@@ -4,7 +4,7 @@
 // a pill on Deals beside the deal list and the Letting Tracker). BGP staff
 // only: the feed (server/aml-dashboard.ts) refuses anyone else, and the Deals
 // hub offers the pill only to staff. The rules are shared/aml-dashboard.ts.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertCircle, ChevronDown, ExternalLink, FileText, Flag, Loader2, Search } from "lucide-react";
@@ -222,16 +222,52 @@ export default function AmlDashboard() {
   const shown = useMemo(() => scoped.filter(r => r.bucket === bucket)
     .sort((a, b) => (b.redFlags.length - a.redFlags.length) || ((b.movedDays ?? -1) - (a.movedDays ?? -1))), [scoped, bucket]);
 
+  // The top folds once the table is scrolled, so the rows get the screen and
+  // the title and pills stay (Woody, 22 November 2026: "the top of the pages
+  // shrink and the table is larger when start scrolling but keep the main
+  // headings"). The Investment Tracker's pattern; never on a phone, where the
+  // whole page scrolls.
+  const [folded, setFolded] = useState(false);
+  const [pageEl, setPageEl] = useState<HTMLDivElement | null>(null);
+  const foldedAtRef = useRef(0);
+  const lastTopRef = useRef(0);
+  useEffect(() => {
+    const page = pageEl;
+    if (!page || isMobile) return;
+    // Folding makes the table taller, which can pull a short list back to its
+    // top: that is not the person scrolling up, so it is ignored for a moment.
+    const settled = () => Date.now() - foldedAtRef.current > 400;
+    const onScroll = (e: Event) => {
+      const table = e.target instanceof HTMLElement && e.target.classList.contains("table-scroll-container") ? e.target : null;
+      if (!table) return;
+      const cameUp = lastTopRef.current > 0;
+      lastTopRef.current = table.scrollTop;
+      if (table.scrollTop > 48) setFolded(was => { if (!was) foldedAtRef.current = Date.now(); return true; });
+      else if (table.scrollTop <= 0 && cameUp && settled()) setFolded(false);
+    };
+    const onWheel = (e: WheelEvent) => {
+      const table = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>(".table-scroll-container") : null;
+      if (table && e.deltaY < 0 && table.scrollTop <= 0 && settled()) setFolded(false);
+    };
+    page.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    page.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      page.removeEventListener("scroll", onScroll, { capture: true });
+      page.removeEventListener("wheel", onWheel);
+    };
+  }, [pageEl, isMobile]);
+  const foldedTop = folded && !isMobile && shownSection === "checks";
+  // The table measures the room below it on a window resize: folding moves its
+  // top without one, so ask it to measure again once the fold has drawn.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    return () => cancelAnimationFrame(id);
+  }, [foldedTop]);
+
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-[1400px]" data-testid="aml-dashboard">
-      <div>
-        <h1 className="text-xl font-semibold">AML checks</h1>
-        <p className="text-sm text-muted-foreground">Every party on a live deal: BGP's checks, the client checks, KYC4U and approvals. A party is To do once HMRC expects its checks: a landlord or seller on any live deal, a tenant or buyer from Heads of Terms.</p>
-      </div>
-
-      <AmlPolicyPanel />
-
-      <div className="flex flex-wrap items-center gap-2 border-b pb-2" data-testid="aml-sections">
+    <div ref={setPageEl} className={`${foldedTop ? "px-4 md:px-6 py-2 space-y-2" : "p-4 md:p-6 space-y-3"} max-w-[1400px]`} data-testid="aml-dashboard" data-folded={foldedTop ? "true" : "false"}>
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${foldedTop ? "" : "border-b pb-2"}`} data-testid="aml-sections">
+        <h1 className={`${foldedTop ? "text-lg" : "text-xl"} font-semibold whitespace-nowrap`}>AML checks</h1>
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sections">
           {sections.map(x => (
             <Pill key={x.key} active={shownSection === x.key} onClick={() => setSection(x.key)} data-testid={`aml-section-${x.key}`}>{x.label}</Pill>
@@ -240,11 +276,13 @@ export default function AmlDashboard() {
         <div className="md:ml-auto"><RaiseReportButton label="Report to the Nominated Officer" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
       </div>
 
+      {!foldedTop && <AmlPolicyPanel />}
+
       {shownSection === "rules" && <AmlRulesBoard />}
       {shownSection === "reports" && <AmlRegisterBoard />}
       {shownSection === "records" && <AmlRetentionBoard />}
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
-      {shownSection === "checks" && <MyRegisterReports />}
+      {shownSection === "checks" && !foldedTop && <MyRegisterReports />}
       {shownSection === "emails" && <KycEmailsAdmin />}
 
       {shownSection === "checks" && <>
@@ -301,7 +339,7 @@ export default function AmlDashboard() {
         // "can you put a scroll bar at the top and fix the heading as scroll
         // down"): the rows scroll inside the box, which the sticky heading needs.
         <div className="rounded-lg border overflow-hidden" data-testid="aml-table-box">
-          <ScrollableTable minWidth={1180} topScrollbar>
+          <ScrollableTable minWidth={1000} topScrollbar>
           <table className="w-full text-sm" data-testid="aml-table">
             <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
@@ -318,12 +356,12 @@ export default function AmlDashboard() {
             <tbody className="divide-y">
               {shown.map(r => (
                 <tr key={r.key} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-muted/40" data-testid={`aml-row-${r.key}`}>
-                  <td className="px-3 py-2 max-w-[260px]"><PartyCell row={r} /></td>
-                  <td className="px-3 py-2 max-w-[300px]"><DealCell row={r} /></td>
+                  <td className="px-3 py-2 max-w-[230px]"><PartyCell row={r} /></td>
+                  <td className="px-3 py-2 max-w-[260px]"><DealCell row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
                   <td className="px-3 py-2"><LevelCell row={r} inHouseEdd={!!roles?.inHouseEdd?.on} /></td>
                   <td className="px-3 py-2 max-w-[220px] truncate"><Flags row={r} /></td>
-                  <td className="px-3 py-2 whitespace-nowrap">{r.waitingOn}</td>
+                  <td className="px-3 py-2 min-w-[150px] max-w-[220px]">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>
                   <td className="px-3 py-2 max-w-[200px] truncate text-muted-foreground">{r.agents.join(", ") || "—"}</td>
                 </tr>

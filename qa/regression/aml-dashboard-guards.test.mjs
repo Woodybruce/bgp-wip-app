@@ -64,10 +64,25 @@ test('the pill is BGP staff only on Deals', () => {
 test('the checks table has a scroll bar above it and a heading that stays in view (Woody, 2026-11-20)', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
   // The rows scroll inside ScrollableTable's box, which the app's sticky table heading needs; a page-height wrapper never scrolls.
-  assert.match(page, /<ScrollableTable minWidth=\{1180\} topScrollbar>\s*<table className="w-full text-sm" data-testid="aml-table">/);
+  assert.match(page, /<ScrollableTable minWidth=\{1000\} topScrollbar>\s*<table className="w-full text-sm" data-testid="aml-table">/);
   assert.doesNotMatch(page, /<div className="rounded-lg border overflow-x-auto">\s*<table className="w-full text-sm" data-testid="aml-table">/);
   const box = read('client/src/components/scrollable-table.tsx');
   assert.match(box, /\{topScrollbar && \(\s*<div ref=\{topScrollRef\} className="sync-scroll-top"/);
   assert.match(box, /const els = \[tableScrollRef\.current, bottomScrollRef\.current, topScrollRef\.current\]/, 'the bars and the table scroll sideways together');
   assert.match(read('client/src/index.css'), /\.sync-scroll-top \{/);
+});
+
+test('the top folds once the table scrolls, keeping the title and pills (Woody, 22 November 2026)', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(page, /const foldedTop = folded && !isMobile && shownSection === "checks";/);
+  assert.match(page, /if \(table\.scrollTop > 48\) setFolded\(/);
+  assert.match(page, /\{!foldedTop && <AmlPolicyPanel \/>\}/);
+  // The title sits beside the section pills, folded or not.
+  assert.match(page, /<h1 className=\{`\$\{foldedTop \? "text-lg" : "text-xl"\} font-semibold whitespace-nowrap`\}>AML checks<\/h1>/);
+  // The table measures the room below it again once the fold has drawn.
+  assert.match(page, /window\.dispatchEvent\(new Event\("resize"\)\)/);
+  // The policy is one line; its documents, officers and settings open in a dialog.
+  const panel = read('client/src/components/aml-policy-panel.tsx');
+  assert.match(panel, /data-testid="aml-policy-open">Policy and settings<\/button>/);
+  assert.match(panel, /<DialogContent className="max-w-2xl max-h-\[85vh\] overflow-y-auto" data-testid="aml-policy-dialog">/);
 });

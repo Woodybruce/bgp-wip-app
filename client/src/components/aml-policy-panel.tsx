@@ -7,7 +7,7 @@
 // shared/aml-policy.ts.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Download, Loader2, ShieldCheck, UserCog, X } from "lucide-react";
+import { Download, Loader2, ShieldCheck, UserCog, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -169,7 +169,10 @@ function InHouseEddLine({ feed }: { feed: PolicyFeed }) {
 export function AmlPolicyPanel() {
   const { toast } = useToast();
   const { data: feed } = useQuery<PolicyFeed>({ queryKey: ["/api/aml-policy"] });
-  const [open, setOpen] = useState(false);
+  // One line on the page; the documents, the officers, the in-house switch and
+  // how the app applies the policy open in a dialog (22 November 2026: Jack
+  // found the page overwhelming, Woody asked for the table to get the room).
+  const [details, setDetails] = useState(false);
   const [editing, setEditing] = useState(false);
   const fromPolicy = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/aml-policy/officers/from-policy", {})).json(),
@@ -184,52 +187,76 @@ export function AmlPolicyPanel() {
   const deputies = (feed.officers.deputies || []).map(d => d.name).filter((x): x is string => !!x);
   const deputyLine = deputies.length < 2 ? deputies.join("") : `${deputies.slice(0, -1).join(", ")} and ${deputies[deputies.length - 1]}`;
   return (
-    <div className="rounded-lg border bg-card p-3 space-y-2 text-sm" data-testid="aml-policy-panel">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-1.5 font-medium"><ShieldCheck className="w-4 h-4 text-muted-foreground" />BGP's AML policy</div>
-        <div className="text-muted-foreground" data-testid="aml-policy-officers">
+    <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" data-testid="aml-policy-panel">
+        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+        <span data-testid="aml-policy-officers">
           {nominated
-            ? <>Nominated Officer <span className="text-foreground">{nominated.name}</span>{deputies.length ? <> · {deputies.length === 1 ? "Deputy" : "Deputies"} <span className="text-foreground">{deputyLine}</span></> : <> · no Deputy set</>}</>
-            : <span className="text-amber-700 dark:text-amber-300">No Nominated Officer set: admins decide until one is.</span>}
-        </div>
-        {feed.canEdit && (
-          <div className="flex flex-wrap gap-1.5">
-            {/* First set-up only: once set, Change is the way (the server refuses it too). */}
-            {!nominated && (
-              <Button type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={fromPolicy.isPending} onClick={() => fromPolicy.mutate()} data-testid="aml-officers-from-policy">
-                {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({feed.policyNames.nominated} and {feed.policyNames.deputy})
-              </Button>
-            )}
-            <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid="aml-officers-change">Change</Button>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5 md:ml-auto">
-          {feed.documents.map(d => (
-            <Button key={d.key} type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={!d.onFile}
-              onClick={() => download(d.url, `${d.title}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
-              data-testid={`aml-policy-download-${d.key}`}>
-              <Download className="w-3.5 h-3.5 mr-1 shrink-0" />{d.title}, Issue {d.issue}
-            </Button>
-          ))}
-        </div>
+            ? <>Nominated Officer <span className="text-foreground">{nominated.name}</span>{deputies.length ? <> · {deputies.length === 1 ? "Deputy" : "Deputies"} <span className="text-foreground">{deputyLine}</span></> : <> · no Deputy</>}</>
+            : <span className="text-amber-700 dark:text-amber-300">No Nominated Officer set</span>}
+        </span>
+        <span data-testid="aml-policy-edd">· Enhanced checks <span className="text-foreground">{feed.inHouseEdd?.on ? "in-house" : "KYC4U"}</span></span>
+        <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setDetails(true)} data-testid="aml-policy-open">Policy and settings</button>
       </div>
-      <InHouseEddLine feed={feed} />
-      <button type="button" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => setOpen(o => !o)} data-testid="aml-policy-how">
-        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}How the app applies it
-      </button>
-      {open && (
-        <ul className="grid gap-x-6 gap-y-1.5 text-xs text-muted-foreground md:grid-cols-2 list-disc pl-4" data-testid="aml-policy-rules">
-          <li><span className="text-foreground">Simplified</span>: a company listed on a regulated market, an FCA-authorised fund or a UK public body. No beneficial owners to verify.</li>
-          <li><span className="text-foreground">Standard</span>: no higher-risk factor. The beneficial owners are identified and verified. Signed off by an agent on the deal, the Nominated Officer or the Deputy.</li>
-          <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor in the policy (a public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, a super-prime sale). {feed.inHouseEdd?.on ? "BGP's officers do it: the Nominated Officer or a Deputy signs it off with a note of what was checked (KYC4U stays available)." : "It goes to KYC4U, and the Nominated Officer or the Deputy adds KYC4U's result."}</li>
-          <li>Approvals last {feed.recheckYears.standard} years for simplified and standard, and {feed.recheckYears.enhanced} year for enhanced.</li>
-          <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month need sanctions checks only: the owners screened, no client documents.</li>
-          <li>A landlord or seller is checked before marketing, a tenant or buyer from Heads of Terms, and all of them before exchange or completion. A deal that exchanges or completes with checks outstanding still moves, and the officers are emailed.</li>
-          <li>The other side of a deal a joint agent negotiated, or where no deal was done, can be marked Not required by the Nominated Officer or the Deputy.</li>
-          <li>Restaurants, bars and pubs are a factor to weigh, not enhanced by themselves. High-risk countries follow FATF's lists of {feed.fatfAsOf}.</li>
-        </ul>
-      )}
+      <Dialog open={details} onOpenChange={setDetails}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="aml-policy-dialog">
+          <DialogHeader>
+            <DialogTitle>BGP's AML policy</DialogTitle>
+            <DialogDescription>The officers, the documents and how the app applies them.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <section className="space-y-1.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Officers</h3>
+              <p>
+                {nominated
+                  ? <>Nominated Officer <span className="font-medium">{nominated.name}</span>{deputies.length ? <>. {deputies.length === 1 ? "Deputy" : "Deputies"} <span className="font-medium">{deputyLine}</span>.</> : <>. No Deputy.</>}</>
+                  : <span className="text-amber-700 dark:text-amber-300">No Nominated Officer set: admins decide until one is.</span>}
+              </p>
+              {feed.canEdit && (
+                <div className="flex flex-wrap gap-1.5">
+                  {/* First set-up only: once set, Change is the way (the server refuses it too). */}
+                  {!nominated && (
+                    <Button type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={fromPolicy.isPending} onClick={() => fromPolicy.mutate()} data-testid="aml-officers-from-policy">
+                      {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({feed.policyNames.nominated} and {feed.policyNames.deputy})
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setDetails(false); setEditing(true); }} data-testid="aml-officers-change">Change</Button>
+                </div>
+              )}
+            </section>
+            <section className="space-y-1.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enhanced checks</h3>
+              <InHouseEddLine feed={feed} />
+            </section>
+            <section className="space-y-1.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {feed.documents.map(d => (
+                  <Button key={d.key} type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={!d.onFile}
+                    onClick={() => download(d.url, `${d.title}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
+                    data-testid={`aml-policy-download-${d.key}`}>
+                    <Download className="w-3.5 h-3.5 mr-1 shrink-0" />{d.title}, Issue {d.issue}
+                  </Button>
+                ))}
+              </div>
+            </section>
+            <section className="space-y-1.5" data-testid="aml-policy-how">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">How the app applies it</h3>
+              <ul className="space-y-1.5 text-xs text-muted-foreground list-disc pl-4" data-testid="aml-policy-rules">
+                <li><span className="text-foreground">Simplified</span>: a listed company, an FCA-authorised fund or a UK public body. No owners to verify.</li>
+                <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the deal or an officer.</li>
+                <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. {feed.inHouseEdd?.on ? "Signed off by the Nominated Officer or a Deputy, with a note of what was checked." : "Sent to KYC4U; an officer adds KYC4U's result."}</li>
+                <li>Approvals last {feed.recheckYears.standard} years ({feed.recheckYears.enhanced} for enhanced).</li>
+                <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month: sanctions checks only.</li>
+                <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; everyone before exchange. A deal that exchanges with checks outstanding still moves, and the officers are emailed.</li>
+                <li>The other side of a deal a joint agent negotiated, or no deal done: an officer can mark it Not required.</li>
+                <li>Restaurants, bars and pubs are a factor to weigh. High-risk countries follow FATF's lists of {feed.fatfAsOf}.</li>
+              </ul>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
       {editing && <OfficersDialog feed={feed} onClose={() => setEditing(false)} />}
-    </div>
+    </>
   );
 }

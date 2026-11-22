@@ -3953,7 +3953,13 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   table on a computer (its rows scroll inside `ScrollableTable` with a scroll
   bar above and below and the heading row fixed: Woody, 2026-11-20, "can you
   put a scroll bar at the top and fix the heading as scroll down") and cards
-  on a phone; a row opens the party's trail:
+  on a phone; the title sits beside the section pills, the policy is one line (officers,
+  enhanced checks in-house or KYC4U) with **Policy and settings** opening the
+  officers, documents, the in-house switch and how the app applies it, and the
+  top folds to the title and pills once the table is scrolled, so the table
+  gets the room (Woody, 2026-11-22: "the top of the pages shrink and the table
+  is larger when start scrolling but keep the main headings"; the Investment
+  Tracker's pattern, desktop only); a row opens the party's trail:
   the deal's own AML card (every button: checks before asking, client checks,
   KYC4U request, Sign off, Add KYC4U result), the documents on the party's
   KYC record and its history (the KYC audit log and the deal's AML lines).
