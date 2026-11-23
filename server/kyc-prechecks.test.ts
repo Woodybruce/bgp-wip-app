@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import {
   askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, dedupeRegisterOwners, webFindingUnsure, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
-  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState,
+  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState, ACTING_NO_ADDRESS,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished,
@@ -123,8 +123,10 @@ test("a listed company is not asked for an owners chart, owner IDs or the person
     { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
   assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
   assert.deepEqual(viaParent.docs, ["authority"]);
-  // A company that is not listed still asks the person acting for a proof of address.
-  assert.ok(precheckAsks(input({}), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("proof_of_address"));
+  // Nor does a company that is not listed (Woody, 23 November 2026: "If they don't need it then let's not require it").
+  const unlisted = precheckAsks(input({}), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
+  assert.ok(!unlisted.docs.includes("proof_of_address"));
+  assert.equal(unlisted.notAsked.find(n => n.key === "proof_of_address")?.reason, ACTING_NO_ADDRESS);
   assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*The officers confirm the chain\. The officers confirm the market/);
   assert.doesNotMatch(viaParent.notAsked[0].reason, /KYC4U/);
 });
@@ -140,6 +142,7 @@ test("owners on the register are confirmed, not drawn; a director is not asked f
   }), { kind: "company", role: "landlord", idCheck: true, contactName: "Jane Doe", today: TODAY });
   // Each owner has a link of their own (19 November 2026): the one asked is an
   // owner, so only the other owner is named.
+  // Jane Doe is an owner, so she gives a proof of address as one (23 November 2026).
   assert.deepEqual(asks.docs, ["proof_of_address"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "authority"]);
   assert.match(asks.notAsked[1].reason, /^Each owner gets a link of their own for their identity check and proof of address: John Smith\./);
@@ -164,7 +167,11 @@ test("a tenant company's recent accounts on file stand for where the money comes
 });
 
 test("with nothing found, or for a private individual, the usual list is asked", () => {
-  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null }).docs, ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  // The person acting gives a proof of address only as an owner (23 November 2026).
+  const nothing = precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null });
+  assert.deepEqual(nothing.docs, ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(nothing.notAsked.map(n => n.key), ["proof_of_address"]);
+  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: false, contactName: null }).docs, ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
   assert.deepEqual(precheckAsks(input({ subjectKind: "individual", ukRegistered: false }), { kind: "individual", role: "purchaser", idCheck: false, contactName: null }).docs, ["photo_id", "proof_of_address", "source_of_funds"]);
   // Not at Companies House: the overseas register extract is asked for.
   assert.ok(precheckAsks(input({ ukRegistered: false }), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("company_documents"));
@@ -643,6 +650,11 @@ test("a company registered abroad that owns the party: asked for, not stood in f
   assert.ok(asks.docs.includes("ownership") && asks.docs.includes("owner_ids"), "not dropped: the register does not name the people");
   assert.deepEqual(asks.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco" }]);
   assert.match(kycDocDetail("ownership", [], asks.ownersAbroad), /Companies House shows Scp Aaa Invest \(Monaco\) owns the company.*register/);
+  // The person asked gives a proof of address only as one of the owners the register names (23 November 2026).
+  assert.ok(!asks.docs.includes("proof_of_address"));
+  const mixed = result({ companiesHouse: { ...tureddi.companiesHouse!, owners: [...tureddi.companiesHouse!.owners, { name: "Mr Marco ROSSI", kind: "individual", controls: ["ownership-of-shares-25-to-50-percent"], notifiedOn: null }] } });
+  assert.ok(precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Marco Rossi", today: TODAY }).docs.includes("proof_of_address"));
+  assert.ok(!precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Sam Lee", today: TODAY }).docs.includes("proof_of_address"));
   // The card says so, and KYC4U's note.
   assert.equal(precheckCardLines(tureddi).find(l => l.key === "owners")?.state, "attention");
   assert.match(precheckNote(tureddi, "done"), /Owned through a company registered abroad: Scp Aaa Invest \(Monaco\)/);

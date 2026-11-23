@@ -124,6 +124,9 @@ test("the email to the joint agent: finalising our KYC, every document asked for
   assert.ok(!jointAgentAsks({ kind: "company", letting: true }).some(a => /reliance/i.test(a.title)));
   assert.deepEqual(jointAgentAsks({ kind: "company", letting: true }).map(a => a.title), ["Proof of identity", "Proof of address", "The company", "Any further AML you have done"]);
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
+  // A proof of address from each owner, not the person acting (23 November 2026).
+  assert.match(jointAgentAsks({ kind: "company", letting: true })[1].detail, /^For each owner: /);
+  assert.match(jointAgentAsks({ kind: "individual", letting: false })[1].detail, /^For each of them: /);
   const nudge = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1 });
   assert.match(nudge.subject, /^Reminder/);
   assert.match(nudge.html, /Upload the documents/);
@@ -229,9 +232,9 @@ test("what their files cover is set against the people the checks need, each by 
   assert.ok(c.missing.some(m => m.startsWith("Carol White")));
 });
 
-test("the person acting for a listed group is not asked for a proof of address", () => {
+test("the person acting for a company, not an owner, is not asked for a proof of address", () => {
   const c = jointCoverage({
-    partyName: "Big Plc", kind: "company", now: today,
+    partyName: "Acme Limited", kind: "company", now: today,
     people: [{ name: "Carol White", roles: ["acting"], noAddress: true }],
     readings: [read({ file: "passport-carol.pdf", kind: "photo_id", title: "UK passport", date: "2024-01-10", expiry: "2034-01-09", people: [{ name: "Carol White", born: null }] })],
   });

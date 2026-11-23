@@ -165,9 +165,11 @@ export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value 
 // for as a document only when there is no online identity check. A company
 // is checked at Companies House by the app, so only what is not filed there
 // is asked for, with the dealing person's authority to act. The person
-// dealing with us for a company sends their own proof of address too (since
-// 19 November 2026: they are one of the people to check, BGP's policy asks an
-// individual for one proof of identity and one of address). Where the money
+// dealing with us for a company gives a proof of address only when the
+// register names them as an owner (precheckAsks adds it then): HMRC asks for
+// their identity and authority (Woody, 23 November 2026: "If they don't need
+// it then let's not require it"; from 19 November it was asked of them
+// always). Where the money
 // comes from is asked of whoever pays: a buyer, and a tenant (HMRC's letting
 // guidance, AMLG2300 section 21: "all customers making a payment").
 export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean, trust = false, publicBody = false): KycDocKey[] {
@@ -180,7 +182,7 @@ export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefin
   // instruction and the settlor's wealth. Its people each get their own link.
   if (kind === "company" && trust) docs.push("proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
   else if (kind === "individual") docs.push("proof_of_address");
-  else docs.push("proof_of_address", "ownership", "owner_ids", "authority");
+  else docs.push("ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");
   return docs;
 }
@@ -737,7 +739,8 @@ export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letti
     { title: "Proof of identity", detail: ctx.kind === "company"
       ? "For each owner and the person acting for the company: their passport, photocard driving licence or national identity card, or your electronic identity check report."
       : "For each person: their passport, photocard driving licence or national identity card, or your electronic identity check report." },
-    { title: "Proof of address", detail: "For each of them: a utility bill, bank or building society statement or council tax bill from the last three months, or your electronic check confirming it." },
+    // The person acting for a company gives one only as an owner (Woody, 23 November 2026).
+    { title: "Proof of address", detail: `For ${ctx.kind === "company" ? "each owner" : "each of them"}: a utility bill, bank or building society statement or council tax bill from the last three months, or your electronic check confirming it.` },
     ...(ctx.kind === "company" ? [{ title: "The company", detail: "Its register entry and who owns it, with a structure chart if it is owned through other companies." }] : []),
     { title: "Any further AML you have done", detail: "Your sanctions, PEP and adverse media screening, your risk assessment or CDD summary, and anything you hold on where the money comes from." },
   ];

@@ -3610,7 +3610,8 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   client"); the page says the same. It lists (`jointAgentAsks`) proof of identity (passport,
   photocard driving licence or national identity card, or their electronic
   check report) for each owner and the person acting, proof of address from
-  the last three months, the company's register entry and owners, and any
+  the last three months for each owner (never the person acting alone, since
+  23 November 2026), the company's register entry and owners, and any
   further AML they have done (screening, risk assessment or CDD summary,
   source of funds); **Upload the documents**, or reply to the email with them
   attached (the reference in the subject files the reply, as before). Their
@@ -4250,13 +4251,22 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   The listing is found only by a run: a party checked before needs Run again.
 - **Ask only what's left** (`precheckAsks`, the one rule; the client checks
   dialog and `createClientCheck` both call it): listed, no owners chart and no
-  owners' IDs, and (Woody, 23 November 2026: "If HMRC don't require it then
-  stop it") no proof of address from the person acting, for a listed company
-  or one owned through one: HMRC asks only their identity and authority (MLR
-  2017 reg 28(10)), and Issue 4 asks an individual for proof of address only
-  as the party or an owner. People to check marks them `address.notNeeded`
-  (owing the identity check alone), their own link and the joint agent's
-  list leave it out, and a request already sent keeps the step; owners on the register, the client confirms the list instead of
+  owners' IDs; **no proof of address from the person acting for any company**
+  unless the register names them as an owner (Woody, 23 November 2026, first
+  for a listed group, "If HMRC don't require it then stop it", then for every
+  company, "If they don't need it then let's not require it"): HMRC asks only
+  their identity and authority (MLR 2017 reg 28(10)), and Issue 4 asks an
+  individual for proof of address only as the party or an owner.
+  `defaultKycDocs` no longer lists it for a company, `precheckAsks` adds it
+  back when the person asked is one of the owners and otherwise lists it as
+  not asked (`ACTING_NO_ADDRESS`), and People to check marks the person acting
+  who is not an owner, guarantor or a trust's person `address.notNeeded`
+  (`actingOnly` in `shared/kyc-people.ts`: owing the identity check alone);
+  their own link and the joint agent's list (`jointAgentAsks`: "For each
+  owner") leave it out. A trust's representative and a private individual are
+  asked as before. A request already sent keeps the step (on live that day one
+  open request, 4KM9Q3 on Inception T2): nothing waits on it, the client can
+  press Finish without it, but its reminders still list it; owners on the register, the client confirms the list instead of
   sending a chart (a new card on the client page, `POST
   /api/kyc-upload/:token/owners`, a no needs words, logged as
   `client_owners_confirmation`, a red flag `owners_differ` and a box in the
@@ -4993,7 +5003,9 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   person asked and anyone added alongside them (below). With no company that signs, or no register read,
   the owners are not known (`not_read`).
 - **What each sends**: an identity check (Veriff) and a proof of address from
-  the last three months (BGP's AML policy, Issue 2, "Individuals": one proof
+  the last three months, except the person acting for a company who is not an
+  owner, who owes the identity check alone (23 November 2026, "Ask only
+  what's left" above) (BGP's AML policy, Issue 2, "Individuals": one proof
   of identity, one of residential address; the policy lists a photocard
   driving licence for identity only, so it never stands for the address).
   The proof of address wording now names this year's council tax bill too
@@ -5023,7 +5035,8 @@ their sanctions result only". Do not re-litigate. Rules (pure):
 - **The request to the person acting**: when the register names the owners
   it no longer asks for "ID for each of those owners" (`precheckAsks` drops
   it and says why); it asks the person acting for their own proof of address
-  (`defaultKycDocs`), and a step "Pass each owner their own link" lists the
+  only when they are one of the owners (`precheckAsks`; until 23 November
+  2026 always, through `defaultKycDocs`), and a step "Pass each owner their own link" lists the
   owners who still owe something (`ownLinksFor`), done when each has a link.
   The agents' Finished note lists who still owes what.
 - **Finished**: a party's client checks are finished only when the request to

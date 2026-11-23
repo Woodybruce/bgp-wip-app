@@ -67,7 +67,7 @@ export const AML_RULES: AmlRuleGroup[] = [
     rules: [
       { text: "A company: its register entry, its directors, and anyone who owns more than 25% or controls it.", refs: ["mlr_reg5", "amlg11400"] },
       { text: "A person: photo ID and proof of address from the last 3 months. The online ID check counts as photo ID.", refs: ["amlg11400", "bgp_policy"] },
-      { text: "The person acting for a company: their identity and their authority to act. For a listed company, or one owned through one, no proof of address.", refs: ["amlg11400", "bgp_policy"] },
+      { text: "The person acting for a company: their identity and their authority to act. No proof of address unless they are also an owner.", refs: ["amlg11400", "bgp_policy"] },
       { text: "Where the money comes from.", refs: ["amlg11630"] },
       { text: "Sanctions: everyone, on every transaction, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },
     ],

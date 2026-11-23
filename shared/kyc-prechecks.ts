@@ -1040,6 +1040,9 @@ const monthsSince = (iso: string | null, today: Date): number | null => {
   return Number.isNaN(d.getTime()) ? null : (today.getTime() - d.getTime()) / (30.44 * 86400000);
 };
 
+/** Why the person dealing with us for a company is not asked for a proof of address. */
+export const ACTING_NO_ADDRESS = "The person dealing with us: HMRC asks for their identity check and their authority, not a proof of address. They give one only if they are also an owner.";
+
 export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
   // A trust (23 November 2026): what its file already holds, and its trustees as its structure records them.
@@ -1068,10 +1071,21 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     if (ctx.contactName && ctx.trust.trustees.some(t => personNamesMatch(ctx.contactName!, t))) drop("trust_authority", `${ctx.contactName} is a trustee, as the trust's structure records.`);
     return { docs, notAsked, confirmOwners: null, ownerNames: [] };
   }
-  if (!input || ctx.kind !== "company") return { docs, notAsked, confirmOwners: null, ownerNames: [] };
+  // The person dealing with us for a company gives a proof of address only as
+  // one of its owners (Woody, 23 November 2026: "If they don't need it then
+  // let's not require it"): HMRC asks for their identity and authority.
+  const noAddress = () => {
+    if (ctx.kind === "company" && !docs.includes("proof_of_address")) notAsked.push({ key: "proof_of_address", reason: ACTING_NO_ADDRESS });
+  };
+  if (!input || ctx.kind !== "company") { noAddress(); return { docs, notAsked, confirmOwners: null, ownerNames: [] }; }
   const today = ctx.today || new Date();
   let confirmOwners: PrecheckAsks["confirmOwners"] = null;
   let ownerNames: string[] = [];
+  // The person asked is one of the owners the register names: as an owner
+  // they give a proof of address, after the photo ID when that is asked.
+  const askAddressAsOwner = (names: string[]) => {
+    if (ctx.contactName && names.some(n => personNamesMatch(ctx.contactName!, n)) && !docs.includes("proof_of_address")) docs.splice(docs.indexOf("photo_id") + 1, 0, "proof_of_address");
+  };
 
   if (input.listing) {
     const where = LISTING_WORDS[input.listing.market];
@@ -1085,8 +1099,6 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
-    // Woody, 23 November 2026: "If HMRC don't require it then stop it".
-    drop("proof_of_address", "The person dealing with us for a listed group: HMRC asks for their identity check and their authority, not a proof of address.");
   } else if (input.owners.length && input.ownersAbroad?.length) {
     // A company registered abroad owns it: Companies House cannot show who
     // owns that company, so the structure chart and the owners' IDs are asked
@@ -1095,6 +1107,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     // The owners' IDs step is for the people behind the company abroad, so
     // it names nobody: a person the register names has a link of their own.
     confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
+    askAddressAsOwner([...input.owners.filter(o => o.kind === "individual").map(o => o.name), ...input.peopleUpChain.map(p => p.name)]);
   } else if (input.owners.length) {
     confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
     const people = [
@@ -1108,6 +1121,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     // 2026: one upload step for every owner ticked itself on the first file).
     // The person acting is one of the owners when their name is on the list.
     const others = ownerNames.filter(n => !(ctx.contactName && personNamesMatch(ctx.contactName, n)));
+    askAddressAsOwner(ownerNames);
     if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the transaction's AML card, or the client passes them on from their page.`);
     else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check and proof of address cover it.");
   }
@@ -1124,6 +1138,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
       drop("source_of_funds", `Its latest accounts, made up to ${input.accounts.madeUpTo}, were downloaded from Companies House and are on file.`);
     }
   }
+  noAddress();
   return { docs, notAsked, confirmOwners, ownerNames, ...(input.ownersAbroad?.length ? { ownersAbroad: input.ownersAbroad } : {}) };
 }
 

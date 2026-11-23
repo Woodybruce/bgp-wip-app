@@ -51,10 +51,14 @@ test("the steps follow the request: the identity check, each document, then the 
 });
 
 test("what is asked for by default: photo ID only without the online check; ownership and authority for a company; the money from whoever pays", () => {
-  // The person dealing with us for a company sends their own proof of address (19 November 2026).
-  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["proof_of_address", "ownership", "owner_ids", "authority"]);
+  // The person dealing with us for a company gives a proof of address only as an
+  // owner, which precheckAsks adds once the register names them (Woody, 23 November
+  // 2026: "If they don't need it then let's not require it"; from 19 November it was always asked).
+  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
+  // A trust keeps its rule: the person acting for it gives one.
+  assert.ok(defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"));
   assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
   assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
   assert.ok(isKycDocKey("owner_ids") && isKycDocKey("authority") && !isKycDocKey("passport"));

@@ -174,9 +174,10 @@ export interface KycPartyPerson {
   };
   address: {
     done: boolean; ref: string | null; asked: boolean;
-    // Not asked of them: the person dealing with us for a listed group, or a
-    // company owned through one (Woody, 23 November 2026: "If HMRC don't
-    // require it then stop it"; HMRC asks for their identity and authority).
+    // Not asked of them: the person dealing with us for a company who is not
+    // also an owner (Woody, 23 November 2026: for a listed group, "If HMRC
+    // don't require it then stop it"; then for every company, "If they don't
+    // need it then let's not require it"). HMRC asks for their identity and authority.
     notNeeded?: boolean;
     // The proof that counts, else the latest one sent, as read against them
     // (shared/kyc-address-proof.ts): it counts when the reading passes or
@@ -227,7 +228,7 @@ export interface PartyPeople {
 }
 
 export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
-  owners: "The owners the register names, up the ownership chain, and the person dealing with us each do an identity check and send a proof of address.",
+  owners: "The owners the register names, up the ownership chain, each do an identity check and send a proof of address. The person dealing with us does an identity check and shows their authority to act.",
   listed: "Listed on a regulated market, or owned through a listed company: no owners to identify. The person dealing with us does an identity check and shows their authority to act. No proof of address is asked of them.",
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
@@ -394,14 +395,15 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     }));
     const counting = proofs.find(x => x.counts) || null;
     const shown = counting || proofs[proofs.length - 1] || null;
-    // The person dealing with us for a listed group gives no proof of address:
-    // HMRC asks for their identity and their authority to act (MLR 2017 reg
-    // 28(10)), and policy Issue 4 asks for one only from the party or an owner.
-    const listedActing = !!ch?.listing && [...d.roles].every(r => r === "acting" || r === "director");
+    // The person dealing with us for a company gives no proof of address unless
+    // they are also an owner (or a guarantor): HMRC asks for their identity and
+    // their authority to act (MLR 2017 reg 28(10)), and policy Issue 4 asks for
+    // one only from the party or an owner. A trust keeps its own rule.
+    const actingOnly = input.kind === "company" && input.trust === undefined && [...d.roles].every(r => r === "acting" || r === "director");
     const address: KycPartyPerson["address"] = {
       done: !!counting || uploads.includes("address"), ref: counting?.r.ref || (uploads.includes("address") ? "upload" : null),
       asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")),
-      ...(listedActing ? { notNeeded: true } : {}),
+      ...(actingOnly ? { notNeeded: true } : {}),
       proof: shown ? {
         token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
         read: !!shown.f.reading?.read, ok: shown.check.ok, summary: shown.check.summary, reasons: shown.check.reasons,
@@ -413,7 +415,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const relied = input.reliance ? relianceWords(input.reliance) : null;
     // A public body's simplified due diligence does not cover its guarantor.
     const coveredByBody = publicBody && !d.roles.has("guarantor") && !d.roles.has("guarantor_owner");
-    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied || coveredByBody ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done || listedActing ? [] : ["proof of address" as const])];
+    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied || coveredByBody ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done || actingOnly ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;
     return {
       key: personKey(d.name), name, roles,

@@ -438,7 +438,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
         {pf
           ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the {pf.method === "certified" ? "certified documents" : "verification from public sources"}</span></li>
           : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
-          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed from the person acting for a listed group</span></li>
+          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed from the person acting, who is not an owner</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>
