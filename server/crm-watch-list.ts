@@ -23,15 +23,30 @@ export const WATCH_QUIET_DAYS = 30;
 // landlord and leasing books). Until 23 November 2026 the watch list read
 // only lines filed against the company itself, so Jersey Mike's read "No
 // contact on record" (Woody: "which is wrong so needs to link").
+//
+// A brand's agents count too (Woody, 2026-11-23: "should count agents they
+// are integral"; Jersey Mike's agent is Richard Wilcox): the named contact on
+// a current tenant rep representation, and the agent named on one of its
+// requirements that is not closed. Only the named person, never everyone at
+// the agent's firm.
+export const brandAgentSql = (brands: string) => `SELECT r.brand_company_id AS company_id, r.primary_contact_id AS contact_id
+    FROM brand_agent_representations r
+   WHERE r.end_date IS NULL AND r.primary_contact_id IS NOT NULL AND r.brand_company_id = ANY(${brands})
+  UNION
+  SELECT q.company_id, q.agent_contact_id FROM crm_requirements_leasing q
+   WHERE q.agent_contact_id IS NOT NULL AND q.company_id = ANY(${brands}) AND (${requirementStateSql("q")}) <> 'closed'`;
 const CONTACT_SQL = `SELECT x.company_id,
     max(x.interaction_date) FILTER (WHERE x.interaction_date <= now()) AS last_at,
     count(*) FILTER (WHERE x.interaction_date > now() - interval '${WATCH_NEWS_DAYS} days' AND x.interaction_date <= now())::int AS recent
   FROM (
-    SELECT i.company_id, i.interaction_date, i.bgp_user, i.participants FROM crm_interactions i WHERE i.company_id = ANY($1::text[])
-    UNION ALL
-    SELECT p.company_id, i.interaction_date, i.bgp_user, i.participants
+    SELECT i.id, i.company_id, i.interaction_date, i.bgp_user, i.participants FROM crm_interactions i WHERE i.company_id = ANY($1::text[])
+    UNION
+    SELECT i.id, p.company_id, i.interaction_date, i.bgp_user, i.participants
       FROM crm_interactions i JOIN crm_contacts p ON p.id = i.contact_id
      WHERE p.company_id = ANY($1::text[]) AND i.company_id IS DISTINCT FROM p.company_id
+    UNION
+    SELECT i.id, a.company_id, i.interaction_date, i.bgp_user, i.participants
+      FROM crm_interactions i JOIN (${brandAgentSql("$1::text[]")}) a ON a.contact_id = i.contact_id
   ) x
   WHERE COALESCE(x.bgp_user, '') !~* $2 AND COALESCE(x.participants::text, '') !~* $2
   GROUP BY x.company_id`;
@@ -73,7 +88,8 @@ export async function watchList(q: Queryable, now: Date = new Date(), meetings: 
     side(`SELECT brand_company_id AS company_id, count(*) FILTER (WHERE kind = 'planning')::int AS planning, count(*) FILTER (WHERE kind <> 'planning')::int AS jobs,
                  (array_agg(COALESCE(town, authority) ORDER BY first_seen_at DESC))[1] AS town
             FROM brand_pipeline_items WHERE brand_company_id = ANY($1::text[]) AND first_seen_at > now() - interval '${WATCH_NEWS_DAYS} days' GROUP BY brand_company_id`),
-    side(`SELECT company_id, email FROM crm_contacts WHERE company_id = ANY($1::text[])`),
+    side(`SELECT company_id, email FROM crm_contacts WHERE company_id = ANY($1::text[])
+            UNION ALL SELECT a.company_id, p.email FROM (${brandAgentSql("$1::text[]")}) a JOIN crm_contacts p ON p.id = a.contact_id`),
     meetings().catch(() => [] as DiaryMeeting[]),
   ]);
   const peopleBy = new Map<string, number>();
@@ -130,13 +146,19 @@ export async function watchSummary(q: Queryable, companyId: string, now: Date = 
   if (!company) return null;
   const part = (sql: string, values: any[]) => q.query(sql, values).then(r => r.rows).catch(() => null as any[] | null);
   const [people, touches, deals, requirements, diary] = await Promise.all([
-    part(`SELECT p.id, p.name, p.role, p.email, p.phone,
+    part(`SELECT p.id, p.name,
+            CASE WHEN p.company_id = $1 THEN p.role ELSE concat_ws(' · ', 'Agent', NULLIF(f.name, '')) END AS role,
+            p.email, p.phone,
             (SELECT max(i.interaction_date) FROM crm_interactions i WHERE i.contact_id = p.id AND i.interaction_date <= now()
                AND COALESCE(i.bgp_user, '') !~* $2 AND COALESCE(i.participants::text, '') !~* $2) AS last_at
-          FROM crm_contacts p WHERE p.company_id = $1 ORDER BY last_at DESC NULLS LAST, lower(p.name) LIMIT 40`, [companyId, PRIVATE_PATTERN]),
+          FROM crm_contacts p LEFT JOIN crm_companies f ON f.id = p.company_id
+         WHERE p.company_id = $1 OR p.id IN (SELECT contact_id FROM (${brandAgentSql("ARRAY[$1]::text[]")}) a)
+         ORDER BY last_at DESC NULLS LAST, lower(p.name) LIMIT 40`, [companyId, PRIVATE_PATTERN]),
     part(`SELECT i.id, i.type, i.direction, i.subject, i.interaction_date AS at, i.bgp_user, p.name AS contact_name
           FROM crm_interactions i LEFT JOIN crm_contacts p ON p.id = i.contact_id
-         WHERE (i.company_id = $1 OR p.company_id = $1) AND i.interaction_date <= now()
+         WHERE (i.company_id = $1 OR p.company_id = $1
+                OR i.contact_id IN (SELECT contact_id FROM (${brandAgentSql("ARRAY[$1]::text[]")}) a))
+           AND i.interaction_date <= now()
            AND COALESCE(i.bgp_user, '') !~* $2 AND COALESCE(i.participants::text, '') !~* $2
          ORDER BY i.interaction_date DESC LIMIT 8`, [companyId, PRIVATE_PATTERN]),
     part(`SELECT d.id, d.name, d.status, d.deal_type, pr.name AS property_name, d.updated_at

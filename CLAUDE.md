@@ -1658,7 +1658,13 @@ calendars), the order of work and the four decisions waiting on him are in
   Landlords", "agents and lenders"). Contact is anything filed against the
   company OR one of its people (the CRM lists' rule, private mailbox left
   out) and the meetings in both diary books; a meeting booked ahead stops
-  "No contact" being owed. "No people on record" is owed apart. Each owed
+  "No contact" being owed. "No people on record" is owed apart. **A brand's
+  agents count** (Woody, the same day: "should count agents they are
+  integral", of Jersey Mike's agent Richard Wilcox): the named contact on a
+  current tenant rep representation and the agent named on a requirement
+  that is not closed (`brandAgentSql` in `server/crm-watch-list.ts`; only the
+  named person, never the whole firm) count as the brand's contact and its
+  people, and show in Activity with BGP as "Agent · <firm>". Each owed
   chip is a button (`owedKind` in `watch-entry.tsx`): Start strategy, Add
   CRM action filled in for the company (No next step; "Get in touch with"
   for No contact), Add contact (`ContactFormDialog` with the company), or
@@ -7619,7 +7625,16 @@ separately and send to" the leasing address. Do not re-litigate.
   the same day: Jack Barratt was filed as a contact of barrette estates under
   his BGP address, so 161 of his diary entries, the dentist and his
   children's clubs included, read as barrette estates meetings): the matcher
-  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`). Tests in
+  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`).
+  **Personal entries are not filed against contacts either** (Woody, the same
+  day: "yes fix it", of a child's rugby and a gymnastics class showing as
+  contacts' next meetings): the hourly calendar sync files a diary entry as
+  a meeting only when it is not marked private, personal or confidential and
+  someone outside BGP is on it at a business address, or is a contact filed
+  under a company (`diaryEntryIsBusiness` in `server/interactions.ts`); one
+  filed before is taken back on the next sync of its dates. A family member
+  who works at a firm in the CRM still reads as a business guest: no rule
+  can tell those apart. Tests in
   `server/landlord-meetings.test.ts`.
 - **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
   `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
