@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { FilePopout } from "@/components/file-popout";
+import { partyTrailKey } from "@/components/aml-files";
 import { KYC_DOCUMENT_ACCEPT_NOTE_MIN, type KycDocumentCheck, type KycDocumentReading } from "@shared/kyc-documents";
 import { personDisplayName } from "@shared/kyc-prechecks";
 
@@ -41,6 +43,8 @@ function useLanded(dealId: string, role: string) {
   return (body: { documents: UploadedDocument[] }) => {
     queryClient.setQueryData(keyFor(dealId, role), { documents: body.documents });
     queryClient.invalidateQueries({ queryKey: peopleKey(dealId) });
+    // The files on record at the top of the Documents step.
+    queryClient.invalidateQueries({ queryKey: partyTrailKey(dealId, role) });
   };
 }
 
@@ -117,6 +121,7 @@ function DocumentLine({ dealId, role, doc, canDecide }: { dealId: string; role: 
   const landed = useLanded(dealId, role);
   const [accepting, setAccepting] = useState(false);
   const [note, setNote] = useState("");
+  const [viewing, setViewing] = useState<number | null>(null);
   const reread = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/documents/${doc.id}/read`, {})).json(),
     onSuccess: (body: any) => landed(body),
@@ -144,7 +149,9 @@ function DocumentLine({ dealId, role, doc, canDecide }: { dealId: string; role: 
           : counts || check?.use === "company" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
           : toLook || !doc.reading?.read ? <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
           : <FileText className="h-3.5 w-3.5 text-muted-foreground" />}
-        {doc.url ? <a href={doc.url} target="_blank" rel="noreferrer" className="font-medium hover:underline">{doc.fileName}</a> : <span className="font-medium">{doc.fileName}</span>}
+        {/* The file opens in the pop-out viewer, not a download (Woody, 23 November 2026). */}
+        {doc.url ? <button type="button" onClick={() => setViewing(0)} className="font-medium hover:underline text-left" data-testid={`aml-document-open-${doc.id}`}>{doc.fileName}</button> : <span className="font-medium">{doc.fileName}</span>}
+        <FilePopout files={[{ key: doc.id, name: doc.fileName, url: doc.url, caption: check?.summary || null }]} index={viewing} onIndex={setViewing} />
         <span className="text-muted-foreground">{!doc.read ? "Reading…" : check?.summary}</span>
         {doc.read && (
           <Button type="button" size="sm" variant="ghost" className="ml-auto h-6 px-1.5 text-[11px]" disabled={reread.isPending} onClick={() => reread.mutate()} data-testid={`aml-document-reread-${doc.id}`}>

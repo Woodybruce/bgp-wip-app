@@ -198,7 +198,11 @@ function ChartBlock({ c }: { c: DealAbroad["charts"][number] }) {
 }
 
 /** The section's detail. */
-export function AbroadTrace({ dealId, role, query }: { dealId: string; role: string; query: ReturnType<typeof useDealAbroad> }) {
+// sanctionsOnly: a letting under £10,000 a month, where nobody behind a company abroad
+// has to be found, so the section shows what was found and offers nothing to add
+// (Woody, 23 November 2026: "there are some pills to add some further docs but under
+// documents says sanctions checks only?").
+export function AbroadTrace({ dealId, role, query, sanctionsOnly = false }: { dealId: string; role: string; query: ReturnType<typeof useDealAbroad>; sanctionsOnly?: boolean }) {
   const [adding, setAdding] = useState<{ owner: string; mode: Mode } | null>(null);
   const data = query.data;
   if (query.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trace…</p>;
@@ -228,11 +232,12 @@ export function AbroadTrace({ dealId, role, query }: { dealId: string; role: str
           <p className="font-medium">{o.name} <span className="font-normal text-muted-foreground">({o.country})</span></p>
           <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">{o.found.map(f => <li key={f} className="break-words">{f}</li>)}</ul>
           {recs.length > 0 && <ul className="space-y-1">{recs.map(r => <RecordLine key={r.id} dealId={dealId} role={role} r={r} />)}</ul>}
-          {o.needs && <p className="text-amber-800 dark:text-amber-300">Still to find: {o.needs}.</p>}
-          {adding?.owner === o.name ? <AddToTrace dealId={dealId} role={role} names={data.names} owner={o.name} mode={adding.mode} onDone={() => setAdding(null)} /> : actions(o.name)}
+          {o.needs && !sanctionsOnly && <p className="text-amber-800 dark:text-amber-300">Still to find: {o.needs}.</p>}
+          {adding?.owner === o.name ? <AddToTrace dealId={dealId} role={role} names={data.names} owner={o.name} mode={adding.mode} onDone={() => setAdding(null)} /> : sanctionsOnly ? null : actions(o.name)}
         </div>
       ))}
-      {!data.owners.length && data.names.length > 0 && (adding ? <AddToTrace dealId={dealId} role={role} names={data.names} owner={adding.owner} mode={adding.mode} onDone={() => setAdding(null)} /> : actions(data.names[0].name))}
+      {!data.owners.length && data.names.length > 0 && (adding ? <AddToTrace dealId={dealId} role={role} names={data.names} owner={adding.owner} mode={adding.mode} onDone={() => setAdding(null)} /> : sanctionsOnly ? null : actions(data.names[0].name))}
+      {sanctionsOnly && <p className="text-muted-foreground" data-testid="abroad-sanctions-only">Nothing to add: a letting under £10,000 a month needs the sanctions checks only.</p>}
       {otherRecords.length > 0 && (
         <div className="space-y-1">
           <p className="font-medium">Recorded against the companies above them</p>

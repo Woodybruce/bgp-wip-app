@@ -27,8 +27,8 @@ import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "
 import { payerRedFlags } from "@shared/deal-billing";
 import { guarantorRedFlags } from "@shared/deal-guarantor";
 import { dealClientRole } from "@shared/deal-parties";
-import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, simplifiedCase, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
+import { isPrecheckResult, normaliseStoredPrecheck, ownersAbroadOf } from "@shared/kyc-prechecks";
+import { amlRegime, dueDiligenceLevel, simplifiedCase, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -94,7 +94,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
-            d.pricing, p.postcode, d.bgp_acting_for,
+            d.pricing, d.rent_pa, p.postcode, d.bgp_acting_for,
             d.invoice_payer_entity_id, d.invoice_payer_relationship, d.invoice_payer_note, pe.name AS invoice_payer_name,
             ${partyCols.join(", ")}, p.name AS property_name
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
@@ -127,7 +127,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
   const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors] = await Promise.all([
-    loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
+    loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId, fullChecks: amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "full" }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
     read("screening records", async () => (await pool.query(
@@ -137,7 +137,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     read("BGP's checks before asking", async () => (await pool.query(
       `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, id, conducted_at, result
          FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
-        ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [brandIds])).rows, none),
+        ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [brandIds])).rows
+      .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none),
     read("client checks", async () => (await pool.query(
       `SELECT u.deal_id, u.company_id, u.request, u.created_at, u.completed_at, u.last_used_at, u.revoked_at, u.expires_at,
               (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files
@@ -323,7 +324,7 @@ router.get("/api/aml-dashboard/party", async (req: Request, res: Response) => {
       : null;
     const [documents, history, dealLines] = await Promise.all([
       pool.query(
-        `SELECT id, doc_type, file_name, file_url, uploaded_at, notes, trading_entity_id
+        `SELECT id, doc_type, file_name, file_url, mime_type, uploaded_at, notes, trading_entity_id
            FROM kyc_documents
           WHERE deleted_at IS NULL AND company_id = $1 AND (trading_entity_id IS NULL OR trading_entity_id = $2)
           ORDER BY uploaded_at DESC NULLS LAST LIMIT 100`, [deal.brand_id, entityId]),
@@ -338,7 +339,7 @@ router.get("/api/aml-dashboard/party", async (req: Request, res: Response) => {
     ]);
     res.json({
       documents: documents.rows.map((d: any) => ({
-        id: String(d.id), type: d.doc_type, name: d.file_name, url: d.file_url, at: d.uploaded_at, note: d.notes,
+        id: String(d.id), type: d.doc_type, name: d.file_name, url: d.file_url, mime: d.mime_type || null, at: d.uploaded_at, note: d.notes,
         onCompany: !!d.trading_entity_id,
       })),
       history: [

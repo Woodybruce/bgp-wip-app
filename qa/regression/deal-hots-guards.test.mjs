@@ -112,3 +112,23 @@ test('a number that is another company\'s is never offered (live check, 23 Novem
 test('ChatBGP is told where it is', () => {
   assert.match(appMap, /\*\*Describe the transaction\*\* \(since 2026-11-23\)/);
 });
+
+// Woody, 23 November 2026: "read hots and click choose company and it went back to
+// previous board nothing saved". The party line's buttons save: the Who signs
+// dialog (Companies House, or a person) opens over the heads of terms, files the
+// pick under the party with no Xero contact, and sets it as the one who signs.
+test('a party not found or named with no company: every button saves the one who signs', () => {
+  const line = screen.slice(screen.indexOf('case "not_found":'), screen.indexOf('case "no_party":'));
+  assert.match(line, /hotsPersonName\(read\.name\)/);
+  assert.match(line, /onFind\(role, "person", person\)/);
+  assert.match(line, /onFind\(role, "company", person \? \(brand\?\.name \|\| ""\) : read\.name\)/);
+  assert.match(line, /onFind\(role, "person", ""\)/);
+  assert.doesNotMatch(line, />Choose the company</, 'the old button that saved nothing');
+  assert.match(screen, /<Dialog open onOpenChange=\{o => \{ if \(!o && !editing && !finding\) onClose\(\); \}\}>/);
+  const finder = screen.slice(screen.indexOf('{finding && ('), screen.indexOf('{finding && (') + 900);
+  assert.match(finder, /<CreateBillingEntityDialog/);
+  assert.match(finder, /xero=\{false\}/);
+  assert.match(finder, /initialPersonName=\{finding\.mode === "person" \? finding\.name : ""\}/);
+  assert.match(finder, /onSavedWithoutXero=\{company => signsFound\(finding\.role, company\)\}/);
+  assert.match(screen, /const signsFound = \(role: DealPartyRole, company: SavedCompany\) => \{[\s\S]{0,200}apiRequest\("PUT", `\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}`, \{ companyId: company\.id \}\)/);
+});

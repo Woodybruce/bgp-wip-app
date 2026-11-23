@@ -33,7 +33,7 @@ import { pool } from "./db";
 import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
   askInputFrom, checkWebAnswer, chooseScreened, gleifOwnerAbroad, gleifPartyLine, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
-  dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
+  dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, normaliseStoredPrecheck, withRoeListing, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
@@ -107,9 +107,10 @@ export async function latestPrecheck(companyId: string, entityId: string | null 
       WHERE crm_company_id = $1 AND result->>'kind' = 'precheck' AND trading_entity_id IS NOT DISTINCT FROM $2
       ORDER BY conducted_at DESC NULLS LAST, id DESC LIMIT 1`, [companyId, entityId || null])).rows[0];
   if (!row || !isPrecheckResult(row.result)) return null;
-  // A run stored before 23 November 2026 can hold an owner Companies House lists twice.
-  if (row.result.companiesHouse?.owners) row.result.companiesHouse.owners = dedupeRegisterOwners(row.result.companiesHouse.owners);
-  return { id: Number(row.id), ranAt: new Date(row.conducted_at || row.result.ranAt).toISOString(), result: row.result };
+  // A run stored before 23 November 2026 can hold an owner Companies House lists twice,
+  // and an overseas entity owned by a listed company abroad (normaliseStoredPrecheck).
+  const result = normaliseStoredPrecheck(row.result);
+  return { id: Number(row.id), ranAt: new Date(row.conducted_at || result.ranAt).toISOString(), result };
 }
 
 export const precheckRunning = (companyId: string, entityId: string | null = null): { startedAt: string } | null => {
@@ -494,8 +495,9 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   const { documents, accountsType } = await documentsFor(n, companyId, entityId, dealId, companyName, profile, errors);
 
   const office = profile.registered_office_address || {};
+  // An overseas entity owned by a company abroad on its register: listed (shared/kyc-prechecks.ts, withRoeListing).
   return {
-    data: {
+    data: withRoeListing({
       number: n, name: companyName, status: clean(profile.company_status, 40) || null, type: clean(profile.type, 60) || null,
       incorporatedOn: profile.date_of_creation || null,
       registeredOffice: [office.premises, office.address_line_1, office.address_line_2, office.locality, office.region, office.postal_code, office.country].filter(Boolean).map((x: any) => clean(x, 80)).join(", ") || null,
@@ -506,7 +508,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
       lastAccountsType: accountsType || clean(profile.accounts?.last_accounts?.type, 40) || null,
       hasInsolvencyHistory: !!profile.has_insolvency_history, insolvencyCases,
       officers, owners, statements, listing, chain, peopleUpChain, offshoreOwners, ownersAbroad, disqualified, covenant, documents,
-    },
+    }),
     raw: { profile, officers: rawOfficers, pscs: rawPscs },
   };
 }

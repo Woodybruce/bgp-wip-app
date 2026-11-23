@@ -119,6 +119,25 @@ const nameWords = (name: unknown): string[] =>
  * BARBER DESIGN LIMITED at Companies House (live check, 23 November 2026).
  * A name made only of common words is compared on all its words.
  */
+/**
+ * The person a party line names, when the name reads as a person's and not a
+ * company's ("Caitlin Johal", "Mr John Smith"): titles and "trading as" taken
+ * off. Null for anything that may be a company. It only decides what the
+ * heads of terms dialog offers first (Woody, 23 November 2026: "read hots and
+ * click choose company and it went back to previous board nothing saved");
+ * the person is saved only when someone presses.
+ */
+export function hotsPersonName(raw: unknown): string | null {
+  let s = oneLine(raw).replace(/\s*[,(]?\s*(?:t\/a|trading as)\b.*$/i, "").replace(/[),\s]+$/, "").trim();
+  s = s.replace(/^(?:mr|mrs|ms|miss|mx|dr|sir|dame)\.?\s+/i, "");
+  if (!s || /\d/.test(s) || /\b(?:ltd|limited|plc|llp|lp|llc|inc)\.?\s*$/i.test(s)) return null;
+  const words = s.split(" ");
+  if (words.length < 2 || words.length > 4 || /^the$/i.test(words[0])) return null;
+  if (!words.every(w => /^[A-Z][A-Za-z'’-]*$/.test(w) || /^(?:van|von|de|da|di|du|la|le|bin|al)$/i.test(w))) return null;
+  if (/\b(?:ag|bv|nv|sa|sas|sarl|gmbh|solicitors|law|legal|partners|partnership|property|properties|estates?|group|holdings?|associates|company|co|trust|trustees|foundation|fund|capital|investments?|ventures|management|retail|restaurants?|cafe|café|bakery|deli|bar|kitchen|foods?|trading|enterprises|international|uk|services|council|club|developments?|homes|hotels?|leisure)\b/i.test(s)) return null;
+  return s;
+}
+
 export function hotsNamesClose(a: unknown, b: unknown): boolean {
   const ka = legalNameKey(a);
   if (ka && ka === legalNameKey(b)) return true;

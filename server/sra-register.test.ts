@@ -172,3 +172,20 @@ test("the solicitors check words a firm from the SRA's data, and says so when th
   const missing = registerFromSra(findSraFirm(INDEX, "Pemberton Greenish"), readAt);
   assert.match(solicitorCheckWords(check(missing)).words, /not found on the SRA's register under that name/);
 });
+
+// Woody, 23 November 2026: "we need our clients solicitors checked at SRA too I think".
+// Each check says whose solicitors the firm is; a check from before is our client's
+// when it is the firm the transaction records as its solicitors.
+test("a solicitors check is our client's or the other side's", async () => {
+  const { sameSolicitorFirm, solicitorSideOf, isSolicitorSide } = await import("../shared/solicitor-aml");
+  assert.equal(sameSolicitorFirm("Forsters LLP", "forsters"), true);
+  assert.equal(sameSolicitorFirm("Taylor Wessing Solicitors", "Taylor Wessing LLP"), true);
+  assert.equal(sameSolicitorFirm("Forsters", "Fieldfisher"), false);
+  assert.equal(sameSolicitorFirm("", ""), false);
+  assert.equal(solicitorSideOf({ firm: "Forsters LLP" }, "Forsters"), "client");
+  assert.equal(solicitorSideOf({ firm: "Fieldfisher" }, "Forsters"), "other");
+  assert.equal(solicitorSideOf({ firm: "Fieldfisher" }, null), "other");
+  assert.equal(solicitorSideOf({ firm: "Forsters LLP", side: "other" }, "Forsters"), "other", "the side asked for stands");
+  assert.equal(isSolicitorSide("client"), true);
+  assert.equal(isSolicitorSide("landlord"), false);
+});

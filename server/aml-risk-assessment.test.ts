@@ -70,7 +70,9 @@ test("a clean, standard party: the officers identify owners abroad (KYC4U is no 
   assert.equal(ra.owners[0].nationality, "Danish");
   assert.match(ra.owners[0].idMethod, /^Public figure: verified from public sources by Jack Barratt/);
   assert.match(ra.conclusion[0], /^Owned through a company registered abroad: the officers identify the people behind it/);
-  assert.ok(ra.counterparty.some(r => r.label === "Solicitors" && /Not checked yet/.test(r.value)));
+  // Our client's solicitors and the other side's are each asked for (Woody, 23 November 2026).
+  assert.ok(ra.counterparty.some(r => r.label === "Our client's solicitors" && /Not checked yet/.test(r.value)));
+  assert.ok(ra.counterparty.some(r => r.label === "The other side's solicitors" && /Not checked yet/.test(r.value)));
   assert.ok(ra.mitigating.some(m => /Erik Example verified from public sources by Jack Barratt/.test(m)));
 });
 

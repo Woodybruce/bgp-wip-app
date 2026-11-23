@@ -14,7 +14,13 @@
 
 import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
 
-export interface KycFacts { status: string | null; expiresAt: string | Date | null; approvedBy: string | null; approvedAt?: string | Date | null }
+export interface KycFacts {
+  status: string | null; expiresAt: string | Date | null; approvedBy: string | null; approvedAt?: string | Date | null;
+  /** The approval was BGP's sign-off on a letting under £10,000 a month: it covers sanctions checks only. */
+  scope?: "sanctions_only" | null;
+  /** Set when a sanctions-only approval stands but this transaction needs the full checks (applyCheckScope). */
+  sanctionsOnly?: { by: string | null; at: string | Date | null; until: string | Date | null } | null;
+}
 
 export interface PartyKycInput {
   brand: { id: string; name: string; companiesHouseNumber: string | null; legalName: string | null } & KycFacts;
@@ -57,7 +63,7 @@ export function approverWords(by: string | null | undefined): string | null {
 
 export function partyKycState(input: PartyKycInput): PartyKycState {
   const { brand, company } = input;
-  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null };
+  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null, scope: brand.scope ?? null };
   const about = { brandName: brand.name, brandStatus: brand.status };
   if (!company) return { name: brand.name, source: "brand", ...brandFacts, ...about };
   if (brand.status === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
@@ -66,9 +72,45 @@ export function partyKycState(input: PartyKycInput): PartyKycState {
   return { name: company.name, source: "company", status: null, expiresAt: null, approvedBy: null, approvedAt: null, ...about };
 }
 
+// ── A sign-off for sanctions checks only ────────────────────────────────────
+//
+// Woody, 23 November 2026, on AG Hondo Brixton Village BV (TPG): "if TPG are a
+// client and we are doing lots of work for them is this a good enough check?"
+// A sign-off on a letting under £10,000 a month covers the sanctions checks
+// that letting needs, and nothing more. An approval is kept on the company
+// (or the brand) and read by every transaction with it, so on a transaction
+// that needs the full checks (a sale or purchase, a letting at £10,000 a month
+// or more) such an approval does not count: the party reads as not yet
+// checked, saying why, and is signed off again once the full checks are done.
+
+const MINUTES_APART = 5;
+const near = (a: unknown, b: unknown): boolean => {
+  const x = new Date(String(a ?? "")).getTime(), y = new Date(String(b ?? "")).getTime();
+  return Number.isFinite(x) && Number.isFinite(y) && Math.abs(x - y) <= MINUTES_APART * 60_000;
+};
+
+/** The company's approval is the sanctions-only sign-off it records (crm_entity_kyc.evidence.bgpSignOff). */
+export function entitySignOffScope(input: { regime: unknown; signedOffAt: unknown; approvedAt: unknown }): "sanctions_only" | null {
+  return String(input.regime || "") === "sanctions_only" && near(input.signedOffAt, input.approvedAt) ? "sanctions_only" : null;
+}
+
+/** The brand's approval is a sanctions-only sign-off: its latest approval line on the KYC history, written with it, says so. */
+export function brandSignOffScope(input: { notes: unknown; loggedAt: unknown; checkedAt: unknown }): "sanctions_only" | null {
+  return /sanctions checks only/i.test(String(input.notes || "")) && near(input.loggedAt, input.checkedAt) ? "sanctions_only" : null;
+}
+
+/** The state as a transaction reads it: on one that needs the full checks a sanctions-only approval is not an approval. */
+export function applyCheckScope<T extends KycFacts>(state: T, fullChecks: boolean): T {
+  if (!fullChecks || state.status !== "approved" || state.scope !== "sanctions_only") return state;
+  return { ...state, status: null, expiresAt: null, approvedBy: null, approvedAt: null,
+    sanctionsOnly: { by: state.approvedBy, at: state.approvedAt ?? null, until: state.expiresAt } };
+}
+
+export const SANCTIONS_ONLY_APPROVAL_WORDS = "signed off for sanctions checks only: this transaction needs the full checks";
+
 /** Approved and current, else why not ("expired", "no checks run", the status). */
 export function kycVerdict(state: KycFacts, now: Date = new Date()): { approved: boolean; reason: string | null } {
-  if (state.status !== "approved") return { approved: false, reason: state.status || "no checks run" };
+  if (state.status !== "approved") return { approved: false, reason: state.sanctionsOnly ? SANCTIONS_ONLY_APPROVAL_WORDS : state.status || "no checks run" };
   if (state.expiresAt && new Date(state.expiresAt) < now) return { approved: false, reason: "expired" };
   return { approved: true, reason: null };
 }

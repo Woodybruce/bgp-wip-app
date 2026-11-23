@@ -6,6 +6,7 @@ import { Link, useLocation } from "wouter";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
 import { PartyDocumentsBox } from "@/components/kyc-documents";
+import { PartyFiles } from "@/components/aml-files";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
@@ -53,6 +54,9 @@ export interface DealAmlStatus {
     kyc_approved_by: string | null;
     isApproved: boolean;
     isExpired: boolean;
+    // Signed off for sanctions checks only (a letting under £10,000 a month), which
+    // does not cover this transaction: it needs the full checks (23 November 2026).
+    sanctionsOnlyApproval?: { by: string | null; at: string | null; until: string | null } | null;
     // Who the state is about (BGP staff only): the company that signs when
     // the deal names one (2026-11-18), else the brand.
     kycName?: string;
@@ -1026,6 +1030,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
 
   // When the checks must be complete (Issue 4 of BGP's policy), and in red once
   // the transaction has passed that point with the party not decided.
+  const sanctionsOnlyLine = cp.sanctionsOnlyApproval ? (
+    <p className="px-0.5 text-[11px] text-amber-800 dark:text-amber-300" data-testid={`aml-sanctions-only-approval-${cp.role}`}>
+      Signed off{cp.sanctionsOnlyApproval.at ? ` ${amlBoxDay(cp.sanctionsOnlyApproval.at)}` : ""}{cp.sanctionsOnlyApproval.by ? ` by ${cp.sanctionsOnlyApproval.by}` : ""} for sanctions checks only, on a smaller letting. This transaction needs the full checks.
+    </p>
+  ) : null;
   const deadline = row && showNext && !cp.notRequired && row.deadline ? (
     <p className={`px-0.5 text-[11px] ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
       {row.late ? "Late: needed " : "Needed "}{row.deadline}
@@ -1068,6 +1077,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           </div>
         )}
         {showNext && nextLine}
+        {sanctionsOnlyLine}
         {deadline}
         {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
         {staff && level?.level === "simplified" && level.sdd && !cp.notRequired && (
@@ -1088,7 +1098,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
                 <SubHead>{ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
-                <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />
+                <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />
               </div>
             )}
             {reg
@@ -1110,6 +1120,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </StepRow>
           )}
           <StepRow id={sid("documents")} testId={tid("documents")} n={3} label="Documents" state={documents.state} summary={documents.text} open={open.has("documents")} onToggle={() => toggle("documents")}>
+            {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
+            <PartyFiles dealId={dealId} role={cp.role} />
             {companyMissing && !current
               ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
               : <>

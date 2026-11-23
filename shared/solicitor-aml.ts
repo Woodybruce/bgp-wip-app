@@ -20,8 +20,27 @@ export const SOLICITOR_REGISTER_SITES = ["sra.org.uk", "solicitors.lawsociety.or
 
 export type SolicitorRegisterStatus = "found" | "not_found" | "unsure" | "not_run";
 
+// Whose solicitors the firm is (Woody, 23 November 2026: "we need our clients
+// solicitors checked at SRA too I think"): BGP's client's, or the other side's.
+export type SolicitorSide = "client" | "other";
+export const SOLICITOR_SIDES: SolicitorSide[] = ["client", "other"];
+export const SOLICITOR_SIDE_WORDS: Record<SolicitorSide, string> = { client: "Our client's solicitors", other: "The other side's solicitors" };
+export const isSolicitorSide = (v: unknown): v is SolicitorSide => v === "client" || v === "other";
+const firmKey = (v: unknown) => String(v ?? "").toLowerCase().replace(/&/g, " and ").replace(/\b(llp|limited|ltd|solicitors?|law firm)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
+/** The two firm names are the same firm, as typed (legal endings and "Solicitors" aside). */
+export const sameSolicitorFirm = (a: unknown, b: unknown): boolean => !!firmKey(a) && firmKey(a) === firmKey(b);
+/**
+ * Whose solicitors a check is about: the side it was run for, else (a check
+ * from before 23 November 2026) our client's when it is the firm the
+ * transaction records as its solicitors, else the other side's.
+ */
+export const solicitorSideOf = (c: { side?: SolicitorSide | null; firm: string }, onDeal: string | null): SolicitorSide =>
+  c.side || (onDeal && sameSolicitorFirm(c.firm, onDeal) ? "client" : "other");
+
 export interface SolicitorCheck {
   firm: string;
+  /** Whose solicitors (23 November 2026); absent on a check from before. */
+  side?: SolicitorSide | null;
   ranAt: string;
   register: {
     status: SolicitorRegisterStatus;

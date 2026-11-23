@@ -13,7 +13,8 @@
 // rule is shared/party-kyc.ts. The `*EntityId` columns (landlordEntityId
 // etc.) are Xero ContactIDs and are never read here.
 import { pool } from "./db";
-import { kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
+import { amlRegime } from "@shared/aml-policy";
+import { applyCheckScope, brandSignOffScope, entitySignOffScope, kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
 
 export type AmlGateInput = {
   landlordId?: string | null;
@@ -28,7 +29,25 @@ export type AmlGateInput = {
   vendorTradingEntityId?: string | null;
   purchaserTradingEntityId?: string | null;
   dealId?: string | null;
+  // What decides whether the transaction needs the full checks; read from
+  // the deal named by dealId when not given (23 November 2026).
+  dealType?: string | null;
+  team?: string[] | string | null;
+  rentPa?: number | string | null;
 };
+
+// A sale or purchase, or a letting at £10,000 a month or more (or with no
+// rent recorded): an approval that was a sign-off for sanctions checks only
+// does not count (shared/party-kyc.ts, applyCheckScope).
+async function gateFullChecks(deal: AmlGateInput): Promise<boolean> {
+  let facts: { dealType?: string | null; team?: string[] | string | null; rentPa?: number | string | null } | null =
+    deal.dealType !== undefined || deal.rentPa !== undefined ? { dealType: deal.dealType, team: deal.team, rentPa: deal.rentPa } : null;
+  if (!facts && deal.dealId) {
+    const r = (await pool.query(`SELECT deal_type, team, rent_pa FROM crm_deals WHERE id = $1`, [deal.dealId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+    if (r) facts = { dealType: r.deal_type, team: r.team, rentPa: r.rent_pa };
+  }
+  return !!facts && amlRegime(facts).regime === "full";
+}
 
 const GATE_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
 type Querier = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -50,7 +69,10 @@ async function signingCompanies(deal: AmlGateInput): Promise<Record<string, stri
 }
 
 /** Each party's AML state by role: the brand, or the company that signs (shared/party-kyc.ts). */
-export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; brandId: string; entityId: string | null }>): Promise<Record<string, PartyKycState>> {
+// fullChecks: the transaction needs the full checks (amlRegime "full"), so an
+// approval that was a sign-off for sanctions checks only does not count
+// (applyCheckScope in shared/party-kyc.ts, 23 November 2026).
+export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; brandId: string; entityId: string | null; fullChecks?: boolean }>): Promise<Record<string, PartyKycState>> {
   const brandIds = [...new Set(parties.map(p => p.brandId).filter(Boolean))];
   const entityIds = [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))];
   const brands = brandIds.length ? (await q.query(
@@ -62,20 +84,30 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
   // A failed read of the companies' own checks reads as "no checks run":
   // never as approved.
   const checks = entityIds.length ? (await q.query(
-    `SELECT entity_id, kyc_status, expires_at, approved_by, approved_at FROM crm_entity_kyc
+    `SELECT entity_id, kyc_status, expires_at, approved_by, approved_at,
+            evidence->'bgpSignOff'->>'regime' AS signoff_regime, evidence->'bgpSignOff'->>'at' AS signoff_at
+       FROM crm_entity_kyc
       WHERE entity_kind = 'trading_entity' AND entity_id = ANY($1::text[])`, [entityIds]).catch(() => ({ rows: [] as any[] }))).rows : [];
+  // Each brand's latest approval line, to tell a sign-off for sanctions checks only.
+  const approvalLines = brandIds.length && parties.some(p => p.fullChecks) ? (await q.query(
+    `SELECT DISTINCT ON (company_id) company_id, notes, created_at FROM kyc_audit_log
+      WHERE company_id = ANY($1::varchar[]) AND action = 'kyc_approved'
+      ORDER BY company_id, created_at DESC NULLS LAST, id DESC`, [brandIds]).catch(() => ({ rows: [] as any[] }))).rows : [];
   const out: Record<string, PartyKycState> = {};
   for (const p of parties) {
     const b = brands.find((r: any) => r.id === p.brandId);
     if (!b) { out[p.role] = { name: `(unknown ${p.role})`, source: "brand", status: null, expiresAt: null, approvedBy: null }; continue; }
     const e = p.entityId ? entities.find((r: any) => r.id === p.entityId && r.parent_company_id === p.brandId) : null;
     const k = e ? checks.find((r: any) => r.entity_id === e.id) : null;
-    out[p.role] = partyKycState({
+    const line = approvalLines.find((r: any) => r.company_id === b.id);
+    out[p.role] = applyCheckScope(partyKycState({
       brand: { id: b.id, name: b.name, companiesHouseNumber: b.companies_house_number || null, legalName: b.uk_entity_name || b.ch_name || null,
-        status: b.kyc_status || null, expiresAt: b.kyc_expires_at || null, approvedBy: b.kyc_approved_by || null, approvedAt: b.kyc_checked_at || null },
+        status: b.kyc_status || null, expiresAt: b.kyc_expires_at || null, approvedBy: b.kyc_approved_by || null, approvedAt: b.kyc_checked_at || null,
+        scope: line ? brandSignOffScope({ notes: line.notes, loggedAt: line.created_at, checkedAt: b.kyc_checked_at }) : null },
       company: e ? { id: e.id, name: e.name, companiesHouseNumber: e.companies_house_number || null,
-        kyc: k ? { status: k.kyc_status || null, expiresAt: k.expires_at || null, approvedBy: k.approved_by || null, approvedAt: k.approved_at || null } : null } : null,
-    });
+        kyc: k ? { status: k.kyc_status || null, expiresAt: k.expires_at || null, approvedBy: k.approved_by || null, approvedAt: k.approved_at || null,
+          scope: entitySignOffScope({ regime: k.signoff_regime, signedOffAt: k.signoff_at, approvedAt: k.approved_at }) } : null } : null,
+    }), !!p.fullChecks);
   }
   return out;
 }
@@ -100,7 +132,8 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
   }
 
   const signs = await signingCompanies(deal);
-  const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role] })));
+  const fullChecks = await gateFullChecks(deal);
+  const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role], fullChecks })));
   // A party the Nominated Officer or the Deputy marked Not required on this
   // deal (BGP's AML policy: the other side of a deal a joint agent
   // negotiated) needs nothing, unless it was rejected.

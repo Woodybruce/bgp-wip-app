@@ -1436,7 +1436,8 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id).catch(() => ({} as Record<string, string>));
     const { loadPartyKyc } = await import("./deal-gates");
     const { kycVerdict } = await import("@shared/party-kyc");
-    const states = await loadPartyKyc(pool, counterpartyIds.map(cp => ({ role: cp.role, brandId: cp.id, entityId: signs[cp.id] || null })));
+    const fullChecks = (await import("@shared/aml-policy")).amlRegime({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }).regime === "full";
+    const states = await loadPartyKyc(pool, counterpartyIds.map(cp => ({ role: cp.role, brandId: cp.id, entityId: signs[cp.id] || null, fullChecks })));
     const now = new Date();
     const counterparties: any[] = [];
     for (const cp of counterpartyIds) {
@@ -1452,6 +1453,8 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
         kyc_approved_by: st.approvedBy,
         isApproved: st.status === "approved",
         isExpired: st.status === "approved" && !verdict.approved,
+        // Signed off for sanctions checks only, on a transaction that needs the full checks (23 November 2026).
+        sanctionsOnlyApproval: staff && st.sanctionsOnly ? { by: st.sanctionsOnly.by, at: st.sanctionsOnly.at, until: st.sanctionsOnly.until } : null,
         // Who the state is about: the company that signs (BGP staff only).
         ...(staff ? { kycName: st.name, kycSource: st.source, brandKycStatus: st.brandStatus ?? null, signsAs: signs[cp.id] ? st.name : null } : {}),
       });

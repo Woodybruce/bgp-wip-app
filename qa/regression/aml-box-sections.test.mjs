@@ -32,7 +32,7 @@ test('each party is four steps, each one line that opens its detail; nothing is 
   for (const piece of ['<PartyCompanyFacts data={data} companyId={cp.id} />', '<PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />',
     '<PartyLevel data={data} companyId={cp.id} />', '<PartyNotRequiredBox cp={cp} />', '<PartyDecisions dealId={dealId} data={data} companyId={cp.id}',
     '<DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />',
-    '<AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />', '<PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />',
+    '<AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />', '<PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />',
     'part="people"', 'part="requests"', '<PartyRiskAssessment dealId={dealId} role={cp.role} />', '<SecondReadPanel dealId={dealId} role={cp.role}']) {
     assert.ok(box.includes(piece), piece);
   }

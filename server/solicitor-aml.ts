@@ -14,7 +14,7 @@
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import {
-  SOLICITOR_REGISTER_SITES, checkMediaAnswer, checkRegisterAnswer, registerFromSra, solicitorFirmName, type SolicitorCheck,
+  SOLICITOR_REGISTER_SITES, checkMediaAnswer, checkRegisterAnswer, isSolicitorSide, registerFromSra, solicitorFirmName, solicitorSideOf, type SolicitorCheck, type SolicitorSide,
 } from "@shared/solicitor-aml";
 import { findSraFirm, sraChoice, type SraChoice, type SraLookup } from "@shared/sra-register";
 
@@ -133,8 +133,12 @@ export async function runSolicitorCheck(firm: string, opts: { sraNumber?: string
   return check;
 }
 
-/** The deal's solicitor firm on record, and the latest check for each firm checked on the deal. */
-export async function dealSolicitorsAml(db: Db, dealId: string): Promise<{ dealId: string; onDeal: string | null; checks: Array<SolicitorCheck & { id: string; by: string | null }> } | null> {
+/**
+ * The deal's solicitor firm on record (our client's solicitors), and the
+ * latest check for each firm checked on the deal, each with whose solicitors
+ * it is (solicitorSideOf: our client's or the other side's, 23 November 2026).
+ */
+export async function dealSolicitorsAml(db: Db, dealId: string): Promise<{ dealId: string; onDeal: string | null; checks: Array<SolicitorCheck & { id: string; by: string | null; side: SolicitorSide }> } | null> {
   const deal = (await db.query(`SELECT id, solicitor_firm FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
   if (!deal) return null;
   const rows = (await db.query(
@@ -143,8 +147,10 @@ export async function dealSolicitorsAml(db: Db, dealId: string): Promise<{ dealI
   return {
     dealId: String(deal.id),
     onDeal: text(deal.solicitor_firm) || null,
-    checks: rows.map((r: any) => ({ ...(r.result as SolicitorCheck), id: String(r.id), by: r.checked_by_name || null }))
-      .sort((a, b) => b.ranAt.localeCompare(a.ranAt)),
+    checks: rows.map((r: any) => {
+      const c = r.result as SolicitorCheck;
+      return { ...c, id: String(r.id), by: r.checked_by_name || null, side: solicitorSideOf(c, text(deal.solicitor_firm) || null) };
+    }).sort((a, b) => b.ranAt.localeCompare(a.ranAt)),
   };
 }
 
@@ -168,8 +174,10 @@ router.post("/api/deals/:id/solicitors-aml/check", async (req: Request, res: Res
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const firm = solicitorFirmName(req.body?.firm);
     if (!firm) return res.status(400).json({ message: "Give the firm's name." });
-    const deal = (await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [req.params.id])).rows[0];
+    const deal = (await pool.query(`SELECT id, name, solicitor_firm FROM crm_deals WHERE id = $1`, [req.params.id])).rows[0];
     if (!deal) return res.status(404).json({ message: "No such transaction." });
+    // Whose solicitors: as asked, else our client's when it is the firm the transaction records.
+    const side: SolicitorSide = isSolicitorSide(req.body?.side) ? req.body.side : solicitorSideOf({ firm }, text(deal.solicitor_firm) || null);
     const sraNumber = text(req.body?.sraNumber).replace(/[^0-9]/g, "").slice(0, 10) || null;
     const noneOfThese = req.body?.none === true;
     // Several entries match and none stands out: the person chooses before anything runs.
@@ -177,15 +185,22 @@ router.post("/api/deals/:id/solicitors-aml/check", async (req: Request, res: Res
       const choices = await solicitorChoices(firm, sraNumber);
       if (choices) return res.json({ choose: true, firm, ...choices });
     }
-    const check = await runSolicitorCheck(firm, { sraNumber, noneOfThese });
+    const check: SolicitorCheck = { ...(await runSolicitorCheck(firm, { sraNumber, noneOfThese })), side };
+    // Our client's solicitors checked on a transaction that records none: recorded as its solicitors too.
+    if (side === "client" && !text(deal.solicitor_firm)) {
+      await pool.query(`UPDATE crm_deals SET solicitor_firm = $2, updated_at = NOW() WHERE id = $1 AND COALESCE(solicitor_firm, '') = ''`, [deal.id, firm]).catch(() => {});
+      await pool.query(
+        `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'solicitor_firm', NULL, $2, $3, $4, $5)`,
+        [deal.id, firm, "Recorded as our client's solicitors when they were checked at the SRA", me.id, me.name]).catch(() => {});
+    }
     const row = (await pool.query(
       `INSERT INTO kyc_solicitor_checks (deal_id, firm, result, checked_by, checked_by_name) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
       [deal.id, firm, JSON.stringify(check), me.id, me.name])).rows[0];
     const { solicitorCheckWords } = await import("@shared/solicitor-aml");
     await pool.query(
       `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'aml_solicitors', NULL, $2, $3, $4, $5)`,
-      [deal.id, firm, `Solicitors checked: ${solicitorCheckWords(check).words}`.slice(0, 2000), me.id, me.name]).catch(() => {});
-    res.json({ ...check, id: String(row.id), by: me.name });
+      [deal.id, firm, `${side === "client" ? "Our client's solicitors" : "The other side's solicitors"} checked: ${solicitorCheckWords(check).words}`.slice(0, 2000), me.id, me.name]).catch(() => {});
+    res.json({ ...check, id: String(row.id), by: me.name, side });
   } catch (err: any) {
     console.error("[solicitor-aml] check failed:", err?.message);
     res.status(500).json({ message: "The solicitors could not be checked." });

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
-import { AlertCircle, ChevronDown, ExternalLink, FileText, Flag, Loader2, Search } from "lucide-react";
+import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
@@ -21,15 +21,16 @@ import { AmlRetentionBoard } from "@/components/aml-retention";
 import { AmlRulesBoard } from "@/components/aml-rules";
 import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
+import { FileThumbGrid } from "@/components/file-popout";
+import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { getAuthHeaders } from "@/lib/queryClient";
 import { AML_BUCKETS, AML_STAGE_LABEL, amlDealStatusWords, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 import { DEAL_STATUS_COLORS } from "@shared/deal-status";
 
 interface Feed { rows: AmlDashboardRow[]; unchecked: string[] }
 interface Trail {
-  documents: Array<{ id: string; type: string; name: string; url: string; at: string | null; note: string | null; onCompany: boolean }>;
+  documents: PartyTrailDocument[];
   history: Array<{ at: string | null; who: string | null; what: string; detail: string | null }>;
 }
 
@@ -155,12 +156,8 @@ function PartyTrail({ row, onClose, officer }: { row: AmlDashboardRow; onClose: 
   const [docsOpen, setDocsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const { data: trail, isLoading } = useQuery<Trail>({
-    queryKey: ["/api/aml-dashboard/party", row.dealId, row.role],
-    queryFn: async () => {
-      const res = await fetch(`/api/aml-dashboard/party?dealId=${encodeURIComponent(row.dealId)}&role=${encodeURIComponent(row.role)}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("The party's trail could not be read");
-      return res.json();
-    },
+    queryKey: partyTrailKey(row.dealId, row.role),
+    queryFn: () => fetchPartyTrail(row.dealId, row.role),
   });
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
@@ -187,17 +184,8 @@ function PartyTrail({ row, onClose, officer }: { row: AmlDashboardRow; onClose: 
           {!docsOpen ? null : isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : !trail?.documents.length ? (
             <p className="text-sm text-muted-foreground">None yet.</p>
           ) : (
-            <ul className="divide-y rounded-md border" data-testid="aml-trail-documents">
-              {trail.documents.map(d => (
-                <li key={d.id} className="flex items-start gap-2 px-3 py-2 text-sm">
-                  <FileText className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <a href={d.url} target="_blank" rel="noopener noreferrer" className="hover:underline break-words">{d.name}</a>
-                    <div className="text-[11px] text-muted-foreground break-words">{[day(d.at), d.type.replace(/_/g, " "), d.onCompany ? "the company that signs" : null, d.note].filter(Boolean).join(" · ")}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            // Thumbnails that open in the pop-out, not a list of downloads (Woody, 23 November 2026).
+            <FileThumbGrid files={partyFilesForPreview(trail.documents)} testId="aml-trail-documents" limit={24} />
           )}
         </section>
         <section className="space-y-1.5">

@@ -147,7 +147,10 @@ test('an owner listed twice is one owner, so a listed parent is found (St George
   assert.match(fn, /const above = dedupeRegisterOwners\(/);
   // New runs store each owner once; runs stored before are merged when read.
   assert.match(checks, /const owners: RegisterOwner\[\] = dedupeRegisterOwners\(rawPscs\.slice\(0, 30\)/);
-  assert.match(checks, /row\.result\.companiesHouse\.owners = dedupeRegisterOwners\(row\.result\.companiesHouse\.owners\)/);
+  // Runs stored before are merged when read (normaliseStoredPrecheck, which also reads an
+  // overseas entity owned by a company abroad as listed, 23 November 2026).
+  assert.match(checks, /const result = normaliseStoredPrecheck\(row\.result\);/);
+  assert.match(rules, /export function normaliseStoredPrecheck[\s\S]{0,300}dedupeRegisterOwners\(ch\.owners\)/);
 });
 
 test('the web search says whether a finding is about the person or only their company (23 November 2026)', () => {

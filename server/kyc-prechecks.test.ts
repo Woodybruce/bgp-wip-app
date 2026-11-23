@@ -11,7 +11,7 @@ import {
   nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState, ACTING_NO_ADDRESS,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
-  precheckCompany, precheckUnfinished,
+  precheckCompany, precheckUnfinished, chStatusLive, roeListedOwners, withRoeListing, normaliseStoredPrecheck, ownersAbroadOf,
 } from "../shared/kyc-prechecks";
 import { partyRedFlags } from "../shared/kyc-red-flags";
 import { kycFinishedEmail, kycRequestEmail, kycSteps } from "../shared/kyc-request";
@@ -865,4 +865,44 @@ test("a finding about a person's company, not the person, is no red flag on them
   // A company's own finding is its own, whatever the search says.
   const company = line("ST GEORGE PLC", false, "organisation");
   assert.ok(precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [company] } as any }), { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
+});
+
+// The Ugly Duck's landlord, AG Hondo Brixton Village BV (Woody, 23 November 2026):
+// an overseas entity reads "registered" when live, and its one registrable owner,
+// TPG Inc. (Delaware), can be one only because it has its own disclosure duties
+// (a Nasdaq listing): no people behind it to find.
+test("an overseas entity's Registered status is live, and a company abroad on its register is read as listed", () => {
+  assert.equal(chStatusLive("active", "01234567"), true);
+  assert.equal(chStatusLive("registered", "OE002654"), true);
+  assert.equal(chStatusLive("registered", "01234567"), false);
+  assert.equal(chStatusLive("removed", "OE002654"), false);
+  assert.equal(chStatusLive("liquidation", "01234567"), false);
+
+  const ch = result().companiesHouse!;
+  const tpg = { name: "Tpg Inc.", kind: "company" as const, controls: ["voting-rights-more-than-25-percent-registered-overseas-entity"], notifiedOn: "2023-11-01", country: "Delaware, Usa", registrationNumber: "6133002" };
+  const hondo = { ...ch, number: "OE002654", name: "AG HONDO BRIXTON VILLAGE BV", status: "registered", type: "registered-overseas-entity", owners: [tpg], ownersAbroad: [{ name: "Tpg Inc.", country: "Delaware, Usa", registrationNumber: "6133002", controls: [], foundAt: null }] };
+  assert.deepEqual(roeListedOwners(hondo).map(o => o.name), ["Tpg Inc."]);
+  const listed = withRoeListing(hondo)!;
+  assert.equal(listed.listing?.market, "roe_disclosure");
+  assert.equal(listed.listing?.viaParent, true);
+  assert.equal(listed.listing?.company, "Tpg Inc.");
+  assert.deepEqual(ownersAbroadOf(listed), []);
+  const company = precheckCompany(result({ companiesHouse: listed }))!;
+  assert.ok(!company.warnings.some(w => /shows it as registered/.test(w)), "registered is no warning");
+  assert.ok(!company.warnings.some(w => /cannot show who owns it/.test(w)), "no owner abroad still to find");
+  // A stored check from before is read the same way.
+  assert.equal(normaliseStoredPrecheck(result({ companiesHouse: hondo })).companiesHouse?.listing?.market, "roe_disclosure");
+  const line = precheckCardLines(result({ companiesHouse: listed })).find(l => l.key === "companies_house")!;
+  assert.equal(line.state, "ok");
+
+  // A UK company's corporate owner abroad is not read as listed (the PSC register is often filled in wrongly).
+  const uk = { ...ch, owners: [{ ...tpg, name: "Scp Aaa Invest", country: "Monaco", registrationNumber: null }] };
+  assert.equal(withRoeListing(uk)!.listing, null);
+  assert.equal(ownersAbroadOf(uk).length, 1);
+  // A person beside the company abroad stays an owner to check; the company abroad is no one still to find.
+  const mixed = { ...hondo, owners: [tpg, { name: "Jane DOE", kind: "individual" as const, controls: [], notifiedOn: "2023-11-01" }] };
+  assert.equal(withRoeListing(mixed)!.listing, null);
+  assert.deepEqual(ownersAbroadOf(mixed), []);
+  // An owner that is itself an overseas entity is followed on the register, not read as listed.
+  assert.deepEqual(roeListedOwners({ ...hondo, owners: [{ ...tpg, registrationNumber: "OE001234" }] }), []);
 });

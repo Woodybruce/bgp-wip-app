@@ -35,8 +35,12 @@ test("Veriff's approval is filed as the person it checked, never on the contact 
   assert.match(veriff, /if \(s\.company_id && !otherPerson\) \{/);
 });
 
-test('photos the client sends show as thumbnails on the deal card (Woody, 19 November 2026)', () => {
+test('photos the client sends show as thumbnails on the deal card (Woody, 19 November 2026), PDFs too since 23 November', () => {
   const card = read('client/src/components/kyc-client-checks.tsx');
-  assert.match(card, /const isPhoto = \(f: \{ name: string; url: string \| null \}\) => !!f\.url && \/\\\.\(jpe\?g\|png\|webp\|gif\)\$\/i\.test\(f\.name\);/);
-  assert.match(card, /<img src=\{f\.url!\}/);
+  // Every file the client sent, as a thumbnail that opens in the pop-out viewer.
+  assert.match(card, /<FileThumbGrid\s+files=\{request\.files\.map\(\(f, i\) => \(\{/);
+  assert.match(card, /testId=\{`client-check-thumbs-\$\{request\.ref\}`\}/);
+  assert.doesNotMatch(card, /<a key=\{`\$\{f\.name\}-\$\{i\}`\} href=\{f\.url!\} target="_blank"/, 'a photo no longer opens a new tab');
+  const popout = read('client/src/components/file-popout.tsx');
+  assert.match(popout, /<img src=\{src\} alt=\{file\.name\}/);
 });

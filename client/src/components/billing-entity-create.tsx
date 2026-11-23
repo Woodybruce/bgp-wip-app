@@ -30,11 +30,13 @@ export type SavedCompany = { id: string; name: string; companiesHouseNumber: str
 // Companies House statuses that cannot be billed (the server refuses them too).
 const CLOSED = new Set(["dissolved", "converted-closed", "removed", "closed"]);
 
-export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, onCreated, onSavedWithoutXero, testIdPrefix = "billing-entity", xero = true, startAsPerson = false }: {
+export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQuery, initialPersonName = "", onCreated, onSavedWithoutXero, testIdPrefix = "billing-entity", xero = true, startAsPerson = false }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   brand: { id: string; name: string };
   initialQuery: string;
+  /** The person's name to start with (the heads of terms named them, 23 November 2026). */
+  initialPersonName?: string;
   onCreated: (contact: XeroContact, company: SavedCompany | null) => void;
   // Given, a company saved under the brand counts even when Xero made no
   // contact (the deal's parties need the company; billing can follow).
@@ -47,7 +49,7 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
 }) {
   const [mode, setMode] = useState<"company" | "person">(startAsPerson ? "person" : "company");
   const [person, setPerson] = useState({ name: "", email: "", mobile: "" });
-  useEffect(() => { if (open) { setMode(startAsPerson ? "person" : "company"); setPerson({ name: "", email: "", mobile: "" }); } }, [open, startAsPerson]);
+  useEffect(() => { if (open) { setMode(startAsPerson ? "person" : "company"); setPerson({ name: initialPersonName, email: "", mobile: "" }); } }, [open, startAsPerson, initialPersonName]);
   const { toast } = useToast();
   const [term, setTerm] = useState(initialQuery);
   const [q, setQ] = useState(initialQuery.trim());
@@ -92,7 +94,7 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
         onOpenChange(false);
       } else if (company && onSavedWithoutXero) {
         onSavedWithoutXero(company, body?.xeroError || "The Xero contact was not made.");
-        toast({ title: "Company saved", description: `${company.name} is saved under ${brand.name}. Not in Xero: ${body?.xeroError || "the Xero contact was not made."}` });
+        toast({ title: "Company saved", description: xero ? `${company.name} is saved under ${brand.name}. Not in Xero: ${body?.xeroError || "the Xero contact was not made."}` : `${company.name} is saved under ${brand.name}.` });
         onOpenChange(false);
       } else {
         // The company is saved under the brand; the Xero step said why it did not happen.

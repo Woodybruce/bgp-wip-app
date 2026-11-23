@@ -741,6 +741,10 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
   const party = data?.parties.find(p => p.role === role);
   const { people } = usePartyPeople(dealId, party);
   if (!party) return null;
+  // Signed off, not required, or a letting under £10,000 a month (sanctions only): nobody
+  // has to be asked, so who to ask is not a gap (Woody, 23 November 2026, on The Ugly Duck).
+  const askQuiet = !!aml && (aml.sanctionsOnly || !!aml.done);
+  const gaps = askQuiet ? party.gaps.filter(g => g.key !== "person" && g.key !== "email") : party.gaps;
   return (
     <div className="space-y-2" data-testid={`deal-party-lines-${role}`}>
       <dl className="space-y-1.5">
@@ -768,8 +772,10 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
         )}
         <PartyRow label="Who to ask" testId={`deal-party-row-person-${role}`}>
           {party.person
-            ? <span data-testid={`deal-party-person-${role}`}>{party.person.name}{party.person.email ? <span className="text-muted-foreground"> · {party.person.email}</span> : <span className="text-amber-700 dark:text-amber-400"> · no email</span>}</span>
-            : <span className="text-amber-700 dark:text-amber-400">Nobody set, needed for the client checks</span>}
+            ? <span data-testid={`deal-party-person-${role}`}>{party.person.name}{party.person.email ? <span className="text-muted-foreground"> · {party.person.email}</span> : askQuiet ? null : <span className="text-amber-700 dark:text-amber-400"> · no email</span>}</span>
+            : askQuiet
+              ? <span className="text-muted-foreground" data-testid={`deal-party-person-not-needed-${role}`}>Not needed: {aml!.done === "approved" ? "signed off" : aml!.done === "not_required" ? "not required" : "sanctions checks only"}</span>
+              : <span className="text-amber-700 dark:text-amber-400">Nobody set, needed for the client checks</span>}
         </PartyRow>
         {isGuaranteedRole(role) && (party.guarantors || []).length > 0 && (
           <PartyRow label={(party.guarantors || []).length > 1 ? "Guarantors" : "Guarantor"} testId={`deal-party-row-guarantor-${role}`}>
@@ -780,7 +786,7 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
       <PeopleToReachLine party={party} people={people} aml={aml} onOpen={() => setOpen(true)} />
       {!party.company && party.brand.kind === "company" && <PartyCompanyChoice dealId={dealId} party={party} onChoose={() => setOpen(true)} />}
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`deal-party-edit-${role}`}>
-        {party.gaps.length ? "Fill in" : "Change"}
+        {gaps.length ? "Fill in" : "Change"}
       </Button>
       {open && <DealPartyEditor dealId={dealId} role={role} aml={aml} onClose={() => setOpen(false)} />}
     </div>

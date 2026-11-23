@@ -10,7 +10,7 @@ import {
   type KycFlagReview, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts, type SetAsideFlag,
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
-import { isPrecheckResult } from "@shared/kyc-prechecks";
+import { isPrecheckResult, normaliseStoredPrecheck } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedCase, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
 import { payerRedFlags } from "@shared/deal-billing";
 import { guarantorRedFlags } from "@shared/deal-guarantor";
@@ -113,7 +113,8 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
   const prechecks = ids.length ? await read("BGP's checks before asking", async () => (await pool.query(
     `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, id, result
        FROM kyc_investigations WHERE crm_company_id = ANY($1::varchar[]) AND result->>'kind' = 'precheck'
-      ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows, none) : none;
+      ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [ids])).rows
+    .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none) : none;
   const requests = ids.length ? await read("client checks", async () => (await pool.query(
     `SELECT company_id, request FROM kyc_upload_tokens
       WHERE deal_id = $1 AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL

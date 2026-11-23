@@ -105,7 +105,7 @@ export interface AmlFileData {
   dealAside: SetAsideFlag[];
   unchecked: string[];
   parties: AmlFileParty[];
-  // The other side's solicitors as checked (server/solicitor-aml.ts), and the
+  // Our client's and the other side's solicitors as checked (server/solicitor-aml.ts), and the
   // deal's heads of terms: the unit's final agreed file, else the text made in
   // the app (21 November 2026).
   solicitors: SolicitorCheck[];
@@ -148,7 +148,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   // A trust or foundation is checked on its own record too (21 November 2026).
   const signsItself = new Set(kinds.map((r: any) => String(r.id)));
   const [states, marks, prechecks, flags, peopleRequests, requests, agentRows] = await Promise.all([
-    loadPartyKyc(pool, present.map(r => ({ role: r, brandId: text(deal[DEAL_PARTY_COLUMNS[r].brand]), entityId: signs[text(deal[DEAL_PARTY_COLUMNS[r].brand])] || null }))).catch(() => ({} as Record<string, PartyKycState>)),
+    loadPartyKyc(pool, present.map(r => ({ role: r, brandId: text(deal[DEAL_PARTY_COLUMNS[r].brand]), entityId: signs[text(deal[DEAL_PARTY_COLUMNS[r].brand])] || null, fullChecks: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime === "full" }))).catch(() => ({} as Record<string, PartyKycState>)),
     loadNotRequired(pool, [dealId]).catch(() => new Map()),
     dealPrechecks(dealId, brandIds.map(id => ({ companyId: id, entityId: signs[id] || null, needsCompany: !signs[id] && !signsItself.has(id) })), { userId: me.id, autoStart: false }).catch(() => ({} as Record<string, any>)),
     loadDealRedFlags(dealId, brandIds, signs).catch(() => null),

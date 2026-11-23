@@ -8,17 +8,18 @@
 // (server/deal-hots.ts) refuses anyone else. The rules are shared/deal-hots.ts.
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileText, Loader2, Plus } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, Loader2, Plus, Search, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import {
-  HOTS_AGENT_FIELDS, HOTS_CONTACT_SIDE_WORDS, HOTS_ROLE_WORDS, hotsContactLabel, hotsNamesClose, hotsTermPatch, hotsTermWords,
+  HOTS_AGENT_FIELDS, HOTS_CONTACT_SIDE_WORDS, HOTS_ROLE_WORDS, hotsContactLabel, hotsNamesClose, hotsPersonName, hotsTermPatch, hotsTermWords,
   type HotsContact, type HotsContactView, type HotsOtherCompany, type HotsParty, type HotsPartyMatch, type HotsReadReply, type HotsTermView,
 } from "@shared/deal-hots";
 import type { DealPartyRole } from "@shared/deal-parties";
+import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "");
 const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
@@ -175,6 +176,11 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
   const fromNote = !file;
   const { toast } = useToast();
   const [editing, setEditing] = useState<DealPartyRole | null>(null);
+  // The Who signs dialog over this one (Woody, 23 November 2026: "read hots and
+  // click choose company and it went back to previous board nothing saved"):
+  // the company found at Companies House, or the person named, is saved under
+  // the party and becomes the one who signs.
+  const [finding, setFinding] = useState<{ role: DealPartyRole; mode: "company" | "person"; name: string; brand: { id: string; name: string } } | null>(null);
   const [filed, setFiled] = useState(false);
   const reading = reply.reading;
   const parties: HotsParty[] = reply.parties.map(p => p.read);
@@ -239,6 +245,13 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}`, { companyId });
     return `${name} signs for the ${role}`;
   });
+  const signsFound = (role: DealPartyRole, company: SavedCompany) => {
+    setFinding(null);
+    act.mutate(async () => {
+      await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}`, { companyId: company.id });
+      return `${company.name} signs for the ${role}`;
+    });
+  };
   const addCompany = (role: DealPartyRole, brandId: string, number: string, name: string) => act.mutate(async () => {
     const r = await apiRequest("POST", "/api/billing-entities", { brandId, companyNumber: number, xero: false });
     const made = await r.json();
@@ -289,14 +302,20 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     await apiRequest("PUT", `/api/crm/deals/${dealId}`, { [fields.firm]: filed.company.id, ...(filed.contact ? { [fields.person]: filed.contact.id } : {}) });
     return `${filed.company.name} set as ${v.clientSide ? "the joint agent" : `the ${HOTS_CONTACT_SIDE_WORDS[v.side].toLowerCase()}'s agent`}${filed.company.created ? ", added to the CRM" : ""}`;
   });
+  // Saved as our client's solicitors and checked at the SRA in the same press (Woody,
+  // 23 November 2026: "we need our clients solicitors checked at SRA too I think").
   const saveOurSolicitors = (v: HotsContactView) => act.mutate(async () => {
     await fileContact(v.read);
     await apiRequest("PUT", `/api/crm/deals/${dealId}`, { solicitorFirm: v.read.firm, solicitorContact: [v.read.person, v.read.email, v.read.phone].filter(Boolean).join(" · ") || null });
-    return `${v.read.firm} saved as our client's solicitors`;
+    const r = await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, { firm: v.read.firm, side: "client" });
+    const answer = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "solicitors-aml"] });
+    if (answer?.choose) return `${v.read.firm} saved as our client's solicitors: more than one firm on the SRA register matches, so choose it under Solicitors in the AML box`;
+    return `${v.read.firm} saved as our client's solicitors and checked at the SRA`;
   });
   const checkSolicitors = (v: HotsContactView) => act.mutate(async () => {
     await fileContact(v.read);
-    const r = await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, { firm: v.read.firm });
+    const r = await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, { firm: v.read.firm, side: "other" });
     const answer = await r.json();
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "solicitors-aml"] });
     if (answer?.choose) return `More than one firm on the SRA register matches ${v.read.firm}: choose it under Solicitors in the AML box`;
@@ -325,7 +344,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
 
   return (
     <>
-      <Dialog open onOpenChange={o => { if (!o && !editing) onClose(); }}>
+      <Dialog open onOpenChange={o => { if (!o && !editing && !finding) onClose(); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="deal-hots-dialog">
           <DialogHeader>
             <DialogTitle>{fromNote ? "What you typed" : "Heads of terms"}</DialogTitle>
@@ -348,7 +367,10 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
             )}
             {dealParties.map(p => (
               <PartyLine key={`${p.role}-${p.read.name}`} match={p} busy={busy} source={fromNote ? "Your note" : "The heads of terms"}
-                onUse={useCompany} onAdd={addCompany} onSetParty={setParty} onAddParty={addParty} onChoose={(role) => (inEditor ? onClose() : setEditing(role))} />
+                onUse={useCompany} onAdd={addCompany} onSetParty={setParty} onAddParty={addParty}
+                onFind={(role, mode, name) => { if (p.brand) setFinding({ role, mode, name, brand: p.brand }); }}
+                chooseWords={inEditor ? "Back to the party box" : "Open the party box"}
+                onChoose={(role) => (inEditor ? onClose() : setEditing(role))} />
             ))}
             {guarantors.map(g => {
               // Make them the transaction's guarantor (23 November 2026): one filed under the
@@ -444,6 +466,20 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
           <DealPartyEditor dealId={dealId} role={editing} onClose={() => { setEditing(null); void rematch().catch(() => undefined); }} />
         </Suspense>
       )}
+      {finding && (
+        <CreateBillingEntityDialog
+          open
+          onOpenChange={v => { if (!v) setFinding(null); }}
+          brand={finding.brand}
+          initialQuery={finding.mode === "company" ? finding.name : ""}
+          initialPersonName={finding.mode === "person" ? finding.name : ""}
+          startAsPerson={finding.mode === "person"}
+          xero={false}
+          onCreated={(_contact, company) => { if (company) signsFound(finding.role, company); else setFinding(null); }}
+          onSavedWithoutXero={company => signsFound(finding.role, company)}
+          testIdPrefix={`deal-hots-${finding.role}-find`}
+        />
+      )}
     </>
   );
 }
@@ -465,7 +501,7 @@ function ContactLine({ view: v, busy, onAgent, onOurs, onCheck }: {
         </Button>)
       : v.clientSide
         ? (v.same ? done("On the transaction")
-          : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onOurs(v)} data-testid={`${id}-save`}>Save as our client's solicitors</Button>)
+          : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onOurs(v)} data-testid={`${id}-save`}>Save and check at the SRA</Button>)
         : (v.checked ? done("Checked at the SRA")
           : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onCheck(v)} data-testid={`${id}-check`}>Check at the SRA</Button>);
   return (
@@ -496,12 +532,14 @@ function NumberIsAnother({ other, name, testId }: { other: HotsOtherCompany; nam
   );
 }
 
-function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, onChoose }: {
+function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, onFind, chooseWords, onChoose }: {
   match: HotsPartyMatch; busy: boolean; source: string;
   onUse: (role: DealPartyRole, companyId: string, name: string) => void;
   onAdd: (role: DealPartyRole, brandId: string, number: string, name: string) => void;
   onSetParty: (role: DealPartyRole, brandId: string, brandName: string, entityId: string | null) => void;
   onAddParty: (role: DealPartyRole, name: string) => void;
+  onFind: (role: DealPartyRole, mode: "company" | "person", name: string) => void;
+  chooseWords: string;
   onChoose: (role: DealPartyRole) => void;
 }) {
   const role = match.role!;
@@ -551,15 +589,38 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
           </div>
         );
       case "not_found":
-      case "no_company":
+      case "no_company": {
+        // Every button here saves (Woody, 23 November 2026: "read hots and click choose
+        // company and it went back to previous board nothing saved"): the company found
+        // at Companies House, or the person the document names, signs for the party.
+        const person = match.state === "no_company" ? hotsPersonName(read.name) : null;
         return (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 text-muted-foreground">
-              {match.state === "no_company" ? `No registered company is given for ${read.name}.` : match.registerNote || "Not found at Companies House."}
-            </span>
-            <Button type="button" size="sm" variant="outline" className={quiet} disabled={busy} onClick={() => onChoose(role)} data-testid={`deal-hots-choose-${role}`}>Choose the company</Button>
+          <div className="space-y-1.5">
+            <p className="text-muted-foreground">
+              {person ? `No company is given: ${person} looks to sign personally.`
+                : match.state === "no_company" ? `No registered company is given for ${read.name}.` : match.registerNote || "Not found at Companies House."}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {person && (
+                <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onFind(role, "person", person)} data-testid={`deal-hots-person-${role}`}>
+                  <UserRound className="mr-1 h-3.5 w-3.5" />{person} signs personally
+                </Button>
+              )}
+              <Button type="button" size="sm" variant="outline" className={quiet} disabled={busy}
+                onClick={() => onFind(role, "company", person ? (brand?.name || "") : read.name)} data-testid={`deal-hots-find-${role}`}>
+                <Search className="mr-1 h-3.5 w-3.5" />Find the company at Companies House
+              </Button>
+              {!person && (
+                <Button type="button" size="sm" variant="outline" className={quiet} disabled={busy} onClick={() => onFind(role, "person", "")} data-testid={`deal-hots-person-${role}`}>
+                  <UserRound className="mr-1 h-3.5 w-3.5" />A person signs
+                </Button>
+              )}
+              <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={busy}
+                onClick={() => onChoose(role)} data-testid={`deal-hots-choose-${role}`}>{chooseWords}</button>
+            </div>
           </div>
         );
+      }
       case "no_party":
         return (
           <div className="space-y-1">

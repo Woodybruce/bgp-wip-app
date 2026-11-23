@@ -17,7 +17,7 @@ import type { PartyPeople } from "./kyc-people";
 import { isOffshoreCountry, isRegisterDirector, personNamesMatch, type PrecheckCompany } from "./kyc-prechecks";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "./charity-register";
 import { sameCompany } from "./foreign-owners";
-import { solicitorCheckWords, type SolicitorCheck } from "./solicitor-aml";
+import { SOLICITOR_SIDES, SOLICITOR_SIDE_WORDS, solicitorCheckWords, type SolicitorCheck } from "./solicitor-aml";
 import { SRA_ATTRIBUTION_URL, SRA_ATTRIBUTION_WORDS } from "./sra-register";
 
 export type RiskTone = "ok" | "attention" | "info";
@@ -323,9 +323,13 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const counterparty: RiskRow[] = [
     { label: "Agents on the transaction", value: others.length ? others.map(a => `${a.roleWords}: ${a.name}`).join("; ") : "None recorded on the deal", tone: "info" },
     { label: "Agents' HMRC registration", value: others.length ? others.map(a => `${a.name}: ${a.words}`).join("; ") : "Not applicable", tone: others.some(a => /not on|not registered|expired/i.test(a.words)) ? "attention" : "info" },
-    ...(input.solicitors.length
-      ? input.solicitors.map(sc => { const w = solicitorCheckWords(sc); return { label: "Solicitors", value: `${w.words} (checked ${day(sc.ranAt)})`, tone: w.tone }; })
-      : [{ label: "Solicitors", value: "Not checked yet: add the other side's solicitors in the AML box", tone: "attention" as const }]),
+    // Our client's solicitors and the other side's, each checked at the SRA (Woody, 23 November 2026).
+    ...SOLICITOR_SIDES.flatMap(side => {
+      const mine = input.solicitors.filter(sc => (sc.side || "other") === side);
+      return mine.length
+        ? mine.map(sc => { const w = solicitorCheckWords(sc); return { label: SOLICITOR_SIDE_WORDS[side], value: `${w.words} (checked ${day(sc.ranAt)})`, tone: w.tone }; })
+        : [{ label: SOLICITOR_SIDE_WORDS[side], value: "Not checked yet: check them under Solicitors in the AML box", tone: "attention" as const }];
+    }),
     // The SRA's terms: where its data is used, say so with a link to its attribution statement.
     ...(input.solicitors.some(sc => sc.register.source === "sra_data")
       ? [{ label: "Source of the SRA data", value: `${SRA_ATTRIBUTION_WORDS} (${SRA_ATTRIBUTION_URL})`, tone: "info" as const }]

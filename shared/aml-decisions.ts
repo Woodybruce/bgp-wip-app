@@ -40,6 +40,12 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Our client's solicitors are checked at the SRA too",
+    text: "Both sides' solicitors on a transaction are checked against the SRA's register and the web for regulatory action or misconduct: our client's as well as the other side's. Saving our client's solicitors from the heads of terms checks them in the same press." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Officers and sign-off", title: "A sanctions-only sign-off covers small lettings only",
+    text: "A sign-off on a letting under £10,000 a month covers the sanctions checks only. On a sale, a purchase or a letting at £10,000 a month or more with the same party, it does not count: that transaction needs the full checks and a new sign-off." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "A company abroad on the overseas register is read as listed",
+    text: "When an overseas entity's only registered owners are companies abroad, such as TPG Inc., they are read as listed: the Register of Overseas Entities takes a company as an owner only when it has its own disclosure duties. No people behind them are asked for. The officers confirm the listing." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a company",
     text: "The person dealing with us for any company does an identity check and shows their authority to act. They send a proof of address only if they are also one of its owners. HMRC asks only for their identity and authority. A trust's representative and a private individual are asked as before. Requests already sent keep the step." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a listed group",

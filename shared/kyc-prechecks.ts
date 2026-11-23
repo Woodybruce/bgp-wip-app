@@ -42,7 +42,7 @@ export const KYC_PRECHECK_MAX_WEB_PEOPLE = 10;
 // rules are equivalent, which KYC4U confirms. AIM is not a regulated market:
 // an AIM company keeps a PSC register and is asked like any other.
 
-export type ListingMarket = "uk_regulated" | "dtr5" | "eu_regulated" | "other_regulated" | "listed_market";
+export type ListingMarket = "uk_regulated" | "dtr5" | "eu_regulated" | "other_regulated" | "listed_market" | "roe_disclosure";
 
 const EXEMPTION_MARKETS: Array<[string, ListingMarket]> = [
   ["psc_exempt_as_trading_on_uk_regulated_market", "uk_regulated"],
@@ -58,6 +58,7 @@ export const LISTING_WORDS: Record<ListingMarket, string> = {
   eu_regulated: "listed on an EU regulated market",
   other_regulated: "listed on a regulated market outside the UK",
   listed_market: "listed on a market outside the UK named in the PSC Regulations",
+  roe_disclosure: "on the Register of Overseas Entities as a company with its own disclosure duties, which for a company abroad means listed on a UK, EEA or named overseas market such as Nasdaq or NYSE",
 };
 
 // The markets that need no one to weigh them.
@@ -773,6 +774,15 @@ export interface PrecheckOverseasEntity {
 }
 
 export const isOverseasEntityNumber = (n: unknown): boolean => /^OE\d{6}$/i.test(String(n || "").trim());
+/**
+ * Live on its register: a UK company reads "active", an overseas entity
+ * "registered" (its normal status on the Register of Overseas Entities, read
+ * as a warning in red until 23 November 2026 on AG Hondo Brixton Village BV).
+ */
+export const chStatusLive = (status: unknown, number: unknown): boolean => {
+  const s = String(status || "").toLowerCase();
+  return s === "active" || (s === "registered" && isOverseasEntityNumber(number));
+};
 
 // A legal form that only an overseas company carries, at the end of its name.
 // "Limited" and "LP" are left out: UK companies use them too.
@@ -938,7 +948,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
   const identity = precheckIdentity(ch);
   const overdueIdv = identity.filter(i => i.state === "overdue");
   const warnings = [
-    ch.status && ch.status !== "active" ? `Companies House shows it as ${status}` : "",
+    ch.status && !chStatusLive(ch.status, ch.number) ? `Companies House shows it as ${status}` : "",
     ch.hasInsolvencyHistory ? `Insolvency history${ch.insolvencyCases ? ` (${ch.insolvencyCases} case${ch.insolvencyCases === 1 ? "" : "s"})` : ""}` : "",
     ch.accountsOverdue ? "Accounts overdue at Companies House" : "",
     ch.confirmationOverdue ? "Confirmation statement overdue" : "",
@@ -1390,13 +1400,54 @@ export function ownerRegister(country: string | null | undefined): "uk" | "abroa
   return "abroad";
 }
 
+/**
+ * The companies abroad that an overseas entity names on the Register of
+ * Overseas Entities as its registrable beneficial owners. A company can only
+ * be one when it is subject to its own disclosure requirements (Economic
+ * Crime (Transparency and Enforcement) Act 2022, Schedule 2): a UK company
+ * keeping its own register, an overseas entity on the register itself, or a
+ * company listed on a UK, EEA or named overseas market (Nasdaq and NYSE among
+ * them). One registered abroad that is not itself on the register is
+ * therefore listed, and there are no people behind it to find (Woody,
+ * 23 November 2026: TPG Inc., the owner of AG Hondo Brixton Village BV, read
+ * "Still to find: the people behind it"). The officers confirm the listing.
+ */
+export function roeListedOwners(ch: KycPrecheckResult["companiesHouse"] | null | undefined): RegisterOwner[] {
+  if (!ch || !isOverseasEntityNumber(ch.number)) return [];
+  return (ch.owners || []).filter(o => (o.kind === "company" || o.kind === "legal_person")
+    && ownerRegister(o.country) === "abroad" && !isOverseasEntityNumber(o.registrationNumber));
+}
+
+/**
+ * An overseas entity whose registrable owners are all such companies is read
+ * as owned through a listed company (the listing St George's chain gives), so
+ * no individual owners are asked for. Applied when a check runs and when a
+ * stored one is read, so no re-run is needed.
+ */
+export function withRoeListing<T extends KycPrecheckResult["companiesHouse"] | null | undefined>(ch: T): T {
+  if (!ch || ch.listing) return ch;
+  const listed = roeListedOwners(ch);
+  if (!listed.length || listed.length !== (ch.owners || []).length) return ch;
+  return { ...ch, listing: { market: "roe_disclosure", since: null, company: listed.map(o => o.name).join(" and "), companyNumber: listed[0].registrationNumber || "", viaParent: true } };
+}
+
+/** A stored check as the readers use it: one owner listed twice is one (23 November 2026), and the overseas register's rule above. */
+export function normaliseStoredPrecheck<T extends KycPrecheckResult>(result: T): T {
+  const ch = result.companiesHouse;
+  if (!ch) return result;
+  const owners = ch.owners ? dedupeRegisterOwners(ch.owners) : ch.owners;
+  return { ...result, companiesHouse: withRoeListing({ ...ch, owners }) };
+}
+
 const sameOwnerName = (a: string, b: string) => a.replace(/\s+/g, " ").trim().toLowerCase() === b.replace(/\s+/g, " ").trim().toLowerCase();
 
 /** The corporate owners registered abroad: as the run stored them, or read from the register's owners for an older check. */
 export function ownersAbroadOf(ch: KycPrecheckResult["companiesHouse"] | null | undefined): OwnerAbroad[] {
   if (!ch || ch.listing) return [];
-  const out: OwnerAbroad[] = [...(ch.ownersAbroad || [])];
+  const listed = roeListedOwners(ch);
+  const out: OwnerAbroad[] = (ch.ownersAbroad || []).filter(a => !listed.some(l => sameOwnerName(l.name, a.name)));
   for (const o of ch.owners) {
+    if (listed.includes(o)) continue;
     if (o.kind !== "company" && o.kind !== "legal_person") continue;
     if (ownerRegister(o.country) !== "abroad" || out.some(x => sameOwnerName(x.name, o.name))) continue;
     out.push({ name: o.name, country: String(o.country), registrationNumber: o.registrationNumber || null, controls: o.controls, foundAt: null });
@@ -1674,7 +1725,7 @@ export function precheckNote(result: KycPrecheckResult | null, state: "done" | "
     const overseas = isOverseasEntityNumber(ch.number);
     lines.push(`- ${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number}), ${(ch.status || "status not given").replace(/-/g, " ")}${ch.type ? `, ${ch.type.replace(/-/g, " ")}` : ""}${ch.incorporatedOn ? `, incorporated ${ch.incorporatedOn}` : ""}.${directors.length ? ` Directors: ${list(directors)}.` : ""}${overseas && result.overseasEntity?.number ? " Found by its name: please confirm it is the same company." : ""}${result.gleif?.foundNumber ? " Its number was found in GLEIF by its name: please confirm it is the same company." : ""}`);
     if (ch.listing) {
-      lines.push(`- Listed: ${ch.listing.viaParent ? `owned through one company at each level by ${ch.listing.company}, which is` : "the company is"} ${LISTING_WORDS[ch.listing.market]} (PSC exemption${ch.listing.since ? ` since ${ch.listing.since}` : ""}). No beneficial owners asked for (MLR 2017 reg 28(5)).${ch.listing.viaParent ? " Please confirm the chain." : ""}${listingSettled(ch.listing.market) ? "" : " Please confirm the market's disclosure rules are equivalent."}`);
+      lines.push(`- Listed: ${ch.listing.viaParent ? `owned through one company at each level by ${ch.listing.company}, which is` : "the company is"} ${LISTING_WORDS[ch.listing.market]} ${ch.listing.market === "roe_disclosure" ? "(the Register of Overseas Entities' rule)" : `(PSC exemption${ch.listing.since ? ` since ${ch.listing.since}` : ""})`}. No beneficial owners asked for (MLR 2017 reg 28(5)).${ch.listing.viaParent ? " Please confirm the chain." : ""}${listingSettled(ch.listing.market) ? "" : " Please confirm the market's disclosure rules are equivalent."}`);
     } else if (ch.owners.length) {
       lines.push(`- Owners on the register: ${list(ch.owners.map(o => `${o.name} (${ownerControlLine(o) || "significant control"})`), 4)}.`);
     } else if (ch.statements.length) {
@@ -1753,7 +1804,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   const out: PrecheckCardLine[] = [];
   const ch = result.companiesHouse;
   if (ch) {
-    const bad = ch.status !== "active" || ch.hasInsolvencyHistory;
+    const bad = !chStatusLive(ch.status, ch.number) || ch.hasInsolvencyHistory;
     const overseas = isOverseasEntityNumber(ch.number);
     out.push({
       key: "companies_house", label: `${overseas ? "Register of Overseas Entities" : "Companies House"}: ${ch.name} (${ch.number})`, state: bad ? "attention" : "ok",

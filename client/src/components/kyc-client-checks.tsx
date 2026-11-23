@@ -7,7 +7,7 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, FileText, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { pillMetrics } from "@/components/ui/pill";
+import { FileThumbGrid } from "@/components/file-popout";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import {
@@ -95,7 +96,6 @@ const STATUS: Record<ClientCheckRequest["status"], { label: string; cls: string 
 };
 
 // A photo a browser can show (HEIC, which most cannot, stays a file line).
-const isPhoto = (f: { name: string; url: string | null }) => !!f.url && /\.(jpe?g|png|webp|gif)$/i.test(f.name);
 
 const ID_WORDS: Record<KycIdState, string> = {
   not_started: "not started", started: "started", submitted: "done, waiting for the result",
@@ -195,34 +195,18 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
       )}
       {request.docs.filter(d => d.note).map(d => <p key={`note-${d.key}`} className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900">{d.title}: {d.note}</p>)}
       {request.idCheckNote && <p className="text-muted-foreground italic">{request.idCheckNote}</p>}
-      {request.files.length > 0 && (
-        <div className="space-y-1.5">
-          {/* Photos as thumbnails (Woody, 19 November 2026: "the letters for the photos can we show them as thumb nails?"). */}
-          {request.files.some(isPhoto) && (
-            <div className="flex flex-wrap gap-2" data-testid={`client-check-thumbs-${request.ref}`}>
-              {request.files.filter(isPhoto).map((f, i) => (
-                <a key={`${f.name}-${i}`} href={f.url!} target="_blank" rel="noreferrer" title={f.name} className="group w-20 shrink-0">
-                  <img src={f.url!} alt={f.docKey ? KYC_DOCS[f.docKey].title : "Photo sent by the client"} loading="lazy"
-                    className="h-20 w-20 rounded border bg-muted object-cover group-hover:ring-2 group-hover:ring-primary/40" />
-                  <span className="block truncate text-[11px] leading-tight text-muted-foreground">{f.docKey ? KYC_DOCS[f.docKey].title : "By email"}</span>
-                  <span className="block text-[11px] leading-tight text-muted-foreground">{shortDate(f.uploadedAt)}</span>
-                </a>
-              ))}
-            </div>
-          )}
-          {request.files.some(f => !isPhoto(f)) && (
-            <ul className="space-y-0.5">
-              {request.files.filter(f => !isPhoto(f)).map((f, i) => (
-                <li key={`${f.name}-${i}`} className="flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  {f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="hover:underline truncate">{f.name}</a> : <span className="truncate">{f.name}</span>}
-                  <span className="text-muted-foreground shrink-0">{f.docKey ? KYC_DOCS[f.docKey].title : "by email"} · {shortDate(f.uploadedAt)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      {/* Every file the client sent as a thumbnail that pops out (Woody, 19 November 2026: "the letters for the
+          photos can we show them as thumb nails?"; 23 November: PDFs too, "just a thumbnail can click and it pops out"). */}
+      <FileThumbGrid
+        files={request.files.map((f, i) => ({
+          key: `${request.ref}-${i}-${f.name}`,
+          name: f.name,
+          url: f.url,
+          caption: `${f.docKey ? KYC_DOCS[f.docKey].title : "By email"} · ${shortDate(f.uploadedAt)}`,
+        }))}
+        testId={`client-check-thumbs-${request.ref}`}
+        limit={12}
+      />
       {live && (
         <div className="flex flex-wrap gap-1 pt-0.5">
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { navigator.clipboard.writeText(request.link); toast({ title: "Link copied", description: "It's personal to the client: send it only to them." }); }}>

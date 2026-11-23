@@ -83,7 +83,8 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
        FROM crm_trading_entities e JOIN crm_companies c ON c.id = e.parent_company_id
       WHERE e.id = $1 AND e.parent_company_id = $2`, [deal.entity_id, deal.brand_id])).rows[0] || null : null;
   const { loadPartyKyc } = await import("./deal-gates");
-  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null }]))[role];
+  const regime = amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime;
+  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full" }]))[role];
   if (!state?.brandName) return null;
   const sameCompany = !!entity && sameLegalCompany(
     { id: deal.brand_id, name: entity.brand_name, companiesHouseNumber: entity.brand_number || null, legalName: entity.uk_entity_name || entity.ch_name || null, status: null, expiresAt: null, approvedBy: null },
@@ -93,7 +94,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
     brandId: String(deal.brand_id), brandName: state.brandName,
     entityId: entity ? String(entity.id) : null, entityName: entity ? text(entity.name) : null,
     sameCompany, state,
-    regime: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime,
+    regime,
     jointRule: jointAgentRule({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }),
     agents: {
       ids: Array.isArray(deal.internal_agent_ids) ? deal.internal_agent_ids.filter(Boolean).map(String) : [],

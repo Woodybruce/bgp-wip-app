@@ -9,6 +9,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   approverWords, isKyc4uResultKey, kyc4uResultDate, kycVerdict, partyKycState, sameLegalCompany, signOffDenial,
+  applyCheckScope, brandSignOffScope, entitySignOffScope, SANCTIONS_ONLY_APPROVAL_WORDS,
   type PartyKycInput, type SignOffFacts,
 } from "../shared/party-kyc";
 import { loadPartyKyc } from "./deal-gates";
@@ -181,4 +182,27 @@ test("a party owned through a company registered abroad is enhanced: the officer
   assert.equal(signOffDenial(facts({ ownersAbroad: [] })), null);
   // Approved by KYC4U already: the approval is what is said.
   assert.match(signOffDenial(facts({ ownersAbroad: ["X, Denmark"], current: { by: "KYC4U", until: null } }))!, /^Already approved by KYC4U/);
+});
+
+// Woody, 23 November 2026: "if TPG are a client and we are doing lots of work for
+// them is this a good enough check?" A sign-off on a letting under £10,000 a month
+// covers sanctions checks only: on a transaction that needs the full checks it is
+// no approval, and the party says why.
+test("a sign-off for sanctions checks only does not clear a transaction that needs the full checks", () => {
+  const at = "2026-11-23T16:39:15.701Z";
+  assert.equal(entitySignOffScope({ regime: "sanctions_only", signedOffAt: "2026-11-23T16:39:15.690Z", approvedAt: at }), "sanctions_only");
+  assert.equal(entitySignOffScope({ regime: "full", signedOffAt: at, approvedAt: at }), null);
+  // A later approval (a full sign-off, a past KYC4U record) is not the sanctions-only one.
+  assert.equal(entitySignOffScope({ regime: "sanctions_only", signedOffAt: "2026-11-23T16:39:15Z", approvedAt: "2026-12-10T10:00:00Z" }), null);
+  assert.equal(brandSignOffScope({ notes: "BGP sign-off on 65A Granville Arcade (tenant) by Layla O'Driscoll: standard due diligence; sanctions checks only (a letting under £10,000 a month)", loggedAt: at, checkedAt: "2026-11-23T16:39:16Z" }), "sanctions_only");
+  assert.equal(brandSignOffScope({ notes: "BGP sign-off: standard due diligence; client checks finished", loggedAt: at, checkedAt: at }), null);
+
+  const state = partyKycState({ brand: brand({ approvedBy: "Layla O'Driscoll", approvedAt: at, expiresAt: "2027-11-23T00:00:00Z", scope: "sanctions_only" }), company: null });
+  assert.equal(kycVerdict(applyCheckScope(state, false)).approved, true, "a small letting: still approved");
+  const full = applyCheckScope(state, true);
+  assert.equal(full.status, null);
+  assert.deepEqual(kycVerdict(full), { approved: false, reason: SANCTIONS_ONLY_APPROVAL_WORDS });
+  assert.equal(full.sanctionsOnly?.by, "Layla O'Driscoll");
+  // A full approval is untouched.
+  assert.equal(kycVerdict(applyCheckScope(partyKycState({ brand: brand(), company: null }), true)).approved, true);
 });

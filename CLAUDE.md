@@ -3374,8 +3374,21 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   type the transaction out and press **Fill it in**, or drop or choose the
   heads of terms. Both read into the same dialog. And **Read the heads of
   terms** in the party box (Fill in) under Who signs while no company
-  signs. The party box stays open under the dialog (`hotsOpen`); from
-  there, Choose the company goes back to the box.
+  signs. The party box stays open under the dialog (`hotsOpen`).
+- **A party not found, or named with no company, saves from the dialog**
+  (Woody, the same day: "read hots and click choose company and it went
+  back to previous board nothing saved"; the old **Choose the company**
+  only closed the dialog). The party line offers **Find the company at
+  Companies House** and **A person signs** (or, when the name reads as a
+  person's, `hotsPersonName` in `shared/deal-hots.ts`: "Caitlin Johal,
+  trading as The Ugly Duck", **Caitlin Johal signs personally** first).
+  Each opens the party box's own Who signs dialog (`CreateBillingEntityDialog`,
+  `xero={false}`, the person's name filled in, `initialPersonName`) over
+  the heads of terms (`finding`, guarded in the dialog's `onOpenChange`);
+  the pick is filed under the party and set as the one who signs (`PUT
+  /api/deals/:id/parties/:role`, `signsFound`), then the reading is matched
+  again. **Back to the party box** (or **Open the party box** from the
+  Describe box) is a quiet link. Guard: `qa/regression/deal-hots-guards.test.mjs`.
 - **A typed note** (`readHotsNote`; the route takes `text` in place of a
   file, up to 20,000 characters): the label rules, New Deal's party rules
   (`readDealNoteRules`: "Landlord is …", "letting … to …") with a company
@@ -3812,6 +3825,76 @@ call for action countries only).
   `server/kyc-prechecks.test.ts` (all in `npm test`);
   `qa/regression/aml-policy-guards.test.mjs` and
   `joint-agent-checks-guards.test.mjs`.
+
+## A party's files as thumbnails, and the Ugly Duck review (Woody, 2026-11-23)
+
+Woody: "on the files can the app show the files so can check them at any
+point rather than having to download a zip just a thumbnail can clikc and
+it pops out?" Then, reviewing 65A Granville Arcade (The Ugly Duck: an
+overseas landlord, a letting of £13,600 a year): "OK fix them but if TPG
+are a client and we are doing lots of work for them is this a good enough
+check?" Do not re-litigate.
+
+- **Thumbnails** (`client/src/components/file-popout.tsx`, rules
+  `shared/file-preview.ts`): `FileThumbGrid` draws files as small tiles (a
+  photo as itself, a PDF's first page by pdf.js, anything else a tile with
+  its type), two at a time as they come into view; a tile opens
+  `FilePopout`: every page of a PDF, a photo with zoom and rotate, arrows
+  between files, **Download**. Only this app's own addresses are fetched
+  (`inAppFileUrl`), with the signed-in headers, as a blob; an SVG, HTML or
+  XML file is never drawn (`filePreviewKind`). Word, Excel and Outlook files
+  show a tile and download. Where: **Files on record** at the top of each
+  party's Documents step (`PartyFiles` in `client/src/components/aml-files.tsx`,
+  reading the AML board's trail route, `GET /api/aml-dashboard/party`, BGP
+  staff only, which now sends each file's type), the AML board's trail, a
+  client check request's files, and a file's name in **Upload documents**.
+  Tests: `server/file-preview.test.ts` (in `npm test`),
+  `qa/regression/aml-files-popout.test.mjs`.
+- **An overseas entity's "Registered" is live** (`chStatusLive` in
+  `shared/kyc-prechecks.ts`): a UK company reads "active", an overseas
+  entity "registered". It was a red warning on AG Hondo Brixton Village BV.
+- **A company abroad on the overseas register is read as listed**
+  (`roeListedOwners`, `withRoeListing`, `normaliseStoredPrecheck`): the
+  Register of Overseas Entities takes a company as a registrable owner only
+  when it has its own disclosure duties (a UK company with its own register,
+  an overseas entity on the register, or a company listed on a UK, EEA or
+  named overseas market such as Nasdaq). One registered abroad that is not
+  itself an overseas entity is therefore listed. When those are all of an
+  overseas entity's registered owners, the party reads as owned through a
+  listed company (`listing.market` `roe_disclosure`, `viaParent`): no people
+  behind it to find, standard due diligence, the officers confirm the
+  listing. Beside a named person, such a company is no owner abroad still to
+  find. Applied when a check runs and on read (`latestPrecheck`, the AML
+  board, the red flags), so no re-run is needed. A UK company's PSC register
+  is not read this way (it is often filled in wrongly: Scp Aaa Invest,
+  Monaco).
+- **Sanctions-only parties ask for nothing** (a letting under £10,000 a
+  month): the party lines read "Who to ask · Not needed: sanctions checks
+  only" (also once signed off or not required), and Owners abroad shows what
+  was found with no add buttons and no "Still to find"
+  (`AbroadTrace sanctionsOnly`).
+- **A sanctions-only sign-off covers small lettings only**
+  (`applyCheckScope`, `entitySignOffScope`, `brandSignOffScope` in
+  `shared/party-kyc.ts`). An approval is kept on the company that signs (or
+  the brand) and read by every transaction with it, so Layla's sign-off of
+  AG Hondo on a £13,600 letting would have read Cleared on a £10,000+ a
+  month letting or a sale. Now `loadPartyKyc` takes `fullChecks` per party
+  (the transaction's `amlRegime` is "full"), and a sign-off recorded as
+  sanctions-only (the company's `crm_entity_kyc.evidence.bgpSignOff.regime`
+  with its time matching the approval; for a brand, its latest
+  `kyc_approved` history line, written with the approval, saying "sanctions
+  checks only") reads as not yet checked there: the gate, the AML box, the
+  AML board, the AML file and the sign-off all see it. The AML box says
+  "Signed off … for sanctions checks only, on a smaller letting. This
+  transaction needs the full checks." Callers that pass no `fullChecks` read
+  as before. Tests in `server/party-kyc.test.ts`.
+- **Is a sanctions check enough for a repeat client?** (Woody's question,
+  answered the same day.) For each letting under £10,000 a month, yes: the
+  law asks for the sanctions checks only. A letting at £10,000 a month or
+  more, or any sale or purchase, needs the full checks on the landlord
+  before marketing; for a client with a lot of work the full file is done
+  once on each company that signs and covers its transactions for three
+  years.
 
 ## Upload documents on a party (Woody, 2026-11-23)
 
@@ -6454,6 +6537,20 @@ SRA every 24 hours. Rules: `shared/sra-register.ts`; read and kept:
   SRA, a firm not in the data), with the key the session's proxy added. In
   that sandbox Node's fetch needed the proxy set as its dispatcher; on
   Railway the app calls the SRA directly. Not run on live yet.
+- **Our client's solicitors too** (Woody, 23 November 2026: "we need our
+  clients solicitors checked at SRA too I think"). Each check records whose
+  solicitors the firm is (`side`: "client" or "other", `solicitorSideOf` in
+  `shared/solicitor-aml.ts`; a check from before is our client's when it is
+  the firm the transaction records as its `solicitor_firm`). The Solicitors
+  line in the AML box has **Our client's solicitors** (the transaction's
+  firm offered with **Check them**) and **The other side's solicitors**,
+  each with its own box; checking our client's solicitors on a transaction
+  that records none records them (`solicitor_firm`, a history line). The
+  heads of terms' **Save and check at the SRA** saves our client's
+  solicitors and checks them in the same press. The risk assessment lists
+  both sides, each "Not checked yet" until checked. Tests in
+  `server/sra-register.test.ts`, `server/aml-risk-assessment.test.ts`.
+
 
 ## KYC4U's files kept in the app, and KYC4U in Subscriptions & APIs (Woody, 2026-11-21)
 

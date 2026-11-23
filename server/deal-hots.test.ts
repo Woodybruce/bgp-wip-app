@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
+  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsPersonName, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
   readHotsByRules, readHotsNoteRules,
   contactsFromBody, firmLike, isBgpContact, mergeHotsContacts, readHotsContactsByRules,
   type HotsContact, type HotsParty,
@@ -542,4 +542,22 @@ test("each contact beside the transaction: the agent set, our client's solicitor
   const sale = await hotsContactViews(contactsDb({}, []), { id: "d2", deal_type: "Sale" } as any, contacts);
   assert.deepEqual([...new Set(sale.map(v => v.side))].sort(), ["purchaser", "vendor"]);
   assert.ok(sale.find(v => v.side === "vendor" && v.read.kind === "solicitor")!.clientSide);
+});
+
+// Woody, 23 November 2026: "read hots and click choose company and it went back to
+// previous board nothing saved". A party the document names as a person (The Ugly
+// Duck's heads of terms: "Tenant: Caitlin Johal, Trading as: The Ugly Duck") is
+// offered as the person who signs; anything that may be a company is not.
+test("a party named as a person is offered as the person who signs; a company never is", () => {
+  assert.equal(hotsPersonName("Caitlin Johal"), "Caitlin Johal");
+  assert.equal(hotsPersonName("Caitlin Johal t/a The Ugly Duck"), "Caitlin Johal");
+  assert.equal(hotsPersonName("Caitlin Johal, trading as The Ugly Duck"), "Caitlin Johal");
+  assert.equal(hotsPersonName("Mr John Smith"), "John Smith");
+  assert.equal(hotsPersonName("Ludwig van Beethoven"), "Ludwig van Beethoven");
+  assert.equal(hotsPersonName("CAITLIN JOHAL"), "CAITLIN JOHAL");
+  for (const company of [
+    "The Ugly Duck", "AG Hondo Brixton Village B.V.", "Braeburn Estates Limited", "Bill's Restaurants Ltd", "Grosvenor Group",
+    "Smith Partners", "Collect.", "Caitlin", "Unit 7 Holdings", "St George Plc", "Brixton Village Bakery", "Fortis Green Tennis Club",
+    "Kirkbi A/S", "Ugly Duck Cafe", "", "One Two Three Four Five",
+  ]) assert.equal(hotsPersonName(company), null, company);
 });
