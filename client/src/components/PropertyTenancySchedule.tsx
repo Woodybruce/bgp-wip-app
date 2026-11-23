@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useAddTrackerToSchedule } from "@/components/add-tracker-to-schedule";
 import { unitOccupancy } from "@shared/property-units";
 import { usePropertyUnits } from "@/components/property-page/use-property-page";
 import { Link, useLocation, useSearch } from "wouter";
@@ -29,7 +30,6 @@ import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/
 import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
 import { unitScheme } from "@shared/property-schemes";
-import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 import { leaseCompanyState, type TenantWriteInput, type TenantWriteNote } from "@shared/tenant-entity";
 import { namedTenant } from "@shared/property-units";
 
@@ -1024,19 +1024,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     onError: (err: any) => { toast({ title: "Bulk delete failed", description: err.message, variant: "destructive" }); },
   });
 
-  // Promote vacant/letting-tracker "orphan" units into real editable tenancy
-  // rows, so every unit on the schedule behaves the same.
-  const promoteMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/properties/${propertyId}/promote-orphans-to-tenancy`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
-      toast({ title: "Added to schedule", description: "Vacant units are now editable rows." });
-    },
-    onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
-  });
+
+  // A Letting Tracker unit with no schedule row: added and linked by id (server/tracker-to-schedule.ts).
+  const addTrackerMutation = useAddTrackerToSchedule(propertyId);
 
   // Tenancy → Letting Tracker: one click on a vacant tenancy row creates
   // the available_units listing (the POST stamps tenancy_unit_id by name
@@ -1688,15 +1678,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {LETTING_REPAIR_TOOLS_ENABLED && canEdit && !isClientViewer && (
+                  {canEdit && unit.available_unit_id && (
                     <button
-                      onClick={() => promoteMutation.mutate()}
-                      disabled={promoteMutation.isPending}
+                      onClick={() => addTrackerMutation.mutate(String(unit.available_unit_id))}
+                      disabled={addTrackerMutation.isPending}
                       className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
-                      title="Add this unit to the schedule as an editable row"
+                      title="Add this unit to the tenancy schedule as a vacant row, linked to its Letting Tracker unit"
                       data-testid={`promote-vacant-card-${unit.id}`}
                     >
-                      <Plus className="w-2.5 h-2.5" />{promoteMutation.isPending ? "Adding…" : "Add to schedule"}
+                      <Plus className="w-2.5 h-2.5" />{addTrackerMutation.isPending && addTrackerMutation.variables === String(unit.available_unit_id) ? "Adding…" : "Add to schedule"}
                     </button>
                   )}
                   {unit.deal_id && (
@@ -1988,8 +1978,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;
                   })}
-                  onPromote={!LETTING_REPAIR_TOOLS_ENABLED || !canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
-                  promoting={promoteMutation.isPending}
+                  onPromote={!canEdit || !unit.available_unit_id ? undefined : () => addTrackerMutation.mutate(String(unit.available_unit_id))}
+                  promoting={addTrackerMutation.isPending && addTrackerMutation.variables === String(unit.available_unit_id)}
                   onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
                   readOnly={!canEdit}
@@ -2272,7 +2262,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                 onClick={onPromote}
                 disabled={promoting}
                 className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-                title="Add this unit to the schedule as an editable row"
+                title="Add this unit to the tenancy schedule as a vacant row, linked to its Letting Tracker unit"
                 data-testid={`promote-vacant-${unit.id}`}
               >
                 <Plus className="w-2.5 h-2.5" />{promoting ? "Adding…" : "Add to schedule"}

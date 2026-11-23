@@ -28,6 +28,7 @@ import { UnitPeopleBlock } from "./people-board";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { propertyUnitsKey } from "./use-property-page";
+import { AddTrackerToScheduleButton } from "@/components/add-tracker-to-schedule";
 
 type Viewer = { staff: boolean; landsecView: boolean; restricted: boolean };
 type Fact = [label: string, value: ReactNode];
@@ -575,9 +576,10 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
         {leaseName && <p className="break-words text-xs text-muted-foreground">Lease in the name of {leaseName}</p>}
         {viewer.staff && tenant.leaseCompany && <LeaseCompanyLines propertyId={propertyId} unit={unit} />}
         {unit.flags.notOnSchedule && (
-          <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs" data-testid="property-unit-not-on-schedule">
-            On the Letting Tracker but not on the tenancy schedule. Add it to the schedule to record its lease.
-          </p>
+          <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs" data-testid="property-unit-not-on-schedule">
+            <p>On the Letting Tracker but not on the tenancy schedule.</p>
+            {unit.trackerId && !viewer.restricted && <AddTrackerToScheduleButton propertyId={propertyId} trackerId={unit.trackerId} />}
+          </div>
         )}
       </header>
 
