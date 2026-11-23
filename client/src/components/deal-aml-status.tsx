@@ -9,7 +9,8 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
-import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
+import { DealPartyEditor, DealPartyLines, PublicBodyLine, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
+import { SddBox } from "@/components/aml-sdd";
 import { DealDescribeBox } from "@/components/deal-hots";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
@@ -754,7 +755,7 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
+const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified (SDD)", standard: "Standard", enhanced: "Enhanced" };
 const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
@@ -820,6 +821,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
   const isTrust = !!party?.brand.recordTrust;
+  // A UK public body: simplified due diligence, no company that signs (23 November 2026).
+  const isPublicBody = !!party?.brand.recordPublicBody && !party?.company;
   // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
   const trustQ = useTrustStructure(cp.id, staff && isTrust);
   const trustRecordedGaps = isTrust ? (trustQ.data?.gaps || []).filter(g => g.from === "recorded").map(g => g.words) : [];
@@ -829,7 +832,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const traceLines = pre?.company?.trace || pre?.trace || [];
   const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0);
   const abroadQ = useDealAbroad(dealId, cp.role, showAbroad);
-  const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
+  const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust && !isPublicBody : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
   const request = requests.find(r => r.status !== "cancelled") || null;
@@ -864,6 +867,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
     trustGaps: trustRecordedGaps,
+    publicBodyHint: !!party?.brand.publicBodyHint && !party?.brand.recordPublicBody,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
     relianceFirm: people?.reliance?.firm || null,
@@ -911,6 +915,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
             : <><span className="font-medium">{party?.company?.name || charity?.name || cp.signsAs || partyName}</span>
                 {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
+          {isPublicBody && <span className="text-muted-foreground"> · a UK public body</span>}
           {isTrust && <span className={!settled && trustRecordedGaps.length ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}> · a trust{trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}</span>}
           {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
           {guarantors.length > 0 && <span className={!settled && guarantorOpen ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"} data-testid={`aml-guarantor-summary-${cp.role}`}> · guarantor{guarantors.length > 1 ? "s" : ""}: {guarantors.map(g => g.name).join(", ")}{!settled && guarantorOpen ? " (checks to run)" : ""}</span>}
@@ -1051,7 +1056,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               </button>
             )}
             {level && level.level !== "standard" && !cp.notRequired && (
-              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-muted text-muted-foreground"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
             )}
             {statusPill && <span data-testid={`aml-box-stage-${cp.role}`}>{statusPill}</span>}
           </span>
@@ -1064,6 +1069,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         )}
         {showNext && nextLine}
         {deadline}
+        {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
+        {staff && level?.level === "simplified" && level.sdd && !cp.notRequired && (
+          <SddBox dealId={dealId} role={cp.role} roleLabel={roleLabel} sdd={level.sdd} partyName={partyName}
+            dealName={row?.dealName || null} dealRef={row?.dealRef || null} contactName={party?.person?.name || null} isClient={!!party?.client} canSave={canSignOff} />
+        )}
       </div>
 
       {staff && !folded && (
@@ -1072,6 +1082,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {party && !settled && <PublicBodyLine dealId={dealId} party={party} compact />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
             {showAbroad && (

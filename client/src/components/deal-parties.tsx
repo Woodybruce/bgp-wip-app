@@ -125,6 +125,60 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
   });
 }
 
+function useMarkPublicBody(dealId: string, role: DealPartyRole) {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (publicBody: boolean) =>
+      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/public-body`, { publicBody })).json() as Promise<DealParties>,
+    onSuccess: (d) => {
+      refresh(dealId, d);
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith(`/api/kyc/deal/${dealId}`) });
+    },
+    onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
+  });
+}
+
+// A UK public body (Layla, 23 November 2026, on #3965, The Crown Estate: "this
+// is too intense for the crown estate"). Recorded, it is simplified due
+// diligence: no company that signs and no owners to verify. A name that reads
+// like one is a suggestion a person presses, never applied by itself, because
+// a joint venture or company the body has an interest in is not the body.
+export function PublicBodyLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
+  const mark = useMarkPublicBody(dealId, party.role);
+  if (party.brand.kind !== "company" || party.brand.recordTrust || party.company) return null;
+  if (party.brand.recordPublicBody) {
+    if (compact) return null;
+    return (
+      <div className="space-y-1 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" data-testid={`deal-party-public-body-${party.role}`}>
+        <p><strong>Recorded as a UK public body{party.brand.publicBodyKnown ? `: ${party.brand.publicBodyKnown}` : ""}.</strong> Simplified due diligence (SDD): there is no company to find and no owners to verify. It is screened against the sanctions lists by name.</p>
+        <p>Still needed: who instructs us and proof they can act for it, and the SDD note (drafted for you on Parties &amp; AML).</p>
+        <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-public-body-${party.role}`}>Not the public body itself? Undo</button>
+      </div>
+    );
+  }
+  if (party.brand.companiesHouseNumber) return null;
+  if (!party.brand.publicBodyHint) {
+    if (compact) return null;
+    return (
+      <p className="text-xs text-muted-foreground" data-testid={`deal-party-public-body-option-${party.role}`}>
+        Is {party.brand.name} a UK public body (a council, a government department, a statutory corporation)?{" "}
+        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-public-body-${party.role}`}>Record as a public body</button>
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" data-testid={`deal-party-public-body-hint-${party.role}`}>
+      <span className="min-w-0 flex-1">
+        <strong>{party.brand.publicBodyKnown ? `${party.brand.name} is ${party.brand.publicBodyKnown}, a UK public body.` : "Reads like a UK public body."}</strong> It only needs simplified due diligence (SDD): no company to find, no owners to verify. Confirm it is the body itself, not a joint venture or company it has an interest in.
+      </span>
+      <Button type="button" size="sm" className="h-7 text-xs" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-public-body-${party.role}`}>
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Yes, record as a public body
+      </Button>
+    </div>
+  );
+}
+
 // A trust (Jack, 20 November 2026: URC Thames North Trust, the vendor on
 // Fortis Green, read as an ordinary company). Recorded, it is enhanced and BGP's
 // officers check it from its structure, never KYC4U (Jack, 23 November 2026:
@@ -852,8 +906,11 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                   </Button>
                   <IndividualSidePeople dealId={dealId} companyId={party.brand.id} />
                 </div>
+              ) : party.brand.recordPublicBody && !party.company ? (
+                <PublicBodyLine dealId={dealId} party={party} />
               ) : (
                 <>
+                  <PublicBodyLine dealId={dealId} party={party} />
                   <TrustLine dealId={dealId} party={party} />
                   {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
                   {!party.company && (
@@ -964,14 +1021,14 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
               </section>
             )}
 
-            {party.client && party.billing && party.billing.state !== "individual" && (
+            {party.client && party.billing && party.billing.state !== "individual" && !(party.brand.recordPublicBody && party.billing.state === "no_company") && (
               <section className="space-y-2" data-testid="deal-party-pays-section">
                 <h4 className="flex items-center gap-1.5 font-semibold"><Receipt className="w-4 h-4 text-muted-foreground" />Who pays BGP's invoice</h4>
                 <PartyBillingDetail dealId={dealId} party={party} />
               </section>
             )}
 
-            {party.brand.kind === "company" && (
+            {party.brand.kind === "company" && !(party.brand.recordPublicBody && !party.company) && (
               <section className="space-y-2" data-testid="deal-party-people-section">
                 <h4 className="flex items-center gap-1.5 font-semibold"><ShieldCheck className="w-4 h-4 text-muted-foreground" />Who the AML checks need</h4>
                 <PartyPeopleToCheck dealId={dealId} party={party} busy={busy} aml={aml} onAsk={(id) => save.mutate({ personId: id })} />

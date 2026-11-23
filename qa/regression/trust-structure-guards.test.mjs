@@ -45,7 +45,7 @@ test("the trust's people are the ones to check and to screen, read from its stru
   assert.match(pre, /=== "trust"\) \{\s*const \{ trustStructureFor \} = await import\("\.\/trust-structure"\);/);
   assert.match(pre, /trustPerson: true/);
   const portal = read("server/aml-portal.ts");
-  assert.match(portal, /trust: trustAsk \}\);/);
+  assert.match(portal, /trust: trustAsk, publicBody: /);
   // The person acting may pass the trust's people their links, as they do an owner's.
   assert.match(portal, /TRUST_PERSON_ROLES as readonly string\[\]\)\.includes\(r\)/);
 });
@@ -102,7 +102,7 @@ test("a red flag is raised with the AML Officer by name while the officers check
 
 test("a trust stays a trust when a company signs for it (Fortis Green, 23 November 2026)", () => {
   const people = read("server/kyc-people.ts");
-  assert.match(people, /const ownRecord = trustRecord && !party\.entityId;/);
+  assert.match(people, /const ownRecord = \(trustRecord \|\| publicBody\) && !party\.entityId;/);
   assert.match(people, /const trust = trustRecord \? /);
   assert.match(read("server/deal-party-aml.ts"), /const trust = String\(held\?\.aml_subject_type \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "trust";/);
   assert.match(read("server/aml-dashboard.ts"), /const isTrust = String\(companyRow\?\.aml_subject_type \|\| ""\)\.toLowerCase\(\) === "trust";/);

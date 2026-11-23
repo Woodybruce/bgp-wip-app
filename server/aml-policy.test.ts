@@ -147,7 +147,7 @@ test("the policy's higher-risk factors, read from the register", () => {
 test("the policy's basis for simplified due diligence (Issue 4: a reduction, never for a company owned by a listed one)", () => {
   assert.match(simplifiedBasis({ precheck: precheck({ listing: { market: "uk_regulated", since: null, company: "HAMMERSON PLC", companyNumber: "00360632", viaParent: false } }) })!, /regulated market/);
   assert.match(simplifiedBasis({ precheck: precheck({ type: "investment-company-with-variable-capital" }) })!, /FCA.*owners are still identified/);
-  assert.match(simplifiedBasis({ precheck: null, partyName: "London Borough of Croydon" })!, /public body.*still identified/);
+  assert.match(simplifiedBasis({ precheck: null, partyName: "London Borough of Croydon" })!, /public body.*who controls it is still noted/);
   assert.equal(simplifiedBasis({ precheck: precheck({}) }), null);
   // HMRC (AMLG11500): none where the ownership goes beyond one UK legal entity.
   const subsidiary = precheck({ listing: { market: "uk_regulated", since: null, company: "HAMMERSON PLC", companyNumber: "00360632", viaParent: true } });

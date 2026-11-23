@@ -29,6 +29,7 @@
 // server/kyc-red-flags.ts, server/deal-party-aml.ts).
 
 import type { KycRedFlag } from "./kyc-red-flags";
+import { fundCase, isPublicBodyRecord, listedCase, publicBodyCase, publicBodyMarkInName, type SddCase } from "./aml-sdd";
 import { ownerRegister, tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
 import { foundationMarkInName } from "./deal-parties";
@@ -196,6 +197,8 @@ export interface PartyDueDiligence {
   // need enhanced due diligence (restaurants and bars, car parks).
   toWeigh: string[];
   recheckYears: number;
+  // Simplified: why, and what the file should hold (shared/aml-sdd.ts).
+  sdd?: SddCase | null;
 }
 
 /**
@@ -210,13 +213,14 @@ export function dueDiligenceLevel(input: {
   toWeigh?: string[];
   // Why standard rather than simplified, when the records say (a company owned by a listed one).
   standardBasis?: string | null;
+  sdd?: SddCase | null;
 }): PartyDueDiligence {
   const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the transaction: ${f.label}` }))];
   if (all.length) {
     return { level: "enhanced", why: all.map(f => f.label), toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.enhanced };
   }
   if (input.simplifiedBasis) {
-    return { level: "simplified", why: [input.simplifiedBasis], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.simplified };
+    return { level: "simplified", why: [input.simplifiedBasis], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.simplified, sdd: input.sdd || null };
   }
   return { level: "standard", why: [input.standardBasis || "No higher-risk factor found: identify and verify the beneficial owners."], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.standard };
 }
@@ -526,22 +530,27 @@ export function policyFactorsToWeigh(input: { precheck?: KycPrecheckResult | nul
   ];
 }
 
-const PUBLIC_BODY = /\b(council|london borough of|royal borough of|city of london corporation|greater london authority|transport for london|combined authority|nhs|ministry of|department (?:for|of)|homes england|police and crime commissioner|fire and rescue authority)\b/i;
-
-/** The policy's basis for simplified due diligence, when the records show one. */
-export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; partyName?: string | null }): string | null {
+/** Why a party is simplified, when the records show a basis, with what its file should hold (shared/aml-sdd.ts). */
+export function simplifiedCase(input: { precheck?: KycPrecheckResult | null; partyName?: string | null; subjectType?: unknown }): SddCase | null {
   const ch = input.precheck?.companiesHouse || null;
   const listing = ch?.listing || null;
   if (listing) {
     // Owned by a listed company: standard due diligence (policy Issue 4, 4.2; HMRC: none where the ownership goes beyond one UK legal entity).
     if (listing.viaParent) return null;
-    if (listing.market === "other_regulated" || listing.market === "listed_market") return `Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`;
-    return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2).`;
+    if (listing.market === "other_regulated" || listing.market === "listed_market") return listedCase(`Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`, true);
+    return listedCase(`Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2).`, false);
   }
-  if (ch?.type && ICVC_TYPES.has(ch.type)) return "An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1). Its owners are still identified.";
+  if (ch?.type && ICVC_TYPES.has(ch.type)) return fundCase("An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1). Its owners are still identified.");
   const name = String(input.partyName || ch?.name || "");
-  if (!ch && PUBLIC_BODY.test(name)) return "A UK public body, by its name: simplified due diligence once that is confirmed (policy 4.3). Who controls it is still identified.";
+  // A public body has no company record: recorded by a person, or read from its name (Layla, 23 November 2026).
+  if (!ch && isPublicBodyRecord(input.subjectType)) return publicBodyCase(name, true);
+  if (!ch && publicBodyMarkInName(name)) return publicBodyCase(name, false);
   return null;
+}
+
+/** The policy's basis for simplified due diligence, when the records show one. */
+export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; partyName?: string | null; subjectType?: unknown }): string | null {
+  return simplifiedCase(input)?.basis || null;
 }
 
 // ── Super-prime sales (risk assessment: transactions, high value) ───────────

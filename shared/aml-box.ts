@@ -93,6 +93,9 @@ export interface AmlBoxFacts {
   // structuring"). trustGaps: what BGP still has to record on its structure.
   trust?: boolean;
   trustGaps?: string[];
+  // The name reads like a UK public body and nobody has said what it is
+  // (shared/aml-sdd.ts): confirming it comes before looking for a company.
+  publicBodyHint?: boolean;
   // Owned through a company registered abroad, in words ("Kirkbi A/S
   // (Denmark)"): enhanced due diligence by the officers, who find the owners
   // behind it (KYC4U did until 23 November 2026).
@@ -203,6 +206,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   // comes before BGP's own checks on the company that signs.
   const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
   if (f.company && f.companyMissing && !jointRunning) {
+    if (f.publicBodyHint) return step("act", "bgp", "To do", "Confirm it is a public body (SDD), or set who signs", "fill_in");
     return step("act", "bgp", "To do", "Set the company that signs", "fill_in");
   }
   if (f.precheckRunning) {

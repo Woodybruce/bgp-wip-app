@@ -118,7 +118,7 @@ test('the EU list is screened beside the UK and US lists, and named as itself', 
 
 test('an overseas party is looked for on the Register of Overseas Entities when it has no UK number', () => {
   const pre = read('server/kyc-prechecks.ts');
-  assert.match(pre, /if \(!number && subjectKind === "company" && process\.env\.COMPANIES_HOUSE_API_KEY\) \{\n    const names = /);
+  assert.match(pre, /if \(!number && !isPublicBody && subjectKind === "company" && process\.env\.COMPANIES_HOUSE_API_KEY\) \{\n    const names = /);
   assert.match(pre, /company_type=registered-overseas-entity/);
   assert.match(pre, /\.\.\.\(p\.is_sanctioned === true \? \{ sanctioned: true \} : \{\}\)/);
   // A busy Companies House is rethrown, so the check counts as unfinished.

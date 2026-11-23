@@ -131,6 +131,8 @@ export interface PartyPeopleInput {
   // the owners of a company that guarantees, are people to check; the
   // company's directors are screened only. precheck: BGP's checks on it.
   guarantors?: Array<{ name: string; kind: "company" | "individual"; precheck: (Pick<KycPrecheckResult, "companiesHouse" | "sanctions">) | null }>;
+  // Recorded as a UK public body: nobody owes an identity check or a proof of address.
+  publicBody?: boolean;
   // Another firm's checks BGP relies on for this party (MLR 2017 reg 39;
   // 21 November 2026): while it stands, no one on the list owes anything.
   reliance?: PartyReliance | null;
@@ -193,7 +195,7 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity" | "trust" | "trust_unrecorded";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity" | "trust" | "trust_unrecorded" | "public_body";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
@@ -230,6 +232,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. They have to be found (by KYC4U, or by the officers when enhanced checks are in-house). The app traces what it can (the accounts and GLEIF, under Owners abroad), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
   trust: "A trust: the people its structure records (the settlor, the trustees, any protector, and the beneficiaries of a trust that is not discretionary) each do an identity check and send a proof of address. Everyone named is screened.",
   trust_unrecorded: "A trust: record its structure (the settlor, the trustees, any protector and the beneficiaries) and each person who has to be verified is listed here with their own link. The person dealing with us does their own check.",
+  public_body: "A UK public body: simplified due diligence. There are no owners to identify and nobody is asked for ID. The person instructing us shows they have authority to act for it.",
   charity: "A registered charity: the Charity Commission's register names its trustees, who control it. Each is screened (sanctions, public roles and adverse media) and listed here. The person dealing with us does their own check and confirms their authority to act for the charity.",
 };
 
@@ -252,6 +255,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   // A private individual (Jack, 20 November 2026): the person asked and anyone
   // added alongside them, each with their own checks. No register is read.
   const ch = input.kind === "individual" ? null : input.precheck?.companiesHouse || null;
+  // A UK public body: simplified due diligence, no owners to verify and no ID asked of anyone (23 November 2026).
+  const publicBody = input.kind === "company" && !!input.publicBody && !ch;
   const drafts: Draft[] = [];
   const add = (raw: string, role: KycPersonRole, extra: { detail?: string; dob?: Dob; register?: boolean } = {}) => {
     const name = String(raw || "").trim();
@@ -397,7 +402,9 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
 
     const publicFigure = (input.publicFigures || []).find(f => samePerson(f.name, d.name)) || null;
     const relied = input.reliance ? relianceWords(input.reliance) : null;
-    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
+    // A public body's simplified due diligence does not cover its guarantor.
+    const coveredByBody = publicBody && !d.roles.has("guarantor") && !d.roles.has("guarantor_owner");
+    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied || coveredByBody ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;
     return {
       key: personKey(d.name), name, roles,
@@ -440,7 +447,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     ...trustCorporate.map(p => ({ name: p.name, roles: `${trustRoleWords(p.roles)} of the trust (a company${p.companyNumber ? `, ${p.companyNumber}` : ""})`, corporate: true, sanctions: sanctionsFor(p.name) })),
   ] : [];
   return {
-    basis: trustBasis || basis, people, directors, loose,
+    basis: publicBody ? "public_body" : trustBasis || basis, people, directors, loose,
     ...(trustNamed.length ? { trustNamed } : {}),
     ...(pc && pc.charity ? {
       trustees: trustees.map(name => ({ name: personDisplayName(name), chair: [...trusteeChair].some(c => samePerson(c, name)), sanctions: sanctionsFor(name) })),

@@ -1489,7 +1489,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // (its own record is checked, with the Charity Commission's register),
     // need no company that signs.
     const signsItself = staff && counterparties.length
-      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`,
+      ? new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`,
           [counterparties.map(c => c.id)]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)))
       : new Set<string>();
     const prechecks = staff

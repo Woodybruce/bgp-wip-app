@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Layla"], topic: "Who we check and when", title: "Simplified due diligence is flagged, with its reasons saved",
+    text: "When a party only needs simplified due diligence (SDD), its box says so in green, lists what the file should hold and drafts the note of why SDD applies. An agent on the transaction or an AML officer checks the note and saves it on the transaction. SDD reduces the checks; it does not remove them." },
+  { date: "2026-11-23", who: ["Layla"], topic: "Who we check and when", title: "UK public bodies, such as The Crown Estate",
+    text: "A UK public body (a statutory corporation, a government department, a council) is recorded on the party as a public body. It is SDD: no company that signs, no owners to verify, no ID asked of anyone. We keep its statutory basis, proof the person instructing us can act, and the SDD note. It is still screened for sanctions. A joint venture it has an interest in needs standard checks." },
   { date: "2026-11-23", who: ["Woody"], topic: "Emails and wording", title: "The email reference is a small tag",
     text: "The code that files an emailed reply sits at the end of the subject as a short tag, such as [4RZ75K], and in small print at the foot of the email. It is for BGP's use: nothing asks the client to keep it. It is not the transaction's Ref number." },
   { date: "2026-11-23", who: ["Woody"], topic: "Screening", title: "News about a person's company is not a red flag on them",

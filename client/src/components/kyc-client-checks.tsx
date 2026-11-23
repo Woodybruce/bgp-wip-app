@@ -34,6 +34,7 @@ interface Party {
   // What BGP's checks before asking found, for "ask only what is left".
   askInput: PrecheckAskInput | null; precheckRanAt: string | null;
   // A trust (23 November 2026): its documents held and its trustees recorded.
+  publicBody?: boolean;
   trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
 }
 export interface ClientCheckRequest {
@@ -1010,14 +1011,15 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const veriff = !!data?.veriff;
   // The online identity check is offered only when it is set up; without
   // it, photo ID is one of the documents (ticked by default).
-  const wantId = veriff && (idCheck ?? true);
+  // A UK public body: simplified due diligence, no identity check unless someone ticks it.
+  const wantId = veriff && (idCheck ?? !party?.publicBody);
   const pickedContact = party?.contacts.find(c => c.id === (contactId ?? party?.contactId ?? party?.contacts[0]?.id ?? "")) || null;
   const usingOther = contactId === SOMEONE_ELSE || (!!party && !party.contacts.length);
   const toName = via ? personName.trim() : usingOther ? name.trim() : pickedContact?.name || "";
   // What is still to ask once BGP's own checks are counted (Woody,
   // 2026-11-17: "we need to do everyhting we can before we ask questions on
   // someone"): the same rule the server records the request by.
-  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null }) : null;
+  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null, publicBody: chosenKind === "company" && !!party.publicBody }) : null;
   const chosenDocs = docs || asks?.docs || [];
   const confirmOwners = chosenKind === "company" && !chosenDocs.includes("ownership") && asks?.confirmOwners?.length ? asks.confirmOwners : null;
   const notAsked = (asks?.notAsked || []).filter(n => !chosenDocs.includes(n.key));

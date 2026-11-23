@@ -30,6 +30,7 @@
 // filled, nothing is overwritten. Every change is a line in deal_audit_log.
 
 import { Router, type Request, type Response } from "express";
+import { PUBLIC_BODY_SUBJECT, isPublicBodyRecord, knownPublicBody, publicBodyMarkInName } from "@shared/aml-sdd";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
   privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, sameCompaniesHouseNumber, signerKindOf,
@@ -225,6 +226,9 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
         recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name),
         recordTrust: isTrustRecord(brandRow.aml_subject_type),
+        recordPublicBody: isPublicBodyRecord(brandRow.aml_subject_type),
+        publicBodyHint: !text(brandRow.companies_house_number) && !company && publicBodyMarkInName(brandRow.name),
+        publicBodyKnown: knownPublicBody(brandRow.name)?.legalName || null,
         trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) || foundationHintFor(brandRow, company?.name) || charityHintFor(brandRow, company),
         foundationHint: foundationHintFor(brandRow, company?.name),
         charityHint: charityHintFor(brandRow, company) },
@@ -235,7 +239,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       xero: text(deal[col.xeroId]) ? { contactId: String(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null,
       person,
       people: people.rows.filter((p: any) => p.company_id === brandRow.id).map(personOf),
-      gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person, trust: isTrustRecord(brandRow.aml_subject_type) }),
+      gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person, trust: isTrustRecord(brandRow.aml_subject_type) || isPublicBodyRecord(brandRow.aml_subject_type) }),
       client: role === clientRoleOf(deal),
       billing: role === clientRoleOf(deal) ? partyBilling(deal, role, kind, company, filed) : null,
       ...(isGuaranteedRole(role) ? { guarantors: guarantors.filter(g => g.role === role).map(({ role: _r, companyId: _c, ...g }) => g) } : {}),
@@ -490,6 +494,50 @@ router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Respo
       const words = wanted
         ? `${text(brand.name)} recorded as a trust or foundation: enhanced due diligence, signed off by the Nominated Officer or a Deputy`
         : `${text(brand.name)} no longer recorded as a trust or foundation`;
+      await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
+        [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
+    }
+    res.json(await loadDealParties(pool, deal.id));
+  } catch (err: any) {
+    res.status(err?.status || 500).json({ message: err?.message || "Could not record the party" });
+  }
+});
+
+// A party recorded as a UK public body (Layla, 23 November 2026, on #3965, The
+// Crown Estate: "it fits the lower risk category for simplified due
+// diligence"). Sets the record's subject type to 'public_body': no company
+// that signs, no beneficial owners to verify, simplified due diligence unless
+// a red flag makes it enhanced. A record with a Companies House number is a
+// company, never the body itself, and is refused. The record is shared, so
+// every transaction with it follows.
+router.put("/api/deals/:id/parties/:role/public-body", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party" });
+    const wanted = req.body && typeof req.body === "object" ? (req.body as any).publicBody : undefined;
+    if (typeof wanted !== "boolean") return res.status(400).json({ message: "Say whether the party is a public body." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
+    const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
+    const brand = (await pool.query(`SELECT id, name, aml_subject_type, companies_house_number FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
+    if (!brand) return res.status(404).json({ message: "Party not found" });
+    const before = text(brand.aml_subject_type) || null;
+    const is = isPublicBodyRecord(before);
+    if (wanted && !is) {
+      if (text(brand.companies_house_number)) return res.status(409).json({ message: `${text(brand.name)} has a Companies House number, so it is a company, not the public body itself. A company or joint venture a public body has an interest in needs standard checks.` });
+      if (before) return res.status(409).json({ message: `${text(brand.name)} is recorded as ${before === "trust" ? "a trust" : before === "individual" ? "a private individual" : before}. Undo that first.` });
+    }
+    if (wanted !== is) {
+      const after = wanted ? PUBLIC_BODY_SUBJECT : null;
+      await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
+      const words = wanted
+        ? `${text(brand.name)} recorded as a UK public body: simplified due diligence, no company that signs and no beneficial owners to verify`
+        : `${text(brand.name)} no longer recorded as a public body`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
         [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));

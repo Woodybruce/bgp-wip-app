@@ -114,7 +114,7 @@ export interface AmlFileData {
   madeAt: string;
 }
 
-const HISTORY_FIELDS = ["aml_sign_off", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "aml_reliance", "aml_public_figure", "aml_stopped", "client_checks_sent", "client_checks_link", "aml_file"];
+const HISTORY_FIELDS = ["aml_sign_off", "aml_sdd_note", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "aml_reliance", "aml_public_figure", "aml_stopped", "client_checks_sent", "client_checks_link", "aml_file"];
 
 /** Everything BGP holds on the checks of the deal's parties (all of them, or the roles given). */
 export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | null, me: { id: string; name: string }): Promise<AmlFileData | null> {
@@ -143,7 +143,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   const view = await loadDealParties(pool, dealId).catch(() => null);
   const brandIds = present.map(r => text(deal[DEAL_PARTY_COLUMNS[r].brand]));
   const kinds = (await pool.query(
-    `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [brandIds])).rows;
+    `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [brandIds])).rows;
   const individuals = new Set(kinds.filter((r: any) => r.kind === "individual").map((r: any) => String(r.id)));
   // A trust or foundation is checked on its own record too (21 November 2026).
   const signsItself = new Set(kinds.map((r: any) => String(r.id)));
