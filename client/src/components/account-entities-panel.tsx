@@ -44,6 +44,8 @@ interface GroupEntityKyc {
   outstanding: { key: string; label: string }[];
   lastCheckedAt: string | null;
   source: string;
+  // Approved on a letting under £10,000 a month: the sanctions checks only (23 November 2026).
+  scope?: "sanctions_only" | null;
 }
 
 interface GroupEntity {
@@ -75,6 +77,10 @@ function EntityTransactions({ e, max = 2 }: { e: GroupEntity; max?: number }) {
         <span key={t.id}>{i > 0 && ", "}<Link href={`/deals/${t.id}?section=parties`} className="text-primary hover:underline">{t.name}{t.ref != null ? ` #${t.ref}` : ""}</Link></span>
       ))}
       {list.length > max && ` and ${list.length - max} more`}
+      {/* Approved for the sanctions checks only: the full checks start on its transaction (23 November 2026). */}
+      {e.kyc?.status === "approved" && e.kyc.scope === "sanctions_only" && (
+        <> · <Link href={`/deals/${list[0].id}?section=parties&full=${encodeURIComponent(list[0].role)}`} className="text-primary hover:underline" data-testid={`entity-start-full-kyc-${e.entityId}`}>Start full KYC</Link></>
+      )}
     </span>
   );
 }
@@ -113,7 +119,12 @@ const TONE = {
   unchecked: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
 };
 
-function KycChip({ bucket, expiresAt }: { bucket: Bucket; expiresAt?: string | null }) {
+// Woody, 23 November 2026, on AG Hondo Brixton Village BV: "is approved KYC for deals under £10k
+// sanction only needs to be clear here and option to start full KYC".
+const SANCTIONS_ONLY_TITLE = "Signed off on a letting under £10,000 a month: the sanctions checks only. A sale, or a letting at £10,000 a month or more, needs the full checks.";
+
+function KycChip({ bucket, expiresAt, scope }: { bucket: Bucket; expiresAt?: string | null; scope?: "sanctions_only" | null }) {
+  if (bucket === "current" && scope === "sanctions_only") return <span className={tone(TONE.current)} title={SANCTIONS_ONLY_TITLE} data-testid="entity-kyc-sanctions-only"><CheckCircle2 className="w-3 h-3" />Sanctions only · under £10k a month</span>;
   if (bucket === "current") return <span className={tone(TONE.current)}><CheckCircle2 className="w-3 h-3" />KYC approved</span>;
   if (bucket === "inReview") return <span className={tone(TONE.inReview)}><AlertCircle className="w-3 h-3" />In review</span>;
   if (bucket === "rejected") return <span className={tone(TONE.rejected)}><XCircle className="w-3 h-3" />Rejected</span>;
@@ -299,7 +310,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
                     {e.kyc?.nextReviewAt && bucket === "current" && (
                       <span className="text-[11px] text-muted-foreground">review {fmtDate(e.kyc.nextReviewAt)}</span>
                     )}
-                    <KycChip bucket={bucket} expiresAt={e.kyc?.expiresAt} />
+                    <KycChip bucket={bucket} expiresAt={e.kyc?.expiresAt} scope={e.kyc?.scope} />
                   </span>
                 </button>
                 {e.entityId && !menuRead && <span className="pl-5"><EntityTransactions e={e} /></span>}
@@ -481,7 +492,7 @@ function EntityReview({
   const body = (
     <div className="space-y-4" data-testid="entity-review">
       <div className="flex flex-wrap items-center gap-1">
-        <KycChip bucket={bucket} expiresAt={kyc?.expiresAt} />
+        <KycChip bucket={bucket} expiresAt={kyc?.expiresAt} scope={kyc?.scope} />
         <span className={chip}>{RELATION_LABEL[entity.relation]}</span>
         {chNumber ? <span className={chip}>CH <span className="font-mono">{chNumber}</span></span> : <span className={tone(TONE.expired)}>No CH no.</span>}
         {overseas && <span className={chip}>Overseas entity</span>}
@@ -639,7 +650,9 @@ function EntityReview({
   const actions = (
     <div className="shrink-0 border-t border-border pt-3 space-y-2" data-testid="entity-review-aml">
       <p className="text-[11px] text-muted-foreground">
-        {bucket === "current"
+        {bucket === "current" && kyc?.scope === "sanctions_only"
+          ? `Sanctions checks only, signed off${kyc?.approvedBy ? ` by ${approverWords(kyc.approvedBy)}` : ""} on a letting under £10,000 a month. A sale, or a letting at £10,000 a month or more, needs the full checks.`
+          : bucket === "current"
           ? `Approved${kyc?.approvedBy ? ` by ${approverWords(kyc.approvedBy)}` : ""}${kyc?.nextReviewAt ? `, re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
           : bucket === "inReview" && kyc?.lastCheckedAt
             ? `In review since ${fmtDate(kyc.lastCheckedAt)}.`
@@ -651,7 +664,13 @@ function EntityReview({
           {txns.map(t => (
             <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
               <span className="min-w-0 truncate">{t.name}{t.ref != null ? <span className="text-muted-foreground"> #{t.ref}</span> : null}<span className="text-[11px] text-muted-foreground"> · the {t.role}</span></span>
-              <Link href={`/deals/${t.id}?section=parties`} className="shrink-0 text-xs text-primary hover:underline" data-testid={`entity-review-aml-${t.id}`}>Open its AML</Link>
+              <span className="flex shrink-0 items-center gap-3">
+                {/* The full checks on the small letting itself: its AML box opens on them. */}
+                {bucket === "current" && kyc?.scope === "sanctions_only" && (
+                  <Link href={`/deals/${t.id}?section=parties&full=${encodeURIComponent(t.role)}`} className="text-xs text-primary hover:underline" data-testid={`entity-review-full-kyc-${t.id}`}>Start full KYC</Link>
+                )}
+                <Link href={`/deals/${t.id}?section=parties`} className="text-xs text-primary hover:underline" data-testid={`entity-review-aml-${t.id}`}>Open its AML</Link>
+              </span>
             </li>
           ))}
         </ul>

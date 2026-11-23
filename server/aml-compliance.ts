@@ -1455,6 +1455,8 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
         isExpired: st.status === "approved" && !verdict.approved,
         // Signed off for sanctions checks only, on a transaction that needs the full checks (23 November 2026).
         sanctionsOnlyApproval: staff && st.sanctionsOnly ? { by: st.sanctionsOnly.by, at: st.sanctionsOnly.at, until: st.sanctionsOnly.until } : null,
+        // An approval on this small letting that covers the sanctions checks only: its full view offers the full checks.
+        approvalScope: staff && st.status === "approved" && st.scope === "sanctions_only" ? "sanctions_only" : null,
         // Who the state is about: the company that signs (BGP staff only).
         ...(staff ? { kycName: st.name, kycSource: st.source, brandKycStatus: st.brandStatus ?? null, signsAs: signs[cp.id] ? st.name : null } : {}),
       });
@@ -1508,11 +1510,12 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     // BGP's sign-off and KYC4U's result on each party (step 2, 18 November
     // 2026): whether the person asking may decide, and per party whether BGP
     // may sign it off now and why not. BGP staff only.
-    let decisions: (Awaited<ReturnType<typeof import("./deal-party-aml")["canDecideAml"]>> & { parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }>; inHouseEdd?: boolean }) | null = null;
+    type SignOffDecision = { blocked: string | null; needsNote: boolean; edd?: boolean };
+    let decisions: (Awaited<ReturnType<typeof import("./deal-party-aml")["canDecideAml"]>> & { parties: Record<string, SignOffDecision & { full?: SignOffDecision }>; inHouseEdd?: boolean }) | null = null;
     if (staff) {
       const aml = await import("./deal-party-aml");
       const who = await aml.canDecideAml(req, d);
-      const parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }> = {};
+      const parties: Record<string, SignOffDecision & { full?: SignOffDecision }> = {};
       for (const c of counterparties) {
         try {
           const party = await aml.loadAmlParty(pool, d.id, c.role);
@@ -1523,6 +1526,17 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
             precheck: view ? { ranAt: view.ranAt, running: view.state === "running", ownersAbroad: (view.company?.ownersAbroad || []).map(a => `${a.name}, ${a.country}`) } : null,
           });
           parties[c.id] = aml.signOffView(facts);
+          // A letting under £10,000 a month: may the full checks be signed off too (23 November 2026)?
+          if (party.regime === "sanctions_only") {
+            const fullParty = await aml.loadAmlParty(pool, d.id, c.role, { full: true });
+            if (fullParty) {
+              const fullFacts = await aml.signOffFacts(pool, fullParty, {
+                redFlags,
+                precheck: view ? { ranAt: view.ranAt, running: view.state === "running", ownersAbroad: (view.company?.ownersAbroad || []).map(a => `${a.name}, ${a.country}`) } : null,
+              });
+              parties[c.id].full = aml.signOffView(fullFacts);
+            }
+          }
         } catch (e: any) { console.warn("[deal-party-aml] sign-off view:", e?.message); }
       }
       // In-house enhanced due diligence (21 November 2026): the officers' setting.

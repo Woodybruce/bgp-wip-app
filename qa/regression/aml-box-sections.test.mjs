@@ -13,9 +13,12 @@ test('each party opens on its stage and one Next line, by the shared rule', () =
   assert.match(box, /const step = amlNextStep\(facts\);/);
   // The stage is the AML dashboard's own, read for this deal, so the box and the dashboard agree.
   assert.match(box, /fetch\(`\/api\/aml-dashboard\?dealId=\$\{encodeURIComponent\(dealId\)\}`/);
-  assert.match(box, /const stage = row\?\.stage \?\? fallbackStage\(cp\);/);
+  // The board's stage, except the full checks on a small letting, where a sanctions-only approval is not where they stand (23 November 2026).
+  assert.match(box, /: row\?\.stage \?\? fallbackStage\(cp\);/);
+  assert.match(box, /const stage: AmlStage \| null = fullOnSmall && cp\.approvalScope === "sanctions_only"/);
   const route = read('server/aml-dashboard.ts');
-  assert.match(route, /const dealId = text\(req\.query\.dealId\);\s*res\.json\(await loadAmlDashboard\(me, new Date\(\), dealId \? \{ dealId \} : \{\}\)\);/);
+  // One deal's rows (the box), or one building's (its Ownership & KYC tab, 23 November 2026).
+  assert.match(route, /const dealId = text\(req\.query\.dealId\);\s*const propertyId = text\(req\.query\.propertyId\);\s*res\.json\(await loadAmlDashboard\(me, new Date\(\), dealId \? \{ dealId \} : propertyId \? \{ propertyId \} : \{\}\)\);/);
   assert.match(route, /const which = opts\.dealId\s*\? `d\.id = \$1`/);
   // Still BGP staff signed in as themselves.
   assert.match(route, /router\.get\("\/api\/aml-dashboard", async[^]*?const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
@@ -50,7 +53,8 @@ test('the AML checks page opens the trail on its own party; on a deal a party st
   const page = read('client/src/pages/aml-dashboard.tsx');
   assert.match(page, /<DealAmlStatusCard dealId=\{row\.dealId\} dealStatus=\{row\.dealStatus\} focusCompanyId=\{row\.brandId\} \/>/);
   assert.match(box, /startOpen=\{focusCompanyId \? cp\.id === focusCompanyId : !isSettled\(cp\)\}/);
-  assert.match(box, /const \[folded, setFolded\] = useState\(!startOpen && !openAll\.all\);/);
+  // Folded unless it starts open, all are open, or the address names it (?full=<role>, 23 November 2026).
+  assert.match(box, /const \[folded, setFolded\] = useState\(\(\) => \{\n\s+if \(startOpen \|\| openAll\.all\) return false;\n\s+try \{ return new URLSearchParams\(window\.location\.search\)\.get\("full"\) !== cp\.role; \}/);
   // One set of stage colours for the page and the box.
   assert.match(page, /import \{ AML_STAGE_TONE, DealAmlStatusCard \} from "@\/components\/deal-aml-status";/);
   assert.doesNotMatch(page, /const STAGE_TONE/);
@@ -81,7 +85,9 @@ test('a person and a request each open on one line', () => {
 // version for AML'S which is much simpler so not to confuse everyone").
 test('a letting under £10,000 a month shows three steps, Who signs, Sanctions and Sign-off, with the full checks behind a link', () => {
   const box = read('client/src/components/deal-aml-status.tsx');
-  assert.match(box, /const simple = sanctionsOnly && !isTrust && !fullView;/);
+  assert.match(box, /const simple = smallLetting && !isTrust && !fullView;/);
+  // Its full view is the full checks: client checks and a full sign-off (23 November 2026).
+  assert.match(box, /const sanctionsOnly = smallLetting && !fullOnSmall;/);
   assert.match(box, /\{simple \? \(/);
   assert.match(box, /testId=\{`aml-step-\$\{cp\.role\}-sanctions`\} n=\{2\} label="Sanctions"/);
   assert.match(box, /n=\{3\} label="Sign-off"/);

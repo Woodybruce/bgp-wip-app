@@ -33,8 +33,8 @@ import { Router, type Request, type Response } from "express";
 import { PUBLIC_BODY_SUBJECT, isPublicBodyRecord, knownPublicBody, publicBodyMarkInName } from "@shared/aml-sdd";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
-  privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, sameCompaniesHouseNumber, signerKindOf,
-  type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView,
+  privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, registeredOwnerAmong, sameCompaniesHouseNumber, signerKindOf,
+  type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView, type LandRegistryOwner,
 } from "@shared/deal-parties";
 import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { readsLikeCharity } from "@shared/charity-register";
@@ -121,7 +121,7 @@ function partyBilling(deal: DealRow, role: DealPartyRole, kind: "company" | "ind
 async function readDeal(db: Db, dealId: string): Promise<DealRow | null> {
   const cols = DEAL_PARTY_ROLES.flatMap(r => Object.values(DEAL_PARTY_COLUMNS[r]));
   return (await db.query(
-    `SELECT id, name, deal_type, team, bgp_acting_for, client_contact_id, tenancy_unit_id, xero_contact_id, xero_contact_name,
+    `SELECT id, name, deal_type, team, bgp_acting_for, client_contact_id, tenancy_unit_id, property_id, xero_contact_id, xero_contact_name,
             invoice_payer_entity_id, invoice_payer_relationship, invoice_payer_note, ${cols.join(", ")}
        FROM crm_deals WHERE id = $1`, [dealId])).rows[0] || null;
 }
@@ -166,6 +166,18 @@ const charityHintFor = (brand: { name?: unknown; company_type?: unknown; ho_coun
   && ownerRegister(typeof brand.ho_country === "string" ? brand.ho_country : null) !== "abroad"
   && readsLikeCharity(brand.name) && !/\b(ltd|limited|plc|llp)\.?$/i.test(text(brand.name));
 
+// The building's registered owner the property's record holds (its title, read
+// from Land Registry on the Ownership & KYC tab), when the deal has a landlord
+// or a seller. A failed read offers nothing.
+async function landRegistryOwnerOf(db: Db, deal: DealRow, roles: DealPartyRole[]): Promise<LandRegistryOwner | null> {
+  if (!deal.property_id || !roles.some(r => r === "landlord" || r === "vendor")) return null;
+  const row = (await db.query(`SELECT title_number, proprietor_name, proprietor_company_number FROM crm_properties WHERE id = $1`, [deal.property_id])
+    .catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (!row || !text(row.proprietor_name)) return null;
+  const number = text(row.proprietor_company_number).replace(/\s+/g, "").toUpperCase();
+  return { name: text(row.proprietor_name), number: number ? (/^\d+$/.test(number) ? number.padStart(8, "0") : number) : null, titleNumber: text(row.title_number) || null };
+}
+
 export async function loadDealParties(db: Db, dealId: string): Promise<DealPartiesView | null> {
   const deal = await readDeal(db, dealId);
   if (!deal) return null;
@@ -192,6 +204,10 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     ? (await db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM crm_contacts WHERE id = ANY($1::varchar[])`, [namedIds])).rows
     : [];
   const lease = roles.includes("tenant") ? await leaseCompanyId(db, deal) : null;
+  // The building's registered owner at Land Registry, set on the property from
+  // its Ownership & KYC tab (Woody, 23 November 2026: "the landreg search should
+  // really feed the inital KYC"): offered for the landlord or the seller.
+  const landRegistry = await landRegistryOwnerOf(db, deal, roles);
 
   // Guarantors of a tenant or a buyer, with where BGP's checks on each stand (23 November 2026).
   const guarantors = roles.some(r => isGuaranteedRole(r))
@@ -219,8 +235,11 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     // A person who signs is checked as a private individual (20 November 2026).
     const kind = partySubjectKind(brandRow.aml_subject_type, company);
     const brandNumber = text(brandRow.companies_house_number);
+    const registered = (role === "landlord" || role === "vendor") && kind === "company" && !company ? landRegistry : null;
     const brandOwn = kind === "company" && !company && brandNumber && !filed.some(c => sameCompaniesHouseNumber(c.companiesHouseNumber, brandNumber))
-      ? { name: text(brandRow.legal_name) || text(brandRow.name), number: brandNumber } : null;
+      ? { name: text(brandRow.legal_name) || text(brandRow.name), number: brandNumber, ...(registered?.number && sameCompaniesHouseNumber(registered.number, brandNumber) ? { registeredOwner: true } : {}) } : null;
+    const titleOwner = registered?.number && !registeredOwnerAmong(filed, registered) && !sameCompaniesHouseNumber(registered.number, brandNumber)
+      ? { name: registered.name, number: registered.number, titleNumber: registered.titleNumber } : null;
     parties.push({
       role, label: DEAL_PARTY_LABEL[role],
       brand: { id: String(brandRow.id), name: text(brandRow.name), companiesHouseNumber: text(brandRow.companies_house_number) || null, kind,
@@ -233,8 +252,9 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
         foundationHint: foundationHintFor(brandRow, company?.name),
         charityHint: charityHintFor(brandRow, company) },
       company,
-      offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null),
+      offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null, registered),
       brandOwn,
+      titleOwner,
       companies: filed,
       xero: text(deal[col.xeroId]) ? { contactId: String(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null,
       person,

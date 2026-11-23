@@ -82,15 +82,16 @@ function withGuarantorFlags(p: { brandId: string; deal: any }, prechecks: any[],
 
 // opts.dealId: one deal's rows, whatever its status (the deal's AML box reads
 // its parties' stage here, so the box and the dashboard say the same thing).
-export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date(), opts: { dealId?: string } = {}): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
+export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date(), opts: { dealId?: string; propertyId?: string } = {}): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
   const partyCols = DEAL_PARTY_ROLES.flatMap(r => [`d.${DEAL_PARTY_COLUMNS[r].brand}`, `d.${DEAL_PARTY_COLUMNS[r].company}`]);
   const closedOnly = CLOSED_STATUSES.filter(c => !TERMINAL_STATUSES.includes(c));
   const st = `lower(btrim(coalesce(d.status, '')))`;
+  // opts.propertyId: the board's own rows at one building (its Ownership & KYC tab, 23 November 2026).
   const which = opts.dealId
     ? `d.id = $1`
     : `${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
         AND (${st} NOT IN (${sqlList(closedOnly)}) OR d.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
-        AND ${amlBoardDealSql("d")}`;
+        AND ${amlBoardDealSql("d")}${opts.propertyId ? ` AND d.property_id = $1` : ""}`;
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
@@ -102,7 +103,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       WHERE ${which}
         AND (d.landlord_id IS NOT NULL OR d.tenant_id IS NOT NULL OR d.vendor_id IS NOT NULL OR d.purchaser_id IS NOT NULL)
       ORDER BY d.updated_at DESC NULLS LAST
-      LIMIT 2000`, opts.dealId ? [opts.dealId] : [])).rows;
+      LIMIT 2000`, opts.dealId ? [opts.dealId] : opts.propertyId ? [opts.propertyId] : [])).rows;
   if (!deals.length) return { rows: [], unchecked: [] };
 
   type Party = { key: string; deal: any; role: typeof DEAL_PARTY_ROLES[number]; brandId: string; entityId: string | null };
@@ -309,7 +310,8 @@ router.get("/api/aml-dashboard", async (req: Request, res: Response) => {
     const me = await staffMe(req);
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const dealId = text(req.query.dealId);
-    res.json(await loadAmlDashboard(me, new Date(), dealId ? { dealId } : {}));
+    const propertyId = text(req.query.propertyId);
+    res.json(await loadAmlDashboard(me, new Date(), dealId ? { dealId } : propertyId ? { propertyId } : {}));
   } catch (err: any) {
     console.error("[aml-dashboard] feed failed:", err?.message);
     res.status(500).json({ message: "The AML dashboard could not be read." });

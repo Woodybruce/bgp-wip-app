@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "Officers and sign-off", title: "The full checks can be done on a small letting",
+    text: "A company signed off on a letting under £10,000 a month is cleared for the sanctions checks only, and Group entities says so. Start full KYC opens that letting's full checks: client checks, owners and a full sign-off. The full sign-off then covers a sale or a bigger letting with the same company for three years." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A building's owner from Land Registry starts its KYC, when we choose",
+    text: "The Ownership & KYC tab reads who owns the building from Land Registry's company ownership lists and sets them up as its owner. We do not check every building: BGP's checks on the owner run only when someone presses for them. When an instruction comes in, the transaction's AML box offers the registered owner as the company that signs." },
   { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Our client's solicitors: the SRA check only",
     text: "HMRC asks for no check on solicitors. Our client's solicitors are checked against the SRA's register only. The other side's are also searched on the web for regulatory action or misconduct, because BGP's policy (Issue 4) asks about negative media around the counterparty's solicitor. An allegation that was dismissed is not reported." },
   { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A party's asset manager is the person to ask",

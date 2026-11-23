@@ -250,16 +250,24 @@ export function PartyCompanyChoice({ dealId, party, onChoose }: { dealId: string
           </Button>
         </div>
       )}
+      {party.titleOwner && (
+        <div className="flex flex-wrap items-center gap-2 text-sm" data-testid={`deal-party-title-owner-line-${party.role}`}>
+          <span className="min-w-0"><span className="font-medium">{party.titleOwner.name} · {party.titleOwner.number}</span> <span className="text-muted-foreground">(the building's registered owner at Land Registry{party.titleOwner.titleNumber ? `, title ${party.titleOwner.titleNumber}` : ""})</span></span>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={set.isPending} onClick={() => set.mutate({ brandId: party.brand.id, number: party.titleOwner!.number })} data-testid={`deal-party-use-title-owner-${party.role}`}>
+            {set.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Use it
+          </Button>
+        </div>
+      )}
       {party.brandOwn && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="min-w-0"><span className="font-medium">{party.brandOwn.name} · {party.brandOwn.number}</span> <span className="text-muted-foreground">({party.brand.name}'s own registered company)</span></span>
+          <span className="min-w-0"><span className="font-medium">{party.brandOwn.name} · {party.brandOwn.number}</span> <span className="text-muted-foreground">({party.brand.name}'s own registered company{party.brandOwn.registeredOwner ? ", the building's registered owner at Land Registry" : ""})</span></span>
           <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={set.isPending} onClick={() => set.mutate({ brandId: party.brand.id, number: party.brandOwn!.number })} data-testid={`deal-party-use-brand-own-${party.role}`}>
             {set.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Use it
           </Button>
         </div>
       )}
-      <Button type="button" size="sm" variant={party.offer || party.brandOwn ? "ghost" : "outline"} className="h-7 text-xs" onClick={onChoose} data-testid={`deal-party-choose-${party.role}`}>
-        {party.offer || party.brandOwn ? "Choose another" : "Choose the company"}
+      <Button type="button" size="sm" variant={party.offer || party.brandOwn || party.titleOwner ? "ghost" : "outline"} className="h-7 text-xs" onClick={onChoose} data-testid={`deal-party-choose-${party.role}`}>
+        {party.offer || party.brandOwn || party.titleOwner ? "Choose another" : "Choose the company"}
       </Button>
     </div>
   );
@@ -938,9 +946,17 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                       <Button type="button" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => pickCompany(party.offer!)} data-testid="deal-party-use-offer">Use it</Button>
                     </div>
                   )}
+                  {party.titleOwner && (
+                    <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs" data-testid="deal-party-title-owner">
+                      <span className="min-w-0 flex-1"><strong>{party.titleOwner.name} · {party.titleOwner.number}</strong><span className="block text-muted-foreground">The building's registered owner at Land Registry{party.titleOwner.titleNumber ? ` (title ${party.titleOwner.titleNumber})` : ""}</span></span>
+                      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={busy || setOwn.isPending} onClick={() => setOwn.mutate({ brandId: party.brand.id, number: party.titleOwner!.number })} data-testid="deal-party-use-title-owner">
+                        {setOwn.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Use it
+                      </Button>
+                    </div>
+                  )}
                   {party.brandOwn && (
                     <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs" data-testid="deal-party-brand-own">
-                      <span className="min-w-0 flex-1"><strong>{party.brandOwn.name} · {party.brandOwn.number}</strong><span className="block text-muted-foreground">{party.brand.name}'s own registered company: use it only if it is the one that signs</span></span>
+                      <span className="min-w-0 flex-1"><strong>{party.brandOwn.name} · {party.brandOwn.number}</strong><span className="block text-muted-foreground">{party.brandOwn.registeredOwner ? `${party.brand.name}'s own registered company and the building's registered owner at Land Registry` : `${party.brand.name}'s own registered company: use it only if it is the one that signs`}</span></span>
                       <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={busy || setOwn.isPending} onClick={() => setOwn.mutate({ brandId: party.brand.id, number: party.brandOwn!.number })} data-testid="deal-party-use-brand-own">
                         {setOwn.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Use it
                       </Button>

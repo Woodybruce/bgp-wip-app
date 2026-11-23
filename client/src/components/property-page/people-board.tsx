@@ -296,7 +296,9 @@ function UnitPersonLine({ person, block, menu, onChanged, propertyId }: { person
     return (
       <div className="py-1" data-testid={`people-unit-row-${block.key}-${person.id}`}>
         <PersonRow person={person} menu={menu} onChanged={onChanged} propertyName=""
-          rolePill={type ? <span className={cn(pillMetrics, "shrink-0 border border-border")}>{type}</span> : undefined}
+          // The role gives way before the name does (Woody, 23 November 2026: "agent at viewing
+          // pill covering" George Hamblett's name): it shrinks first and is cut with its words in the title.
+          rolePill={type ? <span className={cn(pillMetrics, "min-w-0 max-w-[9rem] shrink-[4] border border-border")} title={type} data-testid="people-unit-role"><span className="min-w-0 truncate">{type}</span></span> : undefined}
           aside={<span className={cn(meta, "block truncate")}>{unitCell}{companyName ? <> · {companyCell}</> : null}</span>} />
       </div>
     );

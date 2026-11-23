@@ -16,6 +16,7 @@
 // beside an unchecked child leaves the child unchecked).
 
 import { requireMlro } from "./aml-authority";
+import { entitySignOffScope } from "@shared/party-kyc";
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
@@ -31,6 +32,12 @@ export interface GroupEntityKyc {
   outstanding: { key: string; label: string }[];
   lastCheckedAt: string | null;
   source: "crm_entity_kyc" | "crm_companies";
+  /**
+   * The approval was BGP's sign-off on a letting under £10,000 a month: it covers the
+   * sanctions checks only (Woody, 23 November 2026: AG Hondo "is approved KYC for deals
+   * under £10k sanction only needs to be clear here and option to start full KYC").
+   */
+  scope?: "sanctions_only" | null;
 }
 
 export interface GroupEntity {
@@ -252,7 +259,8 @@ export async function getAccountEntities(
   // Canonical per-entity KYC rows.
   const { rows: kycRows } = await q.query(
     `SELECT entity_kind, entity_id, kyc_status, checked_at, approved_by, approved_at,
-            expires_at, next_review_at, outstanding, last_check_job_at
+            expires_at, next_review_at, outstanding, last_check_job_at,
+            evidence->'bgpSignOff'->>'regime' AS signoff_regime, evidence->'bgpSignOff'->>'at' AS signoff_at
        FROM crm_entity_kyc
       WHERE (entity_kind = 'company' AND entity_id = ANY($1::text[]))
          OR (entity_kind = 'trading_entity' AND entity_id = ANY($2::text[]))`,
@@ -305,6 +313,7 @@ export async function getAccountEntities(
         outstanding: parseOutstanding(row.outstanding),
         lastCheckedAt: iso(row.checked_at || row.last_check_job_at),
         source: "crm_entity_kyc",
+        scope: row.kyc_status === "approved" ? entitySignOffScope({ regime: row.signoff_regime, signedOffAt: row.signoff_at, approvedAt: row.approved_at }) : null,
       };
     } else if (entity.entityKind === "company" && entity.entityId) {
       const live = companyById.get(entity.entityId);

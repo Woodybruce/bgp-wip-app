@@ -66,12 +66,15 @@ export interface AmlParty {
   sameCompany: boolean;      // that company is the brand's own legal company
   state: PartyKycState;
   regime: AmlRegime;         // which checks the deal needs (AML policy A)
+  // The full checks asked for on a letting under £10,000 a month (Woody, 23 November 2026:
+  // AG Hondo "is approved KYC for deals under £10k sanction only ... option to start full KYC").
+  fullOnSmall?: boolean;
   jointRule: JointAgentRule; // HMRC's joint agent route for the deal (22 November 2026)
   agents: { ids: string[]; names: string[] }; // the deal's agents (internal_agent_ids / internal_agent)
 }
 
 /** One party of a deal, with its AML state read the gate's way (loadPartyKyc). */
-export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole): Promise<AmlParty | null> {
+export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole, opts: { full?: boolean } = {}): Promise<AmlParty | null> {
   const col = DEAL_PARTY_COLUMNS[role];
   const deal = (await db.query(
     `SELECT id, name, ${col.brand} AS brand_id, ${col.company} AS entity_id, deal_type, team, rent_pa, internal_agent_ids, internal_agent
@@ -83,7 +86,11 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
        FROM crm_trading_entities e JOIN crm_companies c ON c.id = e.parent_company_id
       WHERE e.id = $1 AND e.parent_company_id = $2`, [deal.entity_id, deal.brand_id])).rows[0] || null : null;
   const { loadPartyKyc } = await import("./deal-gates");
-  const regime = amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime;
+  const natural = amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime;
+  // On a small letting the full checks can be done and signed off as full (opts.full):
+  // the approval then covers a sale or a letting at £10,000 a month or more.
+  const fullOnSmall = !!opts.full && natural === "sanctions_only";
+  const regime: AmlRegime = fullOnSmall ? "full" : natural;
   const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full" }]))[role];
   if (!state?.brandName) return null;
   const sameCompany = !!entity && sameLegalCompany(
@@ -95,6 +102,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole):
     entityId: entity ? String(entity.id) : null, entityName: entity ? text(entity.name) : null,
     sameCompany, state,
     regime,
+    fullOnSmall,
     jointRule: jointAgentRule({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }),
     agents: {
       ids: Array.isArray(deal.internal_agent_ids) ? deal.internal_agent_ids.filter(Boolean).map(String) : [],
@@ -360,7 +368,8 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
   try {
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const party = await loadAmlParty(pool, String(req.params.id), role);
+    // full: the full checks signed off on a letting under £10,000 a month (23 November 2026).
+    const party = await loadAmlParty(pool, String(req.params.id), role, { full: req.body?.full === true });
     if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const me = await signOffActor(req, party);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
@@ -387,6 +396,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       level === "simplified" && sddNote && typed ? `SDD note saved by ${sddNote.by || "BGP"} on ${sddNote.at.slice(0, 10)}` : null,
       edd ? "done by BGP's officers" : null,
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
+      party.fullOnSmall ? "the full checks, done on a letting under £10,000 a month" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,

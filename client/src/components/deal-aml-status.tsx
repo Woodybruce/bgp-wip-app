@@ -57,6 +57,8 @@ export interface DealAmlStatus {
     // Signed off for sanctions checks only (a letting under £10,000 a month), which
     // does not cover this transaction: it needs the full checks (23 November 2026).
     sanctionsOnlyApproval?: { by: string | null; at: string | null; until: string | null } | null;
+    // Approved on this small letting for the sanctions checks only (23 November 2026).
+    approvalScope?: "sanctions_only" | null;
     // Who the state is about (BGP staff only): the company that signs when
     // the deal names one (2026-11-18), else the brand.
     kycName?: string;
@@ -93,7 +95,8 @@ export interface DealAmlStatus {
   decisions?: {
     canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
     officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
-    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean }>;
+    // full: on a letting under £10,000 a month, whether the full checks may be signed off (23 November 2026).
+    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; full?: { blocked: string | null; needsNote: boolean; edd?: boolean } }>;
     // The officers' setting: BGP does enhanced due diligence itself (21 November 2026).
     inHouseEdd?: boolean;
   } | null;
@@ -785,7 +788,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const staff = !!data.prechecks;
   const { open, toggle, show } = useOpenSections(STEP_KEYS, openAll);
   // A party still being checked opens on its four steps; a cleared one is one line until opened.
-  const [folded, setFolded] = useState(!startOpen && !openAll.all);
+  // Opened by name from the address (?full=<role>, Group entities' Start full KYC): unfolded.
+  const [folded, setFolded] = useState(() => {
+    if (startOpen || openAll.all) return false;
+    try { return new URLSearchParams(window.location.search).get("full") !== cp.role; } catch { return true; }
+  });
   useEffect(() => { if (openAll.at) setFolded(!openAll.all); }, [openAll.at]);
   const [editing, setEditing] = useState(false);
   const drafts = useQuery<any[]>({
@@ -813,11 +820,28 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   };
 
   const partyName = cp.kycName || cp.name;
-  const approved = cp.isApproved && !cp.isExpired;
+  // A letting under £10,000 a month needs the sanctions checks only: a simple view of
+  // three steps, Who signs, Sanctions and Sign-off (Woody, 23 November 2026: "we have a
+  // sanctions only version for AML'S which is much simpler so not to confuse everyone").
+  // "Show the full checks" opens the four steps and the full checks themselves: client
+  // checks and a full sign-off, which also covers a sale or a bigger letting (Woody, the
+  // same day: AG Hondo "is approved KYC for deals under £10k sanction only ... option to
+  // start full KYC"). Group entities' Start full KYC opens it (?full=<role>). A trust keeps its own.
+  const smallLetting = data.regime?.regime === "sanctions_only";
+  const isTrust = !!party?.brand.recordTrust;
+  const [fullView, setFullView] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("full") === cp.role; } catch { return false; }
+  });
+  const fullOnSmall = smallLetting && fullView && !isTrust;
+  // An approval on this letting that covers the sanctions checks only is not the full checks.
+  const approved = cp.isApproved && !cp.isExpired && !(fullOnSmall && cp.approvalScope === "sanctions_only");
   // What the checks still need is moot once the party is approved or marked Not required.
   const settled = approved || !!cp.notRequired;
-  const stage = row?.stage ?? fallbackStage(cp);
   const pre = data.prechecks?.[cp.id] || null;
+  // The full checks on a small letting: a sanctions-only approval is not where they stand.
+  const stage: AmlStage | null = fullOnSmall && cp.approvalScope === "sanctions_only" && (!row || row.stage === "approved" || row.stage === "expiring")
+    ? (pre?.ranAt ? "bgp_checked" : "not_started")
+    : row?.stage ?? fallbackStage(cp);
   const allFlags = data.redFlags?.parties[cp.id] || [];
   const flags = allFlags.filter(f => !f.factor);
   const factors = allFlags.filter(f => f.factor);
@@ -827,15 +851,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const decision = data.decisions?.parties[cp.id];
   const canSignOff = !!(data.decisions?.canSignOff ?? data.decisions?.canDecide);
   const canDecide = !!data.decisions?.canDecide;
-  const sanctionsOnly = data.regime?.regime === "sanctions_only";
+  const sanctionsOnly = smallLetting && !fullOnSmall;
   const isCompany = party ? party.brand.kind === "company" : true;
-  const isTrust = !!party?.brand.recordTrust;
-  // A letting under £10,000 a month needs the sanctions checks only: a simple view of
-  // three steps, Who signs, Sanctions and Sign-off (Woody, 23 November 2026: "we have a
-  // sanctions only version for AML'S which is much simpler so not to confuse everyone").
-  // "Show the full checks" opens the four steps. A trust keeps its own.
-  const [fullView, setFullView] = useState(false);
-  const simple = sanctionsOnly && !isTrust && !fullView;
+  const simple = smallLetting && !isTrust && !fullView;
   const officer = useAmlOfficerLabel();
   // A UK public body: simplified due diligence, no company that signs (23 November 2026).
   const isPublicBody = !!party?.brand.recordPublicBody && !party?.company;
@@ -902,7 +920,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
       case "send_via_agent": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} label="Send" agent={theirAgent} viaAgent />;
       case "people": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-people-${cp.role}`}>Open</Button>;
-      case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
+      case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" full={fullOnSmall} />;
       case "red_flags": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("screening")}>See flags</Button>;
       case "billing": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
       case "joint": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-${cp.role}`}>Open</Button>;
@@ -1132,7 +1150,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               </StepRow>
               <StepRow id={sid("decision")} testId={tid("decision")} n={3} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
                 <PartyNotRequiredBox cp={cp} />
-                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
+                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
                 {canDecide && (
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                     <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
@@ -1195,7 +1213,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </StepRow>
             <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
               <PartyNotRequiredBox cp={cp} />
-              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
               {canDecide && !cp.notRequired && (
                 <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
               )}
@@ -1208,7 +1226,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </StepRow>
             </>
           )}
-          {sanctionsOnly && !isTrust && (
+          {smallLetting && !isTrust && (
             <div className="border-t border-border/60 px-3 py-1.5 text-[11px]">
               <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setFullView(v => !v)} data-testid={`aml-full-view-${cp.role}`}>
                 {fullView ? "Show the simple view" : "Show the full checks"}

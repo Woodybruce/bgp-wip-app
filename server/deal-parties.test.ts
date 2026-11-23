@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_ROLES, companyOffer, dealClientRole, invoiceContactFor, isDealPartyRole, newPartyPerson, ownerContactMatch, partyAmlFacts,
-  partyAmlQuietWords, partyGaps, peopleToReach, personFill, sameCompaniesHouseNumber,
+  partyAmlQuietWords, partyGaps, peopleToReach, personFill, registeredOwnerAmong, sameCompaniesHouseNumber,
   type DealPartyCompany,
 } from "../shared/deal-parties";
 import { personNamesMatch } from "../shared/kyc-prechecks";
@@ -72,6 +72,21 @@ test("the company offered first: the one on the lease, the main one, the only on
   assert.equal(companyOffer([a], "elsewhere")?.why, "only");
   assert.equal(companyOffer([a, { ...b, isDefault: false }], null), null);
   assert.equal(companyOffer([], "a"), null);
+});
+
+test("a landlord's or seller's offer: the building's registered owner at Land Registry comes before the main company", () => {
+  const spv: DealPartyCompany = { id: "spv", name: "AG Millennium Propco Limited", companiesHouseNumber: "12345678", isDefault: false };
+  const main: DealPartyCompany = { id: "main", name: "Angelo, Gordon Europe LLP", companiesHouseNumber: "OC361085", isDefault: true };
+  // By number, Land Registry's number tidied either way.
+  assert.equal(companyOffer([main, spv], null, { name: "AG MILLENNIUM PROPCO LTD", number: "12345678", titleNumber: "NGL1" })?.why, "land_registry");
+  assert.equal(companyOffer([main, spv], null, { name: "AG MILLENNIUM PROPCO LTD", number: "12345678", titleNumber: "NGL1" })?.id, "spv");
+  // By the registered name when Land Registry gives no number (a company abroad).
+  assert.equal(companyOffer([main, { ...spv, companiesHouseNumber: null }], null, { name: "AG MILLENNIUM PROPCO LIMITED", number: null, titleNumber: null })?.id, "spv");
+  // A different number is another company: the main one is offered as before.
+  assert.equal(companyOffer([main, spv], null, { name: "AG Millennium Propco Limited", number: "87654321", titleNumber: null })?.why, "default");
+  // The lease still comes first; a person who signs is never the registered owner.
+  assert.equal(companyOffer([main, spv], "main", { name: "AG Millennium Propco Limited", number: "12345678", titleNumber: null })?.why, "lease");
+  assert.equal(registeredOwnerAmong([{ ...spv, kind: "individual" }], { name: "AG Millennium Propco Limited", number: null, titleNumber: null }), undefined);
 });
 
 test("a person typed on the deal: a name and an email or mobile that look right", () => {

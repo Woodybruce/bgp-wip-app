@@ -4575,6 +4575,7 @@ import accountWorkspaceRouter from "./account-workspace";
 import accountTeamsRouter from "./account-teams";
 import agentRelationshipRouter from "./agent-relationship";
 import investmentBuyersRouter from "./investment-buyers";
+import propertyOwnershipRouter from "./property-ownership";
 import propertyReviewRouter from "./property-review";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
@@ -5964,6 +5965,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountTeamsRouter);
   app.use(agentRelationshipRouter);
   app.use(investmentBuyersRouter);
+  app.use(propertyOwnershipRouter);
   app.use(propertyReviewRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);

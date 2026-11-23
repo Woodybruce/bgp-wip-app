@@ -2249,7 +2249,9 @@ This week's focus is the left card's third tab. The property's facts
 (status, asset class, use class, teams, owners and lenders, area, website,
 competitor agent) are a row of editable pills above the tabs
 (`property-facts`), and the Details tab (KYC, Needs review, schemes,
-investment) is shown to admins only (Woody, 2026-11-14). People's tenants
+investment) is shown to admins only (Woody, 2026-11-14; renamed Ownership &
+KYC, with investment moved beside the BGP take, on 23 November 2026: see
+"Ownership & KYC on the property page"). People's tenants
 and agents group is `UnitPersonLine`: a named person is the landlord pages'
 own `KeyContactRow` with Tenant or Agent beside the name and the unit
 (linked to its deal) and company under it (Woody: "the same structure as
@@ -6023,6 +6025,90 @@ assset manager and TPG are the actual owners / freeholders".
   `landlord-company-checks.test.mjs`, `brand-compliance-ui.test.mjs`,
   `server/account-entities.test.ts`. Checked in a browser against a local copy
   shaped like TPG Angelo Gordon on 23 November 2026.
+
+## Ownership & KYC on the property page, and the full checks on a small letting (Woody, 2026-11-23)
+
+Woody: "on the property boards details news should be folded into news and
+social. delete property intelligence. the investment board tab lets sit that
+next to BGP take. then rename details to ownership and KYC that should be
+linked to Landreg and flow up to the tabs at the top ... and then als linked
+to our AML stuff", then "the landreg search should really feed the inital KYC.
+We dont need to KYC every building but have the option to from there? then we
+can set a builidng up and AML / KUYC the client from there when we get an
+instruction", and on AG Hondo Brixton Village BV: "is approved KYC for deals
+under £10k sanction only needs to be clear here and option to start full KYC".
+Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
+`server/property-ownership.ts`; card:
+`client/src/components/property-page/ownership-card.tsx`. Tests:
+`server/property-ownership.test.ts` (in `npm test`), cases in
+`server/deal-parties.test.ts`, `qa/regression/property-ownership-guards.test.mjs`.
+
+- **The plan-led page's tabs**: Details is **Ownership & KYC** (still admins
+  only, as Details was; test id `property-tab-details`). Its news card is gone
+  (the news is under **News & social** in the intro row); **Investment** is a
+  pill beside **BGP take** in the intro row's left card when the property has
+  investment work (`hasInvestment`), and is off the tab. **Property
+  intelligence** is deleted from the property page, both layouts (its Land
+  Registry and planning tools stay on Property Intelligence's own page; the
+  **Land Registry search** link on the card opens it with the postcode). The
+  classic page's KYC section leads with the same Ownership card.
+- **Who owns the building** (`GET /api/properties/:id/ownership`, BGP staff
+  signed in as themselves): Land Registry's company ownership lists loaded in
+  the app (`hmlr_proprietors`, CCOD and OCOD; never PropertyData, which charges
+  per title) for the building's postcode, each title kept when its address
+  holds the building's number on its street, or its name (`titleFit`,
+  `addressNumberAndStreet`), with the title on the property's record first; with
+  none, the postcode's other titles fold under a Show line. Each registered
+  owner is matched to the CRM (`sameRegisteredCompany`: the number, else the
+  registered name): filed under the property's Owner, the Owner itself, another
+  CRM company, or filed under another account. The card says when the lists
+  were loaded and when the monthly update last failed (live: 4.55 million rows;
+  the June 2026 refresh failed because the Land Registry licence was not signed).
+  A building owned by a person is not in those lists.
+- **Use this owner** (`POST …/ownership/use { titleNumber, dataset, position }`):
+  the owner is read again from the lists on the server, never from the request
+  (`titleUsePlan`): the title goes on the property (`title_number`,
+  `proprietor_*`, `title_search_date`); an empty Owner is set to the CRM company
+  that is it, else a new one (type Landlord); an empty Freeholder (freehold
+  title) or Long leaseholder (leasehold title) is set to the Owner; and the
+  company is filed under the Owner (`insertTradingEntity`, Companies House's
+  name when it answers; a company Companies House shows closed is refused). The
+  pills at the top follow. A role a person set is never changed. One line in
+  `investment_comp_migration_log` (batch `property-ownership`).
+- **KYC only when asked**: **Run checks** (`POST …/ownership/check { entityId,
+  again }`) runs BGP's checks before asking on a company filed under the
+  building's Owner (`startPrecheck(owner, { entityId })`), the same record a
+  transaction's AML box reads. Nothing checks a building by itself.
+- **Feeding the AML box**: on a transaction at the building, the landlord's or
+  seller's party offers the building's registered owner (`landRegistryOwnerOf`
+  in `server/deal-parties.ts`, from the property's stored title): a company
+  filed under the brand with that number or name is the first offer (`why:
+  "land_registry"`, `registeredOwnerAmong`, `companyOffer`), else
+  **titleOwner** ("Use it": added under the brand from Companies House, no
+  Xero), and the brand's own registered company is marked when it is the
+  owner. Always a press, never set by itself.
+- **AML on transactions here**: the AML board's own rows for the building
+  (`GET /api/aml-dashboard?propertyId=`, `loadAmlDashboard` with
+  `propertyId`), each transaction's parties with their stage, Late and red
+  flags, and **Open AML** (the property's AML window).
+- **A sanctions-only approval says so**: Group entities reads the sign-off's
+  regime (`entitySignOffScope` in `server/account-entities.ts`, `kyc.scope`)
+  and shows **Sanctions only · under £10k a month** instead of KYC approved,
+  with **Start full KYC** on the row and in its window
+  (`/deals/<id>?section=parties&full=<role>`).
+- **The full checks on a small letting**: **Show the full checks** (or the
+  `full` address parameter) now runs the full steps on a letting under £10,000
+  a month (client checks, owners, `sanctionsOnly` off in the box), and a
+  sanctions-only approval there is not taken as the full checks. **Sign off the
+  full checks** posts `full: true`; `loadAmlParty(…, { full: true })` reads the
+  party as needing the full checks (`fullOnSmall`), the ordinary sign-off rules
+  apply, and the approval is recorded as full, so it covers a sale or a bigger
+  letting for three years. The status sends `decisions.parties[id].full` and
+  `approvalScope` for it.
+- Also the same day: a People row's role pill ("Agent at a viewing") gives
+  way before the name does (`people-board.tsx`).
+- Not built: a building-level sign-off with no transaction; reading the
+  freeholder chain (`findFreeholderChain`) on the card.
 
 ## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
 

@@ -72,6 +72,7 @@ import {
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
+import { PropertyOwnershipCard } from "@/components/property-page/ownership-card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -116,7 +117,6 @@ import {
   LinkedDealsPanel, TaggedConversationsPanel,
   ClientBoardPanel,
   LinkedContactsPanel,
-  PropertyIntelligencePanel,
   PropertyNewsPanel,
   LinkedLandRegistryPanel,
   type DealLink,
@@ -493,7 +493,7 @@ export function PropertyDetail({ id }: { id: string }) {
   const uiClient = isClientViewer && !planLayout;
   const uiJointAgent = jointAgent && !planLayout;
   // The two cards above the plan: the BGP take or Activity; the conversation or People.
-  const [introLeft, setIntroLeft] = useState<"take" | "activity" | "focus">("take");
+  const [introLeft, setIntroLeft] = useState<"take" | "investment" | "activity" | "focus">("take");
   const [introRight, setIntroRight] = useState<"chat" | "people" | "news">("chat");
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
@@ -1023,13 +1023,17 @@ export function PropertyDetail({ id }: { id: string }) {
                       2026-11-14). */}
                   <Card className="min-w-0 h-[372px] flex flex-col" data-testid="property-intro-activity">
                     <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Snapshot">
-                      <Pill active={introLeft === "take"} onClick={() => setIntroLeft("take")} data-testid="property-intro-take">BGP take</Pill>
+                      <Pill active={introLeft === "take" || (introLeft === "investment" && !hasInvestment)} onClick={() => setIntroLeft("take")} data-testid="property-intro-take">BGP take</Pill>
+                      {/* The investment board sits beside the BGP take (Woody, 23 November 2026). */}
+                      {hasInvestment && <Pill active={introLeft === "investment"} onClick={() => setIntroLeft("investment")} data-testid="property-intro-investment">Investment</Pill>}
                       <Pill active={introLeft === "activity"} onClick={() => setIntroLeft("activity")} data-testid="property-intro-activity-tab">Activity</Pill>
                       <Pill active={introLeft === "focus"} onClick={() => setIntroLeft("focus")} data-testid="property-intro-focus">This week's focus</Pill>
                     </div>
                     <div className="px-3 pb-3 min-h-0 flex-1 overflow-y-auto">
-                      {introLeft === "take"
+                      {introLeft === "take" || (introLeft === "investment" && !hasInvestment)
                         ? <ErrorBoundary compact name="BGP take"><BgpCommentaryWrapper propertyId={property.id} /></ErrorBoundary>
+                        : introLeft === "investment"
+                        ? <ErrorBoundary compact name="Investment"><PropertyInvestmentPanel propertyId={property.id} /></ErrorBoundary>
                         : introLeft === "activity"
                         ? <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>
                         : <ErrorBoundary compact name="Weekly focus"><WeeklyFocusCard propertyId={property.id} /></ErrorBoundary>}
@@ -1074,8 +1078,9 @@ export function PropertyDetail({ id }: { id: string }) {
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
               {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
               {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
-              {/* What is left on Details (KYC, Needs review, schemes) is admin work (Woody, 2026-11-14). */}
-              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>}
+              {/* Details became Ownership & KYC (Woody, 23 November 2026): the Land Registry owner, the
+                  owner's KYC and the transactions' AML. Still admins only, as Details was (2026-11-14). */}
+              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Ownership &amp; KYC</Pill>}
             </div>
             ) : (
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -1128,6 +1133,12 @@ export function PropertyDetail({ id }: { id: string }) {
             )}
 
             <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
+            {/* Ownership & KYC opens on who owns the building at Land Registry (Woody, 23 November 2026). */}
+            {planLayout && !isClientViewer && (
+              <ErrorBoundary compact name="Ownership">
+                <PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} />
+              </ErrorBoundary>
+            )}
             {/* Top-row strip: property summary card on the left,
                 latest property news on the right (lg+). News gets
                 more breathing room than 50/50 — typical news
@@ -1347,8 +1358,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!uiClient} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
-                {/* On the plan-led page News is a tab beside the unit list (plan-workspace.tsx) wherever that list is shown. */}
-                {!uiJointAgent && !(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
+                {/* On the plan-led page the news is in News & social above the tabs (Woody, 23 November 2026:
+                    "details news should be folded into news and social"). */}
+                {!uiJointAgent && !planLayout && <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>}
                 {!planLayout && !uiJointAgent && <ErrorBoundary compact name="Risk register">
@@ -1510,18 +1522,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 the right sidebar's Compliance & KYC dropdown so the
                 board isn't duplicated. */}
 
-            {/* Property Intelligence is a pre-instruction tool (catchment /
-                 Land Registry research). Once the property is on any kind of
-                 instruction (Leasing / Lease Advisory / Sales / generic 'BGP
-                 Instruction') we're past research, into delivery — hide it so
-                 the page focuses on the operational view. */}
-            {!/instruction/i.test(property.status || "") && (
-              <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property intelligence" testId="toggle-intel">
-                  <PropertyIntelligencePanel property={property} />
-                </CollapsibleCard>
-              </ErrorBoundary>
-            )}
+            {/* Property intelligence was deleted from the property page (Woody, 23 November 2026): the
+                Land Registry owner is on Ownership & KYC, and the full tools are Property Intelligence's own page. */}
 
             {/* Brand Gap moved to the top of the main column (above
                 Pipeline & Performance) — leasing context leads. */}
@@ -1607,6 +1609,12 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               )}
               </PropertySection>}
+
+              {!planLayout && !isClientViewer && (
+              <PropertySection name={"kyc"} active={phoneSection} simple={tabbed}>
+                <ErrorBoundary compact name="Ownership"><PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} /></ErrorBoundary>
+              </PropertySection>
+              )}
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
@@ -1732,8 +1740,8 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {/* Brands that fit now sits inside Available Units. */}
 
-              {!uiClient && hasInvestment && (
-              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
+              {!planLayout && !uiClient && hasInvestment && (
+              <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Investment"
                 icon={Landmark}

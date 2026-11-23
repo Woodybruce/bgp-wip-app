@@ -84,7 +84,9 @@ test('the deal card lists the people to check first, and their own requests only
   // Under sanctions checks only, nobody is asked for an identity check or a proof of address.
   assert.match(card, /data-testid=\{`people-sanctions-only-\$\{party\.companyId\}`\}/);
   const box = read('client/src/components/deal-aml-status.tsx');
-  assert.match(box, /const sanctionsOnly = data\.regime\?\.regime === "sanctions_only";/);
+  // A small letting reads as sanctions only until its full checks are opened (23 November 2026).
+  assert.match(box, /const smallLetting = data\.regime\?\.regime === "sanctions_only";/);
+  assert.match(box, /const sanctionsOnly = smallLetting && !fullOnSmall;/);
   assert.match(box, /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{sanctionsOnly\} notRequired=\{!!cp\.notRequired\} canDecide=\{canDecide\} part="people" \/>/);
   assert.match(box, /<ClientChecksForParty dealId=\{dealId\} companyId=\{cp\.id\} sanctionsOnly=\{sanctionsOnly\} notRequired=\{!!cp\.notRequired\} canDecide=\{canDecide\} part="requests" \/>/);
   assert.match(card, /data-testid=\{`people-to-check-\$\{party\.companyId\}`\}/);

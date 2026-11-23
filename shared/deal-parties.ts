@@ -89,7 +89,7 @@ export type PartyGapKey = "company" | "person" | "email";
 // narrow column (the deal page's party lines).
 export interface PartyGap { key: PartyGapKey; words: string; short: string }
 
-export type CompanyOfferWhy = "lease" | "default" | "only";
+export type CompanyOfferWhy = "lease" | "land_registry" | "default" | "only";
 
 // What the company that signs is, for each party (Woody, 19 November 2026:
 // "We must have the company taking the lease or who owns the property to be
@@ -178,7 +178,12 @@ export interface DealPartyView {
   offer: (DealPartyCompany & { why: CompanyOfferWhy }) | null;
   // The brand's own registered company, when no company filed under the
   // brand carries its number: offered as one choice, never assumed.
-  brandOwn: { name: string; number: string } | null;
+  // registeredOwner: it is also the building's registered owner at Land Registry.
+  brandOwn: { name: string; number: string; registeredOwner?: boolean } | null;
+  // The building's registered owner at Land Registry (a landlord's or a
+  // seller's), when no company filed under the brand is it: added under the
+  // brand from Companies House on a press, never assumed (23 November 2026).
+  titleOwner?: { name: string; number: string; titleNumber: string | null } | null;
   // Every company filed under the brand.
   companies: DealPartyCompany[];
   // The Xero contact invoices go to.
@@ -207,10 +212,32 @@ export const sameCompaniesHouseNumber = (a: unknown, b: unknown): boolean => {
   return !!x && !!y && pad(x) === pad(y);
 };
 
-/** The company to offer first when the deal names none: the one on the unit's lease, the brand's default, or the only one filed. */
-export function companyOffer(companies: DealPartyCompany[], leaseCompanyId: string | null | undefined): DealPartyView["offer"] {
+// A registered company name without case, punctuation or its legal form.
+const registeredNameKey = (v: unknown): string => text(v).toLowerCase().replace(/&/g, " and ").replace(/['\u2019]/g, "")
+  .replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "")
+  .replace(/\s*\b(limited|ltd|public limited company|plc|llp|limited liability partnership)$/, "").replace(/\s+/g, "");
+
+/** The building's registered owner at Land Registry, as the property's record holds it (the Ownership & KYC tab, 23 November 2026). */
+export interface LandRegistryOwner { name: string; number: string | null; titleNumber: string | null }
+
+/** A company filed under the brand that is the building's registered owner: the same number, else the same registered name. */
+export function registeredOwnerAmong(companies: DealPartyCompany[], owner: LandRegistryOwner | null | undefined): DealPartyCompany | undefined {
+  if (!owner) return undefined;
+  return companies.find(c => c.kind !== "individual" && (owner.number && c.companiesHouseNumber
+    ? sameCompaniesHouseNumber(c.companiesHouseNumber, owner.number)
+    : !!registeredNameKey(owner.name) && registeredNameKey(c.name) === registeredNameKey(owner.name)));
+}
+
+/**
+ * The company to offer first when the deal names none: the one on the unit's
+ * lease, the building's registered owner at Land Registry (a landlord or a
+ * seller), the brand's default, or the only one filed.
+ */
+export function companyOffer(companies: DealPartyCompany[], leaseCompanyId: string | null | undefined, landRegistry?: LandRegistryOwner | null): DealPartyView["offer"] {
   const lease = leaseCompanyId ? companies.find(c => c.id === leaseCompanyId) : undefined;
   if (lease) return { ...lease, why: "lease" };
+  const registered = registeredOwnerAmong(companies, landRegistry);
+  if (registered) return { ...registered, why: "land_registry" };
   const defaults = companies.filter(c => c.isDefault);
   if (defaults.length === 1) return { ...defaults[0], why: "default" };
   if (companies.length === 1) return { ...companies[0], why: "only" };
@@ -219,6 +246,7 @@ export function companyOffer(companies: DealPartyCompany[], leaseCompanyId: stri
 
 export const OFFER_WORDS: Record<CompanyOfferWhy, string> = {
   lease: "the company on the unit's lease",
+  land_registry: "the building's registered owner at Land Registry",
   default: "the brand's main company",
   only: "the only company filed under the brand",
 };

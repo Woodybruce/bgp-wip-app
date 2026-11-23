@@ -49,7 +49,8 @@ test('each party is read the deal card\'s way', () => {
   assert.match(feed, /bucket: amlBucket\(stage, due, amlDealClosed\(p\.deal\.status\)\)/);
   // Off the Investment Tracker as everywhere (from Solicitors), and earlier where Issue 4 needs checks:
   // an investment sale from Live or Available, any investment deal from heads of terms.
-  assert.match(feed, /AND \$\{amlBoardDealSql\("d"\)\}`;/);
+  // One building's rows for its Ownership & KYC tab (23 November 2026).
+  assert.match(feed, /AND \$\{amlBoardDealSql\("d"\)\}\$\{opts\.propertyId \? ` AND d\.property_id = \$1` : ""\}`;/);
   assert.match(feed, /\$\{dealLeftTrackerSql\(alias\)\} OR \(\$\{investmentDealSql\(alias\)\}/);
   // Who BGP acts for decides when each party is due and its deadline.
   assert.match(feed, /const due = amlDue\(p\.role, p\.deal\.status, clientRole\);/);
