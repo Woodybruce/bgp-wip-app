@@ -17,7 +17,7 @@ import path from "path";
 import { pool } from "./db";
 import {
   AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, JOINT_ASKED_HOW, JOINT_OUTCOMES, LETTING_AML_MONTHLY_RENT, MAX_AML_DEPUTIES, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
-  amlPolicyDocument, jointAgentRule, jointAskWords, notRequiredLapse, type JointAskRecord, type NotRequiredReason, type PartyNotRequired,
+  amlPolicyDocument, amlPolicyDocumentReplaced, jointAgentRule, jointAskWords, notRequiredLapse, type JointAskRecord, type NotRequiredReason, type PartyNotRequired,
 } from "@shared/aml-policy";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -114,7 +114,7 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
     const actor = await amlActor(req);
     const inHouseEdd = await readInHouseEdd();
     res.json({
-      documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file) })),
+      documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file), replaced: amlPolicyDocumentReplaced(d) })),
       officers: {
         nominated: officers.nominated ? { id: officers.nominated.id, name: officers.nominated.name } : null,
         deputies: officers.deputies.map(d => ({ id: d.id, name: d.name })),
@@ -229,9 +229,12 @@ router.post("/api/aml-policy/officers/from-policy", async (req: Request, res: Re
     const { amlOfficers } = await import("./aml-authority");
     if ((await amlOfficers()).nominated) return res.status(409).json({ message: "The officers are already set: use Change." });
     const nominatedId = await find(POLICY_OFFICER_NAMES.nominated);
-    const deputyId = await find(POLICY_OFFICER_NAMES.deputy);
     if (!nominatedId) return res.status(409).json({ message: `No single active login is named ${POLICY_OFFICER_NAMES.nominated}: choose the officers by hand.` });
-    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyId ? [deputyId] : [], me)), deputyMissing: !deputyId });
+    const deputies: Array<{ name: string; id: string | null }> = [];
+    for (const name of POLICY_OFFICER_NAMES.deputies) deputies.push({ name, id: await find(name) });
+    const deputyIds = deputies.map(d => d.id).filter((id): id is string => !!id && id !== nominatedId);
+    const missing = deputies.filter(d => !d.id).map(d => d.name);
+    res.json({ ok: true, ...(await setOfficers(nominatedId, deputyIds, me)), deputyMissing: missing.length > 0, deputiesMissing: missing });
   } catch (err: any) {
     if (!err?.status) console.error("[aml-policy] officers not saved:", err?.message);
     res.status(err?.status || 500).json({ message: err?.status ? err.message : "The officers could not be saved." });

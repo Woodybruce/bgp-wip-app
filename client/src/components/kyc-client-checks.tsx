@@ -23,6 +23,7 @@ import {
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import type { PublicRecordsResult, PublicRecordsSuggestion } from "@shared/public-records";
 import type { KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
@@ -351,6 +352,9 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
 }
 
 function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; canDecide: boolean }) {
+  // Verified from public sources is for admins who are AML officers (Woody, 23 November 2026).
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const admin = !!viewer?.isAdmin;
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
@@ -379,7 +383,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
-        {canDecide && !pf && person.outstanding.length > 0 && (
+        {canDecide && admin && !pf && person.outstanding.length > 0 && (
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying(true)} data-testid={`person-verify-public-${testKey}`}>
             <Globe className="w-3 h-3 mr-1" />Verified from public sources
           </Button>
@@ -399,7 +403,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <Tick ok={idOk} />
           {pf ? <span>Identity: verified from public sources (above)</span> : relied ? <span>Identity: {relied.replace(/^Relying on/, "covered by")}</span> : (
           <span>
-            {ID_STATE_WORDS[person.id.state]}
+            {person.id.state === "document" && person.id.ref === "upload" ? "Identity document uploaded by BGP and checked (under Upload documents)" : ID_STATE_WORDS[person.id.state]}
             {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
             {!idOk && person.id.someoneElse ? <span className="text-amber-800"> (the check on their link was {person.id.someoneElse}'s)</span> : null}
             {!idOk && person.id.asked ? <span className="text-muted-foreground"> · asked</span> : null}
@@ -455,6 +459,20 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
     : linkList.length > PUBLIC_FIGURE_MAX_LINKS ? `Give up to ${PUBLIC_FIGURE_MAX_LINKS} links.`
     : !linkList.length && !files.length ? "Give the pages or files that show who they are."
     : null;
+  const search = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/public-figure/search`, { key: person.key })).json() as Promise<{
+      result: PublicRecordsResult; suggestion: PublicRecordsSuggestion; note: string; links: string[];
+    }>,
+    // Filled in only when the sources are enough: a search that says to ask
+    // for their ID leaves the officer's boxes as they were.
+    onSuccess: (r) => {
+      if (!r.suggestion.enough) return;
+      if (!note.trim() && r.note) setNote(r.note);
+      if (!links.trim() && r.links.length) setLinks(r.links.join("\n"));
+    },
+    onError: (e: any) => toast({ title: "Not searched", description: plain(e), variant: "destructive" }),
+  });
+  const found = search.data;
   const save = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
@@ -484,6 +502,27 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1.5" data-testid="public-figure-search">
+            <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={search.isPending} onClick={() => search.mutate()} data-testid="public-figure-search-run">
+              {search.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Globe className="w-3.5 h-3.5 mr-1.5" />}{found ? "Search again" : "Search public sources"}
+            </Button>
+            {found && (
+              <div className={`rounded-md border px-2.5 py-2 text-xs space-y-1 ${found.suggestion.enough ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" : "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"}`} data-testid="public-figure-suggestion">
+                <p className="font-semibold">{found.suggestion.words}</p>
+                {found.suggestion.reasons.length > 0 && <ul className="list-disc pl-4">{found.suggestion.reasons.map(r => <li key={r}>{r}</li>)}</ul>}
+                {found.result.facts.length > 0 && (
+                  <ul className="space-y-0.5 pt-1 text-foreground" data-testid="public-figure-facts">
+                    {found.result.facts.map((f, i) => (
+                      <li key={`${f.url}-${i}`} className={f.sameIdentity === "unsure" ? "text-muted-foreground" : ""}>
+                        {f.fact} <a href={f.url} target="_blank" rel="noreferrer" className="underline">{f.source || "source"}</a>{f.sameIdentity === "unsure" ? " (may be someone else)" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {!found.suggestion.enough && <p>Send them a link for their identity check and proof of address instead.</p>}
+              </div>
+            )}
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="public-figure-note">What makes them a public figure, and what the sources show</Label>
             <Textarea id="public-figure-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
@@ -581,6 +620,15 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
     onSuccess: () => { refresh(); setAccepting(false); setNote(""); toast({ title: "Proof of address accepted" }); },
     onError: (e) => toast({ title: "Not accepted", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
   });
+  // A proof of address BGP uploaded on the party, read and checked (23 November 2026).
+  if (person.address.done && person.address.ref === "upload" && !proof?.ok) {
+    return (
+      <li className="flex items-start gap-1" data-testid={`person-address-upload-${testKey}`}>
+        <Tick ok />
+        <span>Proof of address: uploaded by BGP and checked (under Upload documents)</span>
+      </li>
+    );
+  }
   if (!proof) {
     return (
       <li className="flex items-start gap-1" data-testid={`person-address-${testKey}`}>

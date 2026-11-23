@@ -568,13 +568,68 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
 // (each copied to PDF on the party's KYC record) and any files; it then counts
 // for that person's identity check and proof of address, on every deal with
 // the party (server/kyc-people.ts). It can be withdrawn.
-async function partyKindOf(db: Db, party: AmlParty) {
+export async function partyKindOf(db: Db, party: AmlParty) {
   const held = (await db.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [party.brandId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null;
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   return partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
 }
 
-router.post("/api/deals/:id/parties/:role/public-figure", deciderFirst, takeFiles, async (req: Request, res: Response) => {
+// Verified from public sources is for admins who are AML officers (Woody,
+// 23 November 2026: "verified from public records button needs to be for
+// admins only").
+export async function adminDecider(req: Request): Promise<Decider | { refusal: string; status: number }> {
+  const me = await decider(req);
+  if (!("id" in me)) return me;
+  const row = (await pool.query(`SELECT is_admin, email FROM users WHERE id = $1`, [me.id])).rows[0];
+  const { ADMIN_EMAILS } = await import("./auth");
+  if (!row?.is_admin && !ADMIN_EMAILS.has(String(row?.email || "").toLowerCase().trim())) return { refusal: "Verified from public sources is for admins only.", status: 403 };
+  return me;
+}
+async function adminDeciderFirst(req: Request, res: Response, next: NextFunction) {
+  const me = await adminDecider(req).catch(() => ({ refusal: "Could not check who you are.", status: 500 }));
+  if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+  (req as any).amlDecider = me;
+  next();
+}
+
+// The search: what public sources say about the person, and whether that is
+// a reasonable amount to verify them (Woody, 23 November 2026: "should search
+// and pull out what it can ... make a suggestion if thats a reasonable amount
+// or have to ask for further info"). Records nothing: the officer reads it
+// and saves the verification, or asks for their ID.
+router.post("/api/deals/:id/parties/:role/public-figure/search", async (req: Request, res: Response) => {
+  try {
+    const me = await adminDecider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const kind = await partyKindOf(pool, party);
+    const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
+    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId));
+    const person = people.people.find(p => p.key === String(req.body?.key || ""));
+    if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
+    const { searchPublicRecords } = await import("./public-records");
+    const { publicRecordsNote, publicRecordsSuggestion } = await import("@shared/public-records");
+    const ROLE: Record<string, string> = { owner: "owner", acting: "dealing with us", director: "director", joint: "named alongside" };
+    const result = await searchPublicRecords({ name: person.name, born: person.born, roles: person.roles.map(r => ROLE[r] || r), company: partyName(party), brand: party.brandName });
+    if ("error" in result) return res.status(502).json({ message: result.error });
+    const suggestion = publicRecordsSuggestion(result, { name: person.name, dob: person.dob }, partyName(party), new Date());
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_records_search', $2, $3, $4, $5)`,
+      [party.brandId, me.name, `Public sources searched for ${person.name} on ${party.dealName}: ${result.facts.length} fact${result.facts.length === 1 ? "" : "s"} with a source. ${suggestion.words}`,
+        party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    res.json({
+      result, suggestion, note: publicRecordsNote(result, person.name),
+      links: [...new Set(result.facts.filter(f => f.sameIdentity === "likely").map(f => f.url))].slice(0, PUBLIC_FIGURE_MAX_LINKS),
+    });
+  } catch (err: any) {
+    console.error("[deal-party-aml] public records search failed:", err?.message);
+    res.status(500).json({ message: "The search could not be run." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, takeFiles, async (req: Request, res: Response) => {
   try {
     const me = (req as any).amlDecider as { id: string; name: string };
     const role = String(req.params.role);
@@ -639,7 +694,7 @@ router.post("/api/deals/:id/parties/:role/public-figure", deciderFirst, takeFile
 
 router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", async (req: Request, res: Response) => {
   try {
-    const me = await decider(req);
+    const me = await adminDecider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });

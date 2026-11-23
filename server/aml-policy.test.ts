@@ -3,8 +3,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
-  MAX_AML_DEPUTIES, amlOfficerRole, amlPolicyDocument, amlRegime, countryOf, countryRisk, deputyNames, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
+  AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, POLICY_SOURCE, RECHECK_YEARS,
+  MAX_AML_DEPUTIES, amlOfficerRole, amlPolicyDocument, amlPolicyDocumentReplaced, amlRegime, countryOf, countryRisk, deputyNames, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
   notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, readDeputies, recheckDate, sectorMatches, sellsCitizenship,
   simplifiedBasis, superPrimeFlag,
 } from "../shared/aml-policy";
@@ -27,8 +27,9 @@ test("the Nominated Officer and the Deputy both decide; admins only while no Nom
   assert.equal(officerWords(officers), "the Nominated Officer (Jack Barratt) or the Deputy (Layla O'Driscoll)");
 });
 
-test("Use the policy's officers looks for Jack Barratt and Layla O'Driscoll (Woody, 20 November 2026)", () => {
-  assert.deepEqual({ ...POLICY_OFFICER_NAMES }, { nominated: "Jack Barratt", deputy: "Layla O'Driscoll" });
+test("Use the policy's officers looks for the officers Issue 3 names: Jack Barratt, then Layla O'Driscoll and Woody Bruce", () => {
+  assert.equal(POLICY_OFFICER_NAMES.nominated, "Jack Barratt");
+  assert.deepEqual([...POLICY_OFFICER_NAMES.deputies], ["Layla O'Driscoll", "Woody Bruce"]);
 });
 
 // Woody, 20 November 2026: "jack as officer and then layla and i as depituties".
@@ -209,9 +210,14 @@ test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is 
   assert.ok(STANDARD_HOTS_TEMPLATE.trimEnd().endsWith("Code for Leasing Business Premises in England & Wales."));
 });
 
-test("the documents are listed by issue, the trust checklist among them", () => {
-  assert.equal(AML_POLICY_DOCUMENTS.length, 3);
+test("the documents are listed by issue, the trust checklist among them; Issue 2 of the policy is kept behind Issue 3", () => {
+  assert.equal(AML_POLICY_DOCUMENTS.length, 4);
   assert.equal(amlPolicyDocument("checklist-trusts")?.file, "bgp-aml-checklist-trusts.docx");
+  assert.equal(amlPolicyDocument("policy-issue-3")?.file, "bgp-aml-policy-issue-3.docx");
   assert.equal(amlPolicyDocument("policy-issue-2")?.file, "bgp-aml-policy-issue-2.docx");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-2")!), true, "Issue 3 replaced it");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), false);
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), false, "the risk assessment is still Issue 2");
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
+  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 3) and risk assessment (Issue 2)");
 });

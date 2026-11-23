@@ -27,6 +27,7 @@ import { relianceWords, type PartyReliance } from "./aml-reliance";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 import { trusteePersonName, trusteesInOrder } from "./charity-register";
+import { uploadCountsFor, type KycUploadEvidence } from "./kyc-documents";
 
 export { personDisplayName };
 
@@ -119,6 +120,12 @@ export interface PartyPeopleInput {
   // Every request on the deal, each party's: an identity check passed on
   // someone else's link still counts for the person it was.
   requests: PeopleRequest[];
+  // Documents BGP uploaded on the party (23 November 2026,
+  // shared/kyc-documents.ts): one that reads as a person's and passes, or an
+  // officer accepted, counts for their identity or their address.
+  uploads?: KycUploadEvidence[];
+  // Today, for an identity document's expiry date.
+  today?: Date;
 }
 
 // ── The answer ──────────────────────────────────────────────────────────────
@@ -133,6 +140,8 @@ export interface KycPartyPerson {
   // How they own or control the company (owners).
   ownerDetail: string | null;
   born: string | null;
+  // The month and year of birth the register gives, for setting a document against them.
+  dob?: { year: number | null; month: number | null } | null;
   id: {
     state: PersonIdState;
     // The request the check or document came from.
@@ -301,6 +310,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       }
       if (isOwn && r.files.some(f => f.docKey === "photo_id")) better("document", r.ref, null);
     }
+    const uploads = (input.uploads || []).map(u => uploadCountsFor(u, { name: d.name, dob: d.dob }, input.today || new Date()));
+    if (uploads.includes("identity")) better("document", "upload", null);
     if (id.state === "passed" || id.state === "waiting") id = { ...id, someoneElse: null };
     const idDone = id.state === "passed" || id.state === "waiting" || id.state === "document";
     id.asked = live.some(r => !r.finished && (r.needsIdCheck || r.docs.includes("photo_id")));
@@ -315,7 +326,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const counting = proofs.find(x => x.counts) || null;
     const shown = counting || proofs[proofs.length - 1] || null;
     const address: KycPartyPerson["address"] = {
-      done: !!counting, ref: counting?.r.ref || null,
+      done: !!counting || uploads.includes("address"), ref: counting?.r.ref || (uploads.includes("address") ? "upload" : null),
       asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")),
       proof: shown ? {
         token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
@@ -331,7 +342,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     return {
       key: personKey(d.name), name, roles,
       ownerDetail: d.ownerDetail.length ? d.ownerDetail.join("; ") : null,
-      born: bornWords(d.dob), id, address, sanctions: sanctionsFor(d.name), publicFigure, ...(relied ? { reliedOn: relied } : {}),
+      born: bornWords(d.dob), dob: d.dob?.year ? { year: d.dob.year, month: d.dob.month ?? null } : null,
+      id, address, sanctions: sanctionsFor(d.name), publicFigure, ...(relied ? { reliedOn: relied } : {}),
       own: ownLink ? { token: ownLink.token, ref: ownLink.ref, isMain: !ownLink.person, sentAt: ownLink.sentAt } : null,
       outstanding,
       canSend: outstanding.some(o => o === "identity check" ? !id.asked : !address.asked),

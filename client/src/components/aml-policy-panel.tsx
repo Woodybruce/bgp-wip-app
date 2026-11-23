@@ -16,10 +16,10 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 
 interface PolicyFeed {
-  documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean }>;
+  documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean; replaced?: boolean }>;
   officers: { nominated: { id: string | null; name: string | null } | null; deputies: Array<{ id: string | null; name: string | null }> };
   maxDeputies: number;
-  policyNames: { nominated: string; deputy: string };
+  policyNames: { nominated: string; deputies: string[] };
   canEdit: boolean;
   recheckYears: { simplified: number; standard: number; enhanced: number };
   lettingMonthlyRent: number;
@@ -30,6 +30,7 @@ interface PolicyFeed {
 }
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
+const andList = (names: readonly string[]): string => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
 function refreshOfficers() {
   queryClient.invalidateQueries({ queryKey: ["/api/aml-policy"] });
@@ -72,7 +73,7 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
       <DialogContent className="max-w-md" data-testid="aml-officers-dialog">
         <DialogHeader>
           <DialogTitle>AML officers</DialogTitle>
-          <DialogDescription>The policy (Issue 2) names {feed.policyNames.nominated} as Nominated Officer and {feed.policyNames.deputy} as Deputy. The Nominated Officer and each Deputy decide: enhanced parties, KYC4U's results, red flags set aside and parties marked Not required.</DialogDescription>
+          <DialogDescription>The policy (Issue 3) names {feed.policyNames.nominated} as Nominated Officer and {andList(feed.policyNames.deputies)} as Deputies. The Nominated Officer and each Deputy decide: enhanced parties, red flags set aside and parties marked Not required.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -143,14 +144,14 @@ export function AmlPolicyPanel() {
     mutationFn: async () => (await apiRequest("POST", "/api/aml-policy/officers/from-policy", {})).json(),
     onSuccess: (r: any) => {
       refreshOfficers();
-      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputies?.length ? `, Deputy ${r.deputies.join(", ")}` : ""}.${r?.deputyMissing ? " No single login matched the Deputy: choose them by hand." : ""}` });
+      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputies?.length ? `, ${r.deputies.length === 1 ? "Deputy" : "Deputies"} ${andList(r.deputies)}` : ""}.${r?.deputiesMissing?.length ? ` No single login matched ${andList(r.deputiesMissing)}: choose them by hand.` : ""}` });
     },
     onError: (e: any) => toast({ title: "Not set", description: plain(e), variant: "destructive" }),
   });
   if (!feed) return null;
   const { nominated } = feed.officers;
   const deputies = (feed.officers.deputies || []).map(d => d.name).filter((x): x is string => !!x);
-  const deputyLine = deputies.length < 2 ? deputies.join("") : `${deputies.slice(0, -1).join(", ")} and ${deputies[deputies.length - 1]}`;
+  const deputyLine = andList(deputies);
   return (
     <>
       <div className="max-w-3xl space-y-4 text-sm" data-testid="aml-policy-panel">
@@ -166,7 +167,7 @@ export function AmlPolicyPanel() {
               {/* First set-up only: once set, Change is the way (the server refuses it too). */}
               {!nominated && (
                 <Button type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={fromPolicy.isPending} onClick={() => fromPolicy.mutate()} data-testid="aml-officers-from-policy">
-                  {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({feed.policyNames.nominated} and {feed.policyNames.deputy})
+                  {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({andList([feed.policyNames.nominated, ...feed.policyNames.deputies])})
                 </Button>
               )}
               <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid="aml-officers-change">Change</Button>
@@ -180,14 +181,26 @@ export function AmlPolicyPanel() {
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</h3>
           <div className="flex flex-wrap gap-1.5">
-            {feed.documents.map(d => (
+            {feed.documents.filter(d => !d.replaced).map(d => (
               <Button key={d.key} type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={!d.onFile}
-                onClick={() => download(d.url, `${d.title}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
+                onClick={() => download(d.url, `${d.title}, Issue ${d.issue}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
                 data-testid={`aml-policy-download-${d.key}`}>
                 <Download className="w-3.5 h-3.5 mr-1 shrink-0" />{d.title}, Issue {d.issue}
               </Button>
             ))}
           </div>
+          {feed.documents.some(d => d.replaced) && (
+            <p className="text-xs text-muted-foreground" data-testid="aml-policy-earlier">
+              Earlier issues, kept for five years:{" "}
+              {feed.documents.filter(d => d.replaced).map((d, i) => (
+                <span key={d.key}>{i ? ", " : ""}
+                  <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:no-underline" disabled={!d.onFile}
+                    onClick={() => download(d.url, `${d.title}, Issue ${d.issue}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
+                    data-testid={`aml-policy-download-${d.key}`}>{d.title}, Issue {d.issue}</button>
+                </span>
+              ))}
+            </p>
+          )}
         </section>
         <section className="space-y-1.5" data-testid="aml-policy-how">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">How the app applies it</h3>

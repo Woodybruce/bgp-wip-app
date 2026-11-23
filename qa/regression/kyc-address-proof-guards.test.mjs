@@ -38,7 +38,8 @@ test('the reader is Anthropic, called directly, capped a day, and sent the file 
 test('a proof counts only on its verdict or an officer accepting it', () => {
   assert.match(people, /const check = checkAddressProof\(f\.reading \|\| null, d\.name, f\.uploadedAt\);/);
   assert.match(people, /counts: check\.ok \|\| !!f\.accepted/);
-  assert.match(people, /done: !!counting,/);
+  // Or a proof of address BGP uploaded on the party that passes (23 November 2026, shared/kyc-documents.ts).
+  assert.match(people, /done: !!counting \|\| uploads\.includes\("address"\),/);
   assert.match(loader, /reading: documentId \? request\.addressProofs\?\.\[documentId\] \|\| null : null,/);
   assert.match(loader, /accepted: documentId \? request\.addressAccepted\?\.\[documentId\] \|\| null : null,/);
 });

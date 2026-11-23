@@ -1,5 +1,10 @@
-// BGP's Anti-Money Laundering Policy and Firm-Wide Risk Assessment, Issue 2
-// (November 2026), as the rules the app applies. Woody, 19 November 2026:
+// BGP's Anti-Money Laundering Policy (Issue 3, November 2026) and Firm-Wide
+// Risk Assessment (Issue 2, November 2026), as the rules the app applies.
+// Issue 3 of the policy is Issue 2 with the four changes Jack signed off on
+// 23 November 2026: companies evidenced from Companies House with BGP's
+// screening (4.1, 4.2, 4.4, 4.6); a certified digital identity check counts as
+// meeting the person (4.10, 4.11); a newly formed company (4.4); and the
+// Deputy Nominated Officers (C.b). The rest below was written from Issue 2. Woody, 19 November 2026:
 // "can you consider these and add into the AML as required", and, asked,
 // the same day:
 //   - the deal's agents sign off a standard-risk party; the Nominated
@@ -32,6 +37,7 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-3", title: "Anti-Money Laundering Policy", issue: 3, date: "November 2026", file: "bgp-aml-policy-issue-3.docx" },
   { key: "policy-issue-2", title: "Anti-Money Laundering Policy", issue: 2, date: "November 2026", file: "bgp-aml-policy-issue-2.docx" },
   { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
   { key: "checklist-trusts", title: "AML checklist: trusts", issue: 1, date: "November 2026", file: "bgp-aml-checklist-trusts.docx" },
@@ -77,16 +83,20 @@ export function trustChecklistNote(): string {
 }
 export const amlPolicyDocument = (key: unknown): AmlPolicyDocument | null =>
   AML_POLICY_DOCUMENTS.find(d => d.key === String(key ?? "")) || null;
+/** A document a later issue of the same title replaced (kept for five years, policy M). */
+export const amlPolicyDocumentReplaced = (d: AmlPolicyDocument): boolean =>
+  AML_POLICY_DOCUMENTS.some(o => o.title === d.title && o.issue > d.issue);
 
 // ── The officers (policy C.b and D) ─────────────────────────────────────────
 
-// Who the policy names. The app holds who is set (AML settings); these are
-// only what "Use the policy's officers" looks for. The Deputy is Layla
-// O'Driscoll (Woody, 20 November 2026: "Layla is correct not Victoria"); the
-// Issue 2 document still names Victoria Broadhead. Since the same day there
-// can be more than one Deputy (Woody: "jack as officer and then layla and i
-// as depituties"), set in the AML policy panel.
-export const POLICY_OFFICER_NAMES = { nominated: "Jack Barratt", deputy: "Layla O'Driscoll" } as const;
+// Who the policy names (Issue 3, C.b). The app holds who is set (AML
+// settings); these are only what "Use the policy's officers" looks for. Since
+// 20 November 2026 there can be more than one Deputy (Woody: "jack as officer
+// and then layla and i as depituties"), set in the AML policy panel; Issue 3
+// names both Deputies (Issue 2 named Victoria Broadhead).
+export const POLICY_OFFICER_NAMES: { readonly nominated: string; readonly deputies: readonly string[] } = {
+  nominated: "Jack Barratt", deputies: ["Layla O'Driscoll", "Woody Bruce"],
+};
 export const MAX_AML_DEPUTIES = 3;
 
 export interface AmlOfficer { id: string | null; name: string | null; email: string | null }
@@ -372,7 +382,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy and risk assessment (Issue 2)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 3) and risk assessment (Issue 2)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);

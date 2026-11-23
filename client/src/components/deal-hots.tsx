@@ -21,6 +21,7 @@ import {
 import type { DealPartyRole } from "@shared/deal-parties";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "");
+const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
 const ROLE_FIELD: Record<DealPartyRole, string> = { landlord: "landlordId", tenant: "tenantId", vendor: "vendorId", purchaser: "purchaserId" };
 const ROLE_TYPE: Record<DealPartyRole, string> = { landlord: "Landlord", tenant: "Tenant", vendor: "Vendor", purchaser: "Purchaser" };
 const CLOSED = ["dissolved", "converted-closed", "removed", "closed", "liquidation"];
@@ -119,9 +120,13 @@ export function DealDescribeBox({ dealId }: { dealId: string }) {
   return (
     <div
       className={`rounded-md border px-2.5 py-2 transition-colors ${dragging ? "border-primary bg-primary/5" : "border-dashed border-border"}`}
-      onDragOver={e => { if (Array.from(e.dataTransfer.types || []).includes("Files")) { e.preventDefault(); setDragging(true); } }}
-      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
-      onDrop={e => { const f = e.dataTransfer.files?.[0]; if (!f) return; e.preventDefault(); setDragging(false); void read({ file: f }); }}
+      // The box keeps its own drops: stopped here, the app-wide "Drop to
+      // import" (GlobalDropZone, on window) neither shows nor opens Import
+      // Anything over it (found 23 November 2026).
+      onDragEnter={e => { if (hasFiles(e)) { e.preventDefault(); e.stopPropagation(); setDragging(true); } }}
+      onDragOver={e => { if (hasFiles(e)) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; setDragging(true); } }}
+      onDragLeave={e => { if (hasFiles(e)) e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={e => { if (!hasFiles(e)) return; e.preventDefault(); e.stopPropagation(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) void read({ file: f }); }}
       data-testid="deal-describe-box"
     >
       <input ref={input} type="file" accept={HOTS_ACCEPT} className="hidden"

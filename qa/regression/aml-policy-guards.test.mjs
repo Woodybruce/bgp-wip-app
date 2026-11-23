@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from 'node:fs';
 const read = (p) => readFileSync(p, 'utf8');
 
 test('the documents are kept with the app and served to BGP staff, outside the retired /api/aml/', () => {
-  for (const f of ['bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
+  // Issue 3 of the policy (Jack's four changes, 23 November 2026); Issue 2 kept (policy M).
+  for (const f of ['bgp-aml-policy-issue-3.docx', 'bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
     assert.ok(existsSync(`server/assets/aml-policy/${f}`), f);
   }
   const routes = read('server/aml-policy.ts');

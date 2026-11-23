@@ -5,6 +5,7 @@ import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown
 import { Link, useLocation } from "wouter";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
+import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
@@ -1095,6 +1096,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                       {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" agent={theirAgent} viaAgent={!!request.viaAgent} />}
                     </div>
                   )}
+                  {/* Certified copies and other documents BGP holds, read and checked (23 November 2026). */}
+                  <PartyDocumentsBox dealId={dealId} role={cp.role} partyName={partyName} canDecide={canDecide} />
                   {!settled && (
                     <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
                       <span className="mr-1">Other ways:</span>

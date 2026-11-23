@@ -3496,10 +3496,91 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   - Guards: `qa/regression/kyc-via-agent-guards.test.mjs`; tests in
     `server/kyc-request.test.ts`. Not run against Microsoft from a build
     machine.
-- **For Jack, not done**: Issue 2 of the AML policy says BGP "uses a
-  third-party service provider to conduct due diligence checks" (Outsourcing
-  of KYC administration). That is no longer true and is not one of the four
-  Issue 3 changes he signed off.
+- **For Jack, not done**: the policy (Issue 2, and Issue 3, which kept the
+  section) says BGP "uses a third-party service provider to conduct due
+  diligence checks" (D, Outsourcing of KYC administration). That is no
+  longer true and is not one of the four Issue 3 changes he signed off. Its
+  section D also still names Victoria Broadhead as Deputy Compliance Officer.
+  Both wait on a further issue that Jack signs.
+
+## Upload documents on a party (Woody, 2026-11-23)
+
+Woody: "the documents upload button for KYC4U can that be just upload
+documents but also add the drag and drop function in the new box we have
+done so can upload certified documents, the app must read these and check
+they are acceptable". Rules: `shared/kyc-documents.ts`; reader and routes:
+`server/kyc-documents.ts`; box: `client/src/components/kyc-documents.tsx`.
+Tests: `server/kyc-documents.test.ts` (in `npm test`),
+`qa/regression/kyc-documents-guards.test.mjs`.
+
+- **Where**: **Upload documents** in each party's Documents step on the
+  transaction's AML (BGP staff): drag files onto it or Choose files (PDF,
+  photos including HEIC, Word, or a zip, opened; up to 10 at a time, 25MB
+  each), with **An agent saw the originals** to tick when they did. The box
+  keeps its own drops: its drag handlers stop the event, so the app-wide
+  **Drop to import** (`GlobalDropZone`, on window) neither shows over it nor
+  opens Import Anything (a drop on it did both until a browser check on
+  23 November 2026; the Describe the transaction box had the same fault and
+  the same fix). The same file (name and size) is filed once per party:
+  dropped again it is listed as already uploaded, or, with the tick, the
+  copy already filed is marked as seen in the original.
+- **Filed** on the party's KYC record (the company that signs when the
+  transaction names one, else the brand), with a `kyc_document_readings` row
+  (boot migration in `server/index.ts`: the reading, seen original, who
+  uploaded, an officer's acceptance). Five-year deletion and company merges
+  cover it.
+- **Read** in the background (the box reads again every few seconds while a
+  file waits), by Anthropic called directly, one forced-tool call a file
+  (`read_kyc_document`), capped a day (`KYC_DOCUMENT_READER_DAILY_CAP`,
+  default 200, 0 = off), sent the file alone: the kind, the names as
+  printed, date of birth, issue and expiry dates, a bill's date, the
+  address, and whether it is certified as a true copy with the certifier's
+  name, profession or firm and date. The KYC record files it under the type
+  it was read as. **Read again** per file.
+- **Checked** (`checkKycDocument`): an identity document counts for the one
+  person to check it names (date of birth agreeing with the register's),
+  in date, and certified with the certifier's name, profession or firm and
+  date, or seen in the original by an agent; a proof of address by the
+  proof of address rules; company documents are kept on the record. Each
+  failure is a plain reason. **Accept it** (the Nominated Officer or a
+  Deputy, with a note) counts one that did not pass.
+- **Counts** on the people to check (`uploads` in `shared/kyc-people.ts`):
+  "Identity document uploaded by BGP and checked" and "Proof of address:
+  uploaded by BGP and checked", so nothing more is asked of that person.
+- Not run against Anthropic from a build machine: checked in a browser on a
+  local copy with the reader off and with a reading written in its shape.
+
+## Verified from public sources: admins only, with a search (Woody, 2026-11-23)
+
+Woody: "verified from public records button needs to be for admins only",
+then "should search and pull out what it can to actually verify for public
+records can it also then make a suggestion if thats a reasonable amount or
+have to ask for further info". Rules: `shared/public-records.ts`; search:
+`server/public-records.ts`; routes in `server/deal-party-aml.ts`. Tests:
+`server/public-records.test.ts` (in `npm test`), the guard in
+`qa/regression/kyc4u-gaps-guards.test.mjs`.
+
+- **Admins only**: the button shows to an admin who is an AML officer
+  (`canDecide && admin` on the person row), and the three routes (record,
+  withdraw, search) use `adminDecider`: the Nominated Officer or a Deputy
+  who is also an admin (`is_admin` or `ADMIN_EMAILS`).
+- **Search public sources** in the dialog (`POST
+  /api/deals/:id/parties/:role/public-figure/search { key }`): Perplexity
+  (`sonar-pro`), sent the person's name, their role and the company, and
+  their month and year of birth; capped a day (`PUBLIC_RECORDS_DAILY_CAP`,
+  default 60, 0 = off). A fact is kept only when its page is one the search
+  read (`checkPublicRecordsAnswer`), and one that may be about someone else
+  of the same name is shown but not counted.
+- **The suggestion** (`publicRecordsSuggestion`): enough when at least two
+  separate sites are about them (a `.co.uk` site is one site), at least one
+  ties them to the company, and no source gives another age than the
+  register's; otherwise "Ask for their ID" with the reasons, and send them a
+  link instead. Only when it is enough does it fill the note and links
+  (and only boxes still empty); the officer still reads and saves it
+  (Record it), and the search records nothing beyond a line on the KYC
+  history.
+- Not run against Perplexity from a build machine: the dialog was checked in
+  a browser on a local copy with the search's answer supplied.
 
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
@@ -4733,7 +4814,10 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   correct not Victoria"; the Issue 2 document names Victoria Broadhead as
   Deputy Nominated Officer and Deputy Compliance Officer, and a corrected
   issue is BGP's to publish, as a new entry and file). `POLICY_OFFICER_NAMES`
-  is what **Use the policy's officers** looks for. **Since the same day
+  is what **Use the policy's officers** looks for: since Issue 3 (Jack,
+  2026-11-23) the policy names Jack Barratt, with Layla O'Driscoll and
+  Woody Bruce as Deputy Nominated Officers, and the button sets all three.
+  **Since the same day
   there can be more than one Deputy** (Woody: "can you add woody bruce as
   deputy AML too please", then "jack as officer and then layla and i as
   depituties"): the officers in the app are Jack Barratt, with Layla
@@ -4750,8 +4834,8 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   deputyIds }`, which still takes `deputyId` from a screen loaded before).
   **Use the policy's officers** (`POST …/officers/from-policy`) is first
   set-up only: with a Nominated Officer set the panel does not offer it and
-  the server answers 409, because it would leave only the one Deputy the
-  policy names. **KYC4U is BGP's
+  the server answers 409, because it would overwrite the Deputies an admin
+  chose since. **KYC4U is BGP's
   outsourced KYC provider, not its MLRO**: this supersedes "KYC4U is BGP's
   MLRO" (Woody, 2026-10-05) and "the MLRO's ... admins until then" wherever
   either appears in this file; the screens and ChatBGP say so.
@@ -4760,7 +4844,20 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   themselves at `GET /api/aml-policy/documents/:key` (outside the retired
   `/api/aml/`, on no client list), the buttons on the policy panel (Deals →
   AML). A new issue is a new entry and a new file: never overwrite an old one
-  (policy M keeps older versions for five years).
+  (policy M keeps older versions for five years). The panel shows the latest
+  issue of each as a button and an earlier one on a quiet line under them
+  (`amlPolicyDocumentReplaced`). **Issue 3 of the policy** (Jack, 2026-11-23,
+  `bgp-aml-policy-issue-3.docx`) is Issue 2 with the four changes he signed
+  off: a company, partnership, LLP or listed company is evidenced by its
+  Companies House record (or its home register) with BGP's screening in
+  ChatBGP, an aggregator report allowed instead (4.1, 4.2, 4.4, 4.6); an
+  identity check through a certified service on the UK DVS register
+  (currently Veriff) counts as meeting the person, so certified copies are
+  not needed (4.10, 4.11); a newly formed company with no accounts gives its
+  parent's latest accounts or a record of how the deal is funded (4.4); and the
+  Deputy Nominated Officers (C.b). The risk assessment is still Issue 2
+  (`POLICY_SOURCE` names both). Training confirms the latest issue: each
+  person confirms Issue 3 afresh on My BGP → AML training.
 - **Levels** (policy F.a): each party is Simplified, Standard or Enhanced
   (`dueDiligenceLevel`): enhanced on any red flag or higher-risk factor that
   counts (set aside with a comment, it does not); simplified on a basis

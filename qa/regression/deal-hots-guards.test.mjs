@@ -63,7 +63,8 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   // Type it out or drop the heads of terms (Woody, 23 November 2026).
   assert.match(amlBox, /\{staffView && slots && <DealDescribeBox dealId=\{dealId\} \/>\}/);
   assert.match(screen, /export function DealDescribeBox/);
-  assert.match(screen, /onDrop=\{e => \{ const f = e\.dataTransfer\.files\?\.\[0\]/);
+  // The box takes a dropped file itself and keeps it from the app-wide import (23 November 2026).
+  assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
   assert.match(partyBox, /if \(!o && !finding && !hotsOpen\) onClose\(\);/);
