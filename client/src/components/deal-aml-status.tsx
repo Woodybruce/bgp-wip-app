@@ -7,6 +7,7 @@ import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
 import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
+import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
 import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
@@ -811,6 +812,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
   const isTrust = !!party?.brand.recordTrust;
+  // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
+  const trustQ = useTrustStructure(cp.id, staff && isTrust);
+  const trustRecordedGaps = isTrust ? (trustQ.data?.gaps || []).filter(g => g.from === "recorded").map(g => g.words) : [];
   // Owned through a company registered abroad: the officers find the people behind it.
   const ownedAbroad = pre?.company?.ownersAbroad || [];
   // What the app traced past Companies House and what BGP recorded (21 November 2026).
@@ -851,6 +855,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     needsNote: !!decision?.needsNote,
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
+    trustGaps: trustRecordedGaps,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
     relianceFirm: people?.reliance?.firm || null,
@@ -863,6 +868,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const nextAction: ReactNode = (() => {
     const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
+      case "trust": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
       case "fill_in": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
@@ -888,13 +894,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const signs: { state: StepState; text: ReactNode } = companyMissing
     ? { state: settled ? "todo" : "act", text: <span className="text-amber-800 dark:text-amber-300">Not set</span> }
     : {
-        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers) ? "act" : "done",
+        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0) ? "act" : "done",
         text: <>
           {!isCompany && !party?.company
             ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
             : <><span className="font-medium">{party?.company?.name || charity?.name || cp.signsAs || partyName}</span>
                 {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
-          {isTrust && <span className="text-muted-foreground"> · a trust</span>}
+          {isTrust && <span className={!settled && trustRecordedGaps.length ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}> · a trust{trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}</span>}
           {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
           {regWarning && <span className="text-red-700 dark:text-red-400"> · {shortReason(regWarning, 50)}</span>}
           {!settled && askMissing && <span className="text-amber-800 dark:text-amber-300"> · who to ask not set</span>}
@@ -1050,6 +1056,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
+            {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
                 <SubHead>Owners abroad</SubHead>

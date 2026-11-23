@@ -29,7 +29,7 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_OWNERS_QUESTION, KYC_OWNER_LINKS_TITLE, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords, kycPersonRoleWords,
+  KYC_OWNERS_QUESTION, KYC_OWNER_LINKS_TITLE, KYC_PEP_QUESTION, TRUST_PERSON_ROLES, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, trustDocsReadyEmail, kycOwnersWords, kycPepWords, kycPersonRoleWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycViaAgentReminderEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress, type KycRequestPerson,
 } from "@shared/kyc-request";
@@ -120,6 +120,10 @@ export interface KycRequestDetails {
   // Files the joint agent emailed to someone at BGP, added by BGP: no email
   // went from the app.
   manual?: boolean;
+  // A request for a trust's documents (Jack, 23 November 2026: "Request Trust
+  // Structure"): no identity check or question, and when the documents are in
+  // the agents and the officers hear it is ready for due diligence.
+  purpose?: "trust_structure" | null;
   // Sent through the party's own agent to pass on to their client (Woody,
   // 23 November 2026: "with the agent acting for the tenant or against us we
   // need them to pass on the standard KYC requests for their clients to
@@ -139,6 +143,9 @@ export interface KycViaAgent {
   clientName: string | null;
   passedOn?: Array<{ name: string; email: string; at: string }>;
 }
+
+/** A request for a trust's documents, not identity checks. */
+export const isTrustDocsRequest = (request: Pick<KycRequestDetails, "purpose"> | null | undefined): boolean => request?.purpose === "trust_structure";
 
 /** A joint agent's request (server/joint-agent-checks.ts), not the party's own client checks. */
 export const isJointRequest = (request: Pick<KycRequestDetails, "audience"> | null | undefined): boolean => request?.audience === "joint_agent";
@@ -473,6 +480,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       passedOn: (request.viaAgent.passedOn || []).map(x => ({ name: x.name, at: x.at })),
       personNamed: !!String(row.contact_name || "").trim(),
     } : null,
+    ...(isTrustDocsRequest(request) ? { trustDocs: true } : {}),
   };
 }
 
@@ -550,7 +558,7 @@ async function dealParties(dealId: string) {
   return { deal: { id: d.id as string, name: d.name as string, clientRole, clientName: parties.find(x => x.role === clientRole)?.name || null }, parties };
 }
 
-export async function createClientCheck(dealId: string, input: z.infer<typeof clientCheckBody>, me: { id: string; name: string | null; email: string | null }): Promise<{
+export async function createClientCheck(dealId: string, input: z.infer<typeof clientCheckBody>, me: { id: string; name: string | null; email: string | null }, opts: { purpose?: "trust_structure" } = {}): Promise<{
   token: string; ref: string; link: string; sent: KycSendResult; idCheck: boolean; idCheckNote: string | null; cc: string[];
 }> {
   const found = await dealParties(dealId);
@@ -572,6 +580,8 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   const personName = input.name.replace(/\s+/g, " ").trim();
   if (!via && !personName) throw Object.assign(new Error("Enter the name of the person to ask."), { status: 400 });
   if (input.contactId && !party.contacts.some(c => c.id === input.contactId)) throw Object.assign(new Error("That contact is not at this company."), { status: 400 });
+  const trustDocs = opts.purpose === "trust_structure";
+  if (trustDocs && !party.trust) throw Object.assign(new Error("Record it as a trust first."), { status: 409 });
   let viaAgent: KycViaAgent | null = null;
   if (via) {
     if (email.endsWith(STAFF_DOMAIN)) throw Object.assign(new Error("That is a BGP address: enter the agent's contact."), { status: 400 });
@@ -601,12 +611,13 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   // What BGP's checks before asking found (the agent's ticks decide what is
   // asked; this records why the rest was not, and the owners to confirm).
   const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
-  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName });
-  const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
+  const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk });
+  const confirmOwners = !trustDocs && input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
   // The owners other than the person asked, who each get a link of their own
   // (19 November 2026): the person asked can pass them on from their page.
   let ownLinksFor: Array<{ key: string; name: string }> = [];
-  if (input.kind === "company" && !docs.includes("owner_ids")) {
+  if (!trustDocs && input.kind === "company" && !docs.includes("owner_ids")) {
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company", dealId }, await dealPeopleRequests(dealId)).catch(() => null);
     ownLinksFor = (people?.people || [])
@@ -631,11 +642,11 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     ref, kind: input.kind, role: party.role, partyName: party.name, dealName: found.deal.name,
     needsIdCheck, docs, note: input.note?.trim() || null, mobile: via ? null : input.mobile?.trim() || null,
     agents: agentList, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
-    openedAt: null, veriffSessionIds: [], idCheckNote, askPep: true, answers: null,
+    openedAt: null, veriffSessionIds: [], idCheckNote, askPep: !trustDocs, answers: null,
     confirmOwners, ownerNames: docs.includes("owner_ids") ? asks.ownerNames : [], ownersAnswer: null,
     ownersAbroad: input.kind === "company" && docs.includes("ownership") && asks.ownersAbroad?.length ? asks.ownersAbroad : null,
-    notAsked: asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
-    ownLinksFor,
+    notAsked: trustDocs ? [] : asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
+    ownLinksFor, ...(trustDocs ? { purpose: "trust_structure" as const } : {}),
     ...(viaAgent ? { viaAgent } : {}),
   };
   // Someone typed rather than picked is saved to the CRM under the brand
@@ -647,7 +658,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     try {
       const { findOrAddPartyPerson } = await import("./deal-parties");
       const added = await findOrAddPartyPerson(pool, party.companyId, { name: input.name.trim(), email, mobile: input.mobile?.trim() || null, jobTitle: null },
-        `Added by ${me.name || "BGP"} when sending the client checks for ${found.deal.name}.`);
+        `Added by ${me.name || "BGP"} when ${trustDocs ? "asking for the trust's documents" : "sending the client checks"} for ${found.deal.name}.`);
       contactId = added.id;
       const set = await pool.query(`UPDATE crm_deals SET ${party.personField} = $2 WHERE id = $1 AND ${party.personField} IS NULL RETURNING id`, [dealId, contactId]);
       if (set.rows.length) {
@@ -681,8 +692,9 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   const link = kycLinkFor(token);
   const common = {
     partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
-    needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, askPep: true,
+    needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: ownLinksFor.map(o => o.name),
+    purpose: request.purpose || null,
   };
   const sent = await sendKycEmail({
     to: [email], cc,
@@ -697,8 +709,8 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   request.sentAt = sent.ok ? new Date().toISOString() : null;
   request.sendError = sent.ok ? (sent.fellBack ? `Sent from ${sent.from}: Microsoft would not send as ${KYC_MAILBOX}` : null) : sent.error;
   await saveRequest(token, request);
-  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_checks_sent', $2, $3)`,
-    [party.companyId, me.name || me.id, `${sent.ok ? "Sent" : "Not sent"} ${viaAgent ? `through ${viaAgent.name} of ${viaAgent.firm} <${email}>, to pass on to ${contactName || party.name},` : `to ${input.name} <${email}>`} for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${cc.join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
+  await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+    [party.companyId, trustDocs ? "trust_documents_requested" : "client_checks_sent", me.name || me.id, `${trustDocs ? "Trust documents asked for: " : ""}${sent.ok ? "Sent" : "Not sent"} ${viaAgent ? `through ${viaAgent.name} of ${viaAgent.firm} <${email}>, to pass on to ${contactName || party.name},` : `to ${input.name} <${email}>`} for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${cc.join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
   return { token, ref, link, sent, idCheck: request.needsIdCheck, idCheckNote: request.idCheckNote, cc };
 }
 
@@ -764,7 +776,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
   if (!person) throw Object.assign(new Error(`That person is not on the list of people to check for ${party.name}.`), { status: 404 });
   const main = "client" in by ? by.client : null;
   if (main) {
-    if (!person.roles.includes("owner")) throw Object.assign(new Error("Only the owners' links are passed on from this page."), { status: 400 });
+    if (!person.roles.some(r => r === "owner" || (TRUST_PERSON_ROLES as readonly string[]).includes(r))) throw Object.assign(new Error("Only the owners' and the trust's people's links are passed on from this page."), { status: 400 });
     if (personNamesMatch(person.name, main.contact_name || "")) throw Object.assign(new Error("Your own checks are on this page."), { status: 400 });
   }
   const email = cleanEmail(input.email);
@@ -930,7 +942,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
     ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
     agents: request.agents, progress, test: !!row.is_test, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
-    person: request.person ? { roles: request.person.roles } : null,
+    person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
   };
   const sent = await sendKycEmail({
     to: [passed ? passed.email : row.contact_email || ""],
@@ -1060,6 +1072,25 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
     return documentId;
   }
 
+  if (isTrustDocsRequest(request) || docKey === "trust_deed") {
+    // A trust's documents (23 November 2026): the deed is read into a draft
+    // structure, and once everything asked for is in, the request finishes
+    // itself and the agents and officers hear it is ready.
+    const documentId = String(doc.rows[0].id);
+    void (async () => {
+      if (docKey === "trust_deed" && row.company_id) {
+        await import("./trust-structure").then(m => m.readDeedDocument(documentId, row.company_id!, request.partyName, file)).catch(() => null);
+      }
+      if (isTrustDocsRequest(request)) {
+        const fresh = await tokenRow(row.token);
+        if (fresh && !fresh.completed_at && !fresh.revoked_at) {
+          const progress = await progressOf(fresh);
+          if (fresh.request!.docs.every(k => progress.docsDone.includes(k))) await finishRequest(fresh);
+        }
+      }
+    })().catch((e: any) => console.warn(`[kyc] trust document follow-up failed: ${e?.message}`));
+  }
+
   if (docKey === "proof_of_address") {
     // Read and set against the person it is for (20 November 2026): the
     // people to check count it only when it reads right or an officer
@@ -1111,9 +1142,37 @@ async function jointZipFiles(name: string, mime: string | null | undefined, buff
 
 async function finishRequest(row: TokenRow): Promise<void> {
   if (row.completed_at) return;
-  await pool.query(`UPDATE kyc_upload_tokens SET completed_at = now() WHERE token = $1 AND completed_at IS NULL`, [row.token]);
+  // Claimed once: two uploads finishing a trust's documents together send one note.
+  const claimed = await pool.query(`UPDATE kyc_upload_tokens SET completed_at = now() WHERE token = $1 AND completed_at IS NULL RETURNING token`, [row.token]);
+  if (!claimed.rows.length) return;
   const request = row.request!;
   const progress = await progressOf(row);
+  // A trust's documents are in (23 November 2026): the agents and the
+  // officers hear it is ready for due diligence, with the deed read first.
+  if (isTrustDocsRequest(request)) {
+    const deedFiles = progress.files.filter(f => f.docKey === "trust_deed");
+    const deed = deedFiles.length && row.company_id && !row.is_test
+      ? await import("./trust-structure").then(m => m.ensureRequestDeedRead(row.token, row.company_id!, request.partyName)).catch(() => null)
+      : null;
+    const missing = request.docs.filter(key => !progress.docsDone.includes(key)).map(key => KYC_DOCS[key].title);
+    const officers = row.is_test ? [] : await import("./aml-authority").then(m => m.amlOfficerEmails()).catch(() => [] as string[]);
+    const to = [...new Set([...kycReplyAddresses(row, request.cc), ...officers.filter(e => cleanEmail(e).endsWith(STAFF_DOMAIN))])];
+    const sent = await sendKycEmail({
+      to,
+      build: sentFrom => trustDocsReadyEmail({
+        recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
+        dealLink: row.is_test ? LINK_BASE : dealLinkFor(row.deal_id), sentFrom, test: !!row.is_test,
+        files: progress.files.map(f => ({ name: f.name, docKey: f.docKey })), missing,
+        deed: deed ? { read: deed.read, values: deed.lines.length, people: deed.people.length, why: deed.why } : null,
+      }),
+    });
+    if (!sent.ok) console.warn(`[kyc] the trust documents note for ${request.ref} was not sent: ${sent.error}`);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'trust_documents_in', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `Trust documents in, ref ${request.ref}: ${progress.files.length} file(s)${missing.length ? `; not sent: ${missing.join(", ")}` : ""}; ready for due diligence${sent.ok ? `, emailed to ${to.join(", ")}` : ""}`]).catch(() => {});
+    }
+    return;
+  }
   // The joint agent finished (22 November 2026): the deal's agents hear what
   // came in, what it does not cover yet, and what happens next.
   if (isJointRequest(request)) {
@@ -1299,8 +1358,9 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
       parties: await Promise.all(found.parties.map(async ({ personField: _column, ...p }) => {
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
-        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null });
-        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
+        const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null, trust: trustAsk });
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, trustAsk };
       })),
       requests: await clientChecksForDeal(dealId),
       people,

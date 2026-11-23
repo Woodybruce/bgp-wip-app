@@ -37,6 +37,7 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
       companyId: r.company_id || null,
       recipientName: r.contact_name || null,
       person: person ? { key: String(person.key || ""), name: person.name, roles: Array.isArray(person.roles) ? person.roles : [] } : null,
+      ...(request.purpose === "trust_structure" ? { trustDocs: true } : {}),
       cancelled: !!r.revoked_at,
       expired: new Date(r.expires_at).getTime() < now,
       finished: !!r.completed_at,
@@ -82,10 +83,13 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   }
   const { abroadPeopleFor } = await import("./kyc-abroad");
   const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
+  // A trust's structure as BGP recorded it (23 November 2026): its people are the ones to check.
+  const trust = ownRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
     // Documents BGP uploaded on the party, read and checked (23 November 2026).
     uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
+    ...(trust !== undefined ? { trust } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });
 }

@@ -279,7 +279,8 @@ const box = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({
   role: "vendor", stage: "not_started", due: true, approvedBy: null, expiresAt: null, notRequiredWords: null,
   company: true, companyMissing: false, gaps: [], askName: "Jane Trustee", precheckRunning: false,
   redFlags: 0, factors: 1, sanctionsOnly: false, clientChecks: true, request: null, people: [], kyc4u: "none",
-  canSignOff: true, canDecide: false, signOffBlocked: null, needsNote: true, trust: true, ...over,
+  // An enhanced company (a factor): a trust never goes to KYC4U since 23 November 2026 (server/trust-structure.test.ts).
+  canSignOff: true, canDecide: false, signOffBlocked: null, needsNote: true, trust: false, ...over,
 });
 
 test("the Next line: the client checks and then the officers (KYC4U is no longer used)", () => {

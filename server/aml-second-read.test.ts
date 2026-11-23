@@ -63,7 +63,7 @@ test("a party recorded as a trust is enhanced, and needs no company that signs",
   assert.deepEqual(partyGaps({ role: "vendor", kind: "company", brandName: "A Co", companySet: false, person: { name: "A", email: "a@x.com" } }).map(g => g.key), ["company"]);
 });
 
-test("a trust is the officers' in full: client checks, then their sign-off (KYC4U is no longer used, 23 November 2026)", () => {
+test("a trust is the officers' in full: its structure first, then the client checks and their sign-off (KYC4U is no longer used, 23 November 2026)", () => {
   const facts: AmlBoxFacts = {
     role: "vendor", stage: "bgp_checked", due: true, approvedBy: null, expiresAt: null, notRequiredWords: null,
     company: true, companyMissing: false, gaps: [], askName: "Adam Harvey", precheckRunning: false, redFlags: 0, factors: 1,
@@ -73,6 +73,9 @@ test("a trust is the officers' in full: client checks, then their sign-off (KYC4
   const step = amlNextStep(facts);
   assert.equal(step.action, "send_client_checks");
   assert.doesNotMatch(`${step.lead} ${step.words}`, /KYC4U/);
+  const gap = amlNextStep({ ...facts, trustGaps: ["Record the settlor"] });
+  assert.equal(gap.action, "trust");
+  assert.equal(gap.words, "Record the settlor");
   const done = amlNextStep({ ...facts, request: { status: "finished", to: "Adam Harvey" } });
   assert.equal(done.action, "sign_off");
   assert.equal(done.who, "officers");

@@ -107,13 +107,14 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
 }
 
 // A trust (Jack, 20 November 2026: URC Thames North Trust, the vendor on
-// Fortis Green, read as an ordinary company). Recorded, it is enhanced and goes
-// to KYC4U in full. A name that reads like a trust is a suggestion a person
-// presses, never applied by itself.
+// Fortis Green, read as an ordinary company). Recorded, it is enhanced and BGP's
+// officers check it from its structure, never KYC4U (Jack, 23 November 2026:
+// "Remove KYC4u on trusts"). A name that reads like a trust is a suggestion a
+// person presses, never applied by itself.
 export function TrustLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
   const mark = useMarkTrust(dealId, party.role);
   // Enhanced due diligence is the officers' (KYC4U is no longer used, 23 November 2026).
-  const who = "the officers check it in full";
+  const who = "BGP records its structure and the officers check it";
   if (party.brand.kind !== "company" && !party.brand.recordTrust) return null;
   if (party.brand.recordTrust) {
     if (compact) return null;

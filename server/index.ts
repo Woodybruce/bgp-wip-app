@@ -3088,6 +3088,26 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       undone_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_party_exemptions_deal_idx ON kyc_party_exemptions (deal_id) WHERE undone_at IS NULL`,
+    // A trust's structure, checked by BGP itself (Jack, 23 November 2026:
+    // "Remove KYC4u on trusts. We need you to build the trust structuring"):
+    // one per trust record, shared by its deals. server/trust-structure.ts.
+    `CREATE TABLE IF NOT EXISTS kyc_trust_structures (
+      company_id varchar PRIMARY KEY,
+      structure jsonb NOT NULL,
+      updated_by varchar,
+      updated_by_name text,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    // The trust deed a client sent, read into a draft structure (23 November 2026).
+    `CREATE TABLE IF NOT EXISTS kyc_trust_deed_readings (
+      document_id varchar PRIMARY KEY,
+      company_id varchar NOT NULL,
+      file_name text,
+      reading jsonb NOT NULL,
+      read_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_trust_deed_readings_company ON kyc_trust_deed_readings (company_id, read_at DESC)`,
     // On a sale, the record HMRC asks for when the joint agent found the
     // other side (Woody, 22 November 2026: "We have to do what HMRC say";
     // AMLG2200 section 21): when, how and whom BGP asked for the joint
@@ -4519,6 +4539,7 @@ import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
 import amlSecondReadRouter from "./aml-second-read";
+import trustStructureRouter from "./trust-structure";
 import amlPolicyRouter from "./aml-policy";
 import amlRegisterRouter from "./aml-register";
 import amlRulesRouter from "./aml-rules";
@@ -5904,6 +5925,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(amlFileRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);
+  app.use(trustStructureRouter);
   app.use(amlPolicyRouter);
   // The AML register, training, agents' HMRC registration and the five-year
   // deletion (BGP staff; the officers where each route says).

@@ -84,6 +84,8 @@ export interface AmlFileParty {
   abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
   // The joint agent asked for their checks on this party, and what came back (22 November 2026).
   joint?: JointAgentPartyView | null;
+  // A trust's structure as BGP recorded it, as lines (23 November 2026); null when not a trust.
+  trustStructure?: string[] | null;
 }
 
 export interface AmlFileData {
@@ -213,6 +215,11 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
     const abroadRecords = kind === "company" ? await read("what BGP recorded about companies abroad",
       import("./kyc-abroad").then(m => m.abroadRecordsFor(brandId, entityId)), []) : [];
     if (!Array.isArray(requests)) unread.push("the client checks");
+    const trustStructure = trusts.has(brandId) ? await read("the trust's structure", import("./trust-structure").then(async m => {
+      const { trustStructureLines } = await import("@shared/trust-structure");
+      const r = await m.trustStructureFor(brandId);
+      return r ? trustStructureLines(r.structure, text(brand.name)) : ["No structure recorded yet."];
+    }), null as string[] | null) : null;
     if (!flags) unread.push("the red flags");
     parties.push({
       role,
@@ -244,6 +251,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       riskAssessment: null,
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
       joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
+      trustStructure,
     });
   }
   const data: AmlFileData = {
@@ -291,7 +299,7 @@ type RiskAssessmentKyc4uInput = Parameters<typeof buildRiskAssessment>[0]["party
 /** The written risk assessment for one party, from what the file gathered. */
 export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAssessment {
   return buildRiskAssessment({
-    inHouse: !!data.inHouse,
+    inHouse: !!data.inHouse || p.trust,
     deal: { name: data.deal.name, ref: data.deal.ref, type: data.deal.type, property: data.deal.property, agents: data.deal.agents, regimeWhy: data.regime.why },
     party: {
       roleLabel: DEAL_PARTY_LABEL[p.role], name: p.company?.name || p.brand.name, brandName: p.brand.name, client: p.client,
@@ -523,6 +531,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   w.kv("Brand on the transaction", p.brand.name);
   w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
+  if (p.trustStructure) w.kv("Trust structure (recorded by BGP)", p.trustStructure.join("\n"));
   const state = amlFileStateWords(p.state, p.notRequired);
   w.kv("Where it stands", state.words, state.tone === "done" ? GREEN : state.tone === "flag" ? RED : AMBER);
   if (p.level) {

@@ -6,7 +6,8 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Crown, Mail, Phone, Star, Target, Users } from "lucide-react";
+import { ChevronDown, Crown, Mail, Phone, Star, Target, Users, Check } from "lucide-react";
+import { CompanyLinks } from "./company-links";
 import type { CrmHubKind, CrmHubPerson, CrmHubRow } from "@shared/crm-hub";
 import { lastContactShort } from "@shared/last-contact";
 import { apiRequest } from "@/lib/queryClient";
@@ -190,14 +191,22 @@ const openOnKey = (row: CrmHubRow, actions: CrmRowActions) => (event: React.Keyb
   if (event.target === event.currentTarget && event.key === "Enter") actions.onOpen(row);
 };
 
-export function CrmCompanyCard({ row, actions, phone }: { row: CrmHubRow; actions: CrmRowActions; phone: boolean }) {
+// Select mode (the CRM page's Select and Delete): a press ticks the company
+// instead of opening it.
+function Tick({ on }: { on: boolean }) {
+  return <span aria-hidden className={cn("mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border", on ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground/50 bg-background")}>{on && <Check className="h-3 w-3" />}</span>;
+}
+
+export function CrmCompanyCard({ row, actions, phone, selected }: { row: CrmHubRow; actions: CrmRowActions; phone: boolean; selected?: boolean }) {
   const [open, setOpen] = useState(false);
+  const selecting = selected !== undefined;
   return (
-    <div role="link" tabIndex={0} aria-label={`Open ${row.name}`} onClick={() => actions.onOpen(row)} onKeyDown={openOnKey(row, actions)}
+    <div role={selecting ? "checkbox" : "link"} aria-checked={selecting ? selected : undefined} tabIndex={0} aria-label={selecting ? `Tick ${row.name}` : `Open ${row.name}`} onClick={() => actions.onOpen(row)} onKeyDown={openOnKey(row, actions)}
       className={cn("border border-card-border bg-card shadow-sm p-3 min-w-0 cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring flex flex-col gap-2.5",
-        phone ? "rounded-2xl" : "rounded-xl")}
+        phone ? "rounded-2xl" : "rounded-xl", selected && "ring-2 ring-primary")}
       data-testid={`crm-hub-row-${row.id}`}>
       <div className="flex items-start gap-2">
+        {selecting && <Tick on={!!selected} />}
         <div className="min-w-0 flex-1"><CompanyCell row={row} size={40} roomy /></div>
         <ExpandButton row={row} open={open} onToggle={() => setOpen(value => !value)} />
       </div>
@@ -210,20 +219,21 @@ export function CrmCompanyCard({ row, actions, phone }: { row: CrmHubRow; action
         <div className="min-w-0"><StrategyCell row={row} actions={actions} /></div>
         <ContactCount row={row} />
       </div>
-      {open && <div className="border-t border-border pt-2.5"><PeopleBlock row={row} /></div>}
+      {open && <div className="border-t border-border pt-2.5 space-y-3 cursor-default" onClick={stop}><PeopleBlock row={row} /><CompanyLinks companyId={row.id} /></div>}
     </div>
   );
 }
 
 export const CRM_TABLE_COLUMNS = 7;
-export function CrmCompanyTableRow({ row, actions }: { row: CrmHubRow; actions: CrmRowActions }) {
+export function CrmCompanyTableRow({ row, actions, selected }: { row: CrmHubRow; actions: CrmRowActions; selected?: boolean }) {
   const [open, setOpen] = useState(false);
+  const selecting = selected !== undefined;
   return (
     <>
-      <tr tabIndex={0} title={`Open ${row.name}`} onClick={() => actions.onOpen(row)} onKeyDown={openOnKey(row, actions)}
-        className={cn("align-top cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:bg-muted/40", !open && "border-b border-border last:border-b-0")}
+      <tr tabIndex={0} title={selecting ? `Tick ${row.name}` : `Open ${row.name}`} aria-selected={selecting ? selected : undefined} onClick={() => actions.onOpen(row)} onKeyDown={openOnKey(row, actions)}
+        className={cn("align-top cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:bg-muted/40", !open && "border-b border-border last:border-b-0", selected && "bg-primary/5")}
         data-testid={`crm-hub-row-${row.id}`}>
-        <td className="py-2 pl-3 pr-3 max-w-[340px]"><CompanyCell row={row} size={32} /></td>
+        <td className="py-2 pl-3 pr-3 max-w-[340px]"><div className="flex items-start gap-2">{selecting && <Tick on={!!selected} />}<div className="min-w-0 flex-1"><CompanyCell row={row} size={32} /></div></div></td>
         <td className="py-2 pr-3 max-w-[200px]"><OwnersCell row={row} /></td>
         <td className="py-2 pr-3"><ContactCell row={row} /></td>
         <td className="py-2 pr-3 max-w-[280px]"><NextActionCell row={row} /></td>
@@ -233,7 +243,7 @@ export function CrmCompanyTableRow({ row, actions }: { row: CrmHubRow; actions: 
       </tr>
       {open && (
         <tr className="border-b border-border last:border-b-0 bg-muted/20">
-          <td colSpan={CRM_TABLE_COLUMNS} className="px-3 pb-3 pt-1"><PeopleBlock row={row} wide /></td>
+          <td colSpan={CRM_TABLE_COLUMNS} className="px-3 pb-3 pt-1 space-y-3"><PeopleBlock row={row} wide /><div onClick={stop}><CompanyLinks companyId={row.id} compact /></div></td>
         </tr>
       )}
     </>

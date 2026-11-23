@@ -37,7 +37,7 @@ import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, isDealPartyRole, partySubjectKind, type DealPartyRole } from "@shared/deal-parties";
 import {
   IN_HOUSE_EDD_NOTE_MIN, KYC4U_RESULTS, KYC4U_RESULT_MAX_BYTES, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN,
-  isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial, signOffEnhanced,
+  isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial, signOffEnhanced, signOffInHouse,
   type PartyKycState, type SignOffFacts,
 } from "@shared/party-kyc";
 import { isSanctionsFlag } from "@shared/kyc-red-flags";
@@ -166,6 +166,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     [party.dealId, party.brandId, party.entityId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
+  // A trust is checked by BGP's officers, never KYC4U (Jack, 23 November 2026).
+  const trust = !party.entityId && String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
   const people = await import("./kyc-people")
     .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await m.dealPeopleRequests(party.dealId, db)))
     .catch(() => null);
@@ -185,11 +187,13 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     precheck: precheck.ranAt ? { ranAt: precheck.ranAt } : null,
     precheckRunning: precheck.running,
     clientChecksFinished: finished,
-    clientChecksOutstanding: mainFinished ? outstanding : [],
+    clientChecksOutstanding: mainFinished || trust ? outstanding : [],
     sanctionsOnly: party.regime === "sanctions_only",
     ownersAbroad: precheck.ownersAbroad || [],
     reliance,
     inHouseEdd: (await (await import("./aml-authority")).readInHouseEdd()).on,
+    trust,
+    trustGaps: trust ? (await import("./trust-structure").then(m => m.trustGapsFor(party.brandId, db)).catch(() => [{ words: "the trust's structure could not be read" }])).map(g => g.words) : [],
     sanctionsFlags: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => isSanctionsFlag(f)).length,
     level: flags?.levels?.[party.brandId] || null,
   };
@@ -197,7 +201,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
 
 /** For the deal's AML card: may the party be signed off now, and is a note needed. edd: enhanced due diligence by BGP, the officers' to sign off. */
 export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[] } {
-  const edd = signOffEnhanced(facts) && !!facts.inHouseEdd;
+  const edd = signOffEnhanced(facts) && signOffInHouse(facts);
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(Math.max(SIGN_OFF_NOTE_MIN, IN_HOUSE_EDD_NOTE_MIN)) }),
     needsNote: edd || (!facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance),
@@ -297,7 +301,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     if (denial) return res.status(409).json({ message: denial, code: "SIGN_OFF_REFUSED" });
     // Enhanced due diligence by BGP, with the officers' setting on (21
     // November 2026): the Nominated Officer or a Deputy only, and a year.
-    const edd = signOffEnhanced(facts) && !!facts.inHouseEdd;
+    const edd = signOffEnhanced(facts) && signOffInHouse(facts);
     if (edd && me.as !== "officer") return res.status(403).json({ message: "Enhanced due diligence is signed off by the Nominated Officer or a Deputy.", code: "SIGN_OFF_REFUSED" });
     // A party with nothing that counts reads standard or simplified (an
     // enhanced one is refused above unless done in-house); its approval lasts

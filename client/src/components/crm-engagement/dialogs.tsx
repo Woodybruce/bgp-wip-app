@@ -189,6 +189,17 @@ export function ActionPlanEditor({ action, partners, onClose, onSave }: {action:
 
 export type ActionSourceNote = {interviewee?: string | null; excerpt?: string | null; sourceUrl?: string | null};
 
+// The strategy an action on a company belongs to (Woody, 2026-11-23: "auto
+// type didnt pick up the strategy"): the one running strategy the company is
+// on, or, with several, the one the note names. None when it is not clear.
+export function strategyForCompany(strategies: EngagementStrategy[], companyId: string, note = ""): string | null {
+  const running = strategies.filter(s => s.status === "active" && s.targets.some(t => t.companyId === companyId));
+  if (running.length === 1) return running[0].id;
+  const text = note.toLowerCase();
+  const named = running.filter(s => s.name.trim().length > 3 && text.includes(s.name.trim().toLowerCase()));
+  return named.length === 1 ? named[0].id : null;
+}
+
 export function ActionEditor({ options, data, companyId, eventId, strategyId, initial, sourceNote, kind = "landlord", search, onClose, onSave }: {
   options: EngagementOptions; data: EngagementData; companyId?: string; eventId?: string; strategyId?: string;
   initial?: Partial<ActionInput>; sourceNote?: ActionSourceNote; kind?: EngagementKind; search?: CompanySearch;
@@ -199,6 +210,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
     title: "", notes: null, dueAt: null, status: "todo", ownerId: "", companyId: companyId || "",
     eventId: eventId || null, strategyId: strategyId || null, sourceInterviewId: null, sourceQuestionId: null,
     ...initial,
+    ...(!strategyId && !initial?.strategyId && (initial?.companyId || companyId) ? {strategyId: strategyForCompany(data.strategies, String(initial?.companyId || companyId))} : {}),
   }));
   const [due, setDue] = useState(() => londonDateTimeInput(initial?.dueAt || null));
   const linkedEvents = data.events.filter(e => !form.companyId || e.companies.some(c => c.companyId === form.companyId));
@@ -215,15 +227,16 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
       {sourceNote.excerpt && <p className="text-muted-foreground whitespace-pre-wrap">{sourceNote.excerpt}</p>}
       {sourceNote.sourceUrl && <Link className="inline-block text-xs underline" href={sourceNote.sourceUrl}>Read interview</Link>}
     </div>}
-    {!showSource && <CrmNoteFill form="action" kind={kind} saveWord="Create action" onRead={reading => {
+    {!showSource && <CrmNoteFill form="action" kind={kind} saveWord="Create action" onRead={(reading, note) => {
       if (reading.fields.dueAt) setDue(reading.fields.dueAt);
       const company = reading.companies[0];
       if (company) search?.onPick({id: company.id, name: company.name});
       setForm(f => ({...f, title: (reading.fields.title ?? f.title).slice(0, 200), notes: reading.fields.text ?? f.notes, ownerId: reading.fields.ownerId ?? f.ownerId,
-        ...(company && company.id !== f.companyId && !companyId ? {companyId: company.id, strategyId: null, eventId: null} : {})}));
+        ...(company && company.id !== f.companyId && !companyId ? {companyId: company.id, strategyId: strategyForCompany(data.strategies, company.id, note || ""), eventId: null}
+          : !f.strategyId && f.companyId ? {strategyId: strategyForCompany(data.strategies, f.companyId, note || "")} : {})}));
     }} />}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
-    <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search, kind)} emptyOptions={openingChoices(companyChoices(options, search, kind), kind)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? COMPANY_SEARCH_WORDS : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
+    <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search, kind)} emptyOptions={openingChoices(companyChoices(options, search, kind), kind)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : kind === "all" ? COMPANY_SEARCH_WORDS : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: strategyForCompany(data.strategies, c.id), eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
     {!!partners?.length && <ActionPlanFields partners={partners} value={{...NO_PLAN, propertyId: form.propertyId, tenancyUnitId: form.tenancyUnitId, sharedWithCompanyId: form.sharedWithCompanyId, waitingOnParty: form.waitingOnParty}} onChange={plan => setForm({...form, ...plan})} />}

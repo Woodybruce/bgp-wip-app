@@ -571,7 +571,7 @@ export interface ProviderLine {
 // people who manage the company stand in for them (reg 28(6)). Everyone else
 // on the register (directors, the secretary) and the deal's contact are
 // screened against the sanctions lists only.
-export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company" | "owners_abroad" | "trustees";
+export type ScreenBasis = "owners" | "managers" | "listed" | "individual" | "company" | "owners_abroad" | "trustees" | "trust";
 export interface PrecheckScreened {
   basis: ScreenBasis;
   // The people screened for public roles and adverse media.
@@ -587,6 +587,7 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
   company: "the company only: no owner or director could be named from the register",
   owners_abroad: "the company, the company registered abroad that owns it, and its directors meanwhile: Companies House cannot show who owns that company, so the client is asked for the people behind it",
   trustees: "the charity and its trustees, who control it, as the Charity Commission's register names them",
+  trust: "the trust and the people its structure records (the settlor, the trustees, any protector and the beneficiaries), its beneficial owners under MLR 2017 reg 6",
 };
 // One person or company a run screens, as the server lists them: the roles
 // they were found in ("the company", "owner", "owner of <company up the
@@ -596,7 +597,8 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
 // register or up the chain), screened as a company in full (20 November 2026).
 // trustee: a trustee of the charity the party is, or acts for, from the
 // Charity Commission's register (21 November 2026).
-export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean; trustee?: boolean }
+// trustPerson: someone on a trust's structure as BGP recorded it (23 November 2026).
+export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean }
 
 const roles = (c: ScreenCandidate) => c.role.split(", ");
 const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /director|member/i.test(r) && !/corporate/i.test(r));
@@ -608,7 +610,7 @@ const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /direct
  * the directors when no owner can be named; a private individual themselves.
  */
 export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: { individual: boolean; listed: boolean; maxPeople: number }): { basis: ScreenBasis; full: T[]; sanctionsOnly: T[] } {
-  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company") || r.startsWith("the charity") || r === "corporate trustee") || !!c.abroad));
+  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company") || r.startsWith("the charity") || r === "corporate trustee" || r.startsWith("company on the trust")) || !!c.abroad));
   let basis: ScreenBasis;
   let people: T[];
   if (ctx.individual) {
@@ -618,6 +620,9 @@ export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: 
     basis = "owners";
     // A charity's trustees control it alongside any owner the register names.
     people = [...candidates.filter(c => c.person && c.owner), ...candidates.filter(c => c.person && c.trustee && !c.owner)];
+  } else if (candidates.some(c => c.person && c.trustPerson)) {
+    basis = "trust";
+    people = candidates.filter(c => c.person && (c.trustPerson || c.trustee));
   } else if (candidates.some(c => c.person && c.trustee)) {
     basis = "trustees";
     people = candidates.filter(c => c.person && c.trustee);
@@ -996,8 +1001,12 @@ const monthsSince = (iso: string | null, today: Date): number | null => {
   return Number.isNaN(d.getTime()) ? null : (today.getTime() - d.getTime()) / (30.44 * 86400000);
 };
 
-export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date }): PrecheckAsks {
-  const docs = defaultKycDocs(ctx.kind, ctx.role, ctx.idCheck);
+export function precheckAsks(input: PrecheckAskInput | null, ctx: {
+  kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
+  // A trust (23 November 2026): what its file already holds, and its trustees as its structure records them.
+  trust?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
+}): PrecheckAsks {
+  const docs = defaultKycDocs(ctx.kind, ctx.role, ctx.idCheck, !!ctx.trust);
   const notAsked: PrecheckAsks["notAsked"] = [];
   const drop = (key: KycDocKey, reason: string) => {
     const at = docs.indexOf(key);
@@ -1005,6 +1014,15 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
     docs.splice(at, 1);
     notAsked.push({ key, reason });
   };
+  // A trust is on no register: its own documents are asked for, unless the
+  // file holds them; its people each get a link of their own.
+  if (ctx.trust && ctx.kind === "company") {
+    if (ctx.trust.deed) drop("trust_deed", "The trust deed is already on the trust's KYC record.");
+    if (ctx.trust.trs) drop("trs_excerpt", "HMRC's proof of registration is already on the trust's KYC record.");
+    else if (ctx.trust.trsNotRequired) drop("trs_excerpt", "The trust's structure records that it does not need to register with HMRC.");
+    if (ctx.contactName && ctx.trust.trustees.some(t => personNamesMatch(ctx.contactName!, t))) drop("trust_authority", `${ctx.contactName} is a trustee, as the trust's structure records.`);
+    return { docs, notAsked, confirmOwners: null, ownerNames: [] };
+  }
   if (!input || ctx.kind !== "company") return { docs, notAsked, confirmOwners: null, ownerNames: [] };
   const today = ctx.today || new Date();
   let confirmOwners: PrecheckAsks["confirmOwners"] = null;

@@ -1651,6 +1651,78 @@ calendars), the order of work and the four decisions waiting on him are in
   strategy, what is new in 14 days (signals, planning applications, job
   adverts, contact) and what is owed (overdue actions, no next step, no
   contact for 30 days), the ones owing first.
+  **The watch list does something** (Woody, 2026-11-23, on Jersey Mike's
+  reading "No contact on record": "wrong so needs to link", a "pop out
+  summary of the brand activity with BGP", the "actions needed button to
+  actually do something" and "a box to update strategy"; then "same for
+  Landlords", "agents and lenders"). Contact is anything filed against the
+  company OR one of its people (the CRM lists' rule, private mailbox left
+  out) and the meetings in both diary books; a meeting booked ahead stops
+  "No contact" being owed. "No people on record" is owed apart. Each owed
+  chip is a button (`owedKind` in `watch-entry.tsx`): Start strategy, Add
+  CRM action filled in for the company (No next step; "Get in touch with"
+  for No contact), Add contact (`ContactFormDialog` with the company), or
+  the entry. A company's name opens `WatchEntryDialog`: What's needed (each
+  owed line with its button, overdue and open actions with their status),
+  Strategy (per strategy: this company's plan, which is its target
+  `reason`, the objective, status and review date, saved whole through the
+  Overview's strategy save with the version read) and Activity with BGP
+  (`GET /api/crm/engagement/watch/:companyId/summary`, `watchSummary`:
+  people, last and next contact, diary meetings, logged emails and
+  meetings, live deals, open requirements; staff only on the engagement
+  router). Every kind, not just brands. Tests: `server/super-brand.test.ts`,
+  `qa/regression/crm-watch-entry.test.mjs`.
+  **The Overview's layout** (Woody, same day: "remove the stratgeys board
+  ... have the calend go straight accross", "filters sit above watch list
+  and filter all", "combine the CRM actions with the watch list on to the
+  top board together"). On the joined CRM page (`overall` in
+  `overview.tsx`) the Company / Strategy / BGP owner filters sit above the
+  Watch list and filter it (`watchMatches`: the company, its strategies,
+  and an owner of one of its running strategies or open actions) as well
+  as the calendar and the actions; the CRM actions are the right half of
+  the Watch list's card (`aside`); there is no Strategies board and the
+  calendar runs full width. A company page's plan keeps its Strategies
+  board and its own actions card.
+  **Linked to** (Woody: "brands linked to BGP leasing instructions and the
+  Landlords linked to their buildings / ownership", "agents ... linked to
+  brands they are acting for and also building they are leasing").
+  `GET /api/crm/hub/company/:id/links` (`server/crm-company-links.ts`,
+  `CrmCompanyLinks` in `shared/crm-hub.ts`, staff only on the hub router):
+  buildings by the role a property record gives the company (and
+  `crm_company_properties`), a brand's place on BGP lettings (targets,
+  interest, viewings, offers, Wanted lines, deals as tenant; live by
+  `TRACKER_LIVE_STATUSES`), the brands an agent acts for now, the buildings
+  it lets or brings brands to, and live deals. Read, never stored. Drawn by
+  `CompanyLinks` under a CRM list row's people and in a Watch list entry's
+  Activity with BGP.
+  **Select and Delete on the CRM lists** (Woody: "add a select and delete
+  buttons on the CRMs pages"). Admins, beside Table / Cards
+  (`CrmSelectBar`); `POST /api/admin/crm-companies/bulk-delete`
+  (`crmBulkDeletePlan` in `server/brand-relevance.ts`, the brand tidy's own
+  checks plus a company's own KYC or AML record): untied = deleted for
+  good; a tied brand is hidden as Brand Explorer does; a tied landlord,
+  agent or lender is KEPT and listed with its ties (there is no Hidden list
+  for those to bring one back from). Never at boot.
+  **The CRM forms read better** (Woody: "auto type didnt pick up the
+  strategy", "missed the company ... and didn't fill in why this agent").
+  Add CRM action takes the company's one running strategy, or the one the
+  note names (`strategyForCompany` in `dialogs.tsx`), on a read, on picking
+  a company and when opened for one. A company written with a word that
+  only says what kind of firm it is ("Forge agency") matches the record
+  without it (`withoutKindWord` in `shared/crm-note.ts`, also in the
+  reader's candidate search); the reason then fills.
+  **Contact discovery and the website**: RocketReach is searched by
+  employer NAME, so "forge" brought back people at every Forge. With a
+  website on the record a profile is kept only when its employer's domain
+  or website, or a work email, is on that domain
+  (`rocketReachEmployerFits` in `server/contacts-discovery.ts`); a profile
+  that says nothing is kept. Contacts already SAVED under a company are
+  never removed by a refresh: take them off from the person's menu.
+  **The Landlords list is the owner side** (Woody: Legal & General "hasnt
+  landed as a landlord in the CRM list", typed Investor): `LANDLORD_TYPES`
+  in `shared/crm-hub.ts` takes Landlord, Client, Landlord / Client,
+  Landlord/Freeholder, Freeholder, Investor, REIT, Developer, Fund and Asset
+  manager (the landlord diary book's types), or a portfolio account.
 
 Built on 15 November 2026:
 
@@ -5393,7 +5465,135 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
-## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20)
+## Trusts checked by BGP from their structure, never KYC4U (Jack, 2026-11-23)
+
+Jack: "Remove KYC4u on trusts. We need you to build the trust structuring",
+after asking why BGP could not check a trust itself (it can: a trust is on
+no public register, so what the deed says comes from the client and BGP
+records it). This SUPERSEDES "send trusts to KYC4U in full" in the next
+section; the second read, the trust checklist download and Record as a trust
+stand. Do not re-litigate. Rules: `shared/trust-structure.ts`; store and
+routes: `server/trust-structure.ts`; panel: `client/src/components/trust-structure.tsx`.
+Tests: `server/trust-structure.test.ts` (in `npm test`),
+`qa/regression/trust-structure-guards.test.mjs`.
+
+- **A trust is in-house whatever the officers' switch says.** `amlNextStep`
+  and `signOffDenial` read `trust` as `inHouseEdd` (`signOffInHouse` in
+  `shared/party-kyc.ts`; `signOffEnhanced` counts a trust as enhanced): no
+  "Not yet with KYC4U" line or red box, an open KYC4U request holds nothing
+  up, the AML board never puts it at With KYC4U and shows no red mark
+  (`trust` on `AmlDashboardRow`, `partyInHouse`), Kick off AML sends it the
+  client checks, and the AML box offers no KYC4U under Other ways. Only the
+  Nominated Officer or a Deputy signs it off, with the in-house note, for a
+  year. KYC4U's own routes still take a request someone makes by hand.
+- **The structure** (`kyc_trust_structures`, boot MIGRATIONS: one row per
+  trust record, `company_id` the crm_companies id, shared by its deals):
+  kind (discretionary, fixed, bare, charitable, other, not known), when
+  settled, governing law, HMRC's Trust Registration Service (registered, not
+  required, not registered, not known) and its URN or UTR, a discretionary
+  trust's class of beneficiaries, where the settlor's money came from, and
+  its people (`TrustPerson`: name, roles settlor / trustee / protector /
+  beneficiary / controller, a company or not, company number, country, born
+  month and year, a beneficiary's share). `checkTrustStructure` is the one
+  door (full names, a role each, one person once). `GET` / `PUT
+  /api/trust-structure/:companyId`, BGP staff signed in as themselves; a PUT
+  is refused unless the record is a trust, writes a `trust_structure` line on
+  the KYC history and starts a fresh run of BGP's checks.
+- **Who is verified** (`trustPersonOwesChecks`, BGP's trust checklist items
+  4 to 7): the settlor, every trustee, a protector and anyone else with
+  control; a beneficiary only when the trust is not discretionary or
+  charitable; a company on the trust never (screened as a company). They are
+  People to check (`partyPeople` with `trust`, basis `trust`, or
+  `trust_unrecorded` with no structure; the roles join `KycPersonRole`), each
+  with Send them a link (`createPersonCheck` finds them by key) and owing an
+  identity check and a proof of address; the rest are `trustNamed`, screened
+  only. The person acting may pass them their links from their own page, as
+  an owner's.
+- **Screening**: `runPrecheck` adds everyone on the structure
+  (`trustPerson`, with the date of birth recorded); `chooseScreened` gives
+  basis `trust` (MLR 2017 reg 6): the trust, any company on it, and its
+  people in full; the deal's contact sanctions only.
+- **The client checks for a trust** (`defaultKycDocs(..., trust)`,
+  `precheckAsks` with `trust`): proof of address, `trust_deed`,
+  `trs_excerpt`, `trust_authority` (unless the person asked is a recorded
+  trustee) and `trust_wealth`, and source of funds for a buyer or tenant;
+  the deed or HMRC's proof already on the KYC record, or a structure saying
+  registration is not required, is not asked. The dialog offers the trust's
+  documents first (`trustAsk` on each party).
+- **What the file still needs** (`trustStructureGaps`): recorded gaps
+  (structure, kind, settlor, trustees, beneficiaries or their class, TRS
+  status, TRS not registered, the settlor's wealth) are the Next line's
+  "To do" with **Trust structure** (action `trust`), ahead of the client
+  checks; document gaps (the deed, HMRC's proof: `kyc_documents` types
+  `trust_deed`, `trs_excerpt`) come with the client checks or **Add it** on
+  the panel (`/api/kyc/documents/upload`). The sign-off refuses while any gap
+  stands, and while any person on the trust still owes their checks
+  (`trustGaps`, `clientChecksOutstanding` read for a trust even before the
+  request to the person acting finishes).
+- **Shown**: the panel in the AML box's Who signs step (`TrustStructurePanel`,
+  edit in `TrustStructureDialog`, no form element), the step's summary ("a
+  trust: discretionary, 4 people · 1 to do"), the second read's record
+  (`partyRecordText`), the AML file's report ("Trust structure (recorded by
+  BGP)") and the risk assessment's in-house wording.
+- **Read the trust deed** (Jack, the same day: "Yes build"; rules
+  `shared/trust-deed-read.ts`, reader `readTrustDeed` in
+  `server/trust-structure.ts`): the panel's button reads the deed on file,
+  or one chosen then (filed on the trust's KYC record as `trust_deed`), via
+  `POST /api/trust-structure/:companyId/read-deed` (BGP staff, checked
+  before the file is taken; 20MB; PDF, pictures, Word, text). Anthropic,
+  called directly, one forced-tool call (`read_trust_deed`), capped a day
+  (`TRUST_DEED_READER_DAILY_CAP`, default 40, 0 = off), sent the deed alone.
+  It proposes the kind, when settled, governing law, class of beneficiaries
+  and the people with their roles, each with the deed's words;
+  `checkTrustDeedRead` drops any value whose quote is not in the deed's text
+  or whose name is not in its quote (a scan is kept "check by eye").
+  `mergeDeedReading` fills only what is blank and adds people or roles,
+  never overwriting what a person recorded; registration and the settlor's
+  wealth are never read from a deed. The form opens on the proposal with the
+  read-back (`DeedReadBack`); its Save is the only save. A
+  `trust_deed_read` line goes on the KYC history.
+- **Request trust structure** (Jack, the same day: "My colleagues wont do
+  this. So the 'Trust Structure' button needs to be 'Add Trust Structure
+  Yourself' ... Or 'Request Trust Structure' and it then emails the trust's
+  representative, or whoever's email you then add in ... Once they upload, we
+  need the documents to go somewhere and then be notified that are ready to
+  undertake due diligence on"). With no structure recorded the panel offers
+  **Request trust structure** first and **Add trust structure yourself** (Read
+  the trust deed, or Fill it in by hand). `POST
+  /api/trust-structure/:companyId/request` (BGP staff, the client checks
+  switched on, a trust record) is `createClientCheck` with `{ purpose:
+  "trust_structure" }`: a client checks request marked `request.purpose`, no
+  identity check, no public roles question, no owners to confirm or links to
+  pass, asking `TRUST_REQUEST_DOCS` (the deed, `trust_people` "Who is who in
+  the trust", HMRC's proof, the trust's wealth, the trustees' confirmation;
+  what is on file is unticked). Its email and page say "Documents about
+  <trust>" (`trustDocsRequestEmail`, `trustDocs` on the page), and reminders
+  follow. Its recipient (often the trust's solicitor) is never a person to
+  check and the request is never anyone's own link (`trustDocs` on
+  `PeopleRequest`). Each upload is filed on the trust's KYC record as any
+  client check file is; a deed filed this way (any client check upload as the
+  trust deed) is read once (`readDeedDocument`, kept in
+  `kyc_trust_deed_readings`, a boot table) and the panel shows **Check and
+  save** on the draft until a structure is saved after it (`deedDraftFor`).
+  When everything asked for is in, the request finishes itself (or on the
+  page's Finish; claimed once with `RETURNING`), and `trustDocsReadyEmail`
+  ("Ready for due diligence: ...") goes to the transaction's agents, the
+  sender and the AML officers (`amlOfficerEmails`). A KYC history line
+  `trust_documents_requested`, then `trust_documents_in`. Tests in
+  `server/trust-structure.test.ts` and the guards file. Not run against
+  Microsoft or Anthropic from a build machine.
+- **The words are "trust information"** (Jack, the same day: "it needs to
+  be simple English like 'Add trust information'"): the Next line's button
+  is **Add trust information**, the panel is **Trust information** with
+  **Ask for trust information** and **Add trust information yourself**, and
+  the gap reads "Add the trust's information: what kind of trust, who set
+  it up, the trustees and who benefits". Code names (`trust-structure`,
+  `TrustStructure`) are unchanged. No screen says "trust structure".
+- Not built: the client naming the trust's people on their page; Scotland's
+  and Northern Ireland's registers. Not run against live data or Anthropic:
+  checked by tests only, not in a browser.
+
+## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20; trusts superseded 2026-11-23, see above)
 
 Jack, on Fortis Green (vendor URC Thames North Trust, a 1902 company limited
 by guarantee that the app read as an ordinary company: no PSC, so its
@@ -7384,6 +7584,22 @@ separately and send to" the leasing address. Do not re-litigate.
   address or their firm's domain matches in both books. The leasing book
   (`LEASING_MATCHER`) trusts a name in the invitation only when it is two
   words or more: "Next steps" is not Next. Do not loosen that.
+  **A name alone needs an outside business guest** (Woody, 2026-11-23: his
+  personal invites were on the CRM calendar, which "should just be meetings
+  with recognised brands and or Landlords or agents"). In both diary books
+  (`LANDLORD_DIARY_MATCHER`, `LEASING_MATCHER`: `nameNeedsOutsider`) a
+  company named in the title counts only when someone outside BGP on a
+  business address is on the invitation (`isOutsideBusinessAddress`: not
+  BGP, not Gmail and the like, not a booking or no-reply sender). A contact's
+  own address and the firm's domain still count on their own. Every diary
+  read goes through `bookMatcher`; interview transcripts, which have no guest
+  list, keep `matchLandlordMeeting`'s plain name test.
+  **A BGP address is never a company's contact for matching** (found on live
+  the same day: Jack Barratt was filed as a contact of barrette estates under
+  his BGP address, so 161 of his diary entries, the dentist and his
+  children's clubs included, read as barrette estates meetings): the matcher
+  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`). Tests in
+  `server/landlord-meetings.test.ts`.
 - **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
   `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
   back and 90 ahead). A meeting carries `companyKind`.

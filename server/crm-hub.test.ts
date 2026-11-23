@@ -11,10 +11,12 @@ const NOW = Date.parse("2026-11-15T12:00:00Z");
 
 // ── Which list a company is on ──────────────────────────────────────────────
 
-test("a landlord is typed Landlord, Client or Landlord / Client, or is a portfolio account", () => {
-  for (const companyType of ["Landlord", " client ", "Landlord / Client"]) assert.equal(companyIsKind({ companyType }, "landlord"), true, companyType);
-  assert.equal(companyIsKind({ companyType: "Investor", isPortfolioAccount: true }, "landlord"), true);
-  for (const companyType of ["Investor", "Landlord/Freeholder", "Tenant - Restaurant", "Agent", null]) assert.equal(companyIsKind({ companyType }, "landlord"), false, String(companyType));
+// Since 23 November 2026 the owner side as the landlord diary book reads it
+// (Woody: Legal & General, typed Investor, was on a strategy and on no list).
+test("a landlord is the owner side: Landlord, Client, Investor, Freeholder, REIT, Developer, Fund, Asset manager, or a portfolio account", () => {
+  for (const companyType of ["Landlord", " client ", "Landlord / Client", "Investor", "Landlord/Freeholder", "REIT", "Developer", "Fund", "Asset Manager"]) assert.equal(companyIsKind({ companyType }, "landlord"), true, companyType);
+  assert.equal(companyIsKind({ companyType: "Agent", isPortfolioAccount: true }, "landlord"), true);
+  for (const companyType of ["Tenant - Restaurant", "Agent", "Lender", "Solicitor", null]) assert.equal(companyIsKind({ companyType }, "landlord"), false, String(companyType));
 });
 
 test("an agent is typed exactly Agent, and BGP's own firm is never one", () => {
@@ -55,7 +57,7 @@ test("the crown is a company BGP acts for", () => {
 });
 
 test("the SQL that narrows each list names the same types as the rule", () => {
-  assert.match(KIND_SQL.landlord, /IN \('landlord', 'client', 'landlord \/ client'\) OR c\.is_portfolio_account IS TRUE/);
+  assert.match(KIND_SQL.landlord, /IN \('landlord', 'client', 'landlord \/ client', 'landlord\/freeholder', 'freeholder', 'investor', 'reit', 'developer', 'fund', 'asset manager'\) OR c\.is_portfolio_account IS TRUE/);
   assert.match(KIND_SQL.agent, /= 'agent'$/);
   assert.match(KIND_SQL.brand, /LIKE 'tenant%'$/);
   for (const type of ["lender", "clearing bank", "building society", "development finance"]) assert.ok(KIND_SQL.lender.includes(`LIKE '%${type}%'`), type);
@@ -200,7 +202,7 @@ test("a landlord row is assembled from the reads", async () => {
         registered_locality: "LONDON", bgp_contact_user_ids: ["u2", "u1", "gone"] }),
       company("l2", { name: "Quiet Estates" }),
       // The read can return more than the rule allows: the rule decides.
-      company("x1", { name: "Not a landlord", company_type: "Investor" }),
+      company("x1", { name: "Not a landlord", company_type: "Solicitor" }),
     ],
     users: [{ id: "u1", name: "Rupert Bentley" }, { id: "u2", name: "Charlotte Roberts" }],
     dealOwners: [{ company_id: "l2", id: "u3", name: "Will Smith" }],

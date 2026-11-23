@@ -107,6 +107,36 @@ export type BulkDeletePlan = {
   notBrands: string[];
 };
 
+// The CRM page's Select and Delete (Woody, 2026-11-23: "add a select and
+// delete buttons on the CRMs pages"), for landlords, brands, agents and
+// lenders. A company nothing points at is deleted for good. A brand that
+// something points at is hidden, as Brand Explorer's Delete does (it can be
+// unhidden under Hidden). Any other company that something points at is KEPT
+// and the reply says what holds it: there is no Hidden list for landlords,
+// agents or lenders to bring one back from.
+export type CrmBulkDeletePlan = {
+  remove: Array<{ id: string; name: string }>;
+  hide: Array<{ id: string; name: string; ties: string[] }>;
+  kept: Array<{ id: string; name: string; ties: string[] }>;
+  staysHidden: Array<{ id: string; name: string; ties: string[] }>;
+  missing: string[];
+};
+export function crmBulkDeletePlan(ids: string[], companies: Array<{ id: string; name: string; company_type?: string | null; archived_at?: unknown }>, ties: Map<string, string[]>): CrmBulkDeletePlan {
+  const byId = new Map(companies.map(c => [String(c.id), c]));
+  const plan: CrmBulkDeletePlan = { remove: [], hide: [], kept: [], staysHidden: [], missing: [] };
+  for (const id of ids) {
+    const company = byId.get(id);
+    if (!company) { plan.missing.push(id); continue; }
+    const why = ties.get(id) || [];
+    const brand = /^tenant/i.test(String(company.company_type || "").trim());
+    if (!why.length) plan.remove.push({ id, name: company.name });
+    else if (!brand) plan.kept.push({ id, name: company.name, ties: why });
+    else if (company.archived_at) plan.staysHidden.push({ id, name: company.name, ties: why });
+    else plan.hide.push({ id, name: company.name, ties: why });
+  }
+  return plan;
+}
+
 export function bulkDeletePlan(ids: string[], brands: Array<{ id: string; name: string; archived_at?: unknown }>, ties: Map<string, string[]>): BulkDeletePlan {
   const byId = new Map(brands.map(b => [String(b.id), b]));
   const plan: BulkDeletePlan = { remove: [], hide: [], staysHidden: [], notBrands: [] };
@@ -321,6 +351,37 @@ export function setupBrandRelevanceRoutes(app: Express) {
       }
       console.log(`[brand-relevance] bulk delete by ${userId}: ${deleted.length} deleted, ${plan.hide.length} hidden, ${plan.staysHidden.length} already hidden, ${notDeleted.length} failed`);
       res.json({ ok: true, deleted, hidden: plan.hide, staysHidden: plan.staysHidden, notBrands: plan.notBrands.length, failed: notDeleted });
+    } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
+  });
+
+  app.post("/api/admin/crm-companies/bulk-delete", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? [...new Set<string>(req.body.ids.map(String).filter(Boolean))] : [];
+      if (!ids.length) return res.status(400).json({ error: "Tick the companies to delete." });
+      if (ids.length > BULK_DELETE_MAX) return res.status(400).json({ error: `Delete at most ${BULK_DELETE_MAX} at a time.` });
+      const { ties, failed } = await brandTies(ids);
+      if (failed.length) return res.status(409).json({ error: failedMessage(failed) });
+      // The KYC check above reads brands only: a landlord's, agent's or
+      // lender's own KYC or AML record also holds it.
+      const kyc = await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::text[]) AND (kyc_status IS NOT NULL OR aml_checklist IS NOT NULL)`, [ids]);
+      for (const row of kyc.rows) { const list = ties.get(String(row.id)) || []; if (!list.includes("KYC or AML work on file")) list.push("KYC or AML work on file"); ties.set(String(row.id), list); }
+      const companies = (await pool.query(
+        `SELECT c.id, c.name, c.company_type, c.archived_at FROM crm_companies c WHERE c.id = ANY($1::text[]) AND c.merged_into_id IS NULL ORDER BY c.name`, [ids])).rows;
+      const plan = crmBulkDeletePlan(ids, companies, ties);
+      const userId = req.session?.userId || req.tokenUserId || null;
+      const deleted: Array<{ id: string; name: string }> = [];
+      const notDeleted: Array<{ id: string; name: string }> = [];
+      for (const company of plan.remove) {
+        try { await storage.deleteCrmCompany(company.id); deleted.push(company); }
+        catch (e: any) { notDeleted.push(company); console.warn(`[crm-bulk-delete] ${company.id} failed: ${e?.message}`); }
+      }
+      if (plan.hide.length) {
+        await pool.query(
+          `UPDATE crm_companies c SET archived_at = NOW(), archived_reason = $2, archived_by = $3 WHERE c.id = ANY($1::text[]) AND c.archived_at IS NULL AND ${BRAND}`,
+          [plan.hide.map(b => b.id), HAND_REASON, userId]);
+      }
+      console.log(`[crm-bulk-delete] by ${userId}: ${deleted.length} deleted, ${plan.hide.length} brands hidden, ${plan.kept.length} kept, ${notDeleted.length} failed`);
+      res.json({ ok: true, deleted, hidden: plan.hide, kept: plan.kept, staysHidden: plan.staysHidden, missing: plan.missing.length, failed: notDeleted });
     } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
   });
 

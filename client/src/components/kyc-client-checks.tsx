@@ -33,6 +33,8 @@ interface Party {
   role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[];
   // What BGP's checks before asking found, for "ask only what is left".
   askInput: PrecheckAskInput | null; precheckRanAt: string | null;
+  // A trust (23 November 2026): its documents held and its trustees recorded.
+  trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
 }
 export interface ClientCheckRequest {
   token: string; ref: string; companyId: string | null; partyName: string; role: string | null;
@@ -274,7 +276,10 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
 // acting, each with their own Veriff link and a proof-of-address upload; the
 // directors shown with their sanctions result only".
 
-const ROLE_WORDS: Record<KycPersonRole, string> = { owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them" };
+const ROLE_WORDS: Record<KycPersonRole, string> = {
+  owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them",
+  settlor: "Settlor", trustee: "Trustee", protector: "Protector", beneficiary: "Beneficiary", controller: "Other control",
+};
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {
   passed: "Identity check passed",
@@ -300,7 +305,8 @@ function Tick({ ok }: { ok: boolean }) {
 function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean; canDecide: boolean }) {
   if (sanctionsOnly) {
     const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles.map(r => ROLE_WORDS[r].toLowerCase()), sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director"], sanctions: d.sanctions })),
-      ...(people.trustees || []).map(t => ({ name: t.name, roles: [t.chair ? "trustee, chair" : "trustee"], sanctions: t.sanctions }))];
+      ...(people.trustees || []).map(t => ({ name: t.name, roles: [t.chair ? "trustee, chair" : "trustee"], sanctions: t.sanctions })),
+      ...(people.trustNamed || []).map(t => ({ name: t.name, roles: [t.roles], sanctions: t.sanctions }))];
     if (!everyone.length) return null;
     return (
       <div className="text-xs space-y-1.5" data-testid={`people-to-check-${party.companyId}`}>
@@ -330,6 +336,14 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
           <span className="font-medium text-foreground">Trustees of {people.charity?.name || "the charity"}{people.charity?.number ? ` (charity ${people.charity.number})` : ""}</span>, from the Charity Commission's register, screened for sanctions, public roles and adverse media, no ID asked for:{" "}
           {people.trustees.map((t, i) => (
             <span key={t.name}>{i ? "; " : ""}{t.name}{t.chair ? " (chair)" : ""} <span className={SANCTIONS_WORDS[t.sanctions].cls}>({SANCTIONS_WORDS[t.sanctions].text.replace("Sanctions: ", "")})</span></span>
+          ))}.
+        </p>
+      )}
+      {!!people.trustNamed?.length && (
+        <p className="text-muted-foreground" data-testid={`people-trust-named-${party.companyId}`}>
+          <span className="font-medium text-foreground">Also on the trust, no ID needed</span> (screened only):{" "}
+          {people.trustNamed.map((t, i) => (
+            <span key={t.name}>{i ? "; " : ""}{t.name}, {t.roles} <span className={SANCTIONS_WORDS[t.sanctions].cls}>({SANCTIONS_WORDS[t.sanctions].text.replace("Sanctions: ", "")})</span></span>
           ))}.
         </p>
       )}
@@ -922,7 +936,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   // What is still to ask once BGP's own checks are counted (Woody,
   // 2026-11-17: "we need to do everyhting we can before we ask questions on
   // someone"): the same rule the server records the request by.
-  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null }) : null;
+  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null }) : null;
   const chosenDocs = docs || asks?.docs || [];
   const confirmOwners = chosenKind === "company" && !chosenDocs.includes("ownership") && asks?.confirmOwners?.length ? asks.confirmOwners : null;
   const notAsked = (asks?.notAsked || []).filter(n => !chosenDocs.includes(n.key));
@@ -934,7 +948,9 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
     const list = current || chosenDocs;
     return list.includes(key) ? list.filter(k => k !== key) : [...list, key];
   });
-  const offeredDocs: KycDocKey[] = chosenKind === "company"
+  const offeredDocs: KycDocKey[] = chosenKind === "company" && party?.trustAsk
+    ? ["trust_deed", "trs_excerpt", "trust_authority", "trust_wealth", "source_of_funds", "proof_of_address", "photo_id", "ownership", "other"]
+    : chosenKind === "company"
     ? ["ownership", "owner_ids", "authority", "source_of_funds", "company_documents", "proof_of_address", "photo_id", "other"]
     : ["proof_of_address", "source_of_funds", "photo_id", "other"];
 

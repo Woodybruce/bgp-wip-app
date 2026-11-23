@@ -807,8 +807,12 @@ export default function KycUploadPage() {
       ) : null}
 
       <p className="text-base">Hello{firstName(view.recipientName) && !view.viaAgent ? ` ${firstName(view.recipientName)}` : ""},</p>
-      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.viaAgent ? `Identity checks on ${view.partyName}` : `Your identity checks for ${view.dealName}`}</h1>
-      {view.person ? (
+      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.trustDocs ? <>Documents about {view.partyName}</> : view.viaAgent ? <>Identity checks on {view.partyName}</> : <>Your identity checks for {view.dealName}</>}</h1>
+      {view.trustDocs ? (
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-trust-intro">
+          <strong className="text-foreground">{view.partyName}</strong> is a party to {view.dealName}. Before it can go ahead, the law requires us to know who stands behind the trust: who set it up, who the trustees are and who benefits. Upload each document below. Once we have them, each trustee and the settlor get a short identity check of their own.
+        </p>
+      ) : view.person ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
           {view.person.roles.includes("owner")
             ? <>Companies House lists you as someone who owns or controls <strong className="text-foreground">{view.partyName}</strong>, a party to {view.dealName}. The law requires us to confirm your identity too.</>

@@ -21,7 +21,8 @@ test('a person gets a link of their own from BGP staff, or from the person actin
   // The client page: the request to the person acting only, never a test or a person's own page.
   // Nor the joint agent's page (22 November 2026).
   assert.match(portal, /if \(row\.is_test \|\| request\.person \|\| isJointRequest\(request\) \|\| request\.kind !== "company" \|\| !row\.company_id\) \{\s*return res\.status\(400\)/);
-  assert.match(portal, /if \(!person\.roles\.includes\("owner"\)\) throw Object\.assign\(new Error\("Only the owners' links are passed on from this page\."\)/);
+  // The trust's people too, since 23 November 2026 (server/trust-structure.ts).
+  assert.match(portal, /if \(!person\.roles\.some\(r => r === "owner" \|\| \(TRUST_PERSON_ROLES as readonly string\[\]\)\.includes\(r\)\)\) throw Object\.assign\(new Error\("Only the owners' and the trust's people's links are passed on from this page\."\)/);
   assert.match(portal, /if \(personNamesMatch\(person\.name, main\.contact_name \|\| ""\)\) throw Object\.assign\(new Error\("Your own checks are on this page\."\)/);
   // A page can email a link only a few times a day, not twice in two minutes.
   assert.match(portal, /const CLIENT_SENDS_A_DAY = 3;/);
