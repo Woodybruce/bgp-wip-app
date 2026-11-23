@@ -117,16 +117,25 @@ export interface SignOffFacts {
   // sanctions match must be resolved first: no one deals with a designated person.
   inHouseEdd?: boolean;
   sanctionsFlags?: number;
+  // Recorded as a trust: checked in-house by the officers, never KYC4U, and
+  // signed off only once its structure and documents are complete (Jack,
+  // 23 November 2026). trustGaps: what its file still needs.
+  trust?: boolean;
+  trustGaps?: string[];
   note: string;
   now?: Date;
 }
 
 /** Enhanced due diligence applies: a red flag or factor (the party's or the deal's), a higher-risk file, or owners abroad. */
-export const signOffEnhanced = (f: Pick<SignOffFacts, "redFlags" | "dealRedFlags" | "higherRisk" | "ownersAbroad">): boolean =>
-  f.redFlags > 0 || f.dealRedFlags > 0 || f.higherRisk || !!f.ownersAbroad?.length;
+export const signOffEnhanced = (f: Pick<SignOffFacts, "redFlags" | "dealRedFlags" | "higherRisk" | "ownersAbroad"> & { trust?: boolean }): boolean =>
+  f.redFlags > 0 || f.dealRedFlags > 0 || f.higherRisk || !!f.ownersAbroad?.length || !!f.trust;
+
+/** Done by the officers in-house: their switch is on, or the party is a trust (never KYC4U since 23 November 2026). */
+export const signOffInHouse = (f: Pick<SignOffFacts, "inHouseEdd" | "trust">): boolean => !!f.inHouseEdd || !!f.trust;
 
 /** Why BGP may not sign the party off, or null when it may. */
-export function signOffDenial(f: SignOffFacts): string | null {
+export function signOffDenial(input: SignOffFacts): string | null {
+  const f: SignOffFacts = input.trust ? { ...input, inHouseEdd: true } : input;
   const now = f.now ?? new Date();
   if (f.rejected) return "This party was rejected by the Nominated Officer or KYC4U: only the Nominated Officer or the Deputy can clear it.";
   if (f.current) {
@@ -145,6 +154,8 @@ export function signOffDenial(f: SignOffFacts): string | null {
     if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
     if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
+    if (f.trust && f.trustGaps?.length) return `The trust's file is not complete: ${f.trustGaps.map(g => g.replace(/\.$/, "")).join("; ")}.`;
+    if (f.trust && f.clientChecksOutstanding?.length) return `The trust's people still owe their checks: ${f.clientChecksOutstanding.join("; ")}.`;
     if (text(f.note).length < IN_HOUSE_EDD_NOTE_MIN) return "Enhanced due diligence by BGP: say what was checked and why the risk is acceptable (each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust): at least a couple of sentences.";
     return null;
   }

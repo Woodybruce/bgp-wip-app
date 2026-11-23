@@ -181,6 +181,8 @@ export interface AmlDashboardRow {
   brandId: string;
   brandName: string;
   signsAs: string | null;              // the company that signs, when the deal names one
+  // Recorded as a trust: checked by the officers, never KYC4U (23 November 2026).
+  trust?: boolean;
   // Corporate owners registered abroad ("Kirkbi A/S, Denmark"): KYC4U find the people behind them.
   ownersAbroad?: string[];
   // The level of due diligence BGP's AML policy gives the party (Issue 2),

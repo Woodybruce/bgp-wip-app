@@ -169,6 +169,9 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const companyRow = companies.find((c: any) => c.id === p.brandId) || null;
     // No company that signs: no checks before asking to read (the deal card's rule).
     const needsCompany = !p.entityId && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
+    // A trust is checked by the officers, never KYC4U (Jack, 23 November 2026).
+    const isTrust = !p.entityId && String(companyRow?.aml_subject_type || "").toLowerCase() === "trust";
+    const partyInHouse = inHouse || isTrust;
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     const allTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
     // The joint agent's request (22 November 2026) is not the party's own client checks.
@@ -208,7 +211,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const stage = amlStage({
       role: p.role, dealStatus: p.deal.status, kyc: { status: state.status, expiresAt: state.expiresAt },
       precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
-      notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse, jointAskedAt, jointInAt,
+      notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse: partyInHouse, jointAskedAt, jointInAt,
     }, now);
     const due = amlDue(p.role, p.deal.status);
     const allFlags = [...flags, ...onDeal.map(f => `Transaction: ${f.label}`)];
@@ -226,6 +229,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       brandId: p.brandId,
       brandName: state.brandName,
       signsAs: state.source === "company" || state.source === "same_company" ? state.name : null,
+      ...(isTrust ? { trust: true } : {}),
       ownersAbroad: ownersAbroadOf((pre?.result as any)?.companiesHouse).map(a => `${a.name}, ${a.country}`),
       level: level.level,
       levelWhy: markHolds ? [`Not required: ${mark!.reasonWords}${mark!.by ? ` (${mark!.by})` : ""}`]
@@ -234,7 +238,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
       redFlags: allFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length, inHouse),
+      waitingOn: amlWaitingOn(stage, allFlags.length, partyInHouse),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

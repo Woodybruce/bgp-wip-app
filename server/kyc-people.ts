@@ -82,8 +82,11 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   }
   const { abroadPeopleFor } = await import("./kyc-abroad");
   const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
+  // A trust's structure as BGP recorded it (23 November 2026): its people are the ones to check.
+  const trust = ownRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
+    ...(trust !== undefined ? { trust } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });
 }

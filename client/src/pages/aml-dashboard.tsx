@@ -46,7 +46,7 @@ function LevelCell({ row, inHouseEdd = false }: { row: AmlDashboardRow; inHouseE
     <span className="inline-flex flex-wrap items-center gap-1">
       <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>
       {/* With the officers' in-house setting on, enhanced due diligence is BGP's own: no KYC4U mark (21 November 2026). */}
-      {!inHouseEdd && amlNeedsKyc4u(row.level, row.stage, !!row.ownersAbroad?.length) && (
+      {!inHouseEdd && !row.trust && amlNeedsKyc4u(row.level, row.stage, !!row.ownersAbroad?.length) && (
         <span className="whitespace-nowrap rounded border border-red-600 bg-red-50 px-1 text-[10px] font-semibold uppercase text-red-700 dark:bg-red-950/40 dark:text-red-300"
           title={row.level === "enhanced" ? "Enhanced: request the KYC4U check and submit it on KYC4U's portal" : `Owned through a company registered abroad (${(row.ownersAbroad || []).join("; ")}): request the KYC4U check and submit it on KYC4U's portal`}
           data-testid={`aml-kyc4u-needed-${row.key}`}>Not with KYC4U</span>

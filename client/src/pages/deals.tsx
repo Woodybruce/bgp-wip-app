@@ -3809,7 +3809,8 @@ export function DealFormDialog({
                 // routine client checks (Woody, 2026-11-17), unless the
                 // officers do enhanced checks in-house (2026-11-22).
                 const flags = amlStepStatus?.redFlags?.parties[p.id] || [];
-                const inHouse = !!amlStepStatus?.decisions?.inHouseEdd;
+                // A trust is checked in-house, never by KYC4U (Jack, 23 November 2026).
+                const inHouse = !!amlStepStatus?.decisions?.inHouseEdd || flags.some(f => f.kind === "policy_trust");
                 return (
                   <div key={`${p.role}:${p.id}`} className="space-y-1.5 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">

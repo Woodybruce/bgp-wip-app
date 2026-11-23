@@ -56,7 +56,7 @@ test("in-house enhanced due diligence is off unless an officer switches it on, a
   const ui = read("client/src/components/deal-party-aml.tsx");
   assert.match(ui, /const mayPress = canSignOff && !\(view\?\.edd && !decisions\.canDecide\);/);
   assert.match(ui, /view\.blocked \|\| \(view\.edd && !decisions\.canDecide\)\) return null;/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /!inHouseEdd && amlNeedsKyc4u\(/);
+  assert.match(read("client/src/pages/aml-dashboard.tsx"), /!inHouseEdd && !row\.trust && amlNeedsKyc4u\(/);
   // The red KYC4U mark is the Next line's own (22 November 2026), which never asks for KYC4U while the officers do it in-house.
   assert.match(read("client/src/components/deal-aml-status.tsx"), /const kyc4uNeeded = step\.lead === "Not yet with KYC4U";/);
   const rules = read("shared/aml-box.ts");

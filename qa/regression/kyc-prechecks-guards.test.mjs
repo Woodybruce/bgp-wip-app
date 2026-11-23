@@ -112,10 +112,10 @@ test("KYC4U's request waits a little for the run and carries what it found", () 
 });
 
 test('the client is asked only what is left, by the one rule, on the server and in the dialog', () => {
-  assert.match(portal, /const asks = precheckAsks\(pre\?\.input \|\| null, \{ kind: input\.kind, role: party\.role, idCheck: needsIdCheck, contactName: input\.name \}\);/);
+  assert.match(portal, /const asks = precheckAsks\(pre\?\.input \|\| null, \{ kind: input\.kind, role: party\.role, idCheck: needsIdCheck, contactName: input\.name, trust: trustAsk \}\);/);
   assert.match(portal, /notAsked: asks\.notAsked\.filter\(n => !docs\.includes\(n\.key\)\)/);
   assert.match(portal, /defaultDocs: asks\.docs, askInput: pre\?\.input \|\| null/);
-  assert.match(dialog, /precheckAsks\(party\.askInput, \{ kind: chosenKind, role: party\.role, idCheck: wantId, contactName: toName \|\| null \}\)/);
+  assert.match(dialog, /precheckAsks\(party\.askInput, \{ kind: chosenKind, role: party\.role, idCheck: wantId, contactName: toName \|\| null, trust: chosenKind === "company" \? party\.trustAsk \|\| null : null \}\)/);
   assert.doesNotMatch(dialog, /defaultKycDocs\(/);
   assert.match(dialog, /data-testid="client-checks-not-asked"/);
 });

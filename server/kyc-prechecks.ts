@@ -510,7 +510,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // owner: a person with significant control, of the company or of one up its
 // ownership chain (a beneficial owner, MLR 2017 reg 5).
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean; trustee?: boolean }
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean }
 
 // A UK nationality as Companies House words it, as the code Mesh takes (Woody,
 // 19 November 2026: send the birth year "and UK"). Any other nationality is
@@ -723,7 +723,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   }
   if (!number && subjectKind === "company") {
     notAtCompaniesHouse = isTrust
-      ? "Recorded as a trust or foundation, with no Companies House record. A registered charity's entry on the Charity Commission's register is read instead; for any other trust the trust deed and the trustees come from the client."
+      ? "Recorded as a trust or foundation, with no Companies House record. A registered charity's entry on the Charity Commission's register is read instead; for any other trust BGP records its structure (the settlor, the trustees, any protector and the beneficiaries) from the trust deed the client sends, and screens each person on it."
       : notAtCompaniesHouse || (entity
         ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
         : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.");
@@ -892,6 +892,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (s.owner) seen.owner = true;
     if (s.abroad) seen.abroad = true;
     if (s.trustee) seen.trustee = true;
+    if (s.trustPerson) seen.trustPerson = true;
     if (s.context.length > seen.context.length) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
@@ -965,6 +966,20 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     for (const t of trusteesInOrder(charity!.trustees)) {
       if (t.organisation) add({ name: t.name, role: "corporate trustee", person: false, dobYear: null, context: `corporate trustee of ${of}` });
       else add({ name: trusteePersonName(t.name), role: t.chair ? "trustee (chair)" : "trustee", person: true, trustee: true, dobYear: null, context: `trustee${t.chair ? " and chair" : ""} of ${of}, on the Charity Commission's register` });
+    }
+  }
+  // A trust's people, as BGP recorded its structure (23 November 2026): its
+  // beneficial owners (MLR 2017 reg 6), screened in full; a company on it as
+  // a company.
+  if (isTrust) {
+    const { trustStructureFor } = await import("./trust-structure");
+    const { trustRoleWords } = await import("@shared/trust-structure");
+    const ts = (await trustStructureFor(companyId).catch(() => null))?.structure || null;
+    for (const p of ts?.people || []) {
+      const what = trustRoleWords(p.roles);
+      if (p.corporate) add({ name: p.name, role: `company on the trust (${what})`, person: false, dobYear: null, context: `${what} of ${partyName}, a trust${p.companyNumber ? `; company number ${p.companyNumber}` : ""}${p.country ? `, ${p.country}` : ""}` });
+      else add({ name: p.name, role: `${what} of the trust`, person: true, trustPerson: true, dobYear: p.dob?.year || null, dobMonth: p.dob?.month || null,
+        context: `${what} of ${partyName}, a trust${p.dob?.year ? `, born ${p.dob.month ? `${p.dob.month}/` : ""}${p.dob.year}` : ""}${p.country ? `, ${p.country}` : ""}` });
     }
   }
   // The people recorded behind a company abroad are beneficial owners.

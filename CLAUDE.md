@@ -5117,7 +5117,82 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
-## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20)
+## Trusts checked by BGP from their structure, never KYC4U (Jack, 2026-11-23)
+
+Jack: "Remove KYC4u on trusts. We need you to build the trust structuring",
+after asking why BGP could not check a trust itself (it can: a trust is on
+no public register, so what the deed says comes from the client and BGP
+records it). This SUPERSEDES "send trusts to KYC4U in full" in the next
+section; the second read, the trust checklist download and Record as a trust
+stand. Do not re-litigate. Rules: `shared/trust-structure.ts`; store and
+routes: `server/trust-structure.ts`; panel: `client/src/components/trust-structure.tsx`.
+Tests: `server/trust-structure.test.ts` (in `npm test`),
+`qa/regression/trust-structure-guards.test.mjs`.
+
+- **A trust is in-house whatever the officers' switch says.** `amlNextStep`
+  and `signOffDenial` read `trust` as `inHouseEdd` (`signOffInHouse` in
+  `shared/party-kyc.ts`; `signOffEnhanced` counts a trust as enhanced): no
+  "Not yet with KYC4U" line or red box, an open KYC4U request holds nothing
+  up, the AML board never puts it at With KYC4U and shows no red mark
+  (`trust` on `AmlDashboardRow`, `partyInHouse`), Kick off AML sends it the
+  client checks, and the AML box offers no KYC4U under Other ways. Only the
+  Nominated Officer or a Deputy signs it off, with the in-house note, for a
+  year. KYC4U's own routes still take a request someone makes by hand.
+- **The structure** (`kyc_trust_structures`, boot MIGRATIONS: one row per
+  trust record, `company_id` the crm_companies id, shared by its deals):
+  kind (discretionary, fixed, bare, charitable, other, not known), when
+  settled, governing law, HMRC's Trust Registration Service (registered, not
+  required, not registered, not known) and its URN or UTR, a discretionary
+  trust's class of beneficiaries, where the settlor's money came from, and
+  its people (`TrustPerson`: name, roles settlor / trustee / protector /
+  beneficiary / controller, a company or not, company number, country, born
+  month and year, a beneficiary's share). `checkTrustStructure` is the one
+  door (full names, a role each, one person once). `GET` / `PUT
+  /api/trust-structure/:companyId`, BGP staff signed in as themselves; a PUT
+  is refused unless the record is a trust, writes a `trust_structure` line on
+  the KYC history and starts a fresh run of BGP's checks.
+- **Who is verified** (`trustPersonOwesChecks`, BGP's trust checklist items
+  4 to 7): the settlor, every trustee, a protector and anyone else with
+  control; a beneficiary only when the trust is not discretionary or
+  charitable; a company on the trust never (screened as a company). They are
+  People to check (`partyPeople` with `trust`, basis `trust`, or
+  `trust_unrecorded` with no structure; the roles join `KycPersonRole`), each
+  with Send them a link (`createPersonCheck` finds them by key) and owing an
+  identity check and a proof of address; the rest are `trustNamed`, screened
+  only. The person acting may pass them their links from their own page, as
+  an owner's.
+- **Screening**: `runPrecheck` adds everyone on the structure
+  (`trustPerson`, with the date of birth recorded); `chooseScreened` gives
+  basis `trust` (MLR 2017 reg 6): the trust, any company on it, and its
+  people in full; the deal's contact sanctions only.
+- **The client checks for a trust** (`defaultKycDocs(..., trust)`,
+  `precheckAsks` with `trust`): proof of address, `trust_deed`,
+  `trs_excerpt`, `trust_authority` (unless the person asked is a recorded
+  trustee) and `trust_wealth`, and source of funds for a buyer or tenant;
+  the deed or HMRC's proof already on the KYC record, or a structure saying
+  registration is not required, is not asked. The dialog offers the trust's
+  documents first (`trustAsk` on each party).
+- **What the file still needs** (`trustStructureGaps`): recorded gaps
+  (structure, kind, settlor, trustees, beneficiaries or their class, TRS
+  status, TRS not registered, the settlor's wealth) are the Next line's
+  "To do" with **Trust structure** (action `trust`), ahead of the client
+  checks; document gaps (the deed, HMRC's proof: `kyc_documents` types
+  `trust_deed`, `trs_excerpt`) come with the client checks or **Add it** on
+  the panel (`/api/kyc/documents/upload`). The sign-off refuses while any gap
+  stands, and while any person on the trust still owes their checks
+  (`trustGaps`, `clientChecksOutstanding` read for a trust even before the
+  request to the person acting finishes).
+- **Shown**: the panel in the AML box's Who signs step (`TrustStructurePanel`,
+  edit in `TrustStructureDialog`, no form element), the step's summary ("a
+  trust: discretionary, 4 people · 1 to do"), the second read's record
+  (`partyRecordText`), the AML file's report ("Trust structure (recorded by
+  BGP)") and the risk assessment's in-house wording.
+- Not built: reading the deed with AI to fill the structure; the client
+  naming the trust's people on their page; Scotland's and Northern Ireland's
+  registers. Not run against live data: checked by tests only, not in a
+  browser.
+
+## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20; trusts superseded 2026-11-23, see above)
 
 Jack, on Fortis Green (vendor URC Thames North Trust, a 1902 company limited
 by guarantee that the app read as an ordinary company: no PSC, so its

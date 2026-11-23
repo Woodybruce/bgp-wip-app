@@ -28,7 +28,7 @@ import { pool } from "./db";
 import { graphRequest, sendFromFirstMailbox, senderOrder, type EmailAttachment } from "./shared-mailbox";
 import {
   KYC_DOCS, KYC_LOGO_CID, KYC_MAX_FILE_MB, KYC_MAX_FILES_PER_REQUEST, KYC_REF_ALPHABET,
-  KYC_OWNERS_QUESTION, KYC_OWNER_LINKS_TITLE, KYC_PEP_QUESTION, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords, kycPersonRoleWords,
+  KYC_OWNERS_QUESTION, KYC_OWNER_LINKS_TITLE, KYC_PEP_QUESTION, TRUST_PERSON_ROLES, clientChecksSwitchOn, defaultKycDocs, isKycDocKey, isKycOwnersAnswer, isKycPepAnswer, kycDocDetail, kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycOwnersWords, kycPepWords, kycPersonRoleWords,
   kycRedFlagEmail, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycUploadAllowed, kycWhatsAppHref, kycWhatsAppText,
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress, type KycRequestPerson,
 } from "@shared/kyc-request";
@@ -542,7 +542,8 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   // What BGP's checks before asking found (the agent's ticks decide what is
   // asked; this records why the rest was not, and the owners to confirm).
   const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
-  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name });
+  const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName: input.name, trust: trustAsk });
   const confirmOwners = input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
   // The owners other than the person asked, who each get a link of their own
   // (19 November 2026): the person asked can pass them on from their page.
@@ -696,7 +697,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
   if (!person) throw Object.assign(new Error(`That person is not on the list of people to check for ${party.name}.`), { status: 404 });
   const main = "client" in by ? by.client : null;
   if (main) {
-    if (!person.roles.includes("owner")) throw Object.assign(new Error("Only the owners' links are passed on from this page."), { status: 400 });
+    if (!person.roles.some(r => r === "owner" || (TRUST_PERSON_ROLES as readonly string[]).includes(r))) throw Object.assign(new Error("Only the owners' and the trust's people's links are passed on from this page."), { status: 400 });
     if (personNamesMatch(person.name, main.contact_name || "")) throw Object.assign(new Error("Your own checks are on this page."), { status: 400 });
   }
   const email = cleanEmail(input.email);
@@ -1213,8 +1214,9 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
       parties: await Promise.all(found.parties.map(async ({ personField: _column, ...p }) => {
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
-        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null });
-        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null };
+        const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null, trust: trustAsk });
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, trustAsk };
       })),
       requests: await clientChecksForDeal(dealId),
       people,

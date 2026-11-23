@@ -30,7 +30,10 @@ const DOC_WORDS: Record<string, string> = {
   regulator_register: "Regulator's register",
   screening_report: "Screening report",
   source_of_funds: "Source of funds",
+  source_of_wealth: "Source of wealth",
   structure_chart: "Structure chart",
+  trs_excerpt: "Trust Registration Service",
+  trust_deed: "Trust deed",
   ubo_declaration: "Owners",
   web_source: "Web page (copy)",
 };

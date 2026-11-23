@@ -7,7 +7,9 @@
 
 import type { KycRedFlag } from "./kyc-red-flags";
 
-export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents" | "other";
+export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents"
+  // A trust's own documents (Jack, 23 November 2026: trusts checked by BGP, not KYC4U).
+  | "trust_deed" | "trs_excerpt" | "trust_authority" | "trust_wealth" | "other";
 export type KycPartyKind = "individual" | "company";
 
 // A request of a person's own (Woody, 19 November 2026, agreeing "a list of
@@ -17,7 +19,10 @@ export type KycPartyKind = "individual" | "company";
 // of the people a company's checks are about, not for the company itself.
 // "joint": someone named on the deal alongside a private individual (two
 // people buying together before any company is set up; Jack, 20 November 2026).
-export type KycPersonRole = "owner" | "acting" | "director" | "joint";
+// The trust roles (23 November 2026): the people a trust's structure records
+// (shared/trust-structure.ts), each with their own checks.
+export type KycPersonRole = "owner" | "acting" | "director" | "joint" | "settlor" | "trustee" | "protector" | "beneficiary" | "controller";
+export const TRUST_PERSON_ROLES: readonly KycPersonRole[] = ["settlor", "trustee", "protector", "beneficiary", "controller"];
 export interface KycRequestPerson {
   key: string;
   name: string;
@@ -27,11 +32,16 @@ export interface KycRequestPerson {
 }
 const withoutPrivateMark = (name: string) => name.replace(/\s*\((private|private client|individual)\)\s*$/i, "").trim() || name;
 export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): string =>
-  roles.includes("owner") ? `an owner of ${partyName}`
+  roles.includes("settlor") ? `the settlor of ${partyName}`
+    : roles.includes("trustee") ? `a trustee of ${partyName}`
+    : roles.includes("protector") ? `the protector of ${partyName}`
+    : roles.includes("beneficiary") ? `a beneficiary of ${partyName}`
+    : roles.includes("controller") ? `someone with control of ${partyName}`
+    : roles.includes("owner") ? `an owner of ${partyName}`
     : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
-export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "other"];
+export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth", "other"];
 
 // docType is what the file is filed as on the client's KYC record, the
 // types the KYC pack intake already uses (a driving licence files as
@@ -82,6 +92,27 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     detail: "Only if the company is registered outside the UK: an extract from its official company register showing it is registered, a list of its directors, and its UK registration number if it is registered at Companies House as an overseas company or an overseas entity.",
     docType: "company_cert",
   },
+  // A trust (BGP's trust checklist, items 1, 2, 4 and 8; MLR 2017 reg 6).
+  trust_deed: {
+    title: "The trust deed",
+    detail: "A copy of the trust deed, with any deeds of appointment, retirement or variation since: it shows the settlor, the trustees, the beneficiaries and anyone else with control, such as a protector. As we have not seen the original, please send a copy certified by a practising solicitor or accountant as \"a true copy of the original\", with their name, signature, the date, their professional body and their firm.",
+    docType: "trust_deed",
+  },
+  trs_excerpt: {
+    title: "HMRC's proof of registration",
+    detail: "The trust's proof of registration from HMRC's Trust Registration Service (the trustees can download it from their HMRC online account), or a line from the trustees or their adviser saying why the trust does not need to register.",
+    docType: "trs_excerpt",
+  },
+  trust_authority: {
+    title: "Confirmation the trustees instruct us",
+    detail: "If you are not one of the trustees: an email or letter from the trustees confirming that you can deal with us for the trust.",
+    docType: "authority_to_act",
+  },
+  trust_wealth: {
+    title: "Where the trust's money came from",
+    detail: "How the settlor came to have the money or property put into the trust (savings, the sale of a business or property, an inheritance), with something showing it: a letter from the trust's accountant or solicitor, a completion statement or a will.",
+    docType: "source_of_wealth",
+  },
   other: {
     title: "Anything else",
     detail: "Anything else your agent has asked you for.",
@@ -100,10 +131,13 @@ export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value 
 // individual for one proof of identity and one of address). Where the money
 // comes from is asked of whoever pays: a buyer, and a tenant (HMRC's letting
 // guidance, AMLG2300 section 21: "all customers making a payment").
-export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean): KycDocKey[] {
+export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean, trust = false): KycDocKey[] {
   const docs: KycDocKey[] = [];
   if (!idCheck) docs.push("photo_id");
-  if (kind === "individual") docs.push("proof_of_address");
+  // A trust (23 November 2026): its deed, HMRC's registration, the trustees'
+  // instruction and the settlor's wealth. Its people each get their own link.
+  if (kind === "company" && trust) docs.push("proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
+  else if (kind === "individual") docs.push("proof_of_address");
   else docs.push("proof_of_address", "ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");
   return docs;

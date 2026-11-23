@@ -23,6 +23,7 @@ export type AmlBoxWho = "nobody" | "bgp" | "client" | "kyc4u" | "officers" | "jo
 /** What the Next line's button does. */
 export type AmlBoxAction =
   | "fill_in"            // the party box: the company that signs, who to ask, an email
+  | "trust"              // a trust's structure (23 November 2026)
   | "add_details"        // the party box, for the people the checks need
   | "send_client_checks"
   | "people"             // open People: send each their own link
@@ -83,8 +84,11 @@ export interface AmlBoxFacts {
   // nobody saying who pays (shared/deal-billing.ts, 20 November 2026). Asked
   // before sign-off; it never jumps ahead of the checks themselves.
   billingDiffers?: boolean;
-  // Recorded as a trust (Jack, 20 November 2026): KYC4U checks it in full.
+  // Recorded as a trust: checked by BGP's officers, never KYC4U (Jack, 23
+  // November 2026: "Remove KYC4u on trusts. We need you to build the trust
+  // structuring"). trustGaps: what BGP still has to record on its structure.
   trust?: boolean;
+  trustGaps?: string[];
   // Owned through a company registered abroad, in words ("Kirkbi A/S
   // (Denmark)"): KYC4U find the owners behind it (Woody, 21 November 2026:
   // "foreign companies I think we will send to KYC4U").
@@ -174,7 +178,9 @@ const step = (tone: AmlBoxTone, who: AmlBoxWho, lead: string, words: string, act
 const BILLING_STEP: AmlNextStep = step("act", "bgp", "To do", "Say who pays BGP's invoice", "billing");
 
 /** The one line a party opens on: who it waits on or what to do, in a few words, and one button. */
-export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
+export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
+  // A trust is checked in-house whatever the officers' switch says (23 November 2026).
+  const f: AmlBoxFacts = input.trust ? { ...input, inHouseEdd: true } : input;
   const until = amlBoxDay(f.expiresAt);
   switch (f.stage) {
     case "rejected":
@@ -211,6 +217,10 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   const edd = !!f.inHouseEdd && (!!f.trust || !!f.ownersAbroad || f.redFlags > 0 || f.factors > 0);
   if (edd && (f.sanctionsFlags || 0) > 0) {
     return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
+  }
+  // A trust's structure comes first: its people are the ones to check.
+  if (f.trust && f.trustGaps?.length) {
+    return step("act", "bgp", "To do", f.trustGaps[0], "trust");
   }
   // Higher risk goes to KYC4U, unless the officers do it in-house.
   if (!edd) {

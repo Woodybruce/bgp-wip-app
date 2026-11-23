@@ -27,6 +27,7 @@ import { relianceWords, type PartyReliance } from "./aml-reliance";
 import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 import { trusteePersonName, trusteesInOrder } from "./charity-register";
+import { trustPersonOwesChecks, trustRoleWords, type TrustStructure } from "./trust-structure";
 
 export { personDisplayName };
 
@@ -113,6 +114,9 @@ export interface PartyPeopleInput {
   // The people BGP recorded behind a company abroad that owns the party
   // (21 November 2026: server/kyc-abroad.ts). Each is an owner to check.
   abroadPeople?: Array<{ name: string; ownerName: string; ownerCountry: string | null; detail: string; dob: { month: number | null; year: number | null } | null }>;
+  // A trust's structure as BGP recorded it (23 November 2026): its people are
+  // the trust's beneficial owners (MLR 2017 reg 6).
+  trust?: TrustStructure | null;
   // Another firm's checks BGP relies on for this party (MLR 2017 reg 39;
   // 21 November 2026): while it stands, no one on the list owes anything.
   reliance?: PartyReliance | null;
@@ -167,7 +171,7 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity" | "trust" | "trust_unrecorded";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
@@ -179,6 +183,9 @@ export interface PartyPeople {
   // November 2026). charity: the charity they are trustees of.
   trustees?: Array<{ name: string; chair: boolean; sanctions: PersonSanctions }>;
   charity?: { name: string; number: string; actsAsTrustee: boolean } | null;
+  // A trust's people BGP's policy does not ask to verify (a discretionary
+  // trust's beneficiaries, a company acting as trustee): screened only.
+  trustNamed?: Array<{ name: string; roles: string; corporate: boolean; sanctions: PersonSanctions }>;
   // Files sent on the old single owners' step, which do not say whose they are.
   loose: Array<{ ref: string; files: number; names: string[] }>;
   // "Huseyn Mirhadiyev: identity check and proof of address", per person.
@@ -199,6 +206,8 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   individual: "Private individuals: each person named on the transaction does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
   abroad_company: "Registered outside the UK, so Companies House has no record of it. The client is asked for an extract from its own register and the people who own or control it. The app looks it up in GLEIF (under Owners abroad), and each person found is recorded there and does their own check.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. They have to be found (by KYC4U, or by the officers when enhanced checks are in-house). The app traces what it can (the accounts and GLEIF, under Owners abroad), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
+  trust: "A trust: the people its structure records (the settlor, the trustees, any protector, and the beneficiaries of a trust that is not discretionary) each do an identity check and send a proof of address. Everyone named is screened.",
+  trust_unrecorded: "A trust: record its structure (the settlor, the trustees, any protector and the beneficiaries) and each person who has to be verified is listed here with their own link. The person dealing with us does their own check.",
   charity: "A registered charity: the Charity Commission's register names its trustees, who control it. Each is screened (sanctions, public roles and adverse media) and listed here. The person dealing with us does their own check and confirms their authority to act for the charity.",
 };
 
@@ -209,6 +218,9 @@ const isPerson = (role: string) => /director|member/i.test(role) && !/corporate/
 interface Draft {
   name: string;
   registerName: boolean;
+  // On the trust's structure only, and not asked to verify (a discretionary trust's beneficiary).
+  trustOnly?: boolean;
+  trustOwes?: boolean;
   roles: Set<KycPersonRole>;
   ownerDetail: string[];
   dob: Dob;
@@ -248,6 +260,15 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       add(p.name, "owner", { detail: `behind ${p.ownerName}${p.ownerCountry ? ` (${p.ownerCountry})` : ""}: ${p.detail}`, dob: p.dob });
     }
   }
+  // A trust's people, as its structure records them (23 November 2026).
+  const trust = input.kind === "company" ? input.trust || null : null;
+  const trustCorporate = (trust?.people || []).filter(p => p.corporate);
+  for (const p of (trust?.people || []).filter(p => !p.corporate)) {
+    const detail = `${trustRoleWords(p.roles)} of the trust${p.share ? ` (${p.share})` : ""}`;
+    for (const role of p.roles) add(p.name, role, { detail, dob: p.dob, register: true });
+    const d = drafts.find(x => samePerson(x.name, p.name));
+    if (d) d.trustOwes = (d.trustOwes || false) || trustPersonOwesChecks(p, trust!.kind);
+  }
   const party = input.requests.filter(r => r.companyId === input.companyId && !r.cancelled);
   for (const r of party.filter(r => !r.person && r.recipientName)) add(r.recipientName!, "acting");
   // Someone sent a request of their own stays on the list if the register changes.
@@ -262,14 +283,18 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     if (!d.registerName) { d.name = officer.name; d.registerName = true; }
   }
 
+  // On the trust's structure and not asked to verify, with no other reason to be asked: screened only.
+  const trustRoles = new Set(["settlor", "trustee", "protector", "beneficiary", "controller"]);
+  for (const d of drafts) if (trust && [...d.roles].every(r => trustRoles.has(r)) && !d.trustOwes) d.trustOnly = true;
+
   const sanctionsFor = (name: string): PersonSanctions => {
     const line = (input.precheck?.sanctions?.lines || []).find(l => samePerson(l.name, name));
     return line ? line.outcome : "not_screened";
   };
 
-  const people: KycPartyPerson[] = drafts.map(d => {
+  const people: KycPartyPerson[] = drafts.filter(d => !d.trustOnly).map(d => {
     const name = personDisplayName(d.name);
-    const roles = (["owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
+    const roles = (["settlor", "trustee", "protector", "beneficiary", "controller", "owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
     // Their own requests: a cancelled one still holds what was done on it (a
     // check passed or a file sent is evidence), but is no longer their link.
     const own = (r: PeopleRequest) => r.companyId === input.companyId
@@ -359,8 +384,16 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   const basis: PartyPeopleBasis = input.kind === "individual" ? "individual"
     : !ch ? (input.precheck?.abroad?.party ? "abroad_company" : pc ? "charity" : "not_read")
     : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : pc ? "charity" : "no_owners";
+  // A trust is on no register: its basis is its structure, recorded or not.
+  const trustBasis: PartyPeopleBasis | null = input.trust !== undefined && input.kind === "company" && !ch?.owners.length
+    ? (trust && trust.people.length ? "trust" : pc ? null : "trust_unrecorded") : null;
+  const trustNamed = trust ? [
+    ...drafts.filter(d => d.trustOnly).map(d => ({ name: personDisplayName(d.name), roles: d.ownerDetail.join("; ") || "named on the trust", corporate: false, sanctions: sanctionsFor(d.name) })),
+    ...trustCorporate.map(p => ({ name: p.name, roles: `${trustRoleWords(p.roles)} of the trust (a company${p.companyNumber ? `, ${p.companyNumber}` : ""})`, corporate: true, sanctions: sanctionsFor(p.name) })),
+  ] : [];
   return {
-    basis, people, directors, loose,
+    basis: trustBasis || basis, people, directors, loose,
+    ...(trustNamed.length ? { trustNamed } : {}),
     ...(pc && pc.charity ? {
       trustees: trustees.map(name => ({ name: personDisplayName(name), chair: [...trusteeChair].some(c => samePerson(c, name)), sanctions: sanctionsFor(name) })),
       charity: { name: pc.charity.name, number: pc.charity.number, actsAsTrustee: pc.via === "trustee" },
