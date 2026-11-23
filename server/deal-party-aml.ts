@@ -47,7 +47,7 @@ import {
 } from "@shared/aml-policy";
 import { KYC4U_PACK_MAX_ZIP_BYTES, kyc4uAssessmentRecord, kyc4uResultPrefill, kyc4uRiskLevel } from "@shared/kyc4u-result-pack";
 import { amlFileDocWords } from "@shared/aml-file";
-import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN } from "@shared/kyc-people";
+import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personVerifiedWords } from "@shared/kyc-people";
 import { relianceInput, relianceWords } from "@shared/aml-reliance";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -167,7 +167,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
   // A trust is checked by BGP's officers, never KYC4U (Jack, 23 November 2026).
-  const trust = !party.entityId && String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
+  const trust = String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
   const people = await import("./kyc-people")
     .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await m.dealPeopleRequests(party.dealId, db)))
     .catch(() => null);
@@ -638,7 +638,12 @@ router.post("/api/deals/:id/parties/:role/public-figure/search", async (req: Req
   }
 });
 
-router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, takeFiles, async (req: Request, res: Response) => {
+// Certified copies accepted for a person (Jack, 23 November 2026): the
+// officers', not only admins'. It shares the handler below, which reads the
+// method from the route, never from the request.
+router.post("/api/deals/:id/parties/:role/certified-documents", deciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, true));
+router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, false));
+async function recordPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
     const me = (req as any).amlDecider as { id: string; name: string };
     const role = String(req.params.role);
@@ -646,7 +651,8 @@ router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, tak
     const party = await loadAmlParty(pool, String(req.params.id), role);
     if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const note = text(req.body?.note).slice(0, 1000);
-    if (note.length < PUBLIC_FIGURE_NOTE_MIN) return res.status(400).json({ message: "Say what makes them a public figure and what the sources show (at least a sentence)." });
+    const how = certified ? "verified from certified documents" : "verified from public sources";
+    if (note.length < PUBLIC_FIGURE_NOTE_MIN) return res.status(400).json({ message: certified ? "Say which documents you checked and who certified them (at least a sentence)." : "Say what makes them a public figure and what the sources show (at least a sentence)." });
     const { copyAddress, fileWebCopies } = await import("./web-page-copy");
     const rawLinks = String(req.body?.links || "").split(/[\s,]+/).map(l => l.trim()).filter(Boolean);
     const links = [...new Set(rawLinks.map(copyAddress).filter((l): l is string => !!l))];
@@ -655,35 +661,42 @@ router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, tak
     const { unpackKyc4uFiles } = await import("./kyc4u-result-pack");
     const { entries, skipped } = await unpackKyc4uFiles(((req as any).files || []) as UploadedFile[]);
     if (skipped.length) return res.status(400).json({ message: `Not a file that can be kept: ${skipped.slice(0, 3).map(sk => `${sk.path} (${sk.reason})`).join("; ")}.` });
-    if (!links.length && !entries.length) return res.status(400).json({ message: "Give the pages or files that show who they are." });
+    // Certified documents already on the party's record (sent on the client's page), by id.
+    const askedIds = certified ? [...new Set(String(req.body?.documentIds || "").split(",").map(v => v.trim()).filter(Boolean))].slice(0, 20) : [];
+    const heldIds: string[] = askedIds.length ? (await pool.query(
+      `SELECT id::text AS id FROM kyc_documents WHERE id::text = ANY($1::text[]) AND company_id = $2`, [askedIds, party.brandId])).rows.map((r: any) => String(r.id)) : [];
+    if (heldIds.length < askedIds.length) return res.status(400).json({ message: "One of those documents is not on this party's KYC record." });
+    if (certified && links.length) return res.status(400).json({ message: "Certified documents are files, not links." });
+    if (certified ? !heldIds.length && !entries.length : !links.length && !entries.length) return res.status(400).json({ message: certified ? "Tick their certified documents, or add them." : "Give the pages or files that show who they are." });
 
     const kind = await partyKindOf(pool, party);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId));
     const person = people.people.find(p => p.key === String(req.body?.key || ""));
     if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
-    if (person.publicFigure) return res.status(409).json({ message: `${person.name} is already verified from public sources (by ${person.publicFigure.by}).` });
+    if (person.publicFigure) return res.status(409).json({ message: `${person.name} is already ${personVerifiedWords(person.publicFigure)} (by ${person.publicFigure.by}).` });
 
     const { saveFile } = await import("./file-storage");
-    const documentIds: string[] = [];
+    const documentIds: string[] = [...heldIds];
     for (const f of entries) {
       const stored = `kyc-public-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;
       await saveFile(`chat-media/${stored}`, f.buffer, f.mime, f.name);
       const row = (await pool.query(
         `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
-         VALUES ($1, $2, $3, 'public_source', $4, $5, $6, $7, $8, $9) RETURNING id`,
+         VALUES ($1, $2, $3, $10, $4, $5, $6, $7, $8, $9) RETURNING id`,
         [party.brandId, party.entityId, party.dealId, `/api/chat-media/${stored}`, f.name, f.buffer.length, f.mime,
-          `Public source for ${person.name}, verified from public sources by ${me.name}`, me.id])).rows[0];
+          certified ? `Certified document for ${person.name}, accepted by ${me.name}` : `Public source for ${person.name}, verified from public sources by ${me.name}`, me.id,
+          certified ? "certified_id" : "public_source"])).rows[0];
       documentIds.push(String(row.id));
     }
     const check = (await pool.query(
-      `INSERT INTO kyc_public_figure_checks (deal_id, company_id, trading_entity_id, person_key, person_name, note, links, document_ids, verified_by, verified_by_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10) RETURNING id`,
-      [party.dealId, party.brandId, party.entityId, person.key, person.name, note, JSON.stringify(links), JSON.stringify(documentIds), me.id, me.name])).rows[0];
+      `INSERT INTO kyc_public_figure_checks (deal_id, company_id, trading_entity_id, person_key, person_name, note, links, document_ids, verified_by, verified_by_name, method)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11) RETURNING id`,
+      [party.dealId, party.brandId, party.entityId, person.key, person.name, note, JSON.stringify(links), JSON.stringify(documentIds), me.id, me.name, certified ? "certified" : null])).rows[0];
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure', $2, $3, $4, $5)`,
-      [party.brandId, me.name, `${person.name} verified from public sources on ${party.dealName}: ${note}${links.length ? ` (${links.length} page${links.length === 1 ? "" : "s"})` : ""}${documentIds.length ? ` (${documentIds.length} file${documentIds.length === 1 ? "" : "s"})` : ""}`,
+      [party.brandId, me.name, `${person.name} ${how} on ${party.dealName}: ${note}${links.length ? ` (${links.length} page${links.length === 1 ? "" : "s"})` : ""}${documentIds.length ? ` (${documentIds.length} file${documentIds.length === 1 ? "" : "s"})` : ""}`,
         party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
-    await dealAudit(party.dealId, "aml_public_figure", null, `verified by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${person.name} verified from public sources · ${note}`, me);
+    await dealAudit(party.dealId, "aml_public_figure", null, `verified by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${person.name} ${how} · ${note}`, me);
     // The pages, copied to PDF on the party's record after the reply.
     if (links.length) {
       void fileWebCopies({ companyId: party.brandId, entityId: party.entityId, dealId: party.dealId, pages: links.map(url => ({ url, about: `public source for ${person.name}` })),
@@ -699,11 +712,13 @@ router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, tak
     console.error("[deal-party-aml] public figure failed:", err?.message);
     res.status(500).json({ message: "It could not be recorded." });
   }
-});
+}
 
-router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", async (req: Request, res: Response) => {
+router.post("/api/deals/:id/parties/:role/certified-documents/:checkId/withdraw", (req: Request, res: Response) => withdrawPersonVerified(req, res, true));
+router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", (req: Request, res: Response) => withdrawPersonVerified(req, res, false));
+async function withdrawPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
-    const me = await adminDecider(req);
+    const me = certified ? await decider(req) : await adminDecider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = String(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
@@ -712,17 +727,18 @@ router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", asyn
     const row = (await pool.query(
       `UPDATE kyc_public_figure_checks SET withdrawn_at = now(), withdrawn_by = $4, withdrawn_by_name = $5
         WHERE id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL
-        RETURNING person_name`, [Number(req.params.checkId) || 0, party.brandId, party.entityId, me.id, me.name])).rows[0];
+          AND (method = 'certified') IS NOT DISTINCT FROM $6::boolean
+        RETURNING person_name, method`, [Number(req.params.checkId) || 0, party.brandId, party.entityId, me.id, me.name, certified ? true : null])).rows[0];
     if (!row) return res.status(404).json({ message: "That verification was not found on this party, or was already withdrawn." });
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure_withdrawn', $2, $3, $4, $5)`,
-      [party.brandId, me.name, `${row.person_name}: verification from public sources withdrawn on ${party.dealName}`, party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
-    await dealAudit(party.dealId, "aml_public_figure", "verified", `withdrawn by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${row.person_name}: verification from public sources withdrawn`, me);
+      [party.brandId, me.name, `${row.person_name}: verification from ${row.method === "certified" ? "certified documents" : "public sources"} withdrawn on ${party.dealName}`, party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
+    await dealAudit(party.dealId, "aml_public_figure", "verified", `withdrawn by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${row.person_name}: verification from ${row.method === "certified" ? "certified documents" : "public sources"} withdrawn`, me);
     res.json({ ok: true });
   } catch (err: any) {
     console.error("[deal-party-aml] public figure withdraw failed:", err?.message);
     res.status(500).json({ message: "It could not be withdrawn." });
   }
-});
+}
 
 // Relying on another firm's checks (Woody, 21 November 2026: MLR 2017 reg 39,
 // "Yes go ahead"). The Nominated Officer or a Deputy records, for a party on

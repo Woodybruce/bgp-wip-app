@@ -83,3 +83,20 @@ test("contact discovery keeps only people whose employer or work email is on the
   assert.equal(rocketReachEmployerFits({}, "forge-cp.com"), true);
   assert.equal(rocketReachEmployerFits({ current_employer_domain: "forge.global" }, null), true, "no website on the record: as before");
 });
+
+// Woody, 2026-11-23: personal diary entries were showing as contacts' next
+// meetings. A diary entry is filed against contacts only when it is a meeting
+// with someone outside BGP.
+test("a diary entry is filed against contacts only when someone outside BGP is on it", async () => {
+  const { diaryEntryIsBusiness } = await import("./interactions");
+  const contacts = new Map<string, any>([
+    ["friend@icloud.com", { id: "c1", name: "Giles", email: "friend@icloud.com", companyId: null, companyName: null }],
+    ["client@gmail.com", { id: "c2", name: "Sandy", email: "client@gmail.com", companyId: "co1", companyName: "Sandy (private)" }],
+  ]);
+  const bgp = "woody@brucegillinghampollard.com";
+  assert.equal(diaryEntryIsBusiness({}, [bgp, "friend@icloud.com"], contacts), false, "a friend on iCloud");
+  assert.equal(diaryEntryIsBusiness({}, [bgp], contacts), false, "BGP only");
+  assert.equal(diaryEntryIsBusiness({}, [bgp, "jo@cbre.com"], contacts), true, "someone at a firm");
+  assert.equal(diaryEntryIsBusiness({}, [bgp, "client@gmail.com"], contacts), true, "a private client filed under a company");
+  assert.equal(diaryEntryIsBusiness({ sensitivity: "private" }, [bgp, "jo@cbre.com"], contacts), false, "marked private");
+});

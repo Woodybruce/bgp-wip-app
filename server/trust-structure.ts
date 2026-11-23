@@ -318,6 +318,11 @@ router.get("/api/trust-structure/:companyId", async (req: Request, res: Response
     if (!company) return res.status(404).json({ message: "Company not found." });
     const [record, docs, request] = await Promise.all([trustStructureFor(companyId), trustDocumentsHeld(companyId), trustRequestFor(companyId)]);
     const draft = await deedDraftFor(companyId, record);
+    // Which of the trust's documents are on its KYC record (the Upload documents box lists all five).
+    const { TRUST_REQUEST_DOCS, KYC_DOCS } = await import("@shared/kyc-request");
+    const heldTypes = new Set((await pool.query(
+      `SELECT DISTINCT doc_type FROM kyc_documents WHERE company_id = $1 AND deleted_at IS NULL`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.doc_type)));
+    const held = TRUST_REQUEST_DOCS.filter(k => heldTypes.has(KYC_DOCS[k].docType));
     // Who to ask: the transaction's person to ask for this party, then the trust's people with an email.
     let askFirst: { contactId: string | null; name: string; email: string | null; mobile: string | null } | null = null;
     const dealId = text(req.query.dealId);
@@ -334,7 +339,7 @@ router.get("/api/trust-structure/:companyId", async (req: Request, res: Response
         WHERE company_id = $1 AND COALESCE(email, '') <> '' ORDER BY name LIMIT 60`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows;
     res.json({
       companyId, name: company.name, trust: String(company.aml_subject_type || "").toLowerCase() === "trust",
-      record, documents: docs, gaps: trustStructureGaps(record?.structure || null, docs), request, draft, askFirst,
+      record, documents: docs, held, gaps: trustStructureGaps(record?.structure || null, docs), request, draft, askFirst,
       contacts: contacts.map((c: any) => ({ id: String(c.id), name: c.name, email: c.email, mobile: c.mobile || null })),
     });
   } catch (e: any) {

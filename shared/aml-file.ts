@@ -37,6 +37,7 @@ const DOC_WORDS: Record<string, string> = {
   trs_excerpt: "Trust Registration Service",
   trust_deed: "Trust deed",
   trust_structure: "Who is who in the trust",
+  certified_id: "Certified ID or proof of address",
   ubo_declaration: "Owners",
   web_source: "Web page (copy)",
 };

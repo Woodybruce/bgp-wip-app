@@ -3159,6 +3159,8 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       withdrawn_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
+    // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
+    `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
     // Documents BGP uploads on a party (Woody, 23 November 2026: "upload
     // documents ... the app must read these and check they are acceptable"):
     // the reading of each (server/kyc-documents.ts), whether an agent saw the

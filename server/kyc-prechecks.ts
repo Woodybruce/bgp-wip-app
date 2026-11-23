@@ -970,8 +970,8 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   }
   // A trust's people, as BGP recorded its structure (23 November 2026): its
   // beneficial owners (MLR 2017 reg 6), screened in full; a company on it as
-  // a company.
-  if (isTrust) {
+  // a company. Also when a company signs for the trust (a corporate trustee).
+  if (String(company.aml_subject_type || "").trim().toLowerCase() === "trust") {
     const { trustStructureFor } = await import("./trust-structure");
     const { trustRoleWords } = await import("@shared/trust-structure");
     const ts = (await trustStructureFor(companyId).catch(() => null))?.structure || null;

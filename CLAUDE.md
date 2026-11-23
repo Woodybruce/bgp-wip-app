@@ -1658,7 +1658,13 @@ calendars), the order of work and the four decisions waiting on him are in
   Landlords", "agents and lenders"). Contact is anything filed against the
   company OR one of its people (the CRM lists' rule, private mailbox left
   out) and the meetings in both diary books; a meeting booked ahead stops
-  "No contact" being owed. "No people on record" is owed apart. Each owed
+  "No contact" being owed. "No people on record" is owed apart. **A brand's
+  agents count** (Woody, the same day: "should count agents they are
+  integral", of Jersey Mike's agent Richard Wilcox): the named contact on a
+  current tenant rep representation and the agent named on a requirement
+  that is not closed (`brandAgentSql` in `server/crm-watch-list.ts`; only the
+  named person, never the whole firm) count as the brand's contact and its
+  people, and show in Activity with BGP as "Agent · <firm>". Each owed
   chip is a button (`owedKind` in `watch-entry.tsx`): Start strategy, Add
   CRM action filled in for the company (No next step; "Get in touch with"
   for No contact), Add contact (`ContactFormDialog` with the company), or
@@ -5869,6 +5875,48 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   the gap reads "Add the trust's information: what kind of trust, who set
   it up, the trustees and who benefits". Code names (`trust-structure`,
   `TrustStructure`) are unchanged. No screen says "trust structure".
+- **Certified copies on every request** (Jack, 23 November 2026: "I would
+  also like them to have the ability to upload certified documents (ID and
+  proof of address)", then "these need to be sent on all AML request emails.
+  As long as we have a way to accept the documents sent in"). Every client
+  check email and page (not the joint agent's) has **Or send certified
+  copies** (a trust request: **What happens next**, which also says each
+  trustee and the settlor get their own link) with Jack's lists
+  (`CERTIFIED_LIST_A`: passport, photocard driving licence, Home Office
+  residence permit, certified by a solicitor; `CERTIFIED_LIST_B`: a utility
+  or council tax bill under 3 months old; `certifiedWords` says who for) and
+  an optional upload card, doc key `certified_ids` (filed as
+  `certified_id`). It is never one of a request's own documents
+  (`TRUST_OPTIONAL_DOCS`, sent as `optionalDocs`), so it never holds a
+  request open or shows in a reminder. **Accepting them** is the officers':
+  **Certified documents** on a person's row in People to check
+  (`CertifiedDocsDialog`: tick the person's files, or add them, and say who
+  certified them) posts to `POST /api/deals/:id/parties/:role/certified-documents`
+  (the officers; Verified from public sources is admins only, and the two
+  share one handler that takes the method from the route)
+  (`kyc_public_figure_checks.method`, a boot column; document ids must be on
+  that party's KYC record). It counts for that person's identity check and
+  proof of address exactly as Verified from public sources does, can be
+  withdrawn, and their own request then reads as done (`accepted` in
+  `progressOf`), so they are not chased. **The app reads each one** (Jack,
+  the same day: "As long as the documents are certified then yes they can
+  accept. But how can the app Audit that?"): a `certified_ids` upload is
+  queued and read exactly as a document BGP uploads is
+  (`kyc_document_readings`, `readUpload`, `checkKycDocument`; see "Upload
+  documents on a party"), never as seen in the original. One that names a
+  person to check, is in date and carries the certifier's name, profession
+  or firm and date counts for that person by itself, with the reading kept
+  as the record; anything else shows its reasons in the party's Upload
+  documents box and waits for an officer (Accept it there with a note, or
+  Certified documents on the person's row). Nobody accepts a certified copy
+  on trust.
+- **A trust stays a trust when a company signs for it** (found on Fortis
+  Green the same day: URC Thames North Trust has its company, 00075432, set
+  as the company that signs, and the people reader, the sign-off, the AML
+  board and the client checks each read `!entityId`, so the trust's people
+  would not have been listed). Those four and the screening of the
+  structure's people now read the record alone; BGP's checks still run on
+  the company that signs.
 - Not built: the client naming the trust's people on their page; Scotland's
   and Northern Ireland's registers. Not run against live data or Anthropic:
   checked by tests only, not in a browser.
@@ -7889,7 +7937,16 @@ separately and send to" the leasing address. Do not re-litigate.
   the same day: Jack Barratt was filed as a contact of barrette estates under
   his BGP address, so 161 of his diary entries, the dentist and his
   children's clubs included, read as barrette estates meetings): the matcher
-  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`). Tests in
+  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`).
+  **Personal entries are not filed against contacts either** (Woody, the same
+  day: "yes fix it", of a child's rugby and a gymnastics class showing as
+  contacts' next meetings): the hourly calendar sync files a diary entry as
+  a meeting only when it is not marked private, personal or confidential and
+  someone outside BGP is on it at a business address, or is a contact filed
+  under a company (`diaryEntryIsBusiness` in `server/interactions.ts`); one
+  filed before is taken back on the next sync of its dates. A family member
+  who works at a firm in the CRM still reads as a business guest: no rule
+  can tell those apart. Tests in
   `server/landlord-meetings.test.ts`.
 - **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
   `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days

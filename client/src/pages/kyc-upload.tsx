@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
+import { CERTIFIED_LIST_A, CERTIFIED_LIST_B, TRUST_NEXT_WORDS, KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
 
 type Loaded =
   | { state: "loading" }
@@ -810,7 +810,7 @@ export default function KycUploadPage() {
       <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.trustDocs ? <>Documents about {view.partyName}</> : view.viaAgent ? <>Identity checks on {view.partyName}</> : <>Your identity checks for {view.dealName}</>}</h1>
       {view.trustDocs ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-trust-intro">
-          <strong className="text-foreground">{view.partyName}</strong> is a party to {view.dealName}. Before it can go ahead, the law requires us to know who stands behind the trust: who set it up, who the trustees are and who benefits. Upload each document below. Once we have them, each trustee and the settlor get a short identity check of their own.
+          <strong className="text-foreground">{view.partyName}</strong> is a party to {view.dealName}. Before it can go ahead, the law requires us to know who stands behind the trust: who set it up, who the trustees are and who benefits. Upload each document below.
         </p>
       ) : view.person ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
@@ -896,6 +896,26 @@ export default function KycUploadPage() {
         })()}
 
         {view.docs.map(doc => {
+          step++;
+          return <UploadCard key={doc.key} n={step} title={doc.title} detail={doc.detail} files={doc.files} docKey={doc.key}
+            busy={busyKey === doc.key} error={errors[doc.key] || null} onFiles={uploadFiles} />;
+        })}
+
+        {(view.trustDocs || !!view.optionalDocs?.length) && (
+          <div className="rounded-lg border bg-muted/40 p-4" data-testid="kyc-certified-next">
+            <h3 className="text-sm font-semibold">{view.trustDocs ? "What happens next" : "Or send certified copies"}</h3>
+            {view.trustDocs && <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{TRUST_NEXT_WORDS.links}</p>}
+            {!!view.optionalDocs?.length && <>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{view.certifiedWords}</p>
+              <p className="mt-2 text-sm font-medium">List A (one, certified by a solicitor)</p>
+              <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_A.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
+              <p className="mt-2 text-sm font-medium">List B (one)</p>
+              <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_B.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
+            </>}
+          </div>
+        )}
+
+        {(view.optionalDocs || []).map(doc => {
           step++;
           return <UploadCard key={doc.key} n={step} title={doc.title} detail={doc.detail} files={doc.files} docKey={doc.key}
             busy={busyKey === doc.key} error={errors[doc.key] || null} onFiles={uploadFiles} />;
