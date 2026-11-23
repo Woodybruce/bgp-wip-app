@@ -43,8 +43,8 @@ test("a trust or foundation is checked on its own record: no company that signs 
   assert.match(portal, /if \(party\.kind === "company" && !party\.entityId && !party\.trust\)/);
 });
 
-test("in-house enhanced due diligence is off unless an officer switches it on, and only the officers sign it off", () => {
-  assert.match(read("server/aml-authority.ts"), /on: v\?\.on === true/);
+test("in-house enhanced due diligence is on unless an officer switches it off (Jack, 23 November 2026), and only the officers sign it off", () => {
+  assert.match(read("server/aml-authority.ts"), /on: v \? v\.on !== false : true/);
   const policy = read("server/aml-policy.ts");
   const route = policy.slice(policy.indexOf('router.put("/api/aml-policy/in-house-edd"'));
   assert.match(route.slice(0, 800), /if \(!actor\.isMlro\) return res\.status\(403\)/);

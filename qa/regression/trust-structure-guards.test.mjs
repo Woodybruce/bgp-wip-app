@@ -87,3 +87,9 @@ test("Request trust structure: staff only, a client checks request marked for th
   assert.match(ui, /\/>Add trust information yourself\n/);
   assert.doesNotMatch(ui, /<form[\s>]/);
 });
+
+test("a red flag is raised with the AML Officer by name while the officers check in-house (Jack, 23 November 2026)", () => {
+  const box = read("client/src/components/deal-aml-status.tsx");
+  assert.match(box, /title=\{inHouse \? `Red flag: raise with \$\{officer\}` : "Red flag: raise with KYC4U"\}/);
+  assert.match(read("shared/aml-policy.ts"), /return first \? `AML Officer \(\$\{first\}\)` : "the AML Officer";/);
+});

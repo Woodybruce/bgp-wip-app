@@ -8,6 +8,7 @@ import { KYC4U_FORM_URL, Kyc4uPackButton, Kyc4uRequestButton, Kyc4uSubmittedButt
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
 import { SecondReadPanel } from "@/components/aml-second-read";
+import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
@@ -237,7 +238,7 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
   const H = ({ children }: { children: ReactNode }) => <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
   return (
     <div className="space-y-1.5" data-testid={`aml-risk-assessment-${role}`}>
-      <p className="text-[11px] text-muted-foreground">BGP's written assessment in the shape of KYC4U's report, read from the checks above. The AML file prints it first.</p>
+      <p className="text-[11px] text-muted-foreground">BGP's written risk assessment, read from the checks above. The AML file prints it first.</p>
       <Rows rows={ra.job} />
       <H>Risk details</H>
       <ul className="text-xs space-y-0.5">
@@ -492,6 +493,10 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
   const flags = data.redFlags?.parties[companyId] || [];
   const aside = data.redFlags?.setAside?.[companyId] || [];
   const who = data.decisions?.officerWords;
+  // Raised with the AML Officer, not KYC4U (Jack, 23 November 2026), while
+  // the officers do enhanced checks in-house.
+  const officer = useAmlOfficerLabel();
+  const inHouse = data.decisions?.inHouseEdd !== false;
   return (
     <>
       {only !== "factors" && <RedFlagList
@@ -501,8 +506,8 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         setAside={aside.filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
-        title="Red flag: raise with KYC4U"
-        step="Press Request KYC4U check: the red flags are already in its note."
+        title={inHouse ? `Red flag: raise with ${officer}` : "Red flag: raise with KYC4U"}
+        step={inHouse ? `${officer} checks each one and signs the party off, or sets a flag aside with a comment.` : "Press Request KYC4U check: the red flags are already in its note."}
         testId={`kyc-red-flags-${companyId}`}
       />}
       {only !== "flags" && <RedFlagList
@@ -514,7 +519,7 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
         title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
-        step="Press Request KYC4U check: the factors are in its note, and the Nominated Officer or a Deputy approves the result."
+        step={inHouse ? `${officer} checks these and signs the party off, or sets one aside where it does not apply.` : "Press Request KYC4U check: the factors are in its note, and the Nominated Officer or a Deputy approves the result."}
         testId={`kyc-policy-factors-${companyId}`}
       />}
     </>
@@ -565,6 +570,8 @@ function DealRegime({ data }: { data: DealAmlStatus }) {
 
 function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus }) {
   const unchecked = data.redFlags?.unchecked || [];
+  const officer = useAmlOfficerLabel();
+  const inHouse = data.decisions?.inHouseEdd !== false;
   return (
     <>
       <RedFlagList
@@ -575,7 +582,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Red flag on the transaction record"
-        step="It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."
+        step={inHouse ? `It is not tied to one party: raise it with ${officer}.` : "It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."}
         testId="kyc-red-flags-deal"
       />
       <RedFlagList
@@ -587,7 +594,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Enhanced due diligence on the transaction: a higher-risk factor in BGP's AML policy"
-        step="It applies to every party: Request KYC4U check carries it in the note, and the Nominated Officer or the Deputy approves the result."
+        step={inHouse ? `It applies to every party: ${officer} checks it before signing them off.` : "It applies to every party: Request KYC4U check carries it in the note, and the Nominated Officer or the Deputy approves the result."}
         testId="kyc-policy-factors-deal"
       />
       {unchecked.length > 0 && (
@@ -941,8 +948,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       if (letting && !current.reliance) return { state: "wait", text: `From ${firm} · terms not agreed yet` };
       return { state: "done", text: `From ${firm} · all in` };
     }
+    // In-house, a KYC4U request only shows once it was really submitted (Jack's call on a complex case).
     if (draftState === "submitted" || stage === "with_kyc4u") return { state: "wait", text: `With KYC4U${draft?.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}` };
-    if (draftState === "prepared" || draftState === "stale") return { state: "flag", text: "KYC4U: prepared, not submitted" };
+    if ((draftState === "prepared" || draftState === "stale") && !data.decisions?.inHouseEdd) return { state: "flag", text: "KYC4U: prepared, not submitted" };
     if (request) {
       const n = people?.people.length || 0;
       const who = request.recipientName || request.recipientEmail || "the client";
@@ -952,7 +960,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       return { state: "wait", text: `Sent to ${who}${request.sentAt ? ` ${day(request.sentAt)}` : ""}${n > 1 ? ` · ${n - owing.length} of ${n} people done` : ""}` };
     }
     if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
-    if (!data.clientChecks) return { state: "act", text: isTrust ? "Client checks are off: the officers sign it off" : "Send it to KYC4U" };
+    if (!data.clientChecks) return { state: "act", text: isTrust || data.decisions?.inHouseEdd ? "Client checks are off: the officers sign it off" : "Send it to KYC4U" };
     return { state: "act", text: "Not asked yet" };
   })();
 
@@ -1114,7 +1122,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                       {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet />}
                       {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label={askAgentLabel(jointQ.data, askParty)} quiet />}
                       {canDecide && !sanctionsOnly && !people?.reliance && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} label="Another firm" />}
-                      {!kyc4uActive && !isTrust && <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} label="KYC4U" buttonOnly quiet />}
+                      {!kyc4uActive && !isTrust && <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} label="KYC4U (complex case)" buttonOnly quiet />}
                     </div>
                   )}
                 </>}

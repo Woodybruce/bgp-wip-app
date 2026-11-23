@@ -124,6 +124,16 @@ export function amlOfficerRole(user: { id?: string | null; email?: string | null
   return { role: null, appointed };
 }
 
+/**
+ * How the screens name who a red flag goes to (Jack, 23 November 2026: "should
+ * say raise with AML Officer (Jack)"): "AML Officer (Jack)", the Nominated
+ * Officer's first name; "the AML Officer" with none set.
+ */
+export function amlOfficerLabel(name: string | null | undefined): string {
+  const first = String(name || "").trim().split(/\s+/)[0];
+  return first ? `AML Officer (${first})` : "the AML Officer";
+}
+
 /** "the Nominated Officer (Jack Barratt) or a Deputy (Layla O'Driscoll or Woody Bruce)", as set. */
 export function officerWords(officers: AmlOfficers): string {
   const n = officers.nominated?.name;
