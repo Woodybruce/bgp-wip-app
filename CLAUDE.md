@@ -6110,6 +6110,54 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
 - Not built: a building-level sign-off with no transaction; reading the
   freeholder chain (`findFreeholderChain`) on the card.
 
+## Setting up a new property (Woody, 2026-11-23)
+
+Woody: "when we set up a new property should ask before its set up some basic
+questions I think? correct address? then documents where do we want the files
+options are existing folder with a pop out to the BGP share drive and ability
+to go in and pick a folder. or create new folder tree. Add joint agent and
+tenancy schedule or areas schedule for marketing and add brochure and add
+plans". Rules: `shared/property-setup.ts`; folder tree route:
+`server/property-setup.ts`; dialog:
+`client/src/components/property-page/property-setup.tsx`; folder picker:
+`client/src/components/sharepoint-folder-picker.tsx`. Tests:
+`server/property-setup.test.ts` (in `npm test`),
+`qa/regression/property-setup-guards.test.mjs`.
+
+- **When it opens**: after **Add property** on the Properties page saves a new
+  property (or merges into one the address found), the property opens at
+  `?setup=1` (taken off the address when the dialog closes); and from the
+  property page's More menu, **Set up this property**. BGP staff only (the
+  dialog is not mounted for a client login). A name read as a unit of an
+  estate makes no new property, so nothing opens.
+- **Seven steps, in Woody's order, each skippable** (`SETUP_STEPS`), each
+  saving through the route the page already uses: **Address** (Correct, or
+  Change it with the address search: the property save); **Owner** (the
+  Ownership card from Ownership & KYC, without its AML list); **Files**;
+  **Joint agent** (the facts pill's editor); **Schedule** (a tenancy or areas
+  schedule in Excel, read by the tenancy schedule import); **Brochure** (the
+  brochures panel); **Plans** (Upload plan, cropped then scanned).
+- **Files**: **Pick an existing folder** opens the BGP Share Drive
+  (`ShareDriveFolderPicker`: the BGP site's documents, stepping into
+  "BGP - Share Drive", folders only, on the person's own Microsoft 365
+  connection, `GET /api/microsoft/files`) and links the folder picked
+  (`sharepoint_folder_url`, which the Folders button opens). **Create a new
+  folder tree**: choose the folders to make (the team templates of Set Up
+  Folders, `GET /api/microsoft/folder-templates`), pick where, and `POST
+  /api/properties/:id/folders/tree { driveId, parentId, structure }` (BGP
+  staff signed in as themselves, their own Microsoft token) makes a folder
+  named after the property inside the folder picked, then the template's
+  folders inside it (a folder already there is reused), and links the
+  property to it when the address is on BGP's own SharePoint
+  (`bgpSharePointUrl`). The template is checked first (`folderTreePaths`: at
+  most 80 folders, four deep, names SharePoint takes). The older Set Up
+  Folders (a fixed place under the team's folder) is unchanged.
+- Also fixed: Add property's merge into an existing property sent a PATCH,
+  which the server has no route for, so it failed; it sends a PUT.
+- Not built: templates under the current team names (they are the old
+  ones: London F&B, London Retail, National Leasing and others); a client
+  login's own set-up.
+
 ## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
 
 Jack, on the trust request to Adam Harvey, which read "A note from Charlotte"

@@ -150,7 +150,7 @@ function TransactionsAml({ propertyId, onOpenAml }: { propertyId: string; onOpen
   );
 }
 
-export function PropertyOwnershipCard({ propertyId, onOpenAml }: { propertyId: string; onOpenAml: (deal: AmlDialogDeal) => void }) {
+export function PropertyOwnershipCard({ propertyId, onOpenAml, showAml = true }: { propertyId: string; onOpenAml: (deal: AmlDialogDeal) => void; showAml?: boolean }) {
   const [showNearby, setShowNearby] = useState(false);
   const key = ["/api/properties", propertyId, "ownership"];
   const { data, isLoading, isError } = useQuery<PropertyOwnershipView>({
@@ -206,7 +206,7 @@ export function PropertyOwnershipCard({ propertyId, onOpenAml }: { propertyId: s
                 </div>
               )}
             </div>
-            <TransactionsAml propertyId={propertyId} onOpenAml={onOpenAml} />
+            {showAml && <TransactionsAml propertyId={propertyId} onOpenAml={onOpenAml} />}
           </>
         )}
     </Card>

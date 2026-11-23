@@ -40,6 +40,7 @@ import {
   Layers,
   MoreHorizontal,
   Search,
+  ListChecks,
 } from "lucide-react";
 import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { isSchemeEstate } from "@shared/property-schemes";
@@ -73,6 +74,7 @@ import { trackRecentItem } from "@/hooks/use-recent-items";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { PropertyOwnershipCard } from "@/components/property-page/ownership-card";
+import { PropertySetupDialog } from "@/components/property-page/property-setup";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -449,6 +451,18 @@ export function PropertyDetail({ id }: { id: string }) {
   });
   const amlDeals = propertyDeals.filter((d: any) => !["WIT", "ARCH", "INV"].includes(legacyToCode(d.status) || ""));
   const [amlDeal, setAmlDeal] = useState<AmlDialogDeal | null>(null);
+  // Setting the property up (Woody, 23 November 2026): opens after a property is added (?setup=1) and from More.
+  const [setupOpen, setSetupOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("setup") === "1"; } catch { return false; } });
+  const closeSetup = (open: boolean) => {
+    setSetupOpen(open);
+    if (open) return;
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (!q.has("setup")) return;
+      q.delete("setup");
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${q.toString() ? `?${q}` : ""}${window.location.hash}`);
+    } catch { /* the address stays as it was */ }
+  };
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -723,6 +737,7 @@ export function PropertyDetail({ id }: { id: string }) {
         onOpenChange={setFolderDialogOpen}
       />
       <DealAmlDialog deal={amlDeal} reason="property" onClose={() => setAmlDeal(null)} />
+      {property && !isClientViewer && setupOpen && <PropertySetupDialog property={property} allCompanies={allCompanies} open={setupOpen} onOpenChange={closeSetup} />}
 
       <div className="px-4 sm:px-6 pt-4 sm:pt-5">
         <Breadcrumbs
@@ -871,6 +886,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     {!isClientViewer && <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>}
                     {!isClientViewer && <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>}
                     {!isClientViewer && linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
+                    {!isClientViewer && <DropdownMenuItem onClick={() => setSetupOpen(true)} data-testid="property-setup-open"><ListChecks className="w-3.5 h-3.5 mr-2" />Set up this property</DropdownMenuItem>}
                     {!isClientViewer && <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>}
                     {!isClientViewer && planLayout && <DropdownMenuItem onClick={() => switchLayout(false)} data-testid="property-layout-classic"><Layers className="w-3.5 h-3.5 mr-2" />Back to the current page</DropdownMenuItem>}
                     {!isClientViewer && <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>}

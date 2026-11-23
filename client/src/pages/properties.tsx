@@ -3131,6 +3131,7 @@ function CreatePropertyDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   // When the address autocomplete resolves to a UPRN-canonical property
   // that already exists in CRM, we capture its id here. Save then routes
   // to it instead of creating a duplicate.
@@ -3192,7 +3193,8 @@ function CreatePropertyDialog({
         Object.keys(updates).forEach((k) => {
           if (updates[k] === "" || (Array.isArray(updates[k]) && updates[k].length === 0)) delete updates[k];
         });
-        const res = await apiRequest("PATCH", `/api/crm/properties/${resolvedExistingId}`, updates);
+        // PUT: the server has no PATCH for a property, so this save failed with a 404 (23 November 2026).
+        const res = await apiRequest("PUT", `/api/crm/properties/${resolvedExistingId}`, updates);
         return { ...(await res.json()), _existingId: resolvedExistingId };
       }
       const payload: any = { ...formData };
@@ -3221,6 +3223,11 @@ function CreatePropertyDialog({
       onOpenChange(false);
       setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "", landlordId: "" });
       setResolvedExistingId(null);
+      // Straight into setting it up (Woody, 23 November 2026: "when we set up a new property should
+      // ask before its set up some basic questions"): address, owner, files, joint agent, schedule,
+      // brochure, plans. A name read as a unit of an estate made no new property, so nothing opens.
+      const id = data?._existingId || (!data?.estateUnit ? data?.id : null);
+      if (id) navigate(`/properties/${id}?setup=1`);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message || "Failed to create property", variant: "destructive" });
