@@ -26,7 +26,7 @@ import {
   type JointAgentChecksView, type JointAgentPartyView, type JointAgentRelation, type JointAgentRequestView, type JointCoverage,
   type JointChase, type JointCoveragePerson, type JointFileReading, type JointRequestStatus, JOINT_ASKS_RELIANCE,
 } from "@shared/joint-agent-checks";
-import { JOINT_AGENT_RULE_WORDS, jointAgentRule, type JointAgentRule, type JointRequestForRecord } from "@shared/aml-policy";
+import { JOINT_AGENT_RULE_WORDS, jointAgentRule, type JointAgentRule } from "@shared/aml-policy";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, partySubjectKind, type DealPartyRole } from "@shared/deal-parties";
 import type { TokenRow, KycRequestDetails, KycSendResult } from "./aml-portal";
 import type { PartyPeopleBasis } from "@shared/kyc-people";
@@ -311,37 +311,6 @@ export async function pageNeedsForToken(token: string, db: Db = pool): Promise<{
   if (!files.length) return { missing: [], reading: 0 };
   const coverage = await coverageForRow(db, row, files).catch(() => null);
   return { missing: gapsFor(row, files, coverage, true).filter(l => !/reliance terms, on the page$/.test(l)), reading: coverage?.unread || 0 };
-}
-
-/** The requests to the joint agent on a party, as the Not required form can name them. */
-export async function jointRequestsForRecord(db: Db, dealId: string, companyId: string): Promise<JointRequestForRecord[]> {
-  const rows = (await db.query(
-    `SELECT u.token, u.request->>'ref' AS ref, u.request->>'sentAt' AS sent_at, u.request->>'openedAt' AS opened_at, u.created_at, u.contact_name,
-            u.request->'jointAgent'->>'firm' AS firm, COALESCE((u.request->>'manual')::boolean, false) AS manual,
-            (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files
-       FROM kyc_upload_tokens u
-      WHERE u.deal_id = $1 AND u.company_id = $2 AND u.request->>'audience' = 'joint_agent' AND u.is_test IS NOT TRUE AND u.revoked_at IS NULL
-      ORDER BY u.created_at DESC`, [dealId, companyId])).rows;
-  const out: JointRequestForRecord[] = [];
-  for (const r of rows) {
-    if (!r.ref) continue;
-    // What their files do not cover, and what they show to look at (22 November 2026).
-    const { tokenRow } = await import("./aml-portal");
-    const row = await tokenRow(String(r.token));
-    const files = row ? await filesFor(db, [row.token]) : [];
-    const coverage = row && files.length ? await coverageForRow(db, row, files).catch(() => null) : null;
-    out.push({
-      ref: String(r.ref),
-      // The app's email, else the day they opened a link BGP passed on by hand.
-      sentAt: r.manual ? new Date(r.created_at).toISOString() : r.sent_at || r.opened_at || null,
-      whom: `${text(r.firm) || "the joint agent"}${text(r.contact_name) ? ` (${text(r.contact_name)})` : ""}`,
-      how: r.manual ? "email" as const : "app" as const,
-      files: Number(r.files) || 0,
-      missing: coverage ? coverage.missing : files.length ? [] : ["their checks"],
-      flags: coverage ? coverage.flags : [],
-    });
-  }
-  return out;
 }
 
 // ── The deal and its parties ────────────────────────────────────────────────

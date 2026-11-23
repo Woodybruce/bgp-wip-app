@@ -13,7 +13,7 @@
 
 import type { KycAnswers, KycOwnersReply } from "./kyc-request";
 import { flagKeyPart, precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
-import { policyFactorFlags, superPrimeFlag } from "./aml-policy";
+import { policyFactorFlags } from "./aml-policy";
 
 export type KycRedFlagKind =
   | "client_pep"
@@ -306,8 +306,7 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
       evidence: mismatched.map(i => `doc:${keyPart(i.documentType)}:${iso(i.generatedAt) || ""}`),
     });
   }
-  const superPrime = superPrimeFlag({ dealType: deal.deal_type, team: deal.team, pricing: deal.pricing, postcode: deal.postcode });
-  if (superPrime) flags.push(superPrime);
+  // A super-prime sale is weighed on each party, not a flag (risk assessment Issue 3).
   return flags;
 }
 

@@ -62,12 +62,17 @@ test("a reply by email is filed from the address asked, or a colleague at the sa
   assert.match(portal, /return !!da && da === db && !FREE_MAIL\.has\(da\);/);
 });
 
-test("Not required on a joint agent's party follows HMRC: a record on a sale, never on a letting in scope", () => {
+test("Not required takes no joint agent reason since Issue 4 of BGP's policy; marks made before it lapse", () => {
   const route = read("server/deal-party-aml.ts");
-  assert.match(route, /notRequiredInput\(req\.body, \{ rule: party\.jointRule, requests: await jointRequestsForRecord\(pool, party\.dealId, party\.brandId\)/);
-  assert.match(route, /asked_on, asked_how, asked_whom, asked_outcome, joint_ref/);
+  assert.match(route, /const said = notRequiredInput\(req\.body, \{ rule: party\.jointRule \}\);/);
+  assert.match(route, /INSERT INTO kyc_party_exemptions \(deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name\)\n/);
+  assert.doesNotMatch(read("server/joint-agent-checks.ts"), /jointRequestsForRecord/);
+  // The dialog offers only "no transaction was done", and no joint agent button.
+  const dialog = read("client/src/components/deal-party-aml.tsx");
+  assert.match(dialog, /\{NOT_REQUIRED_CHOOSABLE\.map\(k => <SelectItem/);
+  assert.doesNotMatch(dialog, /JointNotRequiredButton|aml-not-required-asked-/);
+  // Older marks keep their record of asking, still read, and no longer count anywhere loadNotRequired is read.
   assert.match(read("server/index.ts"), /ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_outcome text/);
-  // A mark that no longer counts is not honoured anywhere loadNotRequired is read.
   assert.match(read("server/aml-policy.ts"), /lapsed/);
 });
 
@@ -115,8 +120,7 @@ test("the reliance waits for their files to cover everyone, unless an officer sa
   const route = read("server/deal-party-aml.ts");
   assert.match(route, /if \(joint\.gaps\.length\) \{/);
   assert.match(route, /if \(handNote\.length < JOINT_BY_HAND_MIN\) \{\s*return res\.status\(409\)/);
-  assert.match(route, /asked_missing, asked_note\)/);
-  assert.match(read("server/index.ts"), /ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_missing text/);
+  assert.match(route, /byHand = `Recorded with gaps in their files \(\$\{joint\.gaps\.join\("; "\)\}\); checked by hand: \$\{handNote\}`;/);
 });
 
 // Woody, 23 November 2026: "the reliance on the joint agent doesnt work we cant agree reliance. What we need is an

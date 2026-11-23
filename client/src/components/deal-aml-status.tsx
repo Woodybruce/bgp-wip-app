@@ -11,7 +11,7 @@ import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
-import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
+import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
@@ -983,18 +983,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const roleLabel = slot?.label || (cp.role.charAt(0).toUpperCase() + cp.role.slice(1));
 
   // The joint agent route: the officers' button beside the evidence.
-  const jointDecide = canDecide && current && jointQ.data ? (
-    jointQ.data.rule === "sale"
-      ? (current.sentAt || current.openedAt || current.manual
-          ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
-          : null)
-      : current.reliance && !people?.reliance
-        ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty?.gaps || []} joint={{
+  // A reliance agreed before 23 November 2026 can still be recorded; a sale is
+  // signed off on BGP's own check of the documents, as a letting is (policy Issue 4).
+  const jointDecide = canDecide && current && jointQ.data && current.reliance && !people?.reliance
+    ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty?.gaps || []} joint={{
             ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
             contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
           }} />
-        : null
-  ) : null;
+    : null;
   // KYC4U is no longer used (Woody, 23 November 2026): a request made before
   // then is history on the party, and holds nothing up.
   const clientRoute = !!request || (!current && !people?.reliance);

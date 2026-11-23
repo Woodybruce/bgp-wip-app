@@ -24,7 +24,7 @@ import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "
 import { payerRedFlags } from "@shared/deal-billing";
 import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, simplifiedBasis } from "@shared/aml-policy";
+import { dueDiligenceLevel, simplifiedBasis, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -193,7 +193,13 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     })), reviewsForParty(reviews, p.brandId, p.entityId)).live;
     const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
-    const level = dueDiligenceLevel({ partyFlags: live, dealFlags: onDeal, simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }) });
+    const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });
+    const level = dueDiligenceLevel({
+      partyFlags: live, dealFlags: onDeal,
+      simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
+      standardBasis: standardBasis({ precheck: pre?.result || null }),
+      toWeigh: superPrime ? [superPrime] : [],
+    });
     const mark = notRequired.get(`${p.deal.id}:${p.role}`);
     const markHolds = !!mark && mark.companyId === p.brandId;
     const openDrafts = drafts.filter((d: any) => String(d.deal_id) === String(p.deal.id) && d.company_id === p.brandId);

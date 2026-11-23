@@ -56,7 +56,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "Each agent checks the client. To use the other agent's checks instead, you need a reliance agreement.", refs: ["amlg2200", "amlg11410"] },
       { text: "Sales: the agent who finds the buyer checks them. If that was the other agent, ask them for their checks. If they don't send them, record that you asked.", refs: ["amlg2200"] },
       { text: "Lettings: HMRC has no such exception. Every party to the lease is verified, so use the joint agent's checks on the tenant only under a reliance agreement.", refs: ["amlg2300", "amlg11410"] },
-      { text: "BGP's policy (Issue 3) goes further than HMRC: no checks on a party the joint agent found and negotiated with, for a sale or a letting.", refs: ["bgp_policy"] },
+      { text: "BGP's policy (Issue 4) goes further than HMRC on sales: we check the counterparty on every joint instruction, using the joint agent's documents or our own checks.", refs: ["bgp_policy"] },
       { text: "Agents who share a fee check each other.", refs: ["amlg2200", "amlg2300"] },
       { text: "Only work with agents registered with HMRC for AML. If one isn't, stop working with them and tell HMRC.", refs: ["amlg2200", "amlg11300"] },
     ],
