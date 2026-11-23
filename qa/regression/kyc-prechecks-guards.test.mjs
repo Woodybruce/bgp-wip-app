@@ -161,7 +161,7 @@ test('the web search says whether a finding is about the person or only their co
 });
 
 test('the AML box: Parent companies when nothing is abroad, Add KYC4U result only after a past request', () => {
-  assert.match(card, /<SubHead>\{ownedAbroad\.length \? "Owners abroad" : "Parent companies"\}<\/SubHead>/);
+  assert.match(card, /<SubHead>\{abroadQ\.data\?\.trace\?\.party \? "Registered abroad" : ownedAbroad\.length \? "Owners abroad" : "Parent companies"\}<\/SubHead>/);
   assert.match(card, /pastKyc4u=\{!!draft\}/);
   assert.match(read('client/src/components/deal-party-aml.tsx'), /\{decisions\.canDecide && pastKyc4u && \(/);
   assert.doesNotMatch(rules, /attached to a KYC4U request/);

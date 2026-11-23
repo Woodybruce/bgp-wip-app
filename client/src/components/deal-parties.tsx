@@ -766,7 +766,10 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
                 <span className="font-medium">{party.company.name}</span>
                 {party.company.kind === "individual"
                   ? <span className="ml-1.5 text-muted-foreground">a person, checked as a private individual</span>
-                  : party.company.companiesHouseNumber && <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span>}
+                  : party.company.abroad
+                    // A company registered abroad (23 November 2026): its country and own register's number.
+                    ? <span className="ml-1.5 text-muted-foreground">{companyRegisterWords(party.company)}</span>
+                    : party.company.companiesHouseNumber && <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span>}
               </span>
             ) : (
               <span className="text-amber-700 dark:text-amber-400" data-testid={`deal-party-company-missing-${role}`}>Not set: {SIGNING_COMPANY_WORDS[role]}, needed for the AML checks</span>

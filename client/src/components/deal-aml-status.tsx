@@ -1134,7 +1134,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
-                <SubHead>{ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
+                {/* The party itself registered abroad, with no UK record (23 November 2026): not a parent. */}
+                <SubHead>{abroadQ.data?.trace?.party ? "Registered abroad" : ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />
               </div>
             )}
