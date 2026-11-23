@@ -5,7 +5,7 @@ import { pool } from './db';
 import { getAppToken } from './shared-mailbox';
 import { isClientRequestUser, resolveCompanyScope } from './company-scope';
 import { parseGraphDateTime } from './viewing-matching';
-import { LANDLORD_CATALOGUE_PREDICATE, LEASING_MATCHER, createLandlordMatcher, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry, type LandlordMatcher } from './landlord-meeting-matching';
+import { LANDLORD_CATALOGUE_PREDICATE, LANDLORD_DIARY_MATCHER, LEASING_MATCHER, createLandlordMatcher, londonWeek, type LandlordCatalogueEntry, type LandlordMatcher } from './landlord-meeting-matching';
 import { registerLandlordMeetingSummaryRoutes } from './landlord-meeting-summary';
 import { isPrivateEmailRecord, isPrivateMailboxAddress } from './private-mail';
 
@@ -22,11 +22,10 @@ let refreshing = false;
 // from the other. Everything about privacy below applies to both.
 export type DiaryBook = 'landlord' | 'leasing';
 const BOOK_PREFIX: Record<DiaryBook, string> = { landlord: PREFIX, leasing: 'leasing_diary_v1:' };
-const leasingMatchers = new WeakMap<LandlordCatalogueEntry[], LandlordMatcher>();
+const bookMatchers: Record<DiaryBook, WeakMap<LandlordCatalogueEntry[], LandlordMatcher>> = { landlord: new WeakMap(), leasing: new WeakMap() };
 function bookMatcher(book: DiaryBook, catalogue: LandlordCatalogueEntry[]): LandlordMatcher {
-  if (book === 'landlord') return (subject, people) => matchLandlordMeeting(subject, people, catalogue);
-  let matcher = leasingMatchers.get(catalogue);
-  if (!matcher) { matcher = createLandlordMatcher(catalogue, LEASING_MATCHER); leasingMatchers.set(catalogue, matcher); }
+  let matcher = bookMatchers[book].get(catalogue);
+  if (!matcher) { matcher = createLandlordMatcher(catalogue, book === 'leasing' ? LEASING_MATCHER : LANDLORD_DIARY_MATCHER); bookMatchers[book].set(catalogue, matcher); }
   return matcher;
 }
 
@@ -238,7 +237,7 @@ export function buildLandlordMeetingDigest(
       revokedByKey.set(key, [...(revokedByKey.get(key) || []), revocation]);
     }
   }
-  const matcher = options.book === 'leasing' ? bookMatcher('leasing', catalogue) : createLandlordMatcher(catalogue);
+  const matcher = bookMatcher(options.book === 'leasing' ? 'leasing' : 'landlord', catalogue);
   for (const [key, { event, snapshot }] of sources) {
     if (event.cancelled) continue;
     if (isLandlordDiaryAbsence(event.subject)) continue;
@@ -455,7 +454,7 @@ export async function searchLandlordMeetings(options: LandlordCalendarSearch, de
         if (!token) throw new Error('Microsoft diary connection is unavailable');
         const rawEvents = await (deps.fetchCalendar || fetchLandlordCalendar)(token, member.email, window);
         const events = rawEvents.map(normaliseLandlordDiaryEvent).filter((event): event is DiaryEvent => !!event)
-          .filter(event => !isLandlordDiaryAbsence(event.subject) && (event.cancelled || matchLandlordMeeting(event.subject, event.participants, catalogue).some(match => match.company.id === company.id)));
+          .filter(event => !isLandlordDiaryAbsence(event.subject) && (event.cancelled || bookMatcher('landlord', catalogue)(event.subject, event.participants).some(match => match.company.id === company.id)));
         const checkedAt = (deps.now || new Date()).toISOString();
         const revocations = rawEvents.filter(event => (event.sensitivity !== 'normal' || isLandlordDiaryAbsence(event.subject) || isPrivateEmailRecord(event, member.email)) && event.id).map(event => ({
           id: String(event.id), uid: String(event.iCalUId || ''), at: checkedAt, private: event.sensitivity !== 'normal' || isPrivateEmailRecord(event, member.email),

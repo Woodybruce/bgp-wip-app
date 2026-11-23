@@ -74,6 +74,12 @@ export function titleFromNote(title: unknown, note: string, max = 120): string |
 export const companyKey = (name: unknown) => plain(name).replace(/&/g, " and ").replace(/[^a-z0-9 ]+/g, " ")
   .replace(/\b(?:ltd|limited|plc|llp|group|holdings|uk|the)\b/g, " ").replace(/\s+/g, " ").trim();
 
+// "Forge agency" in a note is the record "forge" (Woody, 2026-11-23): a word
+// that only says what kind of firm it is, at the end of the name as written,
+// is dropped when nothing matched the whole name.
+export const KIND_WORDS_AT_END = /\s+(?:agency|agents?|estate agents?|property|properties|real estate|partners|company|co|firm|landlord|lender|brand|restaurants?)$/;
+export const withoutKindWord = (key: string) => key.replace(KIND_WORDS_AT_END, "").trim();
+
 /** The one BGP person a name in the note picks out, or null. */
 export function ownerFromNote(said: unknown, note: string, staff: CrmNoteContext["staff"]): { id: string; name: string } | null {
   const name = squash(said);
@@ -183,6 +189,7 @@ export function checkCrmAnswer(answer: any, ctx: CrmNoteContext): CrmNoteReading
       ctx.companies.filter(c => plain(c.name) === plain(s.name)),
       ctx.companies.filter(c => companyKey(c.name) === key),
       ctx.companies.filter(c => companyKey(c.name).startsWith(`${key} `)),
+      ...(withoutKindWord(key) && withoutKindWord(key) !== key ? [ctx.companies.filter(c => companyKey(c.name) === withoutKindWord(key))] : []),
     ];
     const starts = tiers.find(t => t.length) || [];
     if (key && starts.length === 1) {

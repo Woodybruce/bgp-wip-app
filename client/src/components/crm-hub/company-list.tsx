@@ -21,6 +21,7 @@ import { Pill, PillCount, pillActive, pillInactive, pillMetrics } from "@/compon
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { CRM_HUB_KEY, CRM_TABLE_COLUMNS, CrmCompanyCard, CrmCompanyTableRow, type CrmRowActions } from "./company-row";
+import { CrmSelectBar } from "./crm-select-bar";
 
 export { CRM_HUB_KEY } from "./company-row";
 
@@ -107,6 +108,11 @@ export function CrmCompanyList({ kind, onStartStrategy, onOpenStrategy }: {
   const [city, setCity] = useState("");
   const [subType, setSubType] = useState("");
   const [view, setView] = useState<View>(() => storedView(kind));
+  // Select and Delete (Woody, 2026-11-23), for admins, as on Brand Explorer.
+  const { data: me } = useQuery<{ isAdmin?: boolean }>({ queryKey: ["/api/auth/me"] });
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  useEffect(() => { setSelecting(false); setPicked(new Set()); }, [kind]);
   const page = isMobile ? PAGE.phone : PAGE.desktop;
   const [shown, setShown] = useState(page);
   // Each list keeps its own filters and view: a change of list starts clean.
@@ -150,7 +156,9 @@ export function CrmCompanyList({ kind, onStartStrategy, onOpenStrategy }: {
 
   const filtered = !!search.trim() || filter !== "all" || !!owner || clients !== "all" || !!city || !!subType;
   const clear = () => { setSearch(""); setFilter("all"); setOwner(""); setClients("all"); setCity(""); setSubType(""); };
-  const actions: CrmRowActions = { onOpen: row => navigate(`/companies/${encodeURIComponent(row.id)}`), onStartStrategy, onOpenStrategy };
+  const toggle = (row: CrmHubRow) => setPicked(previous => { const next = new Set(previous); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next; });
+  const actions: CrmRowActions = { onOpen: row => selecting ? toggle(row) : navigate(`/companies/${encodeURIComponent(row.id)}`), onStartStrategy, onOpenStrategy };
+  const tick = (row: CrmHubRow) => (selecting ? picked.has(row.id) : undefined);
   const asTable = view === "table" && !isMobile;
   const visible = list.slice(0, shown);
 
@@ -184,8 +192,13 @@ export function CrmCompanyList({ kind, onStartStrategy, onOpenStrategy }: {
             {filtered && <> of <span className="font-mono tabular-nums">{rows.length.toLocaleString("en-GB")}</span></>} {(filtered ? rows.length : list.length) === 1 ? words.one : words.many}
           </p>
         )}
-        <div className="hidden md:block md:ml-auto"><ViewToggle view={view} onToggle={chooseView} /></div>
+        <div className="flex items-center gap-2 md:ml-auto">
+          {me?.isAdmin && !selecting && <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setSelecting(true)} data-testid={`crm-hub-select-${kind}`}>Select</Button>}
+          <div className="hidden md:block"><ViewToggle view={view} onToggle={chooseView} /></div>
+        </div>
       </div>
+      {selecting && <CrmSelectBar kind={kind} words={words} picked={picked} onPick={setPicked} shown={list.map(row => ({ id: row.id, name: row.name }))}
+        onDone={() => { setSelecting(false); setPicked(new Set()); }} />}
 
       <div className={filterRow} data-testid={`crm-hub-filters-${kind}`}>
         {CRM_HUB_FILTERS.map(option => (
@@ -236,7 +249,7 @@ export function CrmCompanyList({ kind, onStartStrategy, onOpenStrategy }: {
               </tr>
             </thead>
             <tbody>
-              {visible.map(row => <CrmCompanyTableRow key={row.id} row={row} actions={actions} />)}
+              {visible.map(row => <CrmCompanyTableRow key={row.id} row={row} actions={actions} selected={tick(row)} />)}
               {list.length > visible.length && (
                 <tr><td colSpan={CRM_TABLE_COLUMNS} className="p-2 text-center">
                   <Button type="button" variant="ghost" size="sm" onClick={() => setShown(count => count + page)} data-testid={`crm-hub-more-${kind}`}>
@@ -250,7 +263,7 @@ export function CrmCompanyList({ kind, onStartStrategy, onOpenStrategy }: {
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start" data-testid={`crm-hub-cards-${kind}`}>
-            {visible.map(row => <CrmCompanyCard key={row.id} row={row} actions={actions} phone={isMobile} />)}
+            {visible.map(row => <CrmCompanyCard key={row.id} row={row} actions={actions} phone={isMobile} selected={tick(row)} />)}
           </div>
           {list.length > visible.length && (
             <Button type="button" variant="outline" className="w-full" onClick={() => setShown(count => count + page)} data-testid={`crm-hub-more-${kind}`}>

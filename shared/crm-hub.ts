@@ -51,7 +51,11 @@ export function isOwnFirm(company: CrmHubCompanyLike): boolean {
   return `${company.domain || ""} ${company.domainUrl || ""}`.toLowerCase().includes("brucegillinghampollard.com");
 }
 
-export const LANDLORD_TYPES = ["landlord", "client", "landlord / client"] as const;
+// The owner side, as the landlord diary book reads it (LANDLORD_CATALOGUE_PREDICATE):
+// an investor, REIT, developer, fund or asset manager is on the Landlords
+// list too (Woody, 2026-11-23: Legal & General, typed Investor, was on a CRM
+// strategy and on no list).
+export const LANDLORD_TYPES = ["landlord", "client", "landlord / client", "landlord/freeholder", "freeholder", "investor", "reit", "developer", "fund", "asset manager"] as const;
 export const CLIENT_TYPES = ["client", "landlord / client"] as const;
 export const LENDER_TYPES = [
   "lender", "clearing bank", "investment bank", "insurance lender",
@@ -232,4 +236,21 @@ export function rowMatchesSearch(row: CrmHubRow, text: string): boolean {
   return [row.name, row.companyType, row.description, row.city, row.line, ...row.owners.map(owner => owner.name),
     ...row.strategies.map(strategy => strategy.name), ...row.people.map(person => person.name)]
     .some(value => String(value || "").toLowerCase().includes(wanted));
+}
+
+// What a CRM company is tied to in BGP's work (server/crm-company-links.ts,
+// GET /api/crm/hub/company/:id/links; Woody, 2026-11-23). A part the server
+// could not read is null.
+export interface CrmCompanyLinks {
+  id: string; name: string;
+  /** Buildings the company owns, manages, lends on or lets, by the role each record gives it. */
+  buildings: Array<{ propertyId: string; name: string; roles: string[] }> | null;
+  /** A brand on BGP's leasing instructions: units it is a target for, interested in, viewed or offered on, Wanted lines and deals it is the tenant on. */
+  instructions: Array<{ key: string; unitId: string | null; unit: string | null; propertyId: string | null; propertyName: string | null; stage: string | null; dealId: string | null; live: boolean; how: string[] }> | null;
+  /** An agent firm: the brands it acts for now. */
+  actingFor: Array<{ id: string; name: string; detail: string | null }> | null;
+  /** An agent firm: the buildings it is letting or bringing brands to. */
+  leasing: Array<{ propertyId: string; name: string; how: string[] }> | null;
+  /** Live deals the company is a party to. */
+  deals: Array<{ id: string; name: string; status: string | null; side: string; propertyId: string | null; propertyName: string | null }> | null;
 }

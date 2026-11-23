@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, test } from 'node:test';
 import { createRequire } from 'node:module';
-import { matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
+import { matchLandlordMeeting, createLandlordMatcher, isOutsideBusinessAddress, LANDLORD_DIARY_MATCHER, LEASING_MATCHER, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
 import { PRIVATE_MAILBOX } from './private-mail';
 
 let api: typeof import('./landlord-meetings');
@@ -43,6 +43,28 @@ test('full landlord names are linked in invitation subjects, not contact-name gu
   assert.equal(matchLandlordMeeting('SomeAEWother',[],[aew]).length,0);
   assert.equal(matchLandlordMeeting('not-aew.com, x@aew.com.evil.test',[],[aew]).length,0);
   assert.equal(matchLandlordMeeting('Ben Sykes catch up',[],[aew]).length,0);
+});
+// Woody, 2026-11-23: personal invites were showing on the CRM calendar.
+test('a diary entry that only names a company needs an outside business guest', () => {
+  const flatIron: LandlordCatalogueEntry = { id:'fi', name:'Flat Iron', company_type:'Tenant - Restaurant', domain:'flatironsteak.co.uk', domain_url:null, contacts:[{ id:'c1', name:'Charlie', email:'charlie@gmail.com' }] };
+  const leasing = createLandlordMatcher([flatIron], LEASING_MATCHER);
+  const landlord = createLandlordMatcher([aew], LANDLORD_DIARY_MATCHER);
+  // Only BGP on it, a booking service, a friend on Gmail: not a meeting.
+  assert.equal(leasing('Dinner at Flat Iron', [person('woody@brucegillinghampollard.com')]).length, 0);
+  assert.equal(leasing('Your table at Flat Iron', [person('reservations@sevenrooms.com'), person('woody@brucegillinghampollard.com')]).length, 0);
+  assert.equal(leasing('Flat Iron with Sam', [person('sam@gmail.com'), person('woody@brucegillinghampollard.com')]).length, 0);
+  assert.equal(leasing('Flat Iron booking', [person('noreply@example-bookings.co.uk')]).length, 0);
+  assert.equal(landlord('AEW / BGP prep', [person('nick@brucegillinghampollard.com')]).length, 0);
+  // Someone from a firm on the invitation: the name counts.
+  assert.equal(leasing('Flat Iron x Bluewater', [person('jo@cbre.com'), person('woody@brucegillinghampollard.com')])[0]?.company.id, 'fi');
+  assert.equal(landlord('AEW / BGP catch up', [person('ben@savills.com')])[0]?.company.id, 'aew');
+  // A named contact or the firm's own domain counts on its own, as before.
+  assert.equal(leasing('Lunch', [person('charlie@gmail.com')])[0]?.company.id, 'fi');
+  assert.equal(leasing('Lunch', [person('ops@flatironsteak.co.uk')])[0]?.company.id, 'fi');
+  assert.equal(isOutsideBusinessAddress('bookings@thewolseley.com'), false);
+  assert.equal(isOutsideBusinessAddress('jo@cbre.com'), true);
+  // Interview transcripts carry no guest list and keep the plain name test.
+  assert.equal(matchLandlordMeeting('AEW / BGP catch up',[],[aew])[0]?.company.id,'aew');
 });
 test('London week uses local Monday to Sunday across daylight-saving boundaries', () => {
   assert.deepEqual(londonWeek(new Date('2026-10-25T11:00:00Z')), {start:'2026-10-18T23:00:00.000Z',end:'2026-10-26T00:00:00.000Z',timeZone:'Europe/London'});

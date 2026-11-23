@@ -138,6 +138,21 @@ async function apolloMatchPerson(args: { name?: string | null; email?: string | 
   }
 }
 
+export function rocketReachEmployerFits(p: any, domain: string | null): boolean {
+  if (!domain) return true;
+  const onDomain = (value: unknown) => {
+    const host = String(value || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#@\s]/)[0];
+    return !!host && (host === domain || host.endsWith(`.${domain}`));
+  };
+  const said = [p.current_employer_domain, p.current_employer_website].filter(Boolean);
+  const emails = [p.recommended_professional_email, ...(Array.isArray(p.emails) ? p.emails.map((e: any) => e?.email) : [])]
+    .filter(Boolean).map((e: string) => e.split("@")[1]).filter(Boolean);
+  const generic = /^(gmail|googlemail|yahoo|hotmail|outlook|icloud|me|aol|live|msn|btinternet)\./;
+  const workEmails = emails.filter(host => !generic.test(String(host)));
+  if (!said.length && !workEmails.length) return true;
+  return said.some(onDomain) || workEmails.some(onDomain);
+}
+
 async function runRocketReachSearch(domain: string | null, companyName: string, scope: "tenant" | "landlord"): Promise<{ ok: boolean; total: number; sample: Array<{ name: string; title: string | null; seniority: string | null; email: string | null }>; error?: string }> {
   const key = process.env.ROCKETREACH_API_KEY;
   if (!key) return { ok: false, total: 0, sample: [], error: "ROCKETREACH_API_KEY not set" };
@@ -173,8 +188,14 @@ async function runRocketReachSearch(domain: string | null, companyName: string, 
       return { ok: false, total: 0, sample: [], error: `RocketReach ${res.status}: ${text.slice(0, 200)}` };
     }
     const data = await res.json() as any;
-    const people = (data.profiles || []) as any[];
-    const total = data.pagination?.total ?? people.length;
+    // The search is by employer NAME, so "forge" also brings back people at
+    // every other Forge (Woody, 2026-11-23, Forge's page: "contacts not
+    // updating after refresh and website change"). With a website on the
+    // record, a person is kept only when what RocketReach says of their
+    // employer, or their work email, is on that domain; a profile that says
+    // nothing either way is kept, as before.
+    const people = ((data.profiles || []) as any[]).filter((p: any) => rocketReachEmployerFits(p, domain));
+    const total = people.length < (data.profiles || []).length ? people.length : (data.pagination?.total ?? people.length);
     const sample = people.slice(0, 10).map((p: any) => ({
       id: p.id || null,
       name: p.name || [p.first_name, p.last_name].filter(Boolean).join(" "),

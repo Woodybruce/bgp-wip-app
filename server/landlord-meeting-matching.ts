@@ -17,8 +17,30 @@ export interface LandlordCatalogueEntry {
 // and trusts a name in the invitation only when it is two words or more:
 // "Next steps" is not Next and "Office move" is not Office. A person's email
 // address or their firm's domain matches in both.
-export interface MatcherOptions { tenants?: boolean; minNameWords?: number }
-export const LEASING_MATCHER: MatcherOptions = { tenants: true, minNameWords: 2 };
+//
+// A diary entry that only NAMES a company (no contact of it, nobody from its
+// domain on the invitation) counts as a meeting with it only when someone
+// from outside BGP, on a business address, is on the invitation
+// (`nameNeedsOutsider`; Woody, 2026-11-23: his personal invites were showing
+// on the CRM calendar, which "should just be meetings with recognised brands
+// and or Landlords or agents"). A table booked at a restaurant brand, a
+// personal invitation from a Gmail address, or a BGP-only entry that names a
+// company is not a meeting with it. Interview transcripts, which carry no
+// guest list, keep the plain name test.
+export interface MatcherOptions { tenants?: boolean; minNameWords?: number; nameNeedsOutsider?: boolean }
+export const LEASING_MATCHER: MatcherOptions = { tenants: true, minNameWords: 2, nameNeedsOutsider: true };
+export const LANDLORD_DIARY_MATCHER: MatcherOptions = { nameNeedsOutsider: true };
+
+// Booking, ticketing and notification senders: an address that is not a
+// person at a firm.
+const SERVICE_LOCAL_PART = /^(?:no-?reply|do-?not-?reply|reservations?|bookings?|notifications?|calendar|invites?|tickets?|events?)(?:[+._-]|$)/i;
+const SERVICE_DOMAIN = /(?:^|\.)(?:opentable|sevenrooms|resy|designmynight|tablein|quandoo|bookatable|eventbrite|ticketmaster|tock|fatsoma|feverup|dice)\.[a-z.]+$/i;
+export function isOutsideBusinessAddress(address: string): boolean {
+  const [local = '', host = ''] = address.trim().toLowerCase().split('@');
+  if (!local || !host || !isExternalDomain(host)) return false;
+  if ([...GENERIC_EMAIL_DOMAINS].some(generic => host === generic || host.endsWith(`.${generic}`))) return false;
+  return !SERVICE_LOCAL_PART.test(local) && !SERVICE_DOMAIN.test(host);
+}
 
 export const LANDLORD_CATALOGUE_PREDICATE = `c.merged_into_id IS NULL
   AND LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%'
@@ -122,7 +144,8 @@ export function createLandlordMatcher(catalogue: LandlordCatalogueEntry[], optio
       }
     }
     const text = landlordMentionText(subject);
-    for (const { company, test } of named) if (test(text)) add(company, `Named in invitation: ${company.name}`);
+    const outsider = !options.nameNeedsOutsider || people.some(person => isOutsideBusinessAddress(person.email));
+    if (outsider) for (const { company, test } of named) if (test(text)) add(company, `Named in invitation: ${company.name}`);
     return [...matches.values()];
   };
 }

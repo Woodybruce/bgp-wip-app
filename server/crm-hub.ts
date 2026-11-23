@@ -326,6 +326,20 @@ export function createCrmHubRouter(deps: CrmHubDeps) {
     }
   });
 
+  // What the company is tied to: buildings, BGP's leasing instructions, the
+  // brands an agent acts for and the buildings it lets (Woody, 2026-11-23).
+  router.get("/api/crm/hub/company/:id/links", deps.requireAuth, staffOnly, async (req, res) => {
+    try {
+      const { companyLinks } = await import("./crm-company-links");
+      const links = await companyLinks(q, String(req.params.id));
+      if (!links) return res.status(404).json({ error: "Company not found" });
+      res.json(links);
+    } catch (error: any) {
+      console.error("[crm-hub] links:", error?.message || error);
+      res.status(500).json({ error: "What this company is linked to could not be loaded" });
+    }
+  });
+
   router.get("/api/crm/hub/:kind", deps.requireAuth, staffOnly, async (req, res) => {
     const kind = String(req.params.kind || "").toLowerCase();
     if (!isCrmHubKind(kind)) return res.status(404).json({ error: "Choose landlord, brand, agent or lender" });

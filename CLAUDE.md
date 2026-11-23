@@ -1651,6 +1651,78 @@ calendars), the order of work and the four decisions waiting on him are in
   strategy, what is new in 14 days (signals, planning applications, job
   adverts, contact) and what is owed (overdue actions, no next step, no
   contact for 30 days), the ones owing first.
+  **The watch list does something** (Woody, 2026-11-23, on Jersey Mike's
+  reading "No contact on record": "wrong so needs to link", a "pop out
+  summary of the brand activity with BGP", the "actions needed button to
+  actually do something" and "a box to update strategy"; then "same for
+  Landlords", "agents and lenders"). Contact is anything filed against the
+  company OR one of its people (the CRM lists' rule, private mailbox left
+  out) and the meetings in both diary books; a meeting booked ahead stops
+  "No contact" being owed. "No people on record" is owed apart. Each owed
+  chip is a button (`owedKind` in `watch-entry.tsx`): Start strategy, Add
+  CRM action filled in for the company (No next step; "Get in touch with"
+  for No contact), Add contact (`ContactFormDialog` with the company), or
+  the entry. A company's name opens `WatchEntryDialog`: What's needed (each
+  owed line with its button, overdue and open actions with their status),
+  Strategy (per strategy: this company's plan, which is its target
+  `reason`, the objective, status and review date, saved whole through the
+  Overview's strategy save with the version read) and Activity with BGP
+  (`GET /api/crm/engagement/watch/:companyId/summary`, `watchSummary`:
+  people, last and next contact, diary meetings, logged emails and
+  meetings, live deals, open requirements; staff only on the engagement
+  router). Every kind, not just brands. Tests: `server/super-brand.test.ts`,
+  `qa/regression/crm-watch-entry.test.mjs`.
+  **The Overview's layout** (Woody, same day: "remove the stratgeys board
+  ... have the calend go straight accross", "filters sit above watch list
+  and filter all", "combine the CRM actions with the watch list on to the
+  top board together"). On the joined CRM page (`overall` in
+  `overview.tsx`) the Company / Strategy / BGP owner filters sit above the
+  Watch list and filter it (`watchMatches`: the company, its strategies,
+  and an owner of one of its running strategies or open actions) as well
+  as the calendar and the actions; the CRM actions are the right half of
+  the Watch list's card (`aside`); there is no Strategies board and the
+  calendar runs full width. A company page's plan keeps its Strategies
+  board and its own actions card.
+  **Linked to** (Woody: "brands linked to BGP leasing instructions and the
+  Landlords linked to their buildings / ownership", "agents ... linked to
+  brands they are acting for and also building they are leasing").
+  `GET /api/crm/hub/company/:id/links` (`server/crm-company-links.ts`,
+  `CrmCompanyLinks` in `shared/crm-hub.ts`, staff only on the hub router):
+  buildings by the role a property record gives the company (and
+  `crm_company_properties`), a brand's place on BGP lettings (targets,
+  interest, viewings, offers, Wanted lines, deals as tenant; live by
+  `TRACKER_LIVE_STATUSES`), the brands an agent acts for now, the buildings
+  it lets or brings brands to, and live deals. Read, never stored. Drawn by
+  `CompanyLinks` under a CRM list row's people and in a Watch list entry's
+  Activity with BGP.
+  **Select and Delete on the CRM lists** (Woody: "add a select and delete
+  buttons on the CRMs pages"). Admins, beside Table / Cards
+  (`CrmSelectBar`); `POST /api/admin/crm-companies/bulk-delete`
+  (`crmBulkDeletePlan` in `server/brand-relevance.ts`, the brand tidy's own
+  checks plus a company's own KYC or AML record): untied = deleted for
+  good; a tied brand is hidden as Brand Explorer does; a tied landlord,
+  agent or lender is KEPT and listed with its ties (there is no Hidden list
+  for those to bring one back from). Never at boot.
+  **The CRM forms read better** (Woody: "auto type didnt pick up the
+  strategy", "missed the company ... and didn't fill in why this agent").
+  Add CRM action takes the company's one running strategy, or the one the
+  note names (`strategyForCompany` in `dialogs.tsx`), on a read, on picking
+  a company and when opened for one. A company written with a word that
+  only says what kind of firm it is ("Forge agency") matches the record
+  without it (`withoutKindWord` in `shared/crm-note.ts`, also in the
+  reader's candidate search); the reason then fills.
+  **Contact discovery and the website**: RocketReach is searched by
+  employer NAME, so "forge" brought back people at every Forge. With a
+  website on the record a profile is kept only when its employer's domain
+  or website, or a work email, is on that domain
+  (`rocketReachEmployerFits` in `server/contacts-discovery.ts`); a profile
+  that says nothing is kept. Contacts already SAVED under a company are
+  never removed by a refresh: take them off from the person's menu.
+  **The Landlords list is the owner side** (Woody: Legal & General "hasnt
+  landed as a landlord in the CRM list", typed Investor): `LANDLORD_TYPES`
+  in `shared/crm-hub.ts` takes Landlord, Client, Landlord / Client,
+  Landlord/Freeholder, Freeholder, Investor, REIT, Developer, Fund and Asset
+  manager (the landlord diary book's types), or a portfolio account.
 
 Built on 15 November 2026:
 
@@ -7188,6 +7260,17 @@ separately and send to" the leasing address. Do not re-litigate.
   address or their firm's domain matches in both books. The leasing book
   (`LEASING_MATCHER`) trusts a name in the invitation only when it is two
   words or more: "Next steps" is not Next. Do not loosen that.
+  **A name alone needs an outside business guest** (Woody, 2026-11-23: his
+  personal invites were on the CRM calendar, which "should just be meetings
+  with recognised brands and or Landlords or agents"). In both diary books
+  (`LANDLORD_DIARY_MATCHER`, `LEASING_MATCHER`: `nameNeedsOutsider`) a
+  company named in the title counts only when someone outside BGP on a
+  business address is on the invitation (`isOutsideBusinessAddress`: not
+  BGP, not Gmail and the like, not a booking or no-reply sender). A contact's
+  own address and the firm's domain still count on their own. Every diary
+  read goes through `bookMatcher`; interview transcripts, which have no guest
+  list, keep `matchLandlordMeeting`'s plain name test. Tests in
+  `server/landlord-meetings.test.ts`.
 - **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
   `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days
   back and 90 ahead). A meeting carries `companyKind`.

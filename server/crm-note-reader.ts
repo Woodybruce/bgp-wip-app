@@ -9,7 +9,7 @@
 // kind of form and today's date: no staff list, no company list. The names it
 // reads back are matched here against BGP's people and this view's companies.
 import type { EngagementKind } from "../shared/crm-engagement";
-import { checkCrmAnswer, CRM_NOTE_MAX, type CrmNoteForm, type CrmNoteReading } from "../shared/crm-note";
+import { checkCrmAnswer, companyKey, withoutKindWord, CRM_NOTE_MAX, type CrmNoteForm, type CrmNoteReading } from "../shared/crm-note";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 
 type Queryable = { query: (text: string, values?: any[]) => Promise<{ rows: any[] }> };
@@ -78,7 +78,7 @@ const londonDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Lon
 
 /** The companies on this view's list that the names in the note could be. */
 async function candidates(q: Queryable, kind: EngagementKind, names: string[]): Promise<Array<{ id: string; name: string }>> {
-  const patterns = [...new Set(names.map(n => n.trim().toLowerCase()).filter(n => n.length >= 2))].slice(0, 12)
+  const patterns = [...new Set(names.flatMap(n => [n.trim().toLowerCase(), withoutKindWord(companyKey(n))]).filter(n => n.length >= 2))].slice(0, 24)
     .map(n => `${n.replace(/[\\%_]/g, "\\$&")}%`);
   if (!patterns.length) return [];
   const brands = `(c.merged_into_id IS NULL AND c.archived_at IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%')`;

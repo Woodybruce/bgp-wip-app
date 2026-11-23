@@ -34,7 +34,7 @@ const errorText = (error: any) => {
   try { return JSON.parse(raw)?.error || raw; } catch { return raw || "The note could not be read. Fill the form in by hand."; }
 };
 
-export function CrmNoteFill({ form, kind, saveWord, onRead }: { form: CrmNoteForm; kind: EngagementKind; saveWord: string; onRead: (reading: CrmNoteReading) => void }) {
+export function CrmNoteFill({ form, kind, saveWord, onRead }: { form: CrmNoteForm; kind: EngagementKind; saveWord: string; onRead: (reading: CrmNoteReading, note?: string) => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -49,7 +49,7 @@ export function CrmNoteFill({ form, kind, saveWord, onRead }: { form: CrmNoteFor
     try {
       const result: CrmNoteReading = await (await apiRequest("POST", `/api/crm/engagement/read-note?kind=${kind}`, { form, text })).json();
       setReading(result);
-      onRead(result);
+      onRead(result, text);
     } catch (e) { setError(errorText(e)); }
     finally { setBusy(false); }
   };

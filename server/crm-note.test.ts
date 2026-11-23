@@ -120,3 +120,13 @@ test("the reader matches companies on the server, is capped, and refuses a note 
   await refused(readCrmNote(q, { form: "action", kind: "landlord", text: note, staff }, { hasKey: () => true, claim: async () => false }), 429);
   await refused(readCrmNote(q, { form: "action", kind: "landlord", text: note, staff }, { hasKey: () => true, claim: async () => true, ask: async () => ({ text: "I cannot help with that", model: "test" }) }), 502);
 });
+
+// Woody, 2026-11-23: "Forge agency" in a note missed the record "forge".
+test("a company named with a word saying what kind of firm it is matches the record without it", () => {
+  const reading = checkCrmAnswer({ title: "Ongoing relationship with Forge agency", text: "jack wants an ongoing relationship with Forge agency",
+    companies: [{ name: "Forge agency", reason: "quarterly meetings with the investment team" }] },
+    { form: "strategy", text: "jack wants an ongoing relationship with Forge agency to include quarterly meetings with the investment team", today: "2026-11-23", staff: [],
+      companies: [{ id: "f1", name: "forge" }, { id: "f2", name: "Forge Global Holdings Inc" }] });
+  assert.deepEqual(reading.companies, [{ id: "f1", name: "forge", reason: "quarterly meetings with the investment team" }]);
+  assert.deepEqual(reading.notFound, []);
+});

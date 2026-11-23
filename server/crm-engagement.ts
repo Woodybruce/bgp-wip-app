@@ -715,6 +715,8 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
   // The watch list: every company on a running strategy, what is new on it
   // and what is owed (server/crm-watch-list.ts).
   router.get("/watch",handle(async()=>({rows:await (await import("./crm-watch-list")).watchList(deps.pool)})));
+  // One entry's pop-out: BGP's activity with the company (Woody, 2026-11-23).
+  router.get("/watch/:companyId/summary",handle(async req=>{const summary=await (await import("./crm-watch-list")).watchSummary(deps.pool,String(req.params.companyId));if(!summary)throw Object.assign(new Error("Company not found"),{status:404});return summary;}));
   router.post("/kick-off",handle(async req=>{
     const input=z.object({companyId:id}).strict().parse(req.body);
     return (await import("./crm-kickoff")).buildKickoff(deps.pool,input.companyId);
