@@ -37,6 +37,7 @@ export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise
       companyId: r.company_id || null,
       recipientName: r.contact_name || null,
       person: person ? { key: String(person.key || ""), name: person.name, roles: Array.isArray(person.roles) ? person.roles : [] } : null,
+      ...(request.purpose === "trust_structure" ? { trustDocs: true } : {}),
       cancelled: !!r.revoked_at,
       expired: new Date(r.expires_at).getTime() < now,
       finished: !!r.completed_at,

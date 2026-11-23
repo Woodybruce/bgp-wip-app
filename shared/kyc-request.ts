@@ -9,7 +9,7 @@ import type { KycRedFlag } from "./kyc-red-flags";
 
 export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents"
   // A trust's own documents (Jack, 23 November 2026: trusts checked by BGP, not KYC4U).
-  | "trust_deed" | "trs_excerpt" | "trust_authority" | "trust_wealth" | "other";
+  | "trust_deed" | "trust_people" | "trs_excerpt" | "trust_authority" | "trust_wealth" | "other";
 export type KycPartyKind = "individual" | "company";
 
 // A request of a person's own (Woody, 19 November 2026, agreeing "a list of
@@ -41,7 +41,7 @@ export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): s
     : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
-export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth", "other"];
+export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "trust_deed", "trust_people", "trs_excerpt", "trust_authority", "trust_wealth", "other"];
 
 // docType is what the file is filed as on the client's KYC record, the
 // types the KYC pack intake already uses (a driving licence files as
@@ -98,6 +98,13 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     detail: "A copy of the trust deed, with any deeds of appointment, retirement or variation since: it shows the settlor, the trustees, the beneficiaries and anyone else with control, such as a protector. As we have not seen the original, please send a copy certified by a practising solicitor or accountant as \"a true copy of the original\", with their name, signature, the date, their professional body and their firm.",
     docType: "trust_deed",
   },
+  // Who is who today (23 November 2026): the deed may predate the trustees
+  // now acting, and the people each get a link of their own from it.
+  trust_people: {
+    title: "Who is who in the trust",
+    detail: "A list of the trust's settlor, its trustees now, any protector, and its beneficiaries (or how the deed describes them, such as \"the settlor's grandchildren\"), with each person's full name, date of birth, home address and email, and for a company its name and registration number. A letter or email from the trustees or the trust's solicitor or accountant is fine.",
+    docType: "trust_structure",
+  },
   trs_excerpt: {
     title: "HMRC's proof of registration",
     detail: "The trust's proof of registration from HMRC's Trust Registration Service (the trustees can download it from their HMRC online account), or a line from the trustees or their adviser saying why the trust does not need to register.",
@@ -119,6 +126,12 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     docType: "other",
   },
 };
+
+// What "Request trust structure" asks for (Jack, 23 November 2026: "Request
+// Trust Structure and it then emails the trust's representative ... requesting
+// the specific documents we need"). The trust's people then each get a link
+// of their own for their identity check and proof of address.
+export const TRUST_REQUEST_DOCS: KycDocKey[] = ["trust_deed", "trust_people", "trs_excerpt", "trust_wealth", "trust_authority"];
 
 export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value === "string" && (KYC_DOC_KEYS as string[]).includes(value);
 
@@ -264,6 +277,8 @@ export interface KycEmailContext {
   person?: { roles: KycPersonRole[] } | null;
   // The owners the person acting is asked to pass a link of their own to.
   ownLinksFor?: string[] | null;
+  // A request for a trust's documents (23 November 2026), not identity checks.
+  purpose?: "trust_structure" | null;
 }
 
 // Who hears back from a request (the agents' Finished note, a red-flag
@@ -437,6 +452,7 @@ const subjectFor = (ctx: Pick<KycEmailContext, "dealName" | "ref" | "test">, lea
 
 // The first email: what we need, one button to the client's own page.
 export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
+  if (ctx.purpose === "trust_structure") return trustDocsRequestEmail(ctx);
   const steps = kycSteps(ctx);
   const forWhom = ctx.kind === "company"
     ? ` That's you, for <strong>${escHtml(ctx.partyName)}</strong>, and the company's owners.`
@@ -470,6 +486,59 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
   return { subject: subjectFor(ctx, "Please complete your identity checks for"), html: frame("Identity checks", inner, footerFor(ctx), ctx.test, undefined, ctx.testBy) };
 }
 
+// A trust's documents (23 November 2026): who stands behind the trust, sent
+// by its trustees, solicitor or accountant. Its people each get a link of
+// their own for their identity check afterwards.
+function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Documents about ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.recipientName)),
+    p(`<strong>${escHtml(ctx.partyName)}</strong> is a party to <strong>${escHtml(ctx.dealName)}</strong>. Before it can go ahead, the law requires us to know who stands behind the trust: who set it up, who the trustees are and who benefits.`),
+    h2("What we need"),
+    stepsList(kycSteps(ctx)),
+    p("Upload them on your secure page, or reply to this email with them attached.", `font-size:14px;color:${BODY}`),
+    button("Upload the documents", ctx.link),
+    p(`Your link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>. Once we have the documents, we'll send each trustee and the settlor a short identity check of their own.`, `font-size:13px;color:${MUTED}`),
+    noteBlock(ctx.note, ctx.agents),
+    whyWeAsk(),
+    h2("Questions?"),
+    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    linkFallback(ctx.link),
+  ].join("\n");
+  return { subject: subjectFor(ctx, `Documents about ${ctx.partyName} for`), html: frame("Trust documents", inner, footerFor(ctx), ctx.test, undefined, ctx.testBy) };
+}
+
+/**
+ * The trust's documents are in (23 November 2026, Jack: "Once they upload, we
+ * need the documents to go somewhere and then be notified that are ready to
+ * undertake due diligence on"): to the transaction's agents and the officers.
+ */
+export function trustDocsReadyEmail(ctx: {
+  recipientName: string | null; partyName: string; dealName: string; ref: string; dealLink: string; sentFrom: string; test?: boolean;
+  files: KycFinishedFile[]; missing: string[];
+  // The deed's reading: values found, or why it could not be read; null with no deed sent.
+  deed: { read: boolean; values: number; people: number; why: string | null } | null;
+}): { subject: string; html: string } {
+  const fileRows = ctx.files.map(f => `<tr><td style="padding:3px 12px 3px 0;font-family:${FONT};font-size:14px;color:${INK}">${escHtml(f.name)}</td><td style="padding:3px 0;font-family:${FONT};font-size:13px;color:${MUTED}">${escHtml(f.docKey ? KYC_DOCS[f.docKey].title : "Sent by email")}</td></tr>`).join("");
+  const deedLine = !ctx.deed ? ""
+    : ctx.deed.read ? p(`The trust deed has been read into a draft structure: ${ctx.deed.people} ${ctx.deed.people === 1 ? "person" : "people"} named. Check it against the deed and save it.`)
+    : p(`The trust deed could not be read by the app (${escHtml(ctx.deed.why || "no reason given")}): record the structure from it by hand.`);
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:${ACCENT}">Ready for due diligence: ${escHtml(ctx.partyName)}</h1>`,
+    p(`${escHtml(ctx.recipientName || "The trust's representative")} has sent the trust's documents for <strong>${escHtml(ctx.dealName)}</strong>. They are filed on the trust's KYC record.`),
+    ctx.files.length ? h2(`Files received (${ctx.files.length})`) + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${fileRows}</table>` : p("No files were uploaded."),
+    ctx.missing.length ? h2("Not sent") + p(escHtml(ctx.missing.join(", "))) : "",
+    deedLine,
+    h2("Next"),
+    `<ol style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}"><li style="margin:0 0 4px">Open the transaction's Parties &amp; AML and check the trust structure against the documents, then save it.</li><li style="margin:0 0 4px">Send each trustee, the settlor and anyone else with control their own link under People to check.</li><li style="margin:0 0 4px">An officer signs off once nothing is outstanding.</li></ol>`,
+    button("Open the transaction's AML", ctx.dealLink),
+  ].join("\n");
+  return {
+    subject: `${ctx.test ? "[Test] " : ""}Ready for due diligence: ${ctx.partyName}'s trust documents, ${ctx.dealName} (ref ${ctx.ref})`,
+    html: frame("Trust documents in", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents and the AML officers receive"),
+  };
+}
+
 export interface KycProgress {
   idDone: boolean;
   docsDone: KycDocKey[];
@@ -492,7 +561,7 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
   if (ctx.askPep) (ctx.progress.pepAnswered ? done : left).push(KYC_PEP_QUESTION.title);
   const list = (items: string[], mark: string, colour: string) => items.map(item => `<tr><td style="width:24px;vertical-align:top;padding:3px 0;font-family:${FONT};font-size:15px;font-weight:bold;color:${colour}">${mark}</td><td style="padding:3px 0;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(item)}</td></tr>`).join("");
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">A reminder about your identity checks</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${ctx.purpose === "trust_structure" ? `A reminder about the documents for ${escHtml(ctx.partyName)}` : "A reminder about your identity checks"}</h1>`,
     p(greeting(ctx.recipientName)),
     p(`We still need a few things from you before <strong>${escHtml(ctx.dealName)}</strong> can go ahead.`),
     done.length ? h2("Done, thank you") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${list(done, "&#10003;", "#2e7d32")}</table>` : "",
@@ -503,7 +572,7 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  return { subject: subjectFor(ctx, "Reminder: your identity checks for"), html: frame("Identity checks reminder", inner, footerFor(ctx), ctx.test) };
+  return { subject: subjectFor(ctx, ctx.purpose === "trust_structure" ? `Reminder: documents about ${ctx.partyName} for` : "Reminder: your identity checks for"), html: frame("Identity checks reminder", inner, footerFor(ctx), ctx.test) };
 }
 
 // The identity check on its own, with Veriff's link (a check started for
@@ -952,6 +1021,8 @@ export interface KycPortalView {
   agents: KycAgent[];
   finishedAt: string | null;
   maxFileMb: number;
+  // A request for a trust's documents (23 November 2026): its own wording.
+  trustDocs?: boolean;
   // The joint agent's request (22 November 2026): its own page, with the
   // reliance terms to agree on a letting at £10,000 a month or more.
   joint?: {
