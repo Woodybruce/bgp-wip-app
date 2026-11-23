@@ -277,6 +277,7 @@ export interface KycEmailContext {
   needsIdCheck: boolean;
   docs: KycDocKey[];
   note?: string | null;
+  noteFrom?: string | null;            // who typed the note (the person who sent the request)
   agents: KycAgent[];
   // The mailbox the email goes from, named in the footer.
   sentFrom: string;
@@ -347,7 +348,9 @@ function greeting(name: string | null | undefined): string {
   return first ? `Hello ${escHtml(first)},` : "Hello,";
 }
 
-// "Jack Smith on 07700 900123 or jack@…", for up to two agents.
+// "Jack Smith on 07700 900123 or jack@…", for up to two people. Since
+// 23 November 2026 the server passes the Nominated Officer alone (Jack: "I
+// need to be the only person referenced under 'Questions?'").
 function agentContactHtml(agents: KycAgent[]): string {
   const shown = agents.filter(a => a.name).slice(0, 2);
   if (!shown.length) return "reply to this email";
@@ -464,10 +467,13 @@ export const KYC_WHY_WE_ASK = "The Money Laundering Regulations require estate a
 export const KYC_DATA_USE = "We use what you send only to prevent money laundering and terrorist financing, and keep it securely for five years after our work with you ends.";
 const whyWeAsk = () => h2("Why we ask") + p(`${escHtml(KYC_WHY_WE_ASK)} ${escHtml(KYC_DATA_USE)} Our <a href="${escHtml(KYC_PRIVACY_URL)}" style="color:${ACCENT}">privacy notice</a> has more.`, `font-size:13px;color:${BODY}`);
 
-function noteBlock(note: string | null | undefined, agents: KycAgent[]): string {
+// The note is from whoever typed it, the person who sent the request (Jack,
+// 23 November 2026: his note read "A note from Charlotte", the first agent on
+// the transaction). Never the first name on the contact list.
+function noteBlock(note: string | null | undefined, noteFrom: string | null | undefined): string {
   const text = String(note || "").trim();
   if (!text) return "";
-  const from = firstName(agents[0]?.name) || "your agent";
+  const from = firstName(noteFrom) || "Bruce Gillingham Pollard";
   return `<div style="margin:18px 0;padding:12px 16px;border-left:3px solid ${ACCENT};background:#faf7f5;font-size:14px;color:${BODY}"><strong style="color:${INK}">A note from ${escHtml(from)}:</strong><br>${escHtml(text).replace(/\r?\n/g, "<br>")}</div>`;
 }
 
@@ -508,7 +514,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     h2("Or send certified copies"),
     p(escHtml(certifiedWords(ctx)), `font-size:14px;color:${BODY}`),
     certifiedLists(),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -565,7 +571,7 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     p(escHtml(TRUST_NEXT_WORDS.links), `font-size:14px;color:${BODY}`),
     p(escHtml(TRUST_NEXT_WORDS.certified), `font-size:14px;color:${BODY}`),
     certifiedLists(),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -688,6 +694,7 @@ export interface JointAgentEmailContext {
   expiresAt: Date | string;
   letting: boolean;                   // a letting at £10,000 a month or more: the reliance terms
   note?: string | null;
+  noteFrom?: string | null;            // who typed the note (the person who sent the request)
   agents: KycAgent[];
   sentFrom: string;
   test?: boolean;
@@ -744,7 +751,7 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     stepsList(jointAgentAsks(ctx)),
     button("Upload the documents", ctx.link),
     p(`Or reply to this email with the documents attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -865,7 +872,7 @@ export function kycViaAgentRequestEmail(ctx: KycViaAgentEmailContext): { subject
     button("Open the checks", ctx.link),
     p(`To pass them on, forward this email to ${ctx.personName ? escHtml(ctx.personName) : "your client"}, or send the link to them from the page. You can upload any documents you hold for them on the same page.${ctx.needsIdCheck ? ` The identity check must be done by ${escHtml(kycViaAgentIdWho(ctx))}.` : ""}`, `font-size:14px;color:${BODY}`),
     p(`The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -1174,6 +1181,7 @@ export interface KycPortalView {
   // they have nothing left to send, linked when they have a link.
   people?: Array<{ key: string; name: string; detail: string | null; done: boolean; linked: boolean; emailedAt: string | null }> | null;
   note: string | null;
+  noteFrom?: string | null;
   agents: KycAgent[];
   finishedAt: string | null;
   maxFileMb: number;

@@ -5585,6 +5585,47 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
+## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
+
+Jack, on the trust request to Adam Harvey, which read "A note from Charlotte"
+over a note he typed and named Charlotte Roberts first under Questions?: "For
+every deal across the whole business I need to be the only person referenced
+under 'Questions?' please as the AML officer", and "It's from me, im the
+person who typed that message so fix that bug". Do not re-litigate.
+
+- **The contact** on every AML email and upload page (client checks, a
+  person's own link, reminders, pass-on, the joint agent's request and
+  chases, a closed link) is the Nominated Officer alone: `amlContact(fallback)`
+  in `server/aml-portal.ts`, read by `primeAmlContact` (the officer's login
+  for the phone; kept five minutes; `sendKycEmail` and `portalView` prime
+  it). With no Nominated Officer set, or unread, the request's own people
+  are used. The transaction's agents are still copied (`request.cc`) and
+  still stored on the request. An admin's test request names the admin. A
+  new AML email passes `agents: amlContact(...)`.
+- **The note** is headed with `noteFrom`, the first name of
+  `request.sentBy` (it was the first name on the contact list); with nobody
+  named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
+- Tests in `server/kyc-request.test.ts`.
+
+## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
+
+Jack: "We probably need to keep an up to date document of all these updates
+and rules we (Wood, Jack, Layla) are making to AML section." It is
+`shared/aml-decisions.ts` (`AML_DECISIONS`: date, who decided, topic, title,
+the rule in plain words), shown to BGP staff on Transactions → AML →
+**Updates** (`client/src/components/aml-decisions.tsx`: by day, filters for
+person and topic, Current rules only, search, Print or save as PDF), served
+by `GET /api/aml-decisions` in `server/aml-rules.ts` (BGP staff only; the
+client imports the type only, so the entries are not in the bundle).
+
+- **Every change to an AML rule adds an entry in the same commit**, at the
+  top (newest first), naming who decided it (Woody, Jack or Layla) in plain
+  words of 70 or fewer, saying "transaction". A build with no decision
+  behind it (a bug fix, a layout change) needs no entry.
+- **Never delete an entry.** When a rule replaces an earlier one, add the new
+  entry and set `changed` on the old one ("23 November 2026: ...").
+- Test: `server/aml-decisions.test.ts` (in `npm test`).
+
 ## Trusts checked by BGP from their structure, never KYC4U (Jack, 2026-11-23)
 
 Jack: "Remove KYC4u on trusts. We need you to build the trust structuring",

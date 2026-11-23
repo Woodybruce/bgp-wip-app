@@ -509,7 +509,7 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
 
       {view.note && (
         <div className="mt-5 border-l-[3px] border-[#6E0C25] bg-muted/50 px-4 py-3 text-sm">
-          <div className="font-semibold">A note from {contactName}</div>
+          <div className="font-semibold">A note from {firstName(view.noteFrom) || contactName}</div>
           <p className="mt-1 whitespace-pre-line text-muted-foreground">{view.note}</p>
         </div>
       )}
@@ -844,7 +844,7 @@ export default function KycUploadPage() {
 
       {view.note && (
         <div className="mt-5 border-l-[3px] border-[#6E0C25] bg-muted/50 px-4 py-3 text-sm">
-          <div className="font-semibold">A note from {contactName}</div>
+          <div className="font-semibold">A note from {firstName(view.noteFrom) || contactName}</div>
           <p className="mt-1 whitespace-pre-line text-muted-foreground">{view.note}</p>
         </div>
       )}

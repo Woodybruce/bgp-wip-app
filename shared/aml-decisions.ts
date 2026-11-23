@@ -1,0 +1,204 @@
+// The AML decisions log (Jack, 23 November 2026: "We probably need to keep an
+// up to date document of all these updates and rules we (Wood, Jack, Layla)
+// are making to AML section"). One entry per decision: when, who decided,
+// and the rule in plain words. Shown to BGP staff on Transactions, AML,
+// Updates (served by GET /api/aml-decisions, never bundled into the client).
+//
+// KEEP IT CURRENT: every change to an AML rule adds an entry here in the same
+// commit, newest first. When a rule replaces an earlier one, add the new
+// entry and put `changed` on the old one saying what replaced it. Never
+// delete an entry: the log is the record of what BGP decided and when.
+
+export const AML_DECISION_PEOPLE = ["Woody", "Jack", "Layla"] as const;
+export type AmlDecisionPerson = typeof AML_DECISION_PEOPLE[number];
+
+export const AML_DECISION_TOPICS = [
+  "Officers and sign-off",
+  "Who we check and when",
+  "Screening",
+  "ID and documents",
+  "Trusts and charities",
+  "Agents and joint agents",
+  "Higher risk",
+  "Companies owned abroad",
+  "KYC4U",
+  "Records and reports",
+  "Emails and wording",
+  "Policy",
+] as const;
+export type AmlDecisionTopic = typeof AML_DECISION_TOPICS[number];
+
+export interface AmlDecision {
+  date: string;                 // yyyy-mm-dd, the day it was decided
+  who: AmlDecisionPerson[];
+  topic: AmlDecisionTopic;
+  title: string;
+  text: string;
+  /** Set when a later decision replaced this one: what replaced it, and when. */
+  changed?: string;
+}
+
+export const AML_DECISIONS: AmlDecision[] = [
+  // 23 November 2026
+  { date: "2026-11-23", who: ["Jack"], topic: "Emails and wording", title: "Questions go to the AML Officer",
+    text: "On every AML email and upload page, across every transaction, the only person named under \"Questions?\" is the Nominated Officer. The transaction's agents are still copied on the emails." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Emails and wording", title: "A note is from whoever wrote it",
+    text: "The note on a request is headed with the name of the person who sent it, not the first agent on the transaction." },
+  { date: "2026-11-23", who: ["Jack"], topic: "ID and documents", title: "Who can certify a copy",
+    text: "We accept a copy certified by a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official. A copy certified by anyone else is held back for the Nominated Officer or a Deputy to accept with a note." },
+  { date: "2026-11-23", who: ["Jack"], topic: "ID and documents", title: "What a certification must carry",
+    text: "HMRC's details in full: the words that it is a true copy of the original, the certifier's signature, the date, and their name, occupation, address and telephone number. A copy missing any of these is held back." },
+  { date: "2026-11-23", who: ["Jack"], topic: "ID and documents", title: "No register check on the certifier",
+    text: "The app does not check that the certifier's firm is on the SRA register. Whoever reviews the document judges that the certifier is real." },
+  { date: "2026-11-23", who: ["Jack"], topic: "ID and documents", title: "Certified copies on every request",
+    text: "Every AML request email and upload page offers certified copies in place of the online identity check: one from List A (passport, photocard driving licence, Home Office residence permit) and one from List B (a utility or council tax bill under 3 months old). The app reads and checks each one." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Trusts and charities", title: "Trusts are checked by BGP",
+    text: "A trust is never sent to KYC4U. We record its information from the trust deed, either by asking the trust's representative to upload the documents or by adding it ourselves. Only the Nominated Officer or a Deputy signs a trust off, for one year." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Trusts and charities", title: "Who in a trust is verified",
+    text: "The settlor, every trustee, any protector and anyone else with control each do an identity check and send a proof of address. Beneficiaries do too, unless the trust is discretionary or charitable. Everyone named is screened." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Emails and wording", title: "Trust request says what comes next",
+    text: "The email asking for trust information says that each trustee and the settlor will then get their own link for an identity check and proof of address. The app calls it \"trust information\", never \"trust structure\"." },
+  { date: "2026-11-23", who: ["Woody"], topic: "KYC4U", title: "KYC4U is no longer used",
+    text: "Nothing is sent to KYC4U. Their past checks are kept in the app and still count until each party's re-check date." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Higher risk", title: "Red flags go to the AML Officer",
+    text: "A red flag reads \"raise with AML Officer (Jack)\". Enhanced due diligence is done by the Nominated Officer or a Deputy, who signs off with a note of what was checked and why the risk is acceptable. The approval lasts one year." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Joint agents: we ask for their documents, never reliance",
+    text: "We cannot agree reliance with a joint agent. We email them for every document they hold on the party, including proof of identity and any further AML they have done, and sign the party off on our own check of those documents." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "The other side's agent passes on our checks",
+    text: "An agent acting for the other side is sent our standard client checks to pass on to their client. The agent can help by uploading documents. The identity check is the client's own." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Policy", title: "Policy Issue 4 is the source of truth",
+    text: "Issue 4 of the AML policy and Issue 3 of the risk assessment replace earlier issues. Issue 4 waits on Jack's approval. Everyone confirms they have read it on My BGP, AML training." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Who we check and when", title: "The other party on a joint instruction is always checked",
+    text: "Sale or letting, the counterparty is checked, using the joint agent's documents or our own checks. \"Joint agent\" is no longer a reason to mark a party Not required. This goes further than HMRC asks." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Who we check and when", title: "When checks are done",
+    text: "Landlord or seller before marketing. Tenant when the landlord accepts the offer. Buyer from agreed heads of terms. All complete before exchange of contracts or completion of a lease, and no tenant deposit taken before." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Higher risk", title: "Simplified due diligence is a reduction, not an exemption",
+    text: "Owners are still identified unless the company itself is listed. A company owned through a listed one is standard, not simplified. Never simplified with a PEP, unclear funds, or any higher-risk factor." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Higher risk", title: "Super-prime value is weighed, not a red flag",
+    text: "A high-value sale is a factor to weigh on every party. Enhanced due diligence comes from another higher-risk factor or the agent's judgement." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "Dun & Bradstreet for companies owned from overseas",
+    text: "We will use Dun & Bradstreet reports. Until the app is connected to D&B, an officer downloads the report and uploads it on the party." },
+  { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "Upload documents on a party",
+    text: "BGP staff can drop certified ID, proofs of address and company documents onto a party. The app reads each one and says whether it is acceptable. One that does not pass can be accepted by the Nominated Officer or a Deputy with a note." },
+  { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "Verified from public sources: admins only",
+    text: "Only an admin who is an AML officer can verify a well-known person from public sources. The app searches and says whether what it found is enough or to ask for their ID." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Screening", title: "Warning lists judged like adverse media",
+    text: "Only a sanctions match is a red flag whatever its score. A warning-list match needs a 90% match or an agreeing date of birth, and a company match under a differently spelt name is set aside." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Emails and wording", title: "AML emails come from the KYC mailbox",
+    text: "Every AML email is sent from kyc@brucegillinghampollard.com, never from the app's own address." },
+  { date: "2026-11-23", who: ["Woody", "Jack"], topic: "Officers and sign-off", title: "The officers",
+    text: "Jack Barratt is the Nominated Officer. Layla O'Driscoll and Woody Bruce are Deputies. Each can decide and each is emailed escalations." },
+  { date: "2026-11-23", who: ["Jack"], topic: "Policy", title: "Policy Issue 3",
+    text: "A company is evidenced by its Companies House record with our screening. An identity check through Veriff counts as meeting the person, so certified copies are not needed. A newly formed company gives its parent's accounts or a record of how the transaction is funded.",
+    changed: "Carried into Issue 4 the same day." },
+
+  // 22 November 2026
+  { date: "2026-11-22", who: ["Woody"], topic: "Emails and wording", title: "We say \"transaction\", not \"deal\"",
+    text: "Every screen, email and document says transaction, for clients, joint agents and BGP staff." },
+  { date: "2026-11-22", who: ["Woody", "Jack"], topic: "Emails and wording", title: "Short, plain words on the AML screens",
+    text: "Each party is one card with a status, a Next line and four steps: Who signs, Screening, Documents, Sign-off. No long commentary and no regulation numbers on screens or emails." },
+  { date: "2026-11-22", who: ["Woody"], topic: "Policy", title: "The rules in short, checked against HMRC every 3 months",
+    text: "A short summary of the rules is on the Rules pill. The app checks HMRC's pages each quarter and emails the officers if one changed. Only the Nominated Officer approves a change to the wording." },
+  { date: "2026-11-22", who: ["Woody"], topic: "Agents and joint agents", title: "Joint agents: follow HMRC",
+    text: "We ask the joint agent for their checks. Every joint agent's HMRC registration is checked, not only one we share a fee with.",
+    changed: "23 November 2026: reliance is no longer used, and the counterparty is always checked." },
+  { date: "2026-11-22", who: ["Woody"], topic: "Agents and joint agents", title: "Chase the joint agent until it is all in",
+    text: "The app tells the joint agent what is missing and reminds them every three working days, up to ten times, until everything is in or the party is decided." },
+  { date: "2026-11-22", who: ["Woody"], topic: "Screening", title: "A screen that did not run is never read as clear",
+    text: "If a sanctions list could not be downloaded, or ComplyAdvantage did not screen someone, the party shows as not screened and the checks are run again." },
+
+  // 21 November 2026
+  { date: "2026-11-21", who: ["Woody"], topic: "Policy", title: "HMRC is the test",
+    text: "What matters is what HMRC requires. Where our written policy asks for more than the app does, the policy's wording is brought into line in a new issue." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Screening", title: "Adverse media under a differently spelt name is set aside",
+    text: "An adverse media match is kept only when the name is spelt as the person's or company's. Sanctions and public roles are never set aside on spelling." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Companies owned abroad", title: "Companies owned from abroad",
+    text: "The app traces the owners through the accounts and the worldwide GLEIF register, and we record the people behind the company abroad. These parties were sent to KYC4U.",
+    changed: "23 November 2026: the officers sign these off; KYC4U is no longer used." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Trusts and charities", title: "Foundations are treated like trusts",
+    text: "A foundation registered abroad, such as a Danish fonden or Dutch stichting, is recorded and checked as a trust." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Trusts and charities", title: "UK charities are read from the Charity Commission's register",
+    text: "The charity's status and trustees are read from the register. Trustees are screened. A charity removed from the register or insolvent is a red flag." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Agents and joint agents", title: "Relying on another firm's checks",
+    text: "The Nominated Officer or a Deputy can record reliance on another regulated firm, such as the client's solicitors, with the firm's written agreement. It never covers enhanced due diligence." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Officers and sign-off", title: "Stop acting",
+    text: "The officers can stop BGP's part in a transaction it cannot check. It can then only be withdrawn, and cannot be invoiced or deleted. The team is told without the reason." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Agents and joint agents", title: "The other side's solicitors are checked",
+    text: "The firm is looked up in the SRA's own data and searched for regulatory action." },
+  { date: "2026-11-21", who: ["Woody"], topic: "Records and reports", title: "A written risk assessment for every party",
+    text: "The app writes a risk assessment for each party and prints it first in the AML file, with the heads of terms." },
+  { date: "2026-11-21", who: ["Woody"], topic: "KYC4U", title: "KYC4U's files are kept in the app",
+    text: "Every file KYC4U holds on our requests is copied into the app and filed on the party it belongs to." },
+
+  // 20 November 2026
+  { date: "2026-11-20", who: ["Woody"], topic: "Officers and sign-off", title: "No hold on a transaction while the NCA decides",
+    text: "The app does not block a transaction while a consent request is with the NCA. The officers tell the team." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Who we check and when", title: "Only live transactions are chased",
+    text: "Reminders stop for a transaction that is deleted, withdrawn, completed or invoiced." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Who we check and when", title: "Who we bill and who pays",
+    text: "Our client is billed as the company that signs. A different billing company is flagged. A third party that pays is recorded with how it is related and gets its own checks." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Who we check and when", title: "A person can be the contracting party",
+    text: "A party can be recorded as a private individual. They are then checked as a person, and a purchase vehicle can be added later when it exists." },
+  { date: "2026-11-20", who: ["Jack"], topic: "Who we check and when", title: "More than one private individual on a side",
+    text: "Checks can be started on each person named on one side of a transaction. Everyone added is screened." },
+  { date: "2026-11-20", who: ["Woody"], topic: "ID and documents", title: "Proof of address is read and matched to the person",
+    text: "It must name the person, be dated in the last three months (this year's for a council tax bill) and be a kind we accept. Otherwise it does not count until an officer accepts it with a note." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Companies owned abroad", title: "Owners behind a company abroad are asked for",
+    text: "The directors do not stand in for unknown owners. The client is asked for a structure chart and the owners' ID. Monaco is on the higher-risk list." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Records and reports", title: "The AML file",
+    text: "The officers can download a report and every document on a party, for HMRC if they ask. Internal reports to the Nominated Officer are never in it." },
+  { date: "2026-11-20", who: ["Woody"], topic: "Emails and wording", title: "AML clause in every heads of terms",
+    text: "BGP's standard heads of terms and Landsec's four scheme forms carry our AML clause." },
+  { date: "2026-11-20", who: ["Jack"], topic: "Officers and sign-off", title: "Second read for the officers",
+    text: "On an enhanced party the officers can ask for a machine reading of the documents against the checklist. It decides nothing." },
+  { date: "2026-11-20", who: ["Jack"], topic: "Trusts and charities", title: "Trusts to KYC4U in full",
+    text: "Trusts were sent to KYC4U.",
+    changed: "23 November 2026: trusts are checked by BGP." },
+
+  // 19 November 2026
+  { date: "2026-11-19", who: ["Woody"], topic: "Who we check and when", title: "No check without the company that signs",
+    text: "A company's checks wait until the transaction names the company taking the lease, owning the property, selling or buying. The brand's name is not enough." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Higher risk", title: "Red flags can be set aside with a comment",
+    text: "Each red flag shows its evidence. The Nominated Officer or a Deputy can set one aside with a comment. New evidence raises it again." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Who we check and when", title: "A listed company is checked lightly",
+    text: "A company listed on a regulated market is identified from the register, with no owners to identify. Sanctions screening still applies." },
+  { date: "2026-11-19", who: ["Woody", "Jack"], topic: "Screening", title: "Who is screened, and the date of birth decides",
+    text: "The company and its owners are screened for public roles and adverse media. Directors are screened against sanctions lists only. A match with a different date of birth is set aside; one with no date of birth is a possible namesake, not a red flag." },
+  { date: "2026-11-19", who: ["Woody"], topic: "ID and documents", title: "Each owner does their own identity check",
+    text: "Every owner and the person acting for the company gets their own link, for an identity check and a proof of address from the last three months. An identity check done by someone else does not count." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Officers and sign-off", title: "Who signs off",
+    text: "The transaction's agents sign off a standard-risk party. The Nominated Officer or a Deputy signs off an enhanced one. Re-check after 3 years, or 1 year if enhanced." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Higher risk", title: "Restaurants and bars are a factor to weigh",
+    text: "They are not enhanced due diligence by themselves. Gambling, nightclubs, salons, car washes, vape shops and similar are higher-risk sectors." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Who we check and when", title: "Lettings under £10,000 a month",
+    text: "Sanctions checks only. At £10,000 a month or more, full checks." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Who we check and when", title: "Not required is the officers' decision",
+    text: "Only the Nominated Officer or a Deputy can mark a party Not required, with a comment." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Records and reports", title: "The AML register",
+    text: "Anyone at BGP can report a concern to the Nominated Officer. Only the officers read the register and record what was reported to the NCA, OFSI, Companies House or HMRC." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Records and reports", title: "Training records",
+    text: "Each person confirms they have read the current policy. The officers record training and see who is overdue." },
+  { date: "2026-11-19", who: ["Woody"], topic: "Records and reports", title: "Records deleted after five years",
+    text: "The officers preview and delete AML records five years after our work with a party ends. Never automatic." },
+
+  // 18 November 2026
+  { date: "2026-11-18", who: ["Woody"], topic: "Officers and sign-off", title: "Approval is on the company that signs",
+    text: "A party is approved on the company that signs, not on the brand." },
+  { date: "2026-11-18", who: ["Woody"], topic: "Records and reports", title: "The AML board",
+    text: "Transactions, AML lists every party's checks: to do, in progress, done, expiring." },
+
+  // 17 November 2026
+  { date: "2026-11-17", who: ["Woody"], topic: "Who we check and when", title: "A transaction is not blocked for outstanding checks",
+    text: "Moving to Solicitors, Exchanged or Completed with checks outstanding warns and emails the officers. Only an officer's rejection blocks it." },
+  { date: "2026-11-17", who: ["Woody"], topic: "Screening", title: "We do everything we can before asking the client",
+    text: "The app reads Companies House, downloads the accounts, and screens the company and its people before any request goes out. The client is asked only for what is left." },
+  { date: "2026-11-17", who: ["Woody"], topic: "Emails and wording", title: "Client check emails",
+    text: "One email with one button, the BGP logo, and the transaction's agents copied. Reminders after three and seven days." },
+  { date: "2026-11-17", who: ["Woody"], topic: "ID and documents", title: "Everyone is asked about public roles",
+    text: "Every request asks whether the person holds or held a prominent public role. A yes or not sure is a red flag." },
+];
+
+/** The entries newest first (the order they are written in is kept within a day). */
+export function amlDecisionsNewestFirst(list: AmlDecision[] = AML_DECISIONS): AmlDecision[] {
+  return list.map((d, i) => ({ d, i })).sort((a, b) => (a.d.date < b.d.date ? 1 : a.d.date > b.d.date ? -1 : a.i - b.i)).map(x => x.d);
+}

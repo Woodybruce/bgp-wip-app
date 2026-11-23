@@ -19,6 +19,7 @@ import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/compon
 import { AmlTrainingBoard, AmlTrainingPanel } from "@/components/aml-training";
 import { AmlRetentionBoard } from "@/components/aml-retention";
 import { AmlRulesBoard } from "@/components/aml-rules";
+import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -56,11 +57,13 @@ const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b
 // Client check emails for admins (21 November 2026: the preview and test of
 // the emails BGP's own client checks send, moved here from the KYC4U page
 // when KYC4U went to Subscriptions & APIs).
-type Section = "checks" | "rules" | "policy" | "reports" | "training" | "records" | "emails";
+type Section = "checks" | "rules" | "updates" | "policy" | "reports" | "training" | "records" | "emails";
 const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: boolean }> = [
   { key: "checks", label: "Checks" },
   // HMRC's rules in short, checked against HMRC every three months (22 November 2026).
   { key: "rules", label: "Rules" },
+  // Every AML decision, who made it and when (Jack, 23 November 2026).
+  { key: "updates", label: "Updates" },
   // The officers, the documents and the in-house switch: their own pill, so the
   // table starts at the top (Woody, 22 November 2026: "yes go ahead").
   { key: "policy", label: "Policy" },
@@ -272,6 +275,7 @@ export default function AmlDashboard() {
       {shownSection === "policy" && <AmlPolicyPanel />}
 
       {shownSection === "rules" && <AmlRulesBoard />}
+      {shownSection === "updates" && <AmlDecisionsBoard />}
       {shownSection === "reports" && <AmlRegisterBoard />}
       {shownSection === "records" && <AmlRetentionBoard />}
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
