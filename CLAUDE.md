@@ -5485,7 +5485,9 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   (`trust` on `AmlDashboardRow`, `partyInHouse`), Kick off AML sends it the
   client checks, and the AML box offers no KYC4U under Other ways. Only the
   Nominated Officer or a Deputy signs it off, with the in-house note, for a
-  year. KYC4U's own routes still take a request someone makes by hand.
+  year. (Merged on 23 November 2026 with "KYC4U is no longer used" above:
+  nothing goes to KYC4U for any party now, and the routes that would send a
+  request to KYC4U answer 410.)
 - **The structure** (`kyc_trust_structures`, boot MIGRATIONS: one row per
   trust record, `company_id` the crm_companies id, shared by its deals):
   kind (discretionary, fixed, bare, charitable, other, not known), when

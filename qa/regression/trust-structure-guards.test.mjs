@@ -28,10 +28,14 @@ test("a trust never goes to KYC4U: the Next line, the sign-off, the board and th
   const dash = read("server/aml-dashboard.ts");
   assert.match(dash, /const partyInHouse = inHouse \|\| isTrust;/);
   assert.match(dash, /inHouse: partyInHouse, jointAskedAt/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /!inHouseEdd && !row\.trust && amlNeedsKyc4u\(/);
-  assert.match(read("client/src/pages/deals.tsx"), /const inHouse = !!amlStepStatus\?\.decisions\?\.inHouseEdd \|\| flags\.some\(f => f\.kind === "policy_trust"\);/);
+  // KYC4U is no longer used for any party (23 November 2026): no red KYC4U
+  // mark on the board, and Kick off AML sends every party the client checks.
+  assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u/);
+  const deals = read("client/src/pages/deals.tsx");
+  assert.match(deals, /\{clientChecks && <SendClientChecksButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} partyName=\{p\.name\} label="Kick off AML" \/>\}/);
+  assert.doesNotMatch(deals, /Kyc4uRequestButton/);
   const box = read("client/src/components/deal-aml-status.tsx");
-  assert.match(box, /\{!kyc4uActive && !isTrust && <Kyc4uRequestButton/);
+  assert.doesNotMatch(box, /Kyc4uRequestButton/);
   assert.match(box, /<TrustStructurePanel companyId=\{cp\.id\} dealId=\{dealId\}/);
 });
 
