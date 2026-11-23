@@ -8,12 +8,12 @@ import { isAppAddress } from "../shared/app-mailbox";
 import { APP_MAILBOX, SHARED_MAILBOX, senderOrder, sendFromFirstMailbox } from "./shared-mailbox";
 import { INTERNAL_DOMAIN_RE } from "./tracker-correspondence";
 
-test("the app's emails go from chatbgp.app, then the shared mailbox", { skip: !!process.env.APP_MAILBOX }, () => {
+test("the app's emails go from BGP's shared mailbox, the chatbgp.app address only when it is refused (Woody, 2026-11-23)", { skip: !!process.env.APP_MAILBOX }, () => {
   assert.equal(APP_MAILBOX, "chatbgp1@chatbgp.app");
   assert.equal(SHARED_MAILBOX, "chatbgp@brucegillinghampollard.com");
-  assert.deepEqual(senderOrder(), ["chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
-  assert.deepEqual(senderOrder(["kyc@chatbgp.app"]), ["kyc@chatbgp.app", "chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
-  assert.deepEqual(senderOrder(["landsec2@chatbgp.app", "", "  "]), ["landsec2@chatbgp.app", "chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
+  assert.deepEqual(senderOrder(), ["chatbgp@brucegillinghampollard.com", "chatbgp1@chatbgp.app"]);
+  assert.deepEqual(senderOrder(["kyc@chatbgp.app"]), ["kyc@chatbgp.app", "chatbgp@brucegillinghampollard.com", "chatbgp1@chatbgp.app"]);
+  assert.deepEqual(senderOrder(["landsec2@chatbgp.app", "", "  "]), ["landsec2@chatbgp.app", "chatbgp@brucegillinghampollard.com", "chatbgp1@chatbgp.app"]);
   // Each address once, whatever its case.
   assert.deepEqual(senderOrder(["ChatBGP1@ChatBGP.app"]), ["ChatBGP1@ChatBGP.app", "chatbgp@brucegillinghampollard.com"]);
   // AML emails: their own mailbox, then BGP's shared mailbox, never the app's address (Woody, 2026-11-23).
@@ -26,7 +26,7 @@ test("with Microsoft refusing every address, the send fails and names each one",
   const tried: string[] = [];
   await assert.rejects(
     sendFromFirstMailbox({ mailboxes: ["kyc@chatbgp.app"], to: ["someone@example.com"], build: from => { tried.push(from); return { subject: "Test", html: "<p>Test</p>" }; } }),
-    /kyc@chatbgp\.app: .*; .*@chatbgp\.app: .*; chatbgp@brucegillinghampollard\.com: /,
+    /kyc@chatbgp\.app: .*; chatbgp@brucegillinghampollard\.com: .*; .*@chatbgp\.app: /,
   );
   assert.equal(tried.length, 3);
   assert.deepEqual(senderOrder(["kyc@chatbgp.app"]), tried);

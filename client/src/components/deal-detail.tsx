@@ -838,9 +838,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                         dealId={id} deal={deal} names={names} dealBgpTeam={dealBgpTeam}
                         onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
                       />
+                      {/* Only a note saved before Issue 4 of BGP's AML policy shows, as a record: no new ones (23 November 2026). */}
                       <JointAgencyNoteCard
                         dealId={id}
-                        canAdd={!jointAgent}
+                        canAdd={false}
                         signedBy={ddUser?.name || undefined}
                         defaults={{
                           property: linkedProperty ? [linkedProperty.name, linkedProperty.address && linkedProperty.address !== linkedProperty.name ? linkedProperty.address : null].filter(Boolean).join(", ") : ((deal as any).propertyName || ""),

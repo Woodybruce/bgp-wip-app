@@ -773,3 +773,31 @@ test("a company's warning-list profiles spelt differently are set aside; sanctio
   assert.deepEqual(ps.variants, []);
   assert.deepEqual(ps.namesakes.map(m => m.profileId), ["p-jd"]);
 });
+
+// Woody, 23 November 2026, on Inception T2: "this has picked up a red flag but its not clear why?"
+test("an old automatic screening flag says where it came from, and what BGP's checks found since", async () => {
+  const { oldAutomaticScreening, partyRedFlags } = await import("../shared/kyc-red-flags");
+  const history = [{ at: "2026-09-28T10:00:00.000Z", what: "Sanctions screening returned a match — EDD mandatory.", who: "automatic" }];
+  const clear = { result: result({ sanctions: { ran: true, lists: ["the UK Sanctions List", "the US OFAC list", "the EU consolidated list"], lines: [
+    { name: "CORNHILL BAR LTD", role: "the company", outcome: "clear", matches: [] },
+    { name: "GILKES, Charles Nigel Heming", role: "director", outcome: "clear", matches: [] },
+  ] as any, error: null } }), current: true };
+  const old = oldAutomaticScreening({ recordHistory: history, precheck: clear })!;
+  assert.match(old.detail, /^Set automatically on 28 Sept? 2026 by the old in-app screening, switched off in October 2026\. It did not record which name or list matched\./);
+  assert.match(old.detail, /screened 2 names against the UK Sanctions List, the US OFAC list, the EU consolidated list: no match\.$/);
+  assert.match(old.suggestion!, /^Old automatic flag from the in-app screening of 28 Sept? 2026, which kept no record of what matched\./);
+  const flags = partyRedFlags({
+    company: { aml_pep_status: "review_required", aml_edd_required: true, aml_edd_reason: "Sanctions screening returned a match — EDD mandatory." } as any,
+    latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: clear,
+  });
+  const screening = flags.find(f => f.key === "record:screening")!;
+  const edd = flags.find(f => f.key === "record:edd")!;
+  assert.equal(screening.source, "The old in-app screening");
+  assert.ok(screening.suggestion && edd.suggestion, "both carry words to set them aside with");
+  assert.match(edd.detail || "", /did not record which name or list matched/);
+  // A match in BGP's own checks: no suggestion to set it aside.
+  const matched = { result: result({ sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "CORNHILL BAR LTD", role: "the company", outcome: "possible", matches: [] }] as any, error: null } }), current: true };
+  assert.equal(oldAutomaticScreening({ recordHistory: history, precheck: matched })!.suggestion, null);
+  // A person's own entry is not the old screening's.
+  assert.equal(oldAutomaticScreening({ recordHistory: [{ ...history[0], who: "Jack Barratt" }], precheck: clear }), null);
+});

@@ -156,7 +156,7 @@ import { buildInvoiceDraft, type InvoiceDraft, type InvoiceTemplateFacts } from 
 import { PartyDecisions } from "@/components/deal-party-aml";
 import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
-import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
+import { JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
 // badges, dot map for solid swatches — so every board shares one hue per
@@ -3014,25 +3014,11 @@ function SimplifiedCreateBody({
           ? <>Extra detail (areas, individual dates) is editable on the transaction after creation.</>
           : <>Anything not here (yield, areas, individual dates, Xero billing address) is editable on the transaction board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.</>}
       </p>
-      {/* Joint Agency Lead Deal (Jack, 2026-11-11): the AML file note for a
-          letting where the co-agent introduced and dealt with the tenant.
-          Staff only; the note's wording is a letting, so not on Sale /
-          Purchase or Secondment. Last on the form, just above Create Deal
-          (Woody, 2026-11-12). */}
-      {!hideFees && !isSecondment && !isInvestment && (
-        <JointAgencyWidget
-          value={jointAgency}
-          onChange={setJointAgency}
-          signedBy={signedBy}
-          showErrors={jointAgencyErrors}
-          defaults={{
-            property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
-            client: companies.find(c => c.id === (clientRole === "tenant" ? form.tenantId : form.landlordId))?.name || "",
-            tenant: clientRole === "tenant" ? "" : companies.find(c => c.id === form.tenantId)?.name || "",
-            rentPa: form.rentPa ? String(form.rentPa) : "",
-          }}
-        />
-      )}
+      {/* The Joint Agency Lead Deal switch (Jack, 2026-11-11) is gone: under
+          Issue 4 of BGP's AML policy (23 November 2026) the other side of a
+          joint instruction is always checked, and the joint agent is emailed
+          for their documents from Parties & AML. Notes saved before stay on
+          their transactions and in the register. */}
     </div>
   );
 }
@@ -4507,32 +4493,15 @@ export function DealFormDialog({
               />
             </div>
 
-            {/* Joint Agency Lead Deal on Edit deal too (Jack, 2026-11-20: "add
-                to all deals including historic ones ... so we can invoice").
-                The same switch as New Deal; saved with Save Changes. A deal
-                that already has its note shows that it is on file. */}
-            {!isClientCreate && !["Secondment", "Purchase", "Sale", "Investment"].includes(form.dealType) && (
+            {/* A Joint Agency Lead note saved before Issue 4 of BGP's AML policy (23
+                November 2026) still shows; no new ones are made: the joint agent
+                is emailed for their documents from Parties & AML. */}
+            {!isClientCreate && jointAgencyOnFile && (
               <div className="sm:col-span-2">
-                {jointAgencyOnFile ? (
                   <div className="flex items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-xs" data-testid="joint-agency-on-file">
                     <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
-                    <span><span className="font-semibold">Joint Agency Lead Transaction</span>: AML file note on file (signed {jointAgencyOnFile.signedBy}, {new Date(jointAgencyOnFile.savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}). It is on the transaction page and in the register.</span>
+                    <span><span className="font-semibold">Joint Agency Lead Transaction</span>: AML file note on file (signed {jointAgencyOnFile.signedBy}, {new Date(jointAgencyOnFile.savedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}). Saved before Issue 4 of BGP's AML policy: the other side is now checked, so ask the joint agent for their documents under Parties &amp; AML.</span>
                   </div>
-                ) : (
-                  <JointAgencyWidget
-                    value={jointAgency}
-                    onChange={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
-                    signedBy={currentUser?.name}
-                    showErrors={jointAgencyErrors}
-                    mode={isEdit ? "existing-form" : "create"}
-                    defaults={{
-                      property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
-                      client: companies.find(c => c.id === (form.landlordId || form.tenantId))?.name || "",
-                      tenant: form.landlordId ? companies.find(c => c.id === form.tenantId)?.name || "" : "",
-                      rentPa: form.rentPa ? String(form.rentPa) : "",
-                    }}
-                  />
-                )}
               </div>
             )}
           </div>

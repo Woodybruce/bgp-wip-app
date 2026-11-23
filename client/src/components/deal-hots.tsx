@@ -15,8 +15,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import {
-  HOTS_ROLE_WORDS, hotsNamesClose, hotsTermPatch, hotsTermWords,
-  type HotsOtherCompany, type HotsParty, type HotsPartyMatch, type HotsReadReply, type HotsTermView,
+  HOTS_AGENT_FIELDS, HOTS_CONTACT_SIDE_WORDS, HOTS_ROLE_WORDS, hotsContactLabel, hotsNamesClose, hotsTermPatch, hotsTermWords,
+  type HotsContact, type HotsContactView, type HotsOtherCompany, type HotsParty, type HotsPartyMatch, type HotsReadReply, type HotsTermView,
 } from "@shared/deal-hots";
 import type { DealPartyRole } from "@shared/deal-parties";
 
@@ -178,12 +178,13 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
   const [filed, setFiled] = useState(false);
   const reading = reply.reading;
   const parties: HotsParty[] = reply.parties.map(p => p.read);
+  const contacts: HotsContact[] = (reply.contacts || []).map(c => c.read);
 
   // After anything is set, where each party stands is read again (the document is not).
   const rematch = async () => {
-    const r = await apiRequest("POST", `/api/deals/${dealId}/heads-of-terms/match`, { parties, terms: reply.terms });
+    const r = await apiRequest("POST", `/api/deals/${dealId}/heads-of-terms/match`, { parties, terms: reply.terms, contacts });
     const next = await r.json() as HotsReadReply;
-    onReply({ ...reply, parties: next.parties, terms: next.terms, filing: next.filing });
+    onReply({ ...reply, parties: next.parties, terms: next.terms, contacts: next.contacts, filing: next.filing });
   };
   const act = useMutation({
     mutationFn: async (run: () => Promise<string>) => run(),
@@ -219,6 +220,34 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
     await apiRequest("PUT", `/api/crm/deals/${dealId}`, { [ROLE_FIELD[role]]: String(made.id) });
     return `${made.name} added to the CRM as the ${role}`;
+  });
+  // Solicitors and agents (23 November 2026): the firm and its person go in the
+  // CRM, then onto the transaction through its own save.
+  const fileContact = async (c: HotsContact) => {
+    const r = await apiRequest("POST", `/api/deals/${dealId}/heads-of-terms/contact`, { kind: c.kind, firm: c.firm, person: c.person, email: c.email, phone: c.phone });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    return await r.json() as { company: { id: string; name: string; created: boolean }; contact: { id: string; name: string; created: boolean } | null };
+  };
+  const setAgent = (v: HotsContactView) => act.mutate(async () => {
+    const filed = await fileContact(v.read);
+    // An agent on our client's side who is not BGP is a joint agent.
+    const fields = v.clientSide ? { firm: "jointAgentId", person: "jointAgentContactId" } : HOTS_AGENT_FIELDS[v.side];
+    await apiRequest("PUT", `/api/crm/deals/${dealId}`, { [fields.firm]: filed.company.id, ...(filed.contact ? { [fields.person]: filed.contact.id } : {}) });
+    return `${filed.company.name} set as ${v.clientSide ? "the joint agent" : `the ${HOTS_CONTACT_SIDE_WORDS[v.side].toLowerCase()}'s agent`}${filed.company.created ? ", added to the CRM" : ""}`;
+  });
+  const saveOurSolicitors = (v: HotsContactView) => act.mutate(async () => {
+    await fileContact(v.read);
+    await apiRequest("PUT", `/api/crm/deals/${dealId}`, { solicitorFirm: v.read.firm, solicitorContact: [v.read.person, v.read.email, v.read.phone].filter(Boolean).join(" · ") || null });
+    return `${v.read.firm} saved as our client's solicitors`;
+  });
+  const checkSolicitors = (v: HotsContactView) => act.mutate(async () => {
+    await fileContact(v.read);
+    const r = await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, { firm: v.read.firm });
+    const answer = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "solicitors-aml"] });
+    if (answer?.choose) return `More than one firm on the SRA register matches ${v.read.firm}: choose it under Solicitors in the AML box`;
+    return `${v.read.firm} checked at the SRA: see Solicitors in the AML box`;
   });
   const saveTerms = (list: HotsTermView[]) => act.mutate(async () => {
     const patch = Object.assign({}, ...list.map(t => hotsTermPatch(t.key, t.value)));
@@ -277,6 +306,15 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
               </div>
             ))}
           </section>
+
+          {(reply.contacts || []).length > 0 && (
+            <section className="space-y-2" data-testid="deal-hots-contacts">
+              <h4 className="text-sm font-semibold">Solicitors and agents</h4>
+              {reply.contacts!.map(v => (
+                <ContactLine key={`${v.side}-${v.read.kind}`} view={v} busy={busy} onAgent={setAgent} onOurs={saveOurSolicitors} onCheck={checkSolicitors} />
+              ))}
+            </section>
+          )}
 
           {reply.terms.length > 0 && (
             <section className="space-y-2" data-testid="deal-hots-terms">
@@ -337,6 +375,39 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
         </Suspense>
       )}
     </>
+  );
+}
+
+// A solicitor or agent read from the heads of terms, with the one thing to do with it.
+function ContactLine({ view: v, busy, onAgent, onOurs, onCheck }: {
+  view: HotsContactView; busy: boolean;
+  onAgent: (v: HotsContactView) => void; onOurs: (v: HotsContactView) => void; onCheck: (v: HotsContactView) => void;
+}) {
+  const who = [v.read.person, v.read.email, v.read.phone].filter(Boolean).join(" · ");
+  const id = `deal-hots-contact-${v.side}-${v.read.kind}`;
+  const small = "h-7 text-xs shrink-0";
+  const done = (words: string) => <span className="flex shrink-0 items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{words}</span>;
+  const action = v.us ? <span className="shrink-0 text-muted-foreground">BGP</span>
+    : v.read.kind === "agent"
+      ? (v.same ? done("On the transaction")
+        : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onAgent(v)} data-testid={`${id}-set`}>
+          {v.clientSide ? "Set as joint agent" : `Set as the ${HOTS_CONTACT_SIDE_WORDS[v.side].toLowerCase()}'s agent`}
+        </Button>)
+      : v.clientSide
+        ? (v.same ? done("On the transaction")
+          : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onOurs(v)} data-testid={`${id}-save`}>Save as our client's solicitors</Button>)
+        : (v.checked ? done("Checked at the SRA")
+          : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onCheck(v)} data-testid={`${id}-check`}>Check at the SRA</Button>);
+  return (
+    <div className="flex flex-wrap items-start gap-2 rounded-md border px-2.5 py-2 text-xs" data-testid={id}>
+      <div className="min-w-0 flex-1">
+        <div><span className="font-semibold">{hotsContactLabel({ side: v.side, kind: v.read.kind })}</span> · {v.read.firm}{v.us ? " (us)" : ""}</div>
+        {who && <div className="text-muted-foreground">{who}</div>}
+        {v.onDeal && !v.same && <div className="text-amber-800 dark:text-amber-300">The transaction has {v.onDeal}</div>}
+        <Quote text={v.read.quote} />
+      </div>
+      {action}
+    </div>
   );
 }
 

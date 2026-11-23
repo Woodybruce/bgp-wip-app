@@ -368,7 +368,8 @@ function FlagFacts({ flag }: { flag: KycRedFlag }) {
 
 function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void }) {
   const { toast } = useToast();
-  const [comment, setComment] = useState("");
+  // An old automatic flag the current screening does not bear out comes with words to start from; the officer reads and edits them.
+  const [comment, setComment] = useState(flag.suggestion || "");
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/set-aside`, { role, key: flag.key, comment })).json(),
     onSuccess: () => { refreshAml(dealId); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },

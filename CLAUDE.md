@@ -2758,7 +2758,8 @@ same day, never live). Do not re-litigate. Tests:
   file, the agreed offer, the AML gate) and its event line; with no deal yet
   the convert heals one and the PUT follows. Then the fee split (`saveSplit`:
   `internalAgent` is never sent, the split's own save keeps BGP Contact in
-  step) and the joint agency note. The old Promote route (`/create-deal`) is
+  step) (and the joint agency note, until that was retired on 23 November
+  2026). The old Promote route (`/create-deal`) is
   called by no screen now; it stays for a cached client.
 - **Describe the deal**, the box at the top (BGP staff, New Deal and both
   handovers, never the edit form): `NoteFill` with `readUrl=
@@ -3426,6 +3427,35 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   final agreed heads of terms (`POST /api/unit-hots/:unitId/final`, on the
   tracker unit the transaction is the letting of, PDF or Word only, when none
   are on file; they then go in the AML file). Each writes its own history.
+- **Solicitors and agents** (Woody, the same day: "the HOTs upload / drop
+  didnt pick up their solcitors or ours or their agent"). The reading also
+  gives each side's solicitors and agents (`HotsContact`: side, solicitor or
+  agent, the firm, the person, email and phone), often from a contact sheet
+  at the end. The provider records them under `contacts` and each is kept
+  only where the document's own words carry it (`checkHotsContacts`: the
+  quote and the firm in the text, an email or phone the document does not
+  give dropped). The rules (`readHotsContactsByRules`) read "Landlord's
+  Solicitors: …", a label with the firm on the lines under it, and a row a
+  PDF flattened onto one line ("Landlord Solicitors GT - GreenbergTraurig",
+  only when the words read as a firm name, `firmLike`); a sentence, "TBC",
+  the next clause and a clause heading ("Rent Free") are never a firm or a
+  person. `mergeHotsContacts` fills the provider's blanks from the rules'
+  reading of the same firm. The dialog's **Solicitors and agents** section
+  (`hotsContactViews`) says what each is to this transaction: Bruce
+  Gillingham Pollard is "BGP"; the other side's agent **Set as the tenant's
+  agent** (or landlord's, seller's, buyer's: `HOTS_AGENT_FIELDS`); an agent
+  on our client's side who is not BGP **Set as joint agent**; our client's
+  solicitors **Save as our client's solicitors** (`solicitor_firm`,
+  `solicitor_contact`); the other side's solicitors **Check at the SRA** (the
+  Solicitors check of the AML box). Each first files the firm and its person
+  in the CRM (`POST /api/deals/:id/heads-of-terms/contact`, BGP staff,
+  `fileHotsContact` in `server/deal-hots-contact.ts`, the screen's one write
+  of its own, so the read and match routes still write nothing: the person by email, else the firm by name, else added
+  as type Agent or Solicitor with a note naming the transaction; a record
+  already there only gains blank fields; the person is linked to the
+  transaction), then saves through the transaction's own save. A firm already
+  on the transaction reads "On the transaction". Tests in
+  `server/deal-hots.test.ts`.
 - Not run against Anthropic or Companies House from a build machine.
 
 ## KYC4U is no longer used (Woody, 2026-11-23)
@@ -4556,6 +4586,17 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   it kept only the kinds), the web page, the register entry, or for a flag
   read from the brand's KYC record its history lines (who wrote it, when:
   T4's three were the retired in-app screening's of 23 and 24 September).
+  **A flag the old in-app screening set by itself** (Woody, 23 November 2026,
+  on Inception T2: "this has picked up a red flag but its not clear why?"):
+  the brand's KYC record says a screening matched, or enhanced due diligence
+  is needed, and its history line was written by the automatic screening
+  before 1 November 2026 (`oldAutomaticScreening` in `shared/kyc-red-flags.ts`).
+  That screening was switched off in October and did not record which name
+  or list matched, so the flag says so in its detail, with what BGP's own
+  checks found since (their sanctions result), names its source "The old
+  in-app screening", and offers the officer the words to set it aside
+  (`suggestion`, filled into the set-aside box). It is never cleared by
+  itself.
 - **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
   `server/deal-party-aml.ts`; admins until an MLRO is appointed).
   `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
@@ -5317,7 +5358,16 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   at £10,000 a month or more by HMRC: BGP relies on the co-agent's checks
   under a reliance agreement, or checks the tenant itself; under that, the
   letting is outside CDD and sanctions screening still applies. Notes saved
-  before keep their own words.
+  before keep their own words. **Retired on 23 November 2026** (Woody: "this joint
+  agent thing isnt allowed anymore we are sending them an email instead?"):
+  under Issue 4 the other side of a joint instruction is always checked, so
+  New Transaction and Edit no longer offer the Joint Agency Lead Transaction
+  switch, the transaction page no longer offers to add a note, and `POST
+  /api/crm/deals/:id/joint-agency-note` answers 410. A note saved before still
+  shows on its transaction, marked as saved before Issue 4, and every old note
+  stays in the AML Register. Ask the joint agent for their documents instead
+  (the party's Documents step, Other ways, Joint agent). Guard in
+  `qa/regression/joint-agent-checks-guards.test.mjs`.
 - **The request** is a client checks request (`kyc_upload_tokens`) with
   `request.audience = "joint_agent"` and `request.jointAgent` (firm, CRM ids,
   the rule, the reliance agreed, the readings). It is never the party's own
@@ -6575,6 +6625,17 @@ its parts in `client/src/components/deal-page/`. Tests:
   Parties, as the old Brand tab's cards).
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
+
+**Superseded on 23 November 2026** (Woody: "emails still coming from
+chatbgp.app", after AML emails moved to kyc@brucegillinghampollard.com the
+same day): every email now goes from BGP's own domain first. `senderOrder` in
+`server/shared-mailbox.ts` puts BGP's shared mailbox
+(chatbgp@brucegillinghampollard.com) before the app's chatbgp1@chatbgp.app,
+which is tried only when Microsoft refuses the shared mailbox; AML emails
+never use it. A workspace's own mailbox still goes first, so emails about a
+Landsec property still come from landsec2@chatbgp.app (Woody's choice of
+12 November): whether those move too is Woody's call. Read the rest of this
+section as history.
 
 Woody: "just use chatbgp.app for all emails now". Every email the app sends
 goes through `sendFromFirstMailbox` in `server/shared-mailbox.ts` (the old

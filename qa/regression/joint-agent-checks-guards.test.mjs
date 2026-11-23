@@ -137,3 +137,16 @@ test("the joint agent is asked for the documents, never to agree reliance; Joint
   assert.match(email, /Finalising our KYC on /);
   assert.match(email, /Or reply to this email with the documents attached/);
 });
+
+// Woody, 23 November 2026: "this joint agent thing isnt allowed anymore we are sending them an email instead?"
+test("the Joint Agency Lead note is retired: no switch on New Deal or Edit, the save answers 410, old notes still read", () => {
+  const deals = read("client/src/pages/deals.tsx");
+  assert.doesNotMatch(deals, /<JointAgencyWidget/);
+  assert.match(deals, /\{!isClientCreate && jointAgencyOnFile && \(/);
+  const route = read("server/joint-agency-aml.ts");
+  assert.match(route, /app\.post\("\/api\/crm\/deals\/:id\/joint-agency-note", requireAuth, \(_req: Request, res: Response\) => \{\s*res\.status\(410\)/);
+  assert.doesNotMatch(route, /INSERT INTO deal_events/);
+  const detail = read("client/src/components/deal-detail.tsx");
+  assert.match(detail, /<JointAgencyNoteCard\s+dealId=\{id\}\s+canAdd=\{false\}/);
+  assert.match(read("client/src/components/joint-agency-aml.tsx"), /data-testid="joint-agency-note-superseded"/);
+});
