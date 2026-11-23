@@ -72,6 +72,15 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);
 });
 
+test('a number that is another company\'s is never offered (live check, 23 November 2026)', () => {
+  const look = server.slice(server.indexOf('async function lookUpRegister'), server.indexOf('interface DealRow'));
+  assert.match(look, /hotsNamesClose\(hit\.name, read\.name\)/);
+  assert.match(look, /previousNames/);
+  assert.match(look, /other = \{ number: hit\.number, name: hit\.name/);
+  assert.match(screen, /<NumberIsAnother other=\{match\.numberIsAnother\}/);
+  assert.match(screen, /<NumberIsAnother other=\{g\.numberIsAnother\}/);
+});
+
 test('ChatBGP is told where it is', () => {
   assert.match(appMap, /\*\*Describe the transaction\*\* \(since 2026-11-23\)/);
 });

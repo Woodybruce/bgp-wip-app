@@ -15,8 +15,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import {
-  HOTS_ROLE_WORDS, hotsTermPatch, hotsTermWords,
-  type HotsParty, type HotsPartyMatch, type HotsReadReply, type HotsTermView,
+  HOTS_ROLE_WORDS, hotsNamesClose, hotsTermPatch, hotsTermWords,
+  type HotsOtherCompany, type HotsParty, type HotsPartyMatch, type HotsReadReply, type HotsTermView,
 } from "@shared/deal-hots";
 import type { DealPartyRole } from "@shared/deal-parties";
 
@@ -266,7 +266,8 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
             {guarantors.map(g => (
               <div key={`g-${g.read.name}`} className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-hots-guarantor">
                 <div><span className="font-semibold">Guarantor</span> · {companyWords(g.read)}</div>
-                {g.register[0] && <div className="text-muted-foreground">At Companies House: {companyWords(g.register[0])}{g.register[0].status ? ` · ${g.register[0].status}` : ""}</div>}
+                {g.numberIsAnother && <NumberIsAnother other={g.numberIsAnother} name={g.read.name} testId="deal-hots-number-other-guarantor" />}
+                {g.register[0] && <div className="text-muted-foreground">At Companies House: {companyWords(g.register[0])}{g.register[0].status ? ` · ${g.register[0].status.replace(/-/g, " ")}` : ""}</div>}
                 <Quote text={g.read.quote} />
               </div>
             ))}
@@ -339,6 +340,16 @@ function Quote({ text }: { text: string }) {
   return <span className="mt-0.5 block truncate text-[11px] italic text-muted-foreground" title={text}>"{text}"</span>;
 }
 
+/** The number the document gives is another company's at Companies House. */
+function NumberIsAnother({ other, name, testId }: { other: HotsOtherCompany; name: string; testId: string }) {
+  return (
+    <p className="flex items-start gap-1 text-amber-800 dark:text-amber-300" data-testid={testId}>
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>{other.number} at Companies House is {other.name}{other.status && other.status !== "active" ? ` (${other.status.replace(/-/g, " ")})` : ""}, not {name}. The number may be wrong.</span>
+    </p>
+  );
+}
+
 function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, onChoose }: {
   match: HotsPartyMatch; busy: boolean; source: string;
   onUse: (role: DealPartyRole, companyId: string, name: string) => void;
@@ -363,6 +374,7 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
           <div className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">Filed under {brand!.name}: <span className="font-medium">{companyWords(match.filed!)}</span>{match.signing ? <span className="text-muted-foreground"> (signs now: {match.signing.name})</span> : null}</span>
             <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onUse(role, match.filed!.id, match.filed!.name)} data-testid={`deal-hots-use-${role}`}>Use as the company that signs</Button>
+            {!hotsNamesClose(match.filed!.name, read.name) && <p className="basis-full text-amber-800 dark:text-amber-300">Named as {read.name} in {source.toLowerCase()}: check it is the same company.</p>}
           </div>
         );
       case "register":
@@ -433,6 +445,7 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
       </div>
       <div>{source}: <span className="font-medium">{companyWords(read)}</span>{!read.checked && <span className="text-amber-800 dark:text-amber-300"> · check it by eye</span>}</div>
       <Quote text={read.quote} />
+      {match.numberIsAnother && <NumberIsAnother other={match.numberIsAnother} name={read.name} testId={`deal-hots-number-other-${role}`} />}
       {body}
     </div>
   );

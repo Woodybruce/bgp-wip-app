@@ -3331,6 +3331,20 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   choice); a brand name with no company ("Bill's") is no company; with no
   party on the transaction, the CRM records of that name (`findParty`). A
   guarantor is shown, never set.
+- **A number that is another company's is never offered** (found on live,
+  23 November 2026: the test heads of terms gave 06327384 for Braeburn
+  Estates Limited, which Companies House holds as AUSTIN BARBER DESIGN
+  LIMITED, and the window offered Add … and use it). When the company a
+  number names shares no word that tells companies apart with the name the
+  document gives (`hotsNamesClose`: the legal form and common words such as
+  Estates, Holdings or Property left out; a name of common words only is
+  compared on all its words) and the name is not one of its former names
+  (`previous_company_names`, which count as the same company), the window
+  says "06327384 at Companies House is …, not …. The number may be wrong."
+  (`numberIsAnother`), looks the name up instead and offers only what that
+  finds. A guarantor's number is said the same way. A company filed under
+  the party by that number is still offered, with "check it is the same
+  company" when the names share no such word.
 - **Nothing saves by itself.** The buttons save through the routes that
   already exist: Use as the company that signs (`PUT
   /api/deals/:id/parties/:role`), Add under <party> and use it (`POST

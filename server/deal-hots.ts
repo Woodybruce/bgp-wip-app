@@ -27,8 +27,8 @@ import multer from "multer";
 import { Router, type Request, type Response } from "express";
 import {
   HOTS_PARTY_ROLES, checkHotsAnswer, cleanCompanyNumber, documentHasText, hotsDealRoles, hotsRole, hotsTermDef, hotsTermState,
-  hotsTermsFor, legalNameKey, mergeHotsReadings, readHotsByRules, readHotsNoteRules,
-  type HotsFiling, type HotsTextOptions, type HotsParty, type HotsPartyMatch, type HotsPartyRole, type HotsReading, type HotsRegisterHit, type HotsTerm, type HotsTermKey, type HotsTermView,
+  hotsNamesClose, hotsTermsFor, legalNameKey, mergeHotsReadings, readHotsByRules, readHotsNoteRules,
+  type HotsFiling, type HotsOtherCompany, type HotsTextOptions, type HotsParty, type HotsPartyMatch, type HotsPartyRole, type HotsReading, type HotsRegisterHit, type HotsTerm, type HotsTermKey, type HotsTermView,
 } from "@shared/deal-hots";
 import { namesALegalCompany } from "@shared/deal-note";
 import { sameCompaniesHouseNumber, type DealPartyRole } from "@shared/deal-parties";
@@ -208,7 +208,7 @@ export async function readHotsNote(raw: string, deps: HotsReaderDeps = {}): Prom
 // ── Where each party is ─────────────────────────────────────────────────────
 
 export interface RegisterLookups {
-  byNumber: (number: string) => Promise<{ number: string; name: string; status: string | null; address: string | null } | null>;
+  byNumber: (number: string) => Promise<{ number: string; name: string; status: string | null; address: string | null; previousNames?: string[] } | null>;
   byName: (name: string) => Promise<Array<{ company_number?: string; title?: string; company_status?: string | null; address_snippet?: string | null }>>;
 }
 
@@ -231,7 +231,10 @@ export const defaultRegisterLookups: RegisterLookups = {
     try {
       const p = await chFetch(`/company/${encodeURIComponent(number)}`, { maxWaitMs: 8_000, timeoutMs: 8_000 });
       const name = String(p?.company_name || "").replace(/\s+/g, " ").trim();
-      return name ? { number: String(p?.company_number || number), name, status: p?.company_status ?? null, address: addressWords(p?.registered_office_address) } : null;
+      const previousNames = Array.isArray(p?.previous_company_names)
+        ? p.previous_company_names.map((n: any) => String(n?.name || "").replace(/\s+/g, " ").trim()).filter(Boolean)
+        : [];
+      return name ? { number: String(p?.company_number || number), name, status: p?.company_status ?? null, address: addressWords(p?.registered_office_address), previousNames } : null;
     } catch (e: any) {
       if (/error 404\b|not found/i.test(String(e?.message || ""))) return null;
       throw e;
@@ -246,30 +249,49 @@ export const defaultRegisterLookups: RegisterLookups = {
 
 const CLOSED = new Set(["dissolved", "converted-closed", "removed", "closed", "liquidation"]);
 
-/** Companies House for one named company: by its number when the document gives one, else by its exact name. */
-async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null): Promise<{ register: HotsRegisterHit[]; note: string | null }> {
-  if (!lookups) return { register: [], note: "Companies House is not set up on this server." };
+/**
+ * Companies House for one named company: by its number when the document
+ * gives one, else by its exact name. A number whose company has another name
+ * (no word in common, and not a former name) is another company's: it is
+ * never offered, and the name is looked up instead.
+ */
+async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null): Promise<{ register: HotsRegisterHit[]; note: string | null; numberIsAnother: HotsOtherCompany | null }> {
+  if (!lookups) return { register: [], note: "Companies House is not set up on this server.", numberIsAnother: null };
   try {
+    let other: HotsOtherCompany | null = null;
     if (read.number) {
       const hit = await lookups.byNumber(read.number);
       if (hit) {
-        const closed = CLOSED.has(String(hit.status || "").toLowerCase());
-        return {
-          register: [{ ...hit, agrees: legalNameKey(hit.name) === legalNameKey(read.name) }],
-          note: closed ? `${hit.name} is ${String(hit.status).replace(/-/g, " ")} at Companies House.` : null,
-        };
+        const key = legalNameKey(read.name);
+        const same = legalNameKey(hit.name) === key;
+        const former = !same && (hit.previousNames || []).some(n => legalNameKey(n) === key);
+        if (same || former || hotsNamesClose(hit.name, read.name)) {
+          const closed = CLOSED.has(String(hit.status || "").toLowerCase());
+          return {
+            register: [{ number: hit.number, name: hit.name, status: hit.status, address: hit.address, agrees: same || former }],
+            note: closed ? `${hit.name} is ${String(hit.status).replace(/-/g, " ")} at Companies House.`
+              : former ? `${read.name} is its former name.` : null,
+            numberIsAnother: null,
+          };
+        }
+        other = { number: hit.number, name: hit.name, status: hit.status ?? null };
+      } else if (!namesALegalCompany(read.name)) {
+        return { register: [], note: `Companies House has no company numbered ${read.number}.`, numberIsAnother: null };
       }
-      if (!namesALegalCompany(read.name)) return { register: [], note: `Companies House has no company numbered ${read.number}.` };
     }
     // Exactly the name the document gives (a bracketed word is another company), not closed, best first.
     const key = legalNameKey(read.name);
     const hits = (await lookups.byName(read.name))
       .filter(i => i?.company_number && i?.title && legalNameKey(i.title) === key && !CLOSED.has(String(i.company_status || "").toLowerCase()))
+      .filter(i => !other || String(i.company_number) !== other.number)
       .slice(0, 3)
       .map(i => ({ number: String(i.company_number), name: String(i.title), status: i.company_status ?? null, address: i.address_snippet ?? null, agrees: true }));
-    return { register: hits, note: hits.length ? (read.number ? `Companies House has no company numbered ${read.number}; found by its name instead.` : null) : `Companies House has no live company called ${read.name}.` };
+    const note = hits.length
+      ? (other ? "Found by its name instead." : read.number ? `Companies House has no company numbered ${read.number}; found by its name instead.` : null)
+      : `Companies House has no live company called ${read.name}.`;
+    return { register: hits, note, numberIsAnother: other };
   } catch (e) {
-    return { register: [], note: registerProblem(e) };
+    return { register: [], note: registerProblem(e), numberIsAnother: null };
   }
 }
 
@@ -316,11 +338,11 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
   const out: HotsPartyMatch[] = [];
   for (const read of reading) {
     const role = dealRoleFor(read, roles, reading);
-    const base: HotsPartyMatch = { read, role, brand: null, signing: null, state: "guarantor", filed: null, register: [], registerNote: null, candidates: [] };
+    const base: HotsPartyMatch = { read, role, brand: null, signing: null, state: "guarantor", filed: null, register: [], registerNote: null, numberIsAnother: null, candidates: [] };
     if (!role) {
       if (read.number) {
         const r = await lookUpRegister(read, lookups);
-        Object.assign(base, { register: r.register, registerNote: r.note });
+        Object.assign(base, { register: r.register, registerNote: r.note, numberIsAnother: r.numberIsAnother });
       }
       out.push(base);
       continue;
@@ -340,7 +362,7 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
       base.state = "no_party";
       if (read.number || namesALegalCompany(read.name)) {
         const r = await lookUpRegister(read, lookups);
-        Object.assign(base, { register: r.register, registerNote: r.note });
+        Object.assign(base, { register: r.register, registerNote: r.note, numberIsAnother: r.numberIsAnother });
       } else {
         Object.assign(base, { register: found.register.map(h => ({ ...h, agrees: true })), registerNote: found.registerNote });
       }
@@ -365,6 +387,7 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
     const r = await lookUpRegister(read, lookups);
     base.register = r.register;
     base.registerNote = r.note;
+    base.numberIsAnother = r.numberIsAnother;
     const live = r.register.filter(h => !CLOSED.has(String(h.status || "").toLowerCase()));
     base.state = live.length === 1 ? "register" : live.length > 1 ? "choose" : "not_found";
     out.push(base);
