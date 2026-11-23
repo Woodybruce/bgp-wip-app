@@ -6,7 +6,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  certificationGaps, checkKycDocument, cleanKycDocumentReading, unreadableKycDocument, uploadCountsFor,
+  certificationGaps, certifierGroup, certifierRefusal, checkKycDocument, cleanKycDocumentReading, unreadableKycDocument, uploadCountsFor,
   type KycDocumentReading, type KycUploadEvidence,
 } from "../shared/kyc-documents";
 import { partyPeople, type PartyPeopleInput } from "../shared/kyc-people";
@@ -16,7 +16,7 @@ const TODAY = new Date("2026-11-23T12:00:00Z");
 const passport = (over: Partial<KycDocumentReading> = {}): KycDocumentReading => ({
   readAt: "2026-11-23T10:00:00Z", read: true, unreadable: null, kind: "passport", kindWords: "British passport", issuer: "HM Passport Office",
   names: ["HUSEYN MIRHADIYEV"], dob: "1982-02-14", issued: "2022-04-01", expires: "2032-04-01", date: null, address: null,
-  certified: true, certification: { words: "Certified to be a true copy of the original seen by me", name: "Sarah Price", profession: "Solicitor", firm: "Price & Co", date: "2026-11-20" },
+  certified: true, certification: { words: "Certified to be a true copy of the original seen by me", name: "Sarah Price", profession: "Solicitor", firm: "Price & Co", date: "2026-11-20", address: "1 High Street, London N10 1AA", phone: "020 7946 0000", signed: true },
   ...over,
 });
 const people = [{ name: "Huseyn Mirhadiyev", dob: { year: 1982, month: 2 } }, { name: "Woody Bruce", dob: { year: 1976, month: 5 } }];
@@ -49,8 +49,9 @@ test("an identity document is held back: expired, not certified, a certification
   assert.match(checkKycDocument(passport({ expires: "2025-01-01" }), people, opts).reasons.join(" "), /It expired on 1 Jan 2025/);
   assert.match(checkKycDocument(passport({ certified: false, certification: null }), people, opts).reasons.join(" "), /Not a certified copy/);
   assert.equal(checkKycDocument(passport({ certified: false, certification: null }), people, { ...opts, seenOriginal: true }).ok, true, "an agent saw the original");
-  assert.deepEqual(certificationGaps({ words: null, name: "Sarah Price", profession: null, firm: null, date: null }), ["their profession or firm", "the date"]);
-  assert.match(checkKycDocument(passport({ certification: { words: null, name: null, profession: "Solicitor", firm: null, date: "2026-11-20" } }), people, opts).reasons.join(" "), /does not give the certifier's name/);
+  assert.deepEqual(certificationGaps({ words: null, name: "Sarah Price", profession: null, firm: null, date: null }),
+    ["the words that it is a true copy of the original", "their occupation", "the date", "their address", "their telephone number"]);
+  assert.match(checkKycDocument(passport({ certification: { words: "Certified true copy of the original", name: null, profession: "Solicitor", firm: null, date: "2026-11-20", address: "1 High St", phone: "020 7946 0000", signed: true } }), people, opts).reasons.join(" "), /does not give the certifier's name$/);
   assert.match(checkKycDocument(passport({ names: ["JANE DOE"] }), people, opts).reasons.join(" "), /not one of the people to check/);
   const wrongDob = checkKycDocument(passport({ dob: "1990-01-01" }), people, opts);
   assert.equal(wrongDob.ok, false);
@@ -117,4 +118,31 @@ test("the reader is sent the file, keeps its own shape, and says why it could no
   assert.equal(read.read, true);
   assert.equal(read.kind, "passport");
   assert.equal((sent[0] as any)?.type, "document", "the PDF itself, nothing else");
+});
+
+test("who may certify: solicitors, lawyers and notaries, chartered accountants, bank and building society officials; HMRC's details are all needed", () => {
+  const full = passport().certification!;
+  const by = (profession: string | null, firm: string | null = null) => checkKycDocument(passport({ certification: { ...full, profession, firm } }), people, opts);
+  for (const p of ["Solicitor", "Notary Public", "Lawyer", "Barrister", "Chartered Accountant", "Chartered Certified Accountant", "FCA", "Bank official", "Branch manager, Nationwide Building Society"]) {
+    assert.equal(by(p).ok, true, p);
+  }
+  assert.equal(by(null, "Price & Co Solicitors").ok, true, "the firm says it");
+  assert.equal(by("Manager", "Barclays Bank plc").ok, true);
+  for (const p of ["Accountant", "Teacher", "Councillor", "Dentist", "Estate agent"]) {
+    const c = by(p);
+    assert.equal(c.ok, false, p);
+    assert.match(c.reasons.join(" "), /BGP accepts a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official/);
+  }
+  assert.equal(certifierGroup("chartered accountant"), "accountant");
+  assert.equal(certifierGroup("financial adviser"), null);
+  assert.equal(certifierRefusal({ ...full, profession: null, firm: null }), null, "no occupation is a gap, said once");
+  const gaps = (over: object) => checkKycDocument(passport({ certification: { ...full, ...over } }), people, opts).reasons.join(" ");
+  assert.match(gaps({ address: null }), /does not give their address/);
+  assert.match(gaps({ phone: null }), /their telephone number/);
+  assert.match(gaps({ signed: false }), /the certifier's signature/);
+  assert.match(gaps({ words: "Seen by me" }), /the words that it is a true copy/);
+  const old = { words: "true copy", name: "Sarah Price", profession: "Solicitor", firm: null, date: "2026-11-20" };
+  assert.match(checkKycDocument(passport({ certification: old }), people, opts).reasons.join(" "), /their address, their telephone number/, "a reading from before the rule is read again");
+  const r = cleanKycDocumentReading({ kind: "passport", names: [], certified: true, certification: { name: "S", address: " 1 High St ", phone: "020", signed: true } }, "t");
+  assert.deepEqual([r.certification?.address, r.certification?.phone, r.certification?.signed], ["1 High St", "020", true]);
 });

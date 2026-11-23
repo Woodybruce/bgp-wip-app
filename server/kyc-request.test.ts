@@ -340,3 +340,31 @@ test("the reference is a small tag at the end of the subject, only for BGP's use
   assert.equal(kycRefFromSubject("Re: Fwd: Please complete your identity checks for [RENT26] Unit 4 [7K2Q9M]"), "7K2Q9M");
   assert.equal(kycRefFromSubject("Re: [TEST AML] Unit 4"), null);
 });
+
+test("the note is from whoever sent the request, never the first contact listed (Jack, 23 November 2026)", () => {
+  const two = [{ name: "Charlotte Roberts", email: "charlotte@brucegillinghampollard.com", phone: null }, { name: "Jack Barratt", email: "jack@brucegillinghampollard.com", phone: null }];
+  const html = kycRequestEmail(ctx({ note: "Hi Adam, as discussed. Thanks", noteFrom: "Jack Barratt", agents: two })).html;
+  assert.match(html, /A note from Jack:/);
+  assert.doesNotMatch(html, /A note from Charlotte/);
+  assert.match(kycRequestEmail(ctx({ note: "Hello", agents: two })).html, /A note from Bruce Gillingham Pollard:/, "nobody named: never a guess");
+});
+
+test("clients are told to speak to the Nominated Officer alone, on every AML email and page", async () => {
+  const { amlContact, resetAmlContactForTests } = await import("./aml-portal");
+  const agents = [{ name: "Charlotte Roberts", email: "charlotte@brucegillinghampollard.com", phone: null }];
+  resetAmlContactForTests({ name: "Jack Barratt", email: "jack@brucegillinghampollard.com", phone: "+44 (0)7788 215 044" });
+  assert.deepEqual(amlContact(agents).map(a => a.name), ["Jack Barratt"]);
+  const html = kycRequestEmail(ctx({ agents: amlContact(agents) })).html;
+  assert.match(html, /Speak to <strong>Jack Barratt<\/strong>/);
+  assert.doesNotMatch(html, /Charlotte/);
+  resetAmlContactForTests(null);
+  assert.deepEqual(amlContact(agents), agents, "no Nominated Officer set: the people the request holds");
+  resetAmlContactForTests();
+  const portal = readFileSync("server/aml-portal.ts", "utf8");
+  const joint = readFileSync("server/joint-agent-checks.ts", "utf8");
+  for (const [name, src] of [["aml-portal", portal], ["joint-agent-checks", joint]] as const) {
+    assert.doesNotMatch(src, /agents: request\.agents|agents: agentList, askPep|agents, sentFrom/, name);
+  }
+  assert.match(portal, /export async function sendKycEmail\([\s\S]{0,200}?await primeAmlContact\(\);/);
+  assert.match(portal, /export async function portalView\(row: TokenRow\): Promise<KycPortalView> \{\n  await primeAmlContact\(\);/);
+});

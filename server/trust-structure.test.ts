@@ -228,7 +228,9 @@ test("every request email offers certified copies with both lists (Jack, 23 Nove
   const company = kycRequestEmail({ ...base, kind: "company" as any }).html;
   assert.match(company, /Or send certified copies/);
   assert.match(company, /anyone who owns more than 25% of the company/);
-  assert.match(company, /List A<\/strong> \(one, certified by a solicitor\)/);
+  assert.match(company, /List A<\/strong> \(one, certified\)/);
+  assert.match(company, /Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official/);
+  assert.match(company, /sign and date it, and print their name, occupation, address and telephone number/);
   assert.match(company, /residence permit issued by the Home Office/);
   assert.match(company, /council tax bill less than 3 months old/);
   const person = kycRequestEmail({ ...base, kind: "individual" as any }).html;

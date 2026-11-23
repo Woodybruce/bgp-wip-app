@@ -287,6 +287,7 @@ export interface KycEmailContext {
   needsIdCheck: boolean;
   docs: KycDocKey[];
   note?: string | null;
+  noteFrom?: string | null;            // who typed the note (the person who sent the request)
   agents: KycAgent[];
   // The mailbox the email goes from, named in the footer.
   sentFrom: string;
@@ -357,7 +358,9 @@ function greeting(name: string | null | undefined): string {
   return first ? `Hello ${escHtml(first)},` : "Hello,";
 }
 
-// "Jack Smith on 07700 900123 or jack@…", for up to two agents.
+// "Jack Smith on 07700 900123 or jack@…", for up to two people. Since
+// 23 November 2026 the server passes the Nominated Officer alone (Jack: "I
+// need to be the only person referenced under 'Questions?'").
 function agentContactHtml(agents: KycAgent[]): string {
   const shown = agents.filter(a => a.name).slice(0, 2);
   if (!shown.length) return "reply to this email";
@@ -474,10 +477,13 @@ export const KYC_WHY_WE_ASK = "The Money Laundering Regulations require estate a
 export const KYC_DATA_USE = "We use what you send only to prevent money laundering and terrorist financing, and keep it securely for five years after our work with you ends.";
 const whyWeAsk = () => h2("Why we ask") + p(`${escHtml(KYC_WHY_WE_ASK)} ${escHtml(KYC_DATA_USE)} Our <a href="${escHtml(KYC_PRIVACY_URL)}" style="color:${ACCENT}">privacy notice</a> has more.`, `font-size:13px;color:${BODY}`);
 
-function noteBlock(note: string | null | undefined, agents: KycAgent[]): string {
+// The note is from whoever typed it, the person who sent the request (Jack,
+// 23 November 2026: his note read "A note from Charlotte", the first agent on
+// the transaction). Never the first name on the contact list.
+function noteBlock(note: string | null | undefined, noteFrom: string | null | undefined): string {
   const text = String(note || "").trim();
   if (!text) return "";
-  const from = firstName(agents[0]?.name) || "your agent";
+  const from = firstName(noteFrom) || "Bruce Gillingham Pollard";
   return `<div style="margin:18px 0;padding:12px 16px;border-left:3px solid ${ACCENT};background:#faf7f5;font-size:14px;color:${BODY}"><strong style="color:${INK}">A note from ${escHtml(from)}:</strong><br>${escHtml(text).replace(/\r?\n/g, "<br>")}</div>`;
 }
 
@@ -522,7 +528,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     h2("Or send certified copies"),
     p(escHtml(certifiedWords(ctx)), `font-size:14px;color:${BODY}`),
     certifiedLists(),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -538,24 +544,31 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
 // own link, or certified copies sent now. The email and the page say both.
 export const TRUST_NEXT_WORDS = {
   links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check and a proof of address from the last three months, and takes about ten minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
-  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified by a solicitor, and one from List B.",
+  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified, and one from List B.",
 };
 // Certified copies in place of the online check, on every request (Jack, 23
 // November 2026: "these need to be sent on all AML request emails"). Who
 // they are for depends on who is asked.
 export function certifiedWords(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): string {
   if (ctx.purpose === "trust_structure") return TRUST_NEXT_WORDS.certified;
-  if (ctx.person || ctx.kind === "individual") return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified by a solicitor, and one from List B.";
-  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified by a solicitor, and one from List B.";
+  if (ctx.person || ctx.kind === "individual") return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified, and one from List B.";
+  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified, and one from List B.";
 }
+// Who may certify and what the certification must carry (Jack, 23 November
+// 2026; the details are HMRC's, AMLG11400). The app checks each copy against
+// both (shared/kyc-documents.ts).
+export const CERTIFIED_WHO = "Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official.";
+export const CERTIFIED_HOW = "They write \"Certified to be a true copy of the original seen by me\" on the copy, sign and date it, and print their name, occupation, address and telephone number.";
 const bullets = (items: string[]): string =>
   `<ul style="margin:0 0 6px 18px;padding:0;font-family:${FONT};font-size:14px;line-height:1.5;color:${BODY}">${items.map(i => `<li>${escHtml(i[0].toUpperCase() + i.slice(1))}</li>`).join("")}</ul>`;
 
 const certifiedLists = (): string => [
-  p(`<strong>List A</strong> (one, certified by a solicitor)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  p(`<strong>List A</strong> (one, certified)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
   bullets(CERTIFIED_LIST_A),
   p(`<strong>List B</strong> (one)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
   bullets(CERTIFIED_LIST_B),
+  p(escHtml(CERTIFIED_WHO), `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  p(escHtml(CERTIFIED_HOW), `font-size:14px;color:${BODY}`),
 ].join("\n");
 
 function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
@@ -572,7 +585,7 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     p(escHtml(TRUST_NEXT_WORDS.links), `font-size:14px;color:${BODY}`),
     p(escHtml(TRUST_NEXT_WORDS.certified), `font-size:14px;color:${BODY}`),
     certifiedLists(),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -695,6 +708,7 @@ export interface JointAgentEmailContext {
   expiresAt: Date | string;
   letting: boolean;                   // a letting at £10,000 a month or more: the reliance terms
   note?: string | null;
+  noteFrom?: string | null;            // who typed the note (the person who sent the request)
   agents: KycAgent[];
   sentFrom: string;
   test?: boolean;
@@ -751,7 +765,7 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     stepsList(jointAgentAsks(ctx)),
     button("Upload the documents", ctx.link),
     p(`Or reply to this email with the documents attached. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -872,7 +886,7 @@ export function kycViaAgentRequestEmail(ctx: KycViaAgentEmailContext): { subject
     button("Open the checks", ctx.link),
     p(`To pass them on, forward this email to ${ctx.personName ? escHtml(ctx.personName) : "your client"}, or send the link to them from the page. You can upload any documents you hold for them on the same page.${ctx.needsIdCheck ? ` The identity check must be done by ${escHtml(kycViaAgentIdWho(ctx))}.` : ""}`, `font-size:14px;color:${BODY}`),
     p(`The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
-    noteBlock(ctx.note, ctx.agents),
+    noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
@@ -1181,6 +1195,7 @@ export interface KycPortalView {
   // they have nothing left to send, linked when they have a link.
   people?: Array<{ key: string; name: string; detail: string | null; done: boolean; linked: boolean; emailedAt: string | null }> | null;
   note: string | null;
+  noteFrom?: string | null;
   agents: KycAgent[];
   finishedAt: string | null;
   maxFileMb: number;
