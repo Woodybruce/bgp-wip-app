@@ -6,7 +6,8 @@
 // waits on, all read from records the app already holds. The feed is
 // server/aml-dashboard.ts; the page client/src/pages/aml-dashboard.tsx.
 
-import { legacyToCode } from "./deal-status";
+import { legacyToCode, type DealStatusCode } from "./deal-status";
+import { dealStatusLabel } from "./letting-rules";
 
 export type AmlStage = "not_started" | "bgp_checked" | "joint_asked" | "client_sent" | "joint_in" | "client_finished" | "relied" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
 
@@ -206,6 +207,7 @@ export interface AmlDashboardRow {
   dealName: string;
   dealRef: number | null;
   dealStatus: string | null;
+  dealType: string | null;             // so a letting's AVA reads Marketing
   propertyName: string | null;
   role: string;
   brandId: string;
@@ -246,6 +248,14 @@ export function bucketCounts(rows: Pick<AmlDashboardRow, "bucket">[]): Record<Am
 export function rowMatches(row: AmlDashboardRow, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealRef != null ? `#${row.dealRef}` : null, ...row.agents]
+  return [row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealRef != null ? `#${row.dealRef}` : null, amlDealStatusWords(row).words, ...row.agents]
     .some(v => (v || "").toLowerCase().includes(q));
+}
+
+/** The transaction's own status in the Transactions board's words (Woody,
+ *  23 November 2026: "on this page can we have the deal status i.e
+ *  reporting, marketing, solicitors, completed etc"): a letting's AVA reads
+ *  Marketing, an investment's Available. */
+export function amlDealStatusWords(row: Pick<AmlDashboardRow, "dealStatus" | "dealType">): { code: DealStatusCode | null; words: string | null } {
+  return { code: legacyToCode(row.dealStatus || ""), words: dealStatusLabel(row.dealStatus, row.dealType) };
 }

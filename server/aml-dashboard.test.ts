@@ -129,6 +129,19 @@ test("days since anything moved, and the search", () => {
   } as AmlDashboardRow;
   for (const q of ["bakery", "OPERATIONS", "unit 9", "westgate", "#1234", "victoria", ""]) assert.ok(rowMatches(row, q), q);
   assert.ok(!rowMatches(row, "pret"));
+  // The transaction's status is searchable in its words (23 November 2026).
+  assert.ok(rowMatches({ ...row, dealStatus: "SOL", dealType: "New Letting" }, "solicitors"));
+  assert.ok(!rowMatches({ ...row, dealStatus: "SOL", dealType: "New Letting" }, "completed"));
+});
+
+test("the transaction's status in the Transactions board's words (Woody, 23 November 2026)", async () => {
+  const { amlDealStatusWords } = await import("../shared/aml-dashboard");
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "AVA", dealType: "New Letting" }), { code: "AVA", words: "Marketing" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "AVA", dealType: "Sale" }), { code: "AVA", words: "Available" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "REP", dealType: "Sale" }), { code: "REP", words: "Reporting" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "SOL", dealType: null }), { code: "SOL", words: "Solicitors" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "Completed", dealType: "New Letting" }), { code: "COM", words: "Completed" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: null, dealType: null }), { code: null, words: null });
 });
 
 test("no Not with KYC4U mark: KYC4U is no longer used (23 November 2026)", async () => {

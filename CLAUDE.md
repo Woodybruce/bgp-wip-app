@@ -4609,6 +4609,18 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   the deal's own AML card (every button: checks before asking, client checks,
   KYC4U request, Sign off, Add KYC4U result), the documents on the party's
   KYC record and its history (the KYC audit log and the deal's AML lines).
+  **The table's columns** (Woody, 23 November 2026: "on this page can we
+  have the deal status i.e reporting, marketing, solicitors, completed etc",
+  "combined due diligence and red flags same as stage to sit under each",
+  "dont let the agents responsible leak off the page they should be
+  listed"): Party, Transaction (the property under it), **Transaction
+  status** (`amlDealStatusWords`: the status in the Transactions board's
+  words and colours, `dealStatusLabel` with the row's `dealType`, so a
+  letting's AVA reads Marketing; the search matches it), **AML stage** (Late
+  stacked under it), **Due diligence and red flags** (the level with the red
+  flags stacked under it, a long flag wrapping in its column), Waiting on,
+  Last moved and **Agents** (every agent, one to a line, never cut off). The
+  phone card shows the status beside the transaction.
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
   is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and

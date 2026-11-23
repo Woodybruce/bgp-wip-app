@@ -23,9 +23,9 @@ import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { AML_BUCKETS, AML_STAGE_LABEL, amlDealStatusWords, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
-import { legacyToCode } from "@shared/deal-status";
+import { DEAL_STATUS_COLORS } from "@shared/deal-status";
 
 interface Feed { rows: AmlDashboardRow[]; unchecked: string[] }
 interface Trail {
@@ -78,7 +78,7 @@ interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean; inHouseE
 function StageChip({ row }: { row: AmlDashboardRow }) {
   const label = row.stage === "expiring" && row.expiresAt ? `Expires ${day(row.expiresAt)}` : AML_STAGE_LABEL[row.stage];
   return (
-    <span className="inline-flex flex-wrap items-center gap-1">
+    <span className="flex flex-col items-start gap-1">
       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>
       {/* Past the point BGP's policy (Issue 4) needs the checks by, and not decided. */}
       {row.late && <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 whitespace-nowrap dark:bg-red-950/40 dark:text-red-200" title={`Needed ${row.deadline}`} data-testid={`aml-late-${row.key}`}>Late</span>}
@@ -89,9 +89,32 @@ function StageChip({ row }: { row: AmlDashboardRow }) {
 function Flags({ row }: { row: AmlDashboardRow }) {
   if (!row.redFlags.length) return <span className="text-muted-foreground">—</span>;
   return (
-    <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300" title={row.redFlags.join("\n")} data-testid={`aml-flags-${row.key}`}>
-      <Flag className="w-3.5 h-3.5 shrink-0" />{row.redFlags.length === 1 ? row.redFlags[0] : `${row.redFlags.length} red flags`}
+    <span className="inline-flex items-start gap-1 text-red-700 dark:text-red-300" title={row.redFlags.join("\n")} data-testid={`aml-flags-${row.key}`}>
+      <Flag className="w-3.5 h-3.5 shrink-0 mt-0.5" />{row.redFlags.length === 1 ? row.redFlags[0] : `${row.redFlags.length} red flags`}
     </span>
+  );
+}
+
+// The level of due diligence with the party's red flags under it, as Late
+// sits under the AML stage (Woody, 23 November 2026: "combined due diligence
+// and red flags same as stage to sit under each").
+function DiligenceCell({ row }: { row: AmlDashboardRow }) {
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <LevelCell row={row} />
+      {row.redFlags.length > 0 && <Flags row={row} />}
+    </div>
+  );
+}
+
+// Every agent on the transaction, one to a line (Woody, 23 November 2026:
+// "dont let the agents responsible leak off the page they should be listed").
+function AgentsCell({ row }: { row: AmlDashboardRow }) {
+  if (!row.agents.length) return <span>—</span>;
+  return (
+    <ul className="space-y-0.5" data-testid={`aml-agents-${row.key}`}>
+      {row.agents.map(a => <li key={a} className="whitespace-nowrap">{a}</li>)}
+    </ul>
   );
 }
 
@@ -110,9 +133,17 @@ function DealCell({ row }: { row: AmlDashboardRow }) {
   return (
     <div className="min-w-0">
       <div className="truncate">{row.dealRef != null ? <span className="font-mono text-muted-foreground mr-1">#{row.dealRef}</span> : null}{row.dealName}</div>
-      <div className="text-[11px] text-muted-foreground truncate">{[legacyToCode(row.dealStatus || "") || row.dealStatus, row.propertyName].filter(Boolean).join(" · ")}</div>
+      {row.propertyName && <div className="text-[11px] text-muted-foreground truncate">{row.propertyName}</div>}
     </div>
   );
+}
+
+// The transaction's own status (Woody, 23 November 2026), in the Transactions
+// board's words and colours.
+function DealStatusChip({ row }: { row: AmlDashboardRow }) {
+  const { code, words } = amlDealStatusWords(row);
+  if (!words) return <span className="text-muted-foreground">—</span>;
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${code ? DEAL_STATUS_COLORS[code] : "bg-muted text-muted-foreground"}`} data-testid={`aml-deal-status-${row.key}`}>{words}</span>;
 }
 
 // The party's trail (20 November 2026, Woody: "minimise each section with the
@@ -307,7 +338,7 @@ export default function AmlDashboard() {
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
           </div>
         </div>
       </div>
@@ -330,7 +361,7 @@ export default function AmlDashboard() {
             <li key={r.key}>
               <button type="button" onClick={() => setOpen(r)} className="w-full text-left rounded-lg border bg-card p-3 space-y-1.5" data-testid={`aml-row-${r.key}`}>
                 <div className="flex items-start justify-between gap-2"><PartyCell row={r} /><StageChip row={r} /></div>
-                <div className="text-xs"><DealCell row={r} /></div>
+                <div className="flex items-start justify-between gap-2 text-xs"><DealCell row={r} /><DealStatusChip row={r} /></div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                   <LevelCell row={r} />
                   <span><span className="text-muted-foreground">Waiting on</span> {r.waitingOn}</span>
@@ -347,15 +378,15 @@ export default function AmlDashboard() {
         // "can you put a scroll bar at the top and fix the heading as scroll
         // down"): the rows scroll inside the box, which the sticky heading needs.
         <div className="rounded-lg border overflow-hidden" data-testid="aml-table-box">
-          <ScrollableTable minWidth={1000} topScrollbar>
+          <ScrollableTable minWidth={1120} topScrollbar>
           <table className="w-full text-sm" data-testid="aml-table">
             <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="text-left font-medium px-3 py-2">Party</th>
                 <th className="text-left font-medium px-3 py-2">Transaction</th>
-                <th className="text-left font-medium px-3 py-2">Stage</th>
-                <th className="text-left font-medium px-3 py-2">Due diligence</th>
-                <th className="text-left font-medium px-3 py-2">Red flags</th>
+                <th className="text-left font-medium px-3 py-2">Transaction status</th>
+                <th className="text-left font-medium px-3 py-2">AML stage</th>
+                <th className="text-left font-medium px-3 py-2">Due diligence and red flags</th>
                 <th className="text-left font-medium px-3 py-2">Waiting on</th>
                 <th className="text-right font-medium px-3 py-2">Last moved</th>
                 <th className="text-left font-medium px-3 py-2">Agents</th>
@@ -366,12 +397,12 @@ export default function AmlDashboard() {
                 <tr key={r.key} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-muted/40" data-testid={`aml-row-${r.key}`}>
                   <td className="px-3 py-2 max-w-[230px]"><PartyCell row={r} /></td>
                   <td className="px-3 py-2 max-w-[260px]"><DealCell row={r} /></td>
+                  <td className="px-3 py-2"><DealStatusChip row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
-                  <td className="px-3 py-2"><LevelCell row={r} /></td>
-                  <td className="px-3 py-2 max-w-[220px] truncate"><Flags row={r} /></td>
+                  <td className="px-3 py-2 max-w-[240px]"><DiligenceCell row={r} /></td>
                   <td className="px-3 py-2 min-w-[150px] max-w-[220px]">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>
-                  <td className="px-3 py-2 max-w-[200px] truncate text-muted-foreground">{r.agents.join(", ") || "—"}</td>
+                  <td className="px-3 py-2 text-muted-foreground"><AgentsCell row={r} /></td>
                 </tr>
               ))}
             </tbody>

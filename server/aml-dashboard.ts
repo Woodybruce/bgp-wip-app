@@ -262,6 +262,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       dealName: text(p.deal.name) || "Untitled transaction",
       dealRef: p.deal.deal_ref ?? null,
       dealStatus: p.deal.status || null,
+      dealType: text(p.deal.deal_type) || null,
       propertyName: text(p.deal.property_name) || null,
       role: p.role,
       brandId: p.brandId,
