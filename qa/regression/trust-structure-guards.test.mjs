@@ -66,3 +66,24 @@ test("reading the deed is BGP staff's, checked before the file is taken, and sav
   assert.doesNotMatch(route.slice(0, route.indexOf("\nrouter.", 10)), /INSERT INTO kyc_trust_structures|UPDATE kyc_trust_structures/);
   assert.match(read("client/src/components/trust-structure.tsx"), /<DeedReadBack reading=\{reading\} \/>/);
 });
+
+test("Request trust structure: staff only, a client checks request marked for the trust, finished once everything is in", () => {
+  const s = read("server/trust-structure.ts");
+  assert.match(s, /router\.post\("\/api\/trust-structure\/:companyId\/request", async \(req: Request, res: Response\) => \{\s*try \{\s*const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
+  assert.match(s, /if \(!clientChecksOn\(\)\) return res\.status\(410\)/);
+  assert.match(s, /\{ purpose: "trust_structure" \}\);/);
+  const portal = read("server/aml-portal.ts");
+  // One ready note however many uploads finish it together.
+  assert.match(portal, /UPDATE kyc_upload_tokens SET completed_at = now\(\) WHERE token = \$1 AND completed_at IS NULL RETURNING token/);
+  assert.match(portal, /if \(isTrustDocsRequest\(request\)\) \{\s*const deedFiles/);
+  assert.match(portal, /m\.amlOfficerEmails\(\)/);
+  assert.match(portal, /if \(fresh\.request!\.docs\.every\(k => progress\.docsDone\.includes\(k\)\)\) await finishRequest\(fresh\);/);
+  // The deed a client sends is read into a draft, never saved as the structure.
+  const readFn = s.slice(s.indexOf("export async function readDeedDocument"), s.indexOf("export async function ensureRequestDeedRead"));
+  assert.doesNotMatch(readFn, /kyc_trust_structures/);
+  assert.match(read("server/index.ts"), /CREATE TABLE IF NOT EXISTS kyc_trust_deed_readings/);
+  const ui = read("client/src/components/trust-structure.tsx");
+  assert.match(ui, /\/>Request trust structure\n/);
+  assert.match(ui, /\/>Add trust structure yourself\n/);
+  assert.doesNotMatch(ui, /<form[\s>]/);
+});

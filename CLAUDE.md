@@ -5204,6 +5204,36 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   wealth are never read from a deed. The form opens on the proposal with the
   read-back (`DeedReadBack`); its Save is the only save. A
   `trust_deed_read` line goes on the KYC history.
+- **Request trust structure** (Jack, the same day: "My colleagues wont do
+  this. So the 'Trust Structure' button needs to be 'Add Trust Structure
+  Yourself' ... Or 'Request Trust Structure' and it then emails the trust's
+  representative, or whoever's email you then add in ... Once they upload, we
+  need the documents to go somewhere and then be notified that are ready to
+  undertake due diligence on"). With no structure recorded the panel offers
+  **Request trust structure** first and **Add trust structure yourself** (Read
+  the trust deed, or Fill it in by hand). `POST
+  /api/trust-structure/:companyId/request` (BGP staff, the client checks
+  switched on, a trust record) is `createClientCheck` with `{ purpose:
+  "trust_structure" }`: a client checks request marked `request.purpose`, no
+  identity check, no public roles question, no owners to confirm or links to
+  pass, asking `TRUST_REQUEST_DOCS` (the deed, `trust_people` "Who is who in
+  the trust", HMRC's proof, the trust's wealth, the trustees' confirmation;
+  what is on file is unticked). Its email and page say "Documents about
+  <trust>" (`trustDocsRequestEmail`, `trustDocs` on the page), and reminders
+  follow. Its recipient (often the trust's solicitor) is never a person to
+  check and the request is never anyone's own link (`trustDocs` on
+  `PeopleRequest`). Each upload is filed on the trust's KYC record as any
+  client check file is; a deed filed this way (any client check upload as the
+  trust deed) is read once (`readDeedDocument`, kept in
+  `kyc_trust_deed_readings`, a boot table) and the panel shows **Check and
+  save** on the draft until a structure is saved after it (`deedDraftFor`).
+  When everything asked for is in, the request finishes itself (or on the
+  page's Finish; claimed once with `RETURNING`), and `trustDocsReadyEmail`
+  ("Ready for due diligence: ...") goes to the transaction's agents, the
+  sender and the AML officers (`amlOfficerEmails`). A KYC history line
+  `trust_documents_requested`, then `trust_documents_in`. Tests in
+  `server/trust-structure.test.ts` and the guards file. Not run against
+  Microsoft or Anthropic from a build machine.
 - Not built: the client naming the trust's people on their page; Scotland's
   and Northern Ireland's registers. Not run against live data or Anthropic:
   checked by tests only, not in a browser.

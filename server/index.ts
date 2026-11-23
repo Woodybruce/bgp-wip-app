@@ -3099,6 +3099,15 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       updated_at timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL DEFAULT now()
     )`,
+    // The trust deed a client sent, read into a draft structure (23 November 2026).
+    `CREATE TABLE IF NOT EXISTS kyc_trust_deed_readings (
+      document_id varchar PRIMARY KEY,
+      company_id varchar NOT NULL,
+      file_name text,
+      reading jsonb NOT NULL,
+      read_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_trust_deed_readings_company ON kyc_trust_deed_readings (company_id, read_at DESC)`,
     // On a sale, the record HMRC asks for when the joint agent found the
     // other side (Woody, 22 November 2026: "We have to do what HMRC say";
     // AMLG2200 section 21): when, how and whom BGP asked for the joint

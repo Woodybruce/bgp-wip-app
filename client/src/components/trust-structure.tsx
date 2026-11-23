@@ -6,7 +6,7 @@
 // shared/trust-structure.ts. No form element here: the dialog opens over the deal form.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, FileSearch, Loader2, Pencil, Plus, Upload, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, FileSearch, Loader2, Mail, Pencil, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,20 +19,39 @@ import {
   type TrsStatus, type TrustGap, type TrustKind, type TrustRole, type TrustStructure, type TrustStructureRecord,
 } from "@shared/trust-structure";
 import type { TrustDeedReading } from "@shared/trust-deed-read";
+import { KYC_DOCS, TRUST_REQUEST_DOCS, type KycDocKey } from "@shared/kyc-request";
 
 export interface TrustStructureView {
   companyId: string; name: string; trust: boolean;
   record: TrustStructureRecord | null;
   documents: { deed: boolean; trs: boolean };
   gaps: TrustGap[];
+  // The latest "Request trust structure" (23 November 2026), and the deed it brought in, read.
+  request?: {
+    token: string; ref: string; dealId: string; to: string | null; email: string | null; sentAt: string | null; sendError: string | null;
+    finishedAt: string | null; remindersSent: number; docs: Array<{ key: string; title: string; done: boolean }>;
+  } | null;
+  draft?: { documentId: string; fileName: string | null; readAt: string; reading: TrustDeedReading; proposal: TrustStructure } | null;
+  askFirst?: { contactId: string | null; name: string; email: string | null; mobile: string | null } | null;
+  contacts?: Array<{ id: string; name: string; email: string | null; mobile: string | null }>;
 }
 
 const plain = (e: unknown) => String((e as any)?.message || e).replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1");
 const keyFor = (companyId: string) => ["/api/trust-structure", companyId];
 
-export function useTrustStructure(companyId: string | null | undefined, enabled = true) {
-  return useQuery<TrustStructureView>({ queryKey: keyFor(String(companyId)), enabled: !!companyId && enabled, staleTime: 30_000 });
+export function useTrustStructure(companyId: string | null | undefined, enabled = true, dealId?: string | null) {
+  return useQuery<TrustStructureView>({
+    queryKey: [...keyFor(String(companyId)), dealId || ""],
+    enabled: !!companyId && enabled, staleTime: 30_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/trust-structure/${companyId}${dealId ? `?dealId=${encodeURIComponent(dealId)}` : ""}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(plain(await res.text()));
+      return res.json();
+    },
+  });
 }
+
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
 function refreshAfter(companyId: string, dealId?: string | null) {
   queryClient.invalidateQueries({ queryKey: keyFor(companyId) });
@@ -129,9 +148,11 @@ function ReadDeedButton({ companyId, dealId, onFile, onRead }: {
 }
 
 export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: { companyId: string; dealId?: string | null; partyName: string; onPeople?: () => void }) {
-  const q = useTrustStructure(companyId);
+  const q = useTrustStructure(companyId, true, dealId);
   const [editing, setEditing] = useState(false);
   const [deedRead, setDeedRead] = useState<{ reading: TrustDeedReading; proposal: TrustStructure | null } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [yourself, setYourself] = useState(false);
   if (q.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trust's structure…</p>;
   if (q.isError || !q.data) return <p className="text-xs text-red-700 dark:text-red-400">The trust's structure could not be read: {plain(q.error)}</p>;
   const view = q.data;
@@ -142,13 +163,46 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">Trust structure</span>
         {view.record && <span className="text-muted-foreground">recorded by {view.record.updatedBy || "BGP"} · {new Date(view.record.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>}
-        <span className="ml-auto" />
-        <ReadDeedButton companyId={companyId} dealId={dealId} onFile={view.documents.deed} onRead={r => { setDeedRead(r); setEditing(true); }} />
-        <Button type="button" size="sm" variant={s ? "outline" : "default"} className="h-7 text-xs" onClick={() => { setDeedRead(null); setEditing(true); }} data-testid={`trust-structure-edit-${companyId}`}>
-          {s ? <><Pencil className="mr-1 h-3 w-3" />Change</> : <><Plus className="mr-1 h-3 w-3" />Record it</>}
-        </Button>
+        {s && (
+          <>
+            <span className="ml-auto" />
+            <ReadDeedButton companyId={companyId} dealId={dealId} onFile={view.documents.deed} onRead={r => { setDeedRead(r); setEditing(true); }} />
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setDeedRead(null); setEditing(true); }} data-testid={`trust-structure-edit-${companyId}`}>
+              <Pencil className="mr-1 h-3 w-3" />Change
+            </Button>
+          </>
+        )}
       </div>
-      {!s && <p className="text-muted-foreground">From the trust deed: what kind of trust it is, whether HMRC holds it, where the settlor's money came from, and its people. Each person who has to be verified then gets their own link under People to check.</p>}
+      {view.draft && (
+        <div className="flex flex-wrap items-center gap-2 rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" data-testid={`trust-draft-${companyId}`}>
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          <span>The trust deed{view.draft.fileName ? ` (${view.draft.fileName})` : ""} was read on {shortDay(view.draft.readAt)}: {view.draft.reading.people.length} {view.draft.reading.people.length === 1 ? "person" : "people"} named. Check it against the deed and save.</span>
+          <Button type="button" size="sm" className="ml-auto h-7 text-xs" onClick={() => { setDeedRead({ reading: view.draft!.reading, proposal: view.draft!.proposal }); setEditing(true); }} data-testid={`trust-draft-open-${companyId}`}>Check and save</Button>
+        </div>
+      )}
+      {view.request && <TrustRequestLine request={view.request} onAskAgain={() => setAsking(true)} companyId={companyId} dealId={dealId} />}
+      {!s && !view.draft && (
+        <div className="space-y-2" data-testid={`trust-start-${companyId}`}>
+          <div className="flex flex-wrap gap-2">
+            {!view.request && (
+              <Button type="button" size="sm" className="h-8 text-xs" onClick={() => setAsking(true)} data-testid={`trust-request-${companyId}`}>
+                <Mail className="mr-1 h-3.5 w-3.5" />Request trust structure
+              </Button>
+            )}
+            <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setYourself(v => !v)} data-testid={`trust-yourself-${companyId}`}>
+              <Plus className="mr-1 h-3.5 w-3.5" />Add trust structure yourself
+            </Button>
+          </div>
+          {!view.request && <p className="text-muted-foreground">Request it: we email the trust's representative a link to upload the trust deed, who is who, HMRC's registration and where the money came from. When it's all in, you and the AML officers get an email that it's ready for due diligence, with the deed already read into a draft.</p>}
+          {yourself && (
+            <div className="flex flex-wrap items-center gap-2 rounded border border-border/60 px-2 py-1.5">
+              <span className="text-muted-foreground">If you have the deed:</span>
+              <ReadDeedButton companyId={companyId} dealId={dealId} onFile={view.documents.deed} onRead={r => { setDeedRead(r); setEditing(true); }} />
+              <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setDeedRead(null); setEditing(true); }} data-testid={`trust-structure-edit-${companyId}`}>Fill it in by hand</Button>
+            </div>
+          )}
+        </div>
+      )}
       {s && (
         <dl className="grid gap-x-3 gap-y-1 sm:grid-cols-[max-content_1fr]">
           <dt className="text-muted-foreground">Kind</dt><dd>{TRUST_KINDS[s.kind]}{s.established ? ` · settled ${s.established}` : ""}{s.governingLaw ? ` · ${s.governingLaw} law` : ""}</dd>
@@ -191,8 +245,117 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
       {s && s.people.some(p => trustPersonOwesChecks(p, s.kind)) && onPeople && (
         <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={onPeople}>Send each person their own link, under People to check</button>
       )}
+      {asking && dealId && <TrustRequestDialog view={view} dealId={dealId} onClose={() => setAsking(false)} />}
       {editing && <TrustStructureDialog companyId={companyId} dealId={dealId} partyName={partyName} initial={deedRead?.proposal || s} reading={deedRead?.reading || null} onClose={() => { setEditing(false); setDeedRead(null); }} />}
     </div>
+  );
+}
+
+// What has come in on the request, with Remind and Ask someone else.
+function TrustRequestLine({ request, onAskAgain, companyId, dealId }: { request: NonNullable<TrustStructureView["request"]>; onAskAgain: () => void; companyId: string; dealId?: string | null }) {
+  const { toast } = useToast();
+  const remind = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/aml/client-checks/${request.token}/remind`),
+    onSuccess: () => { toast({ title: `Reminder sent to ${request.to || "them"}` }); refreshAfter(companyId, dealId); },
+    onError: e => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
+  });
+  const done = request.docs.filter(d => d.done).length;
+  return (
+    <div className="space-y-1 rounded border border-border/60 px-2 py-1.5" data-testid={`trust-request-line-${companyId}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Mail className="h-3.5 w-3.5 text-muted-foreground" />
+        <span>
+          {request.finishedAt
+            ? <>Documents in from {request.to || "them"} on {shortDay(request.finishedAt)}: <strong>ready for due diligence</strong></>
+            : request.sentAt
+              ? <>Requested from {request.to || "them"}{request.email ? ` (${request.email})` : ""} on {shortDay(request.sentAt)} · {done} of {request.docs.length} in{request.remindersSent ? ` · ${request.remindersSent} reminder${request.remindersSent === 1 ? "" : "s"}` : ""}</>
+              : <span className="text-amber-800 dark:text-amber-300">The request to {request.to || "them"} was not sent{request.sendError ? `: ${request.sendError}` : ""}</span>}
+        </span>
+        <span className="ml-auto flex gap-1">
+          {!request.finishedAt && request.sentAt && <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={remind.isPending} onClick={() => remind.mutate()}>Remind</Button>}
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onAskAgain}>Ask someone else</Button>
+        </span>
+      </div>
+      <ul className="flex flex-wrap gap-x-3 gap-y-0.5 pl-5 text-[11px]">
+        {request.docs.map(d => (
+          <li key={d.key} className="inline-flex items-center gap-1">
+            {d.done ? <CheckCircle2 className="h-3 w-3 text-emerald-600" /> : <Circle className="h-3 w-3 text-muted-foreground" />}{d.title}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Request trust structure (Jack, 23 November 2026): who to email, and which
+// documents. No form element: the dialog opens over the deal form.
+function TrustRequestDialog({ view, dealId, onClose }: { view: TrustStructureView; dealId: string; onClose: () => void }) {
+  const { toast } = useToast();
+  const first = view.askFirst || null;
+  const contacts = view.contacts || [];
+  // The transaction's person to ask for the trust ("first", when not filed under the trust), its people, or someone typed.
+  const [pick, setPick] = useState<string>(first?.contactId || (first?.email ? "first" : contacts[0]?.id || "typed"));
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  const [docs, setDocs] = useState<KycDocKey[]>(() => TRUST_REQUEST_DOCS.filter(k => !(k === "trust_deed" && view.documents.deed) && !(k === "trs_excerpt" && view.documents.trs)));
+  const chosen: { id: string | null; name: string; email: string | null; mobile: string | null } | null = pick === "first" && first
+    ? { id: null, name: first.name, email: first.email, mobile: first.mobile }
+    : pick !== "typed" ? contacts.find(c => c.id === pick) || null : null;
+  const send = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/trust-structure/${view.companyId}/request`, {
+      dealId, contactId: chosen?.id || null, name: chosen ? chosen.name : name, email: chosen ? chosen.email : email, mobile: chosen?.mobile || null, docs, note,
+    })).json() as Promise<{ sent: { ok: boolean; error?: string | null }; link: string }>,
+    onSuccess: out => {
+      if (out.sent.ok) toast({ title: "Request sent", description: `${chosen?.name || name} has been emailed a link to upload the trust's documents. You'll be emailed when they're in.` });
+      else toast({ title: "The email did not go", description: `${out.sent.error || "Microsoft refused it"}. Send them this link yourself: ${out.link}`, variant: "destructive" });
+      refreshAfter(view.companyId, dealId);
+      onClose();
+    },
+    onError: e => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
+  });
+  const ready = docs.length > 0 && (chosen ? !!chosen.email : name.trim().length > 1 && /@/.test(email));
+  return (
+    <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" data-testid="trust-request-dialog">
+        <DialogHeader>
+          <DialogTitle>Request the trust's structure</DialogTitle>
+          <DialogDescription>We email them a secure link to upload these documents. They're filed on {view.name}'s KYC record, and you and the AML officers are emailed when they're in.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 text-sm">
+          <div className="space-y-1">
+            <Label>Who to ask</Label>
+            <select className={selectClass} value={pick} onChange={e => setPick(e.target.value)} data-testid="trust-request-who">
+              {first && !first.contactId && first.email && <option value="first">{first.name} ({first.email})</option>}
+              {contacts.map(c => <option key={c.id} value={c.id}>{c.name}{c.email ? ` (${c.email})` : ""}</option>)}
+              <option value="typed">Someone else…</option>
+            </select>
+          </div>
+          {pick === "typed" && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Full name" data-testid="trust-request-name" />
+              <Input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" type="email" data-testid="trust-request-email" />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label>What to ask for</Label>
+            {TRUST_REQUEST_DOCS.map(k => (
+              <label key={k} className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={docs.includes(k)} onChange={e => setDocs(list => (e.target.checked ? [...list, k] : list.filter(x => x !== k)))} data-testid={`trust-request-doc-${k}`} />
+                <span>{KYC_DOCS[k].title}{(k === "trust_deed" && view.documents.deed) || (k === "trs_excerpt" && view.documents.trs) ? <span className="text-muted-foreground"> (already on file)</span> : null}</span>
+              </label>
+            ))}
+          </div>
+          <div className="space-y-1"><Label>A note to them (optional)</Label><Textarea rows={2} value={note} onChange={e => setNote(e.target.value)} /></div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={!ready || send.isPending} onClick={() => send.mutate()} data-testid="trust-request-send">
+            {send.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}Send request
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

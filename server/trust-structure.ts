@@ -176,6 +176,86 @@ export async function readTrustDeed(file: { data: Buffer; name: string; mime: st
   }
 }
 
+// ── The deed a client sent, read into a draft (23 November 2026) ────────────
+//
+// A deed filed through "Request trust structure" (or any client checks
+// upload as the trust deed) is read once, and the reading kept against the
+// document, so BGP opens the structure form on it. Nothing is saved to the
+// structure: the form's Save is the only save.
+
+const reading = new Map<string, Promise<TrustDeedReading>>();
+
+export async function readDeedDocument(documentId: string, companyId: string, partyName: string, file?: { name: string; mime: string; buffer: Buffer } | null): Promise<TrustDeedReading> {
+  const kept = (await pool.query(`SELECT reading FROM kyc_trust_deed_readings WHERE document_id = $1`, [documentId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (kept?.reading) return kept.reading as TrustDeedReading;
+  const running = reading.get(documentId);
+  if (running) return running;
+  const job = (async () => {
+    let data = file ? { data: file.buffer, name: file.name, mime: file.mime || null } : null;
+    if (!data) {
+      const doc = (await pool.query(`SELECT file_url, file_name, mime_type FROM kyc_documents WHERE id::text = $1 AND deleted_at IS NULL`, [documentId])).rows[0];
+      if (!doc?.file_url) return unreadDeed("The deed is no longer on file.");
+      const { getFile } = await import("./file-storage");
+      const stored = await getFile(String(doc.file_url).replace(/^\/api\//, ""));
+      if (!stored?.data?.length) return unreadDeed("The deed could not be found in the store.");
+      data = { data: stored.data, name: doc.file_name || "trust deed", mime: doc.mime_type || stored.contentType || null };
+    }
+    const out = await readTrustDeed(data, partyName);
+    await pool.query(
+      `INSERT INTO kyc_trust_deed_readings (document_id, company_id, file_name, reading, read_at) VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (document_id) DO UPDATE SET reading = EXCLUDED.reading, read_at = now()`,
+      [documentId, companyId, data.name, JSON.stringify(out)]).catch(e => console.warn(`[trust-structure] deed reading not kept: ${e?.message}`));
+    if (out.read) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'trust_deed_read', 'ChatBGP', $2)`,
+        [companyId, `The trust deed sent by the client (${data.name}) was read into a draft structure: ${out.lines.length} values found in the deed, ${out.dropped.length} left out. Nothing saved until a person saves the structure.`]).catch(() => {});
+    }
+    return out;
+  })().finally(() => reading.delete(documentId));
+  reading.set(documentId, job);
+  return job;
+}
+
+/** The deed a request brought in, read (the latest one); null when it brought none. */
+export async function ensureRequestDeedRead(token: string, companyId: string, partyName: string): Promise<TrustDeedReading | null> {
+  const docs = (await pool.query(
+    `SELECT kyc_document_id FROM kyc_upload_files WHERE token = $1 AND doc_type = 'trust_deed' AND kyc_document_id IS NOT NULL ORDER BY uploaded_at DESC LIMIT 1`, [token])).rows;
+  if (!docs.length) return null;
+  return readDeedDocument(String(docs[0].kyc_document_id), companyId, partyName);
+}
+
+/** The latest read deed newer than the structure saved: the draft the form opens on. */
+export async function deedDraftFor(companyId: string, record: TrustStructureRecord | null): Promise<{ documentId: string; fileName: string | null; readAt: string; reading: TrustDeedReading; proposal: TrustStructure } | null> {
+  const r = (await pool.query(
+    `SELECT r.document_id, r.file_name, r.reading, r.read_at FROM kyc_trust_deed_readings r
+       JOIN kyc_documents d ON d.id::text = r.document_id AND d.deleted_at IS NULL
+      WHERE r.company_id = $1 AND (r.reading->>'read')::boolean IS TRUE AND ($2::timestamptz IS NULL OR r.read_at > $2::timestamptz)
+      ORDER BY r.read_at DESC LIMIT 1`, [companyId, record?.updatedAt || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (!r) return null;
+  const read = r.reading as TrustDeedReading;
+  return { documentId: String(r.document_id), fileName: r.file_name || null, readAt: new Date(r.read_at).toISOString(), reading: read, proposal: mergeDeedReading(record?.structure || null, read) };
+}
+
+/** The latest "Request trust structure" for the trust: who it went to, and what has come in. */
+export async function trustRequestFor(companyId: string): Promise<null | {
+  token: string; ref: string; dealId: string; to: string | null; email: string | null; sentAt: string | null; sendError: string | null;
+  finishedAt: string | null; remindersSent: number; docs: Array<{ key: string; title: string; done: boolean }>;
+}> {
+  const row = (await pool.query(
+    `SELECT token, deal_id, contact_name, contact_email, request, completed_at, reminders_sent FROM kyc_upload_tokens
+      WHERE company_id = $1 AND request->>'purpose' = 'trust_structure' AND revoked_at IS NULL AND is_test IS NOT TRUE
+      ORDER BY created_at DESC LIMIT 1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (!row) return null;
+  const { KYC_DOCS, isKycDocKey } = await import("@shared/kyc-request");
+  const got = new Set((await pool.query(`SELECT DISTINCT doc_type FROM kyc_upload_files WHERE token = $1`, [row.token])).rows.map((r: any) => String(r.doc_type)));
+  const request = row.request || {};
+  return {
+    token: row.token, ref: String(request.ref || ""), dealId: String(row.deal_id), to: row.contact_name || null, email: row.contact_email || null,
+    sentAt: typeof request.sentAt === "string" ? request.sentAt : null, sendError: request.sendError || null,
+    finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, remindersSent: Number(row.reminders_sent || 0),
+    docs: (Array.isArray(request.docs) ? request.docs : []).filter(isKycDocKey).map((key: any) => ({ key, title: KYC_DOCS[key as keyof typeof KYC_DOCS].title, done: got.has(key) })),
+  };
+}
+
 const deedUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DEED_MAX_BYTES, files: 1 } });
 
 const router = Router();
@@ -236,13 +316,60 @@ router.get("/api/trust-structure/:companyId", async (req: Request, res: Response
     const companyId = String(req.params.companyId);
     const company = (await pool.query(`SELECT id, name, aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
     if (!company) return res.status(404).json({ message: "Company not found." });
-    const [record, docs] = await Promise.all([trustStructureFor(companyId), trustDocumentsHeld(companyId)]);
+    const [record, docs, request] = await Promise.all([trustStructureFor(companyId), trustDocumentsHeld(companyId), trustRequestFor(companyId)]);
+    const draft = await deedDraftFor(companyId, record);
+    // Who to ask: the transaction's person to ask for this party, then the trust's people with an email.
+    let askFirst: { contactId: string | null; name: string; email: string | null; mobile: string | null } | null = null;
+    const dealId = text(req.query.dealId);
+    if (dealId) {
+      const d = (await pool.query(
+        `SELECT landlord_id, landlord_contact_id, tenant_id, tenant_contact_id, vendor_id, vendor_contact_id, purchaser_id, purchaser_contact_id FROM crm_deals WHERE id = $1`, [dealId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+      const role = d ? (["landlord", "tenant", "vendor", "purchaser"] as const).find(r => d[`${r}_id`] === companyId) : null;
+      const cid = role ? d[`${role}_contact_id`] : null;
+      const c = cid ? (await pool.query(`SELECT id, name, email, company_id, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile FROM crm_contacts WHERE id = $1`, [cid])).rows[0] : null;
+      if (c) askFirst = { contactId: c.company_id === companyId && c.email ? String(c.id) : null, name: c.name, email: c.email || null, mobile: c.mobile || null };
+    }
+    const contacts = (await pool.query(
+      `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile FROM crm_contacts
+        WHERE company_id = $1 AND COALESCE(email, '') <> '' ORDER BY name LIMIT 60`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows;
     res.json({
       companyId, name: company.name, trust: String(company.aml_subject_type || "").toLowerCase() === "trust",
-      record, documents: docs, gaps: trustStructureGaps(record?.structure || null, docs),
+      record, documents: docs, gaps: trustStructureGaps(record?.structure || null, docs), request, draft, askFirst,
+      contacts: contacts.map((c: any) => ({ id: String(c.id), name: c.name, email: c.email, mobile: c.mobile || null })),
     });
   } catch (e: any) {
     res.status(500).json({ message: e?.message || "Could not read the trust's structure." });
+  }
+});
+
+// Request trust structure (Jack, 23 November 2026): email the trust's
+// representative, or whoever BGP names, a link to upload the trust's
+// documents. They are filed on the trust's KYC record; the deed is read into a
+// draft; once everything asked for is in, the transaction's agents and the
+// officers are emailed that it is ready for due diligence (server/aml-portal.ts).
+router.post("/api/trust-structure/:companyId/request", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const { clientChecksOn, createClientCheck } = await import("./aml-portal");
+    if (!clientChecksOn()) return res.status(410).json({ message: "The client checks are switched off, so nothing can be sent." });
+    const companyId = String(req.params.companyId);
+    if (!(await isTrustRecord(companyId))) return res.status(409).json({ message: "Record it as a trust first." });
+    const dealId = text(req.body?.dealId);
+    if (!dealId) return res.status(400).json({ message: "Open it from the transaction." });
+    const name = text(req.body?.name).slice(0, 120);
+    if (!name) return res.status(400).json({ message: "Enter the name of the person to ask." });
+    const { TRUST_REQUEST_DOCS, isKycDocKey } = await import("@shared/kyc-request");
+    const asked = Array.isArray(req.body?.docs) ? (req.body.docs as unknown[]).filter(isKycDocKey).filter(k => TRUST_REQUEST_DOCS.includes(k)) : TRUST_REQUEST_DOCS;
+    if (!asked.length) return res.status(400).json({ message: "Ask for at least one document." });
+    const u = (await pool.query(`SELECT email FROM users WHERE id = $1`, [me.id])).rows[0];
+    const out = await createClientCheck(dealId, {
+      companyId, contactId: text(req.body?.contactId) || null, name, email: text(req.body?.email), mobile: text(req.body?.mobile) || null,
+      kind: "company", needsIdCheck: false, docs: asked, note: text(req.body?.note).slice(0, 2000) || null,
+    }, { id: me.id, name: me.name, email: u?.email || null }, { purpose: "trust_structure" });
+    res.json(out);
+  } catch (e: any) {
+    res.status(e?.status || 500).json({ message: e?.message || "Could not send the request." });
   }
 });
 

@@ -71,6 +71,9 @@ export interface PeopleRequest {
   recipientName: string | null;
   // A person's own request (null for the request to the person acting).
   person: { key: string; name: string; roles: KycPersonRole[] } | null;
+  // A request for a trust's documents (23 November 2026): its recipient is the
+  // trust's representative (often its solicitor), not a person to check.
+  trustDocs?: boolean;
   cancelled: boolean;
   expired: boolean;
   finished: boolean;
@@ -270,7 +273,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     if (d) d.trustOwes = (d.trustOwes || false) || trustPersonOwesChecks(p, trust!.kind);
   }
   const party = input.requests.filter(r => r.companyId === input.companyId && !r.cancelled);
-  for (const r of party.filter(r => !r.person && r.recipientName)) add(r.recipientName!, "acting");
+  for (const r of party.filter(r => !r.person && !r.trustDocs && r.recipientName)) add(r.recipientName!, "acting");
   // Someone sent a request of their own stays on the list if the register changes.
   for (const r of party.filter(r => r.person)) for (const role of r.person!.roles) add(r.person!.name, role);
 
@@ -297,7 +300,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const roles = (["settlor", "trustee", "protector", "beneficiary", "controller", "owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
     // Their own requests: a cancelled one still holds what was done on it (a
     // check passed or a file sent is evidence), but is no longer their link.
-    const own = (r: PeopleRequest) => r.companyId === input.companyId
+    const own = (r: PeopleRequest) => r.companyId === input.companyId && !r.trustDocs
       && (r.person ? samePerson(r.person.name, d.name) : samePerson(r.recipientName, d.name));
     const mine = input.requests.filter(own);
     const live = mine.filter(r => !r.expired && !r.cancelled);

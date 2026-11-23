@@ -8,7 +8,7 @@ import {
 } from "../shared/trust-structure";
 import { partyPeople } from "../shared/kyc-people";
 import { chooseScreened, precheckAsks } from "../shared/kyc-prechecks";
-import { defaultKycDocs, kycPersonRoleWords } from "../shared/kyc-request";
+import { TRUST_REQUEST_DOCS, defaultKycDocs, kycPersonRoleWords, kycReminderEmail, kycRequestEmail, trustDocsReadyEmail } from "../shared/kyc-request";
 import { signOffDenial, signOffEnhanced, type SignOffFacts } from "../shared/party-kyc";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 
@@ -173,4 +173,49 @@ test("readTrustDeed sends the deed alone and checks the answer against its text"
   assert.match(sent, /THIS SETTLEMENT/);
   assert.equal((await readTrustDeed({ data: Buffer.from(DEED), name: "deed.txt", mime: "text/plain" }, "X", { hasKey: () => true, claim: async () => false })).read, false);
   assert.match((await readTrustDeed({ data: Buffer.from(DEED), name: "deed.txt", mime: "text/plain" }, "X", { hasKey: () => false })).why || "", /not switched on/);
+});
+
+// Request trust structure (Jack, 23 November 2026: "Request Trust Structure and
+// it then emails the trust's representative ... Once they upload, we need the
+// documents to go somewhere and then be notified that are ready to undertake
+// due diligence on").
+const trustReq = (over: any = {}): any => ({
+  token: "t", ref: "TR1", companyId: "t1", recipientName: "Adam Harvey", person: null, trustDocs: true, cancelled: false, expired: false,
+  finished: false, sentAt: "2026-11-23T10:00:00Z", needsIdCheck: false, docs: TRUST_REQUEST_DOCS, ownerNames: [], idChecks: [], files: [], ...over,
+});
+
+test("the trust's representative is not a person to check, and a request for documents is never their own link", () => {
+  const people = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq()], trust: structure() });
+  assert.ok(!people.people.some(p => p.name === "Adam Harvey"));
+  // Even when the representative is a trustee, the request is not their identity check link.
+  const asTrustee = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ recipientName: "David Ellis" })], trust: structure() });
+  const david = asTrustee.people.find(p => p.name === "David Ellis")!;
+  assert.equal(david.own, null);
+  assert.deepEqual(david.outstanding, ["identity check", "proof of address"]);
+  // An ordinary request to the person acting still names them.
+  const acting = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ trustDocs: false })], trust: structure() });
+  assert.ok(acting.people.some(p => p.name === "Adam Harvey" && p.roles.includes("acting")));
+});
+
+test("the request asks for the trust's documents in plain words, and the ready note goes to due diligence", () => {
+  assert.deepEqual(TRUST_REQUEST_DOCS, ["trust_deed", "trust_people", "trs_excerpt", "trust_wealth", "trust_authority"]);
+  const base = {
+    recipientName: "Adam Harvey", partyName: "URC Thames North Trust", kind: "company" as const, dealName: "Fortis Green Tennis Club", ref: "7K2Q9M",
+    link: "https://chatbgp.app/kyc-upload/x", expiresAt: new Date("2026-12-23"), needsIdCheck: false, docs: TRUST_REQUEST_DOCS, agents: [], sentFrom: "kyc@chatbgp.app",
+    askPep: false, purpose: "trust_structure" as const,
+  };
+  const ask = kycRequestEmail(base);
+  assert.equal(ask.subject, "Documents about URC Thames North Trust for Fortis Green Tennis Club (ref 7K2Q9M)");
+  assert.match(ask.html, /Who is who in the trust/);
+  assert.match(ask.html, /Upload the documents/);
+  assert.doesNotMatch(ask.html, /identity checks|public role/i);
+  assert.match(kycReminderEmail({ ...base, progress: { idDone: false, docsDone: ["trust_deed"] } }).subject, /^Reminder: documents about URC Thames North Trust/);
+  const ready = trustDocsReadyEmail({
+    recipientName: "Adam Harvey", partyName: "URC Thames North Trust", dealName: "Fortis Green Tennis Club", ref: "7K2Q9M", dealLink: "https://chatbgp.app/deals/1",
+    sentFrom: "kyc@chatbgp.app", files: [{ name: "deed.pdf", docKey: "trust_deed" }], missing: ["HMRC's proof of registration"],
+    deed: { read: true, values: 6, people: 4, why: null },
+  });
+  assert.match(ready.subject, /^Ready for due diligence: URC Thames North Trust's trust documents/);
+  assert.match(ready.html, /read into a draft structure: 4 people named/);
+  assert.match(ready.html, /HMRC&#39;s proof of registration|HMRC's proof of registration/);
 });
