@@ -209,7 +209,7 @@ export function checkJointReading(raw: any, file: string, now: Date = new Date()
 
 // ── What they sent, against the people the checks need ──────────────────────
 
-export interface JointCoveragePerson { name: string; roles: string[]; born?: string | null }
+export interface JointCoveragePerson { name: string; roles: string[]; born?: string | null; noAddress?: boolean }
 
 /** Something in their files to look at, by kind, so it can be worded for BGP or for the joint agent. */
 export interface JointFlag {
@@ -352,7 +352,8 @@ export function jointCoverage(input: {
       }
     }
     if (!id) missing.push("identity");
-    if (!address) missing.push("address");
+    // No proof of address is asked of the person acting for a listed group.
+    if (!address && !p.noAddress) missing.push("address");
     return { name: p.name, id, address, missing };
   });
   let company: JointCoverage["company"] = null;

@@ -9,7 +9,8 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
-import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
+import { DealPartyEditor, DealPartyLines, PublicBodyLine, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
+import { SddBox } from "@/components/aml-sdd";
 import { DealDescribeBox } from "@/components/deal-hots";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
@@ -368,7 +369,8 @@ function FlagFacts({ flag }: { flag: KycRedFlag }) {
 
 function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void }) {
   const { toast } = useToast();
-  const [comment, setComment] = useState("");
+  // An old automatic flag the current screening does not bear out comes with words to start from; the officer reads and edits them.
+  const [comment, setComment] = useState(flag.suggestion || "");
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/set-aside`, { role, key: flag.key, comment })).json(),
     onSuccess: () => { refreshAml(dealId); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
@@ -457,7 +459,7 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               );
             })}
           </ul>
-          <p className="mt-1.5">{step}{canDecide ? " Or, if one does not apply, set it aside with a comment." : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
+          <p className="mt-1.5">{step}{canDecide ? (/aside/.test(step) ? "" : " Or, if one does not apply, set it aside with a comment.") : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
         </div>
       )}
       {setAside.length > 0 && (
@@ -753,7 +755,7 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified", standard: "Standard", enhanced: "Enhanced" };
+const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified (SDD)", standard: "Standard", enhanced: "Enhanced" };
 const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
@@ -819,6 +821,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
   const isTrust = !!party?.brand.recordTrust;
+  // A UK public body: simplified due diligence, no company that signs (23 November 2026).
+  const isPublicBody = !!party?.brand.recordPublicBody && !party?.company;
   // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
   const trustQ = useTrustStructure(cp.id, staff && isTrust);
   const trustRecordedGaps = isTrust ? (trustQ.data?.gaps || []).filter(g => g.from === "recorded").map(g => g.words) : [];
@@ -828,7 +832,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const traceLines = pre?.company?.trace || pre?.trace || [];
   const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0);
   const abroadQ = useDealAbroad(dealId, cp.role, showAbroad);
-  const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust : pre?.state === "needs_company";
+  const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust && !isPublicBody : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
   const requests = (checks?.requests || []).filter(r => r.companyId === cp.id && !r.person);
   const request = requests.find(r => r.status !== "cancelled") || null;
@@ -863,6 +867,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
     trustGaps: trustRecordedGaps,
+    publicBodyHint: !!party?.brand.publicBodyHint && !party?.brand.recordPublicBody,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
     relianceFirm: people?.reliance?.firm || null,
@@ -898,17 +903,22 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const regWarning = reg?.warnings[0] || charity?.warnings[0] || null;
   const askMissing = !!party && !party.person;
   const askNoEmail = !!party?.person && !party.person.email;
+  // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
+  const guarantors = party?.guarantors || [];
+  const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
   const signs: { state: StepState; text: ReactNode } = companyMissing
     ? { state: settled ? "todo" : "act", text: <span className="text-amber-800 dark:text-amber-300">Not set</span> }
     : {
-        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0) ? "act" : "done",
+        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0 || guarantorOpen) ? "act" : "done",
         text: <>
           {!isCompany && !party?.company
             ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
             : <><span className="font-medium">{party?.company?.name || charity?.name || cp.signsAs || partyName}</span>
                 {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
+          {isPublicBody && <span className="text-muted-foreground"> · a UK public body</span>}
           {isTrust && <span className={!settled && trustRecordedGaps.length ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}> · a trust{trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}</span>}
           {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
+          {guarantors.length > 0 && <span className={!settled && guarantorOpen ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"} data-testid={`aml-guarantor-summary-${cp.role}`}> · guarantor{guarantors.length > 1 ? "s" : ""}: {guarantors.map(g => g.name).join(", ")}{!settled && guarantorOpen ? " (checks to run)" : ""}</span>}
           {regWarning && <span className="text-red-700 dark:text-red-400"> · {shortReason(regWarning, 50)}</span>}
           {!settled && askMissing && <span className="text-amber-800 dark:text-amber-300"> · who to ask not set</span>}
           {!settled && askNoEmail && <span className="text-amber-800 dark:text-amber-300"> · no email for {party!.person!.name}</span>}
@@ -1014,6 +1024,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     </div>
   );
 
+  // When the checks must be complete (Issue 4 of BGP's policy), and in red once
+  // the transaction has passed that point with the party not decided.
+  const deadline = row && showNext && !cp.notRequired && row.deadline ? (
+    <p className={`px-0.5 text-[11px] ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
+      {row.late ? "Late: needed " : "Needed "}{row.deadline}
+    </p>
+  ) : null;
+
   return (
     <div className="min-w-0 rounded-lg border border-border bg-card" data-testid={`counterparty-${cp.id}`}>
       <div className="space-y-2 px-3 py-2.5">
@@ -1038,7 +1056,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               </button>
             )}
             {level && level.level !== "standard" && !cp.notRequired && (
-              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-muted text-muted-foreground"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
+              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
             )}
             {statusPill && <span data-testid={`aml-box-stage-${cp.role}`}>{statusPill}</span>}
           </span>
@@ -1050,6 +1068,12 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           </div>
         )}
         {showNext && nextLine}
+        {deadline}
+        {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
+        {staff && level?.level === "simplified" && level.sdd && !cp.notRequired && (
+          <SddBox dealId={dealId} role={cp.role} roleLabel={roleLabel} sdd={level.sdd} partyName={partyName}
+            dealName={row?.dealName || null} dealRef={row?.dealRef || null} contactName={party?.person?.name || null} isClient={!!party?.client} canSave={canSignOff} />
+        )}
       </div>
 
       {staff && !folded && (
@@ -1058,11 +1082,12 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {party && !settled && <PublicBodyLine dealId={dealId} party={party} compact />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
-                <SubHead>Owners abroad</SubHead>
+                <SubHead>{ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />
               </div>
             )}
@@ -1114,13 +1139,15 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                       {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
                       {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
                       {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
+                      {/* The report so far, with what is still needed, for a supplier if the officers ever use one (Woody, 23 November 2026). */}
+                      {canDecide && <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} label="Report so far" quiet />}
                     </div>
                   )}
                 </>}
           </StepRow>
           <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
             <PartyNotRequiredBox cp={cp} />
-            <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} />
+            <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
             {canDecide && !cp.notRequired && (
               <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
             )}
@@ -1193,6 +1220,8 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
   // party lines follow them.
   const staffView = !!data?.prechecks;
   const { data: parties } = useDealParties(dealId, staffView);
+  // The company on the unit's lease is set as the company that signs by itself (23 November 2026).
+  useWorkOutSigningCompanies(dealId, staffView ? parties : undefined);
   const { data: checks } = useClientChecks(dealId, staffView && !!data?.clientChecks);
   const { data: board } = useDealAmlRows(dealId, staffView);
   const { data: agents } = useDealAgentsAml(dealId, staffView);

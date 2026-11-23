@@ -22,7 +22,7 @@ test("the emails go from kyc@brucegillinghampollard.com unless set, then the sha
   assert.match(portal, /KYC_MAILBOX = \(process\.env\.KYC_MAILBOX \|\| process\.env\.BGP_AML_MAILBOX \|\| "kyc@brucegillinghampollard\.com"\)/);
   assert.match(portal, /sendFromFirstMailbox\(\{ mailboxes: \[KYC_MAILBOX\], to, cc:[^\n]*appMailbox: false \}\)/);
   const mailbox = readFileSync(new URL('../../server/shared-mailbox.ts', import.meta.url), 'utf8');
-  assert.match(mailbox, /for \(const m of \[\.\.\.first, \.\.\.\(opts\.appMailbox === false \? \[\] : \[APP_MAILBOX\]\), SHARED_MAILBOX\]\)/);
+  assert.match(mailbox, /for \(const m of \[\.\.\.first, SHARED_MAILBOX, \.\.\.\(opts\.appMailbox === false \? \[\] : \[APP_MAILBOX\]\)\]\)/);
   assert.doesNotMatch(portal, /"kyc@chatbgp\.app"/);
   assert.doesNotMatch(portal, /return \{ ok: false, error: "BGP_AML_MAILBOX env not configured" \}/, "an unset variable no longer stops every email");
 });

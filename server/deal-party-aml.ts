@@ -49,6 +49,7 @@ import { KYC4U_PACK_MAX_ZIP_BYTES, kyc4uAssessmentRecord, kyc4uResultPrefill, ky
 import { amlFileDocWords } from "@shared/aml-file";
 import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personVerifiedWords } from "@shared/kyc-people";
 import { relianceInput, relianceWords } from "@shared/aml-reliance";
+import { sddNoteProblem, type SavedSddNote } from "@shared/aml-sdd";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -195,6 +196,11 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     trust,
     trustGaps: trust ? (await import("./trust-structure").then(m => m.trustGapsFor(party.brandId, db)).catch(() => [{ words: "the trust's structure could not be read" }])).map(g => g.words) : [],
     sanctionsFlags: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => isSanctionsFlag(f)).length,
+    // The party's guarantors: signed off only once BGP's checks on each have run (23 November 2026).
+    guarantorChecks: await import("./deal-guarantors")
+      .then(m => m.guarantorViews(party.dealId, db))
+      .then(list => list.filter(g => g.companyId === party.brandId).map(g => ({ name: g.name, state: g.checks.state })))
+      .catch(() => [{ name: "the guarantors (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
   };
 }
@@ -285,7 +291,69 @@ async function approveBrand(party: AmlParty, by: { name: string }, line: string,
   return expires;
 }
 
+// The note of why simplified due diligence was applied, saved on the
+// transaction (Layla, 23 November 2026: "we will need the reasoning of the
+// SDD saved against this deal"). A deal history line per save, the role in
+// old_value; the latest per party is the one that stands.
+export async function sddNotesFor(dealId: string): Promise<Record<string, SavedSddNote>> {
+  const rows = (await pool.query(
+    `SELECT DISTINCT ON (old_value) old_value AS role, new_value AS note, reason, changed_by_name, created_at
+       FROM deal_audit_log WHERE deal_id = $1 AND field = 'aml_sdd_note' ORDER BY old_value, created_at DESC NULLS LAST, id DESC`, [dealId])).rows;
+  const out: Record<string, SavedSddNote> = {};
+  for (const r of rows) {
+    if (!isDealPartyRole(String(r.role)) || !text(r.note)) continue;
+    out[String(r.role)] = { role: String(r.role), note: String(r.note), basis: text(r.reason) || null, by: text(r.changed_by_name) || null, at: new Date(r.created_at).toISOString() };
+  }
+  return out;
+}
+
 const router = Router();
+
+router.get("/api/deals/:id/sdd-notes", async (req: Request, res: Response) => {
+  try {
+    const { contactViewer } = await import("./contact-viewer");
+    if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    res.json({ notes: await sddNotesFor(String(req.params.id)) });
+  } catch (err: any) {
+    console.error("[deal-party-aml] SDD notes not read:", err?.message);
+    res.status(500).json({ message: "The SDD notes could not be read." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/sdd-note", async (req: Request, res: Response) => {
+  try {
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const me = await signOffActor(req, party);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.status === 403 ? "Only an agent on this transaction, the Nominated Officer or a Deputy can save its SDD note." : me.refusal });
+    // The note keeps its own line breaks.
+    const note = String(req.body?.note ?? "").replace(/\r\n/g, "\n").trim();
+    const problem = sddNoteProblem(note);
+    if (problem) return res.status(400).json({ message: problem });
+    // The level is read again here: a note is only saved for a party that is simplified now.
+    const { loadDealRedFlags } = await import("./kyc-red-flags");
+    const flags = await loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
+    const level = flags.levels[party.brandId] || null;
+    if (!level || level.level !== "simplified") {
+      return res.status(409).json({ message: level?.level === "enhanced"
+        ? `${partyName(party)} is enhanced due diligence now (${level.why.join("; ")}), so simplified due diligence does not apply.`
+        : `${partyName(party)} does not read as simplified due diligence. Record what it is on the party first.` });
+    }
+    const basis = `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${level.why[0]}`;
+    await pool.query(
+      `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'aml_sdd_note', $2, $3, $4, $5, $6)`,
+      [party.dealId, role, note, basis.slice(0, 2000), me.id, me.name]);
+    await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'sdd_note', $2, $3)`,
+      [party.brandId, me.name, `Simplified due diligence note saved on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}): ${note}`.slice(0, 4000)])
+      .catch((e: any) => console.warn(`[deal-party-aml] KYC history line not written: ${e?.message}`));
+    res.json({ ok: true, notes: await sddNotesFor(party.dealId) });
+  } catch (err: any) {
+    console.error("[deal-party-aml] SDD note not saved:", err?.message);
+    res.status(500).json({ message: "The SDD note could not be saved." });
+  }
+});
 
 router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: Response) => {
   try {
@@ -295,8 +363,11 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
     const me = await signOffActor(req, party);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
-    const note = text(req.body?.note).slice(0, 1000);
     const facts = await signOffFacts(pool, party);
+    // A simplified party's saved SDD note stands as the sign-off's note (23 November 2026).
+    const sddNote = facts.level?.level === "simplified" ? (await sddNotesFor(party.dealId).catch(() => ({} as Record<string, SavedSddNote>)))[role] || null : null;
+    const typed = text(req.body?.note).slice(0, 1000);
+    const note = typed || (sddNote ? `SDD note saved by ${sddNote.by || "BGP"} on ${sddNote.at.slice(0, 10)}` : "");
     const denial = signOffDenial({ ...facts, note });
     if (denial) return res.status(409).json({ message: denial, code: "SIGN_OFF_REFUSED" });
     // Enhanced due diligence by BGP, with the officers' setting on (21
@@ -311,6 +382,8 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
 
     const relied = [
       DUE_DILIGENCE_LABEL[level].toLowerCase(),
+      level === "simplified" && facts.level?.why[0] ? `why: ${facts.level.why[0]}` : null,
+      level === "simplified" && sddNote && typed ? `SDD note saved by ${sddNote.by || "BGP"} on ${sddNote.at.slice(0, 10)}` : null,
       edd ? "done by BGP's officers" : null,
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,

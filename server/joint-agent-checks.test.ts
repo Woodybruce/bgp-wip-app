@@ -98,7 +98,7 @@ test("the email to the joint agent: finalising our KYC, every document asked for
     agents: [{ name: "Woody Bruce", email: "woody@example.com", phone: null }], sentFrom: "kyc@chatbgp.app",
   };
   const sale = jointAgentRequestEmail({ ...base, letting: false });
-  assert.match(sale.subject, /\(ref 7K2Q9M\)/);
+  assert.match(sale.subject, /\[7K2Q9M\]$/);
   // Woody, 23 November 2026: "an email ... saying we are finalising the KYC on this joint agent transaction and need you to
   // upload or email back the following files ... all the docs including their proof of identity and any further AML they have done".
   // Woody, 23 November 2026: "the intro changing to reflect the fact that we are jointly instructed by xxx client and you have
@@ -124,6 +124,9 @@ test("the email to the joint agent: finalising our KYC, every document asked for
   assert.ok(!jointAgentAsks({ kind: "company", letting: true }).some(a => /reliance/i.test(a.title)));
   assert.deepEqual(jointAgentAsks({ kind: "company", letting: true }).map(a => a.title), ["Proof of identity", "Proof of address", "The company", "Any further AML you have done"]);
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
+  // A proof of address from each owner, not the person acting (23 November 2026).
+  assert.match(jointAgentAsks({ kind: "company", letting: true })[1].detail, /^For each owner: /);
+  assert.match(jointAgentAsks({ kind: "individual", letting: false })[1].detail, /^For each of them: /);
   const nudge = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1 });
   assert.match(nudge.subject, /^Reminder/);
   assert.match(nudge.html, /Upload the documents/);
@@ -227,6 +230,16 @@ test("what their files cover is set against the people the checks need, each by 
   assert.deepEqual(c.others, ["Robert Jones"]);
   assert.equal(c.complete, false);
   assert.ok(c.missing.some(m => m.startsWith("Carol White")));
+});
+
+test("the person acting for a company, not an owner, is not asked for a proof of address", () => {
+  const c = jointCoverage({
+    partyName: "Acme Limited", kind: "company", now: today,
+    people: [{ name: "Carol White", roles: ["acting"], noAddress: true }],
+    readings: [read({ file: "passport-carol.pdf", kind: "photo_id", title: "UK passport", date: "2024-01-10", expiry: "2034-01-09", people: [{ name: "Carol White", born: null }] })],
+  });
+  assert.deepEqual(c.people[0].missing, []);
+  assert.ok(!c.missing.some(m => /proof of address/i.test(m)));
 });
 
 test("an expired ID, a failed check, a screening match and another date of birth are listed to look at", () => {
@@ -382,7 +395,8 @@ test("the AML board reads the joint agent asked, then their checks in, as in pro
   assert.equal(amlBucket("joint_asked", true), "in_progress");
   assert.equal(amlBucket("joint_in", true), "in_progress");
   assert.equal(amlWaitingOn("joint_asked", 0), "The joint agent");
-  assert.match(amlWaitingOn("joint_in", 0), /Officers/);
+  assert.equal(amlWaitingOn("joint_in", 0), "BGP: sign off", "Issue 4: their documents in, BGP signs off");
+  assert.match(amlWaitingOn("joint_in", 1), /Officers/);
 });
 
 const facts = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({

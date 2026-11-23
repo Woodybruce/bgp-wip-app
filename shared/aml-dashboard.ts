@@ -6,7 +6,8 @@
 // waits on, all read from records the app already holds. The feed is
 // server/aml-dashboard.ts; the page client/src/pages/aml-dashboard.tsx.
 
-import { legacyToCode } from "./deal-status";
+import { legacyToCode, type DealStatusCode } from "./deal-status";
+import { dealStatusLabel } from "./letting-rules";
 
 export type AmlStage = "not_started" | "bgp_checked" | "joint_asked" | "client_sent" | "joint_in" | "client_finished" | "relied" | "with_kyc4u" | "approved" | "rejected" | "expiring" | "expired" | "not_required";
 
@@ -26,8 +27,9 @@ export const AML_STAGE_LABEL: Record<AmlStage, string> = {
   rejected: "Rejected",
   expiring: "Expiring",
   expired: "Expired",
-  // Marked by the Nominated Officer or the Deputy (BGP's AML policy: the
-  // other side of a deal a joint agent negotiated, or no deal done).
+  // Marked by the Nominated Officer or a Deputy: no transaction was done with
+  // the party (since Issue 4 of the policy; before it, also the other side of
+  // a deal a joint agent negotiated).
   not_required: "Not required",
 };
 
@@ -106,14 +108,53 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
   return "not_started";
 }
 
-// HMRC's timing (shared/kyc-request.ts, KYC_TIMING): the landlord and the
-// seller before the unit is marketed, so on any live deal; the tenant once
-// the landlord accepts their offer and the buyer before an offer is
-// accepted, so from Heads of Terms.
+// When the checks start and when they must be complete: BGP's AML policy,
+// Issue 4 (approved by Jack, 23 November 2026), the table "When do we do
+// client identity checks". BGP's own client who lets or sells: from
+// engagement, complete before the property is marketed. A buyer or tenant,
+// and every party BGP does not act for: from agreed heads of terms, complete
+// before exchange (a sale) or before the lease completes (a letting), the
+// tenant's identity before any agreement is signed. Nothing exchanges or
+// completes until every party is done.
 const FROM_HOTS = new Set(["HOT", "SOL", "EXC", "COM", "INV"]);
-export function amlDue(role: string, dealStatus: string | null): boolean {
-  if (role === "landlord" || role === "vendor") return true;
+// The property is on the market from Available on (a letting's or a sale's);
+// a sale on the Investment Tracker is Live before that, already instructed.
+const MARKETED = new Set(["AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"]);
+const EXCHANGED = new Set(["EXC", "COM", "INV"]);
+
+/** BGP's own client who lets or sells: checked from engagement, before marketing. */
+const lettingOrSellingClient = (role: string, clientRole: string | null | undefined): boolean =>
+  (role === "landlord" || role === "vendor") && (clientRole == null || clientRole === role);
+
+/**
+ * Whether the policy expects the party's checks yet. clientRole: the party BGP
+ * acts for (shared/deal-parties.ts dealClientRole); left out, a landlord or
+ * seller reads as BGP's client, as before Issue 4.
+ */
+export function amlDue(role: string, dealStatus: string | null, clientRole?: string | null): boolean {
+  if (lettingOrSellingClient(role, clientRole)) return true;
   return FROM_HOTS.has(legacyToCode(dealStatus || "") || "");
+}
+
+export interface AmlDeadline {
+  // "before the property is marketed", in the policy's words.
+  words: string;
+  // The transaction is already past that point.
+  passed: boolean;
+}
+
+/** When the party's checks must be complete (Issue 4), and whether the transaction has passed that point. */
+export function amlDeadline(role: string, dealStatus: string | null, clientRole?: string | null): AmlDeadline {
+  const code = legacyToCode(dealStatus || "") || "";
+  if (lettingOrSellingClient(role, clientRole)) return { words: "before the property is marketed", passed: MARKETED.has(code) };
+  if (role === "tenant") return { words: "before any agreement is signed (identity) and before the lease completes (the rest)", passed: EXCHANGED.has(code) };
+  if (role === "landlord") return { words: "before the lease completes", passed: EXCHANGED.has(code) };
+  return { words: "before exchange of contracts", passed: EXCHANGED.has(code) };
+}
+
+/** Past its deadline and not decided: the party is late. */
+export function amlLate(stage: AmlStage, deadline: AmlDeadline): boolean {
+  return deadline.passed && !["approved", "expiring", "not_required", "rejected"].includes(stage);
 }
 
 /** The deal has completed or been invoiced. */
@@ -140,7 +181,8 @@ export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
     case "bgp_checked": return redFlags ? "BGP: send the client checks" : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
     case "joint_asked": return "The joint agent";
-    case "joint_in": return redFlags ? flagged : "Officers: decide on the joint agent's checks";
+    // Issue 4: their documents in, BGP checks and signs the party off (no Not required for a joint agent).
+    case "joint_in": return redFlags ? flagged : "BGP: sign off";
     case "client_finished":
     case "relied": return redFlags ? flagged : "BGP: sign off";
     case "with_kyc4u": return "Officers: sign off";
@@ -165,6 +207,7 @@ export interface AmlDashboardRow {
   dealName: string;
   dealRef: number | null;
   dealStatus: string | null;
+  dealType: string | null;             // so a letting's AVA reads Marketing
   propertyName: string | null;
   role: string;
   brandId: string;
@@ -181,6 +224,10 @@ export interface AmlDashboardRow {
   stage: AmlStage;
   bucket: AmlBucket;
   due: boolean;
+  // When the checks must be complete (Issue 4), and whether the transaction
+  // is past that point with the party not decided.
+  deadline: string;
+  late: boolean;
   redFlags: string[];                  // the labels, the deal card's rule
   waitingOn: string;
   movedDays: number | null;
@@ -201,6 +248,14 @@ export function bucketCounts(rows: Pick<AmlDashboardRow, "bucket">[]): Record<Am
 export function rowMatches(row: AmlDashboardRow, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealRef != null ? `#${row.dealRef}` : null, ...row.agents]
+  return [row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealRef != null ? `#${row.dealRef}` : null, amlDealStatusWords(row).words, ...row.agents]
     .some(v => (v || "").toLowerCase().includes(q));
+}
+
+/** The transaction's own status in the Transactions board's words (Woody,
+ *  23 November 2026: "on this page can we have the deal status i.e
+ *  reporting, marketing, solicitors, completed etc"): a letting's AVA reads
+ *  Marketing, an investment's Available. */
+export function amlDealStatusWords(row: Pick<AmlDashboardRow, "dealStatus" | "dealType">): { code: DealStatusCode | null; words: string | null } {
+  return { code: legacyToCode(row.dealStatus || ""), words: dealStatusLabel(row.dealStatus, row.dealType) };
 }

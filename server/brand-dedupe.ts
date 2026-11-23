@@ -66,6 +66,8 @@ export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "kyc_abroad_records",       column: "company_id" },
   { table: "kyc_reliance",             column: "company_id" },
   { table: "kyc_document_readings",    column: "company_id" },
+  // A transaction's guarantor is filed under the party's brand (23 November 2026).
+  { table: "deal_guarantors",          column: "company_id" },
   { table: "investment_offers",        column: "company_id" },
   { table: "investment_distributions", column: "company_id" },
   { table: "investment_viewings",      column: "company_id" },

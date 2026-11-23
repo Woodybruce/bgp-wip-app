@@ -15,6 +15,7 @@
 // writes, the screens draw from what it sends.
 
 import type { BillingState } from "./deal-billing";
+import type { DealGuarantorView } from "./deal-guarantor";
 
 export const DEAL_PARTY_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
 export type DealPartyRole = (typeof DEAL_PARTY_ROLES)[number];
@@ -164,6 +165,9 @@ export interface DealPartyView {
     // trustHint: its name, or the company that signs, reads like a trust (Jack,
     // 20 November 2026) or a foundation (foundationHint, 21 November 2026).
     recordTrust?: boolean; trustHint?: boolean; foundationHint?: boolean;
+    // A UK public body (shared/aml-sdd.ts): recorded by a person; a name that
+    // reads like one is a suggestion. publicBodyKnown: its legal name, when known.
+    recordPublicBody?: boolean; publicBodyHint?: boolean; publicBodyKnown?: string | null;
     // charityHint: a UK party with no company record whose name reads like a
     // charity or foundation: recorded, its register entry is read (21 November 2026).
     charityHint?: boolean };
@@ -191,6 +195,8 @@ export interface DealPartyView {
   // it is billed as against the company that signs (null for any other party).
   client?: boolean;
   billing?: DealPartyBilling | null;
+  // A tenant's or a buyer's guarantors (23 November 2026; shared/deal-guarantor.ts).
+  guarantors?: DealGuarantorView[];
 }
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();

@@ -136,6 +136,20 @@ async function staffMe(req: Request): Promise<{ id: string; name: string } | nul
 
 const router = Router();
 
+// The AML decisions log (Jack, 23 November 2026), for BGP staff. The entries
+// are shared/aml-decisions.ts; served here so they are not in the client bundle.
+router.get("/api/aml-decisions", async (req: Request, res: Response) => {
+  try {
+    if (!(await staffMe(req))) return res.status(403).json({ message: "BGP staff only" });
+    const { AML_DECISION_PEOPLE, AML_DECISION_TOPICS, amlDecisionsNewestFirst } = await import("@shared/aml-decisions");
+    const entries = amlDecisionsNewestFirst();
+    res.json({ entries, topics: AML_DECISION_TOPICS.filter(t => entries.some(e => e.topic === t)), people: AML_DECISION_PEOPLE });
+  } catch (e: any) {
+    console.error("[aml-decisions] read failed:", e?.message);
+    res.status(500).json({ message: "Could not read the updates" });
+  }
+});
+
 router.get("/api/aml-rules", async (req: Request, res: Response) => {
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: "BGP staff only" });

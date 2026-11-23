@@ -6,9 +6,9 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
+  askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, dedupeRegisterOwners, webFindingUnsure, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
-  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState,
+  nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState, ACTING_NO_ADDRESS,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished,
@@ -109,17 +109,24 @@ const input = (over: Partial<PrecheckAskInput> = {}): PrecheckAskInput => ({
   subjectKind: "company", ukRegistered: true, listing: null, owners: [], peopleUpChain: [], directors: [], accounts: null, ...over,
 });
 
-test("a listed company is not asked for an owners chart or owner IDs", () => {
+test("a listed company is not asked for an owners chart, owner IDs or the person acting's proof of address", () => {
   const asks = precheckAsks(input({ listing: { market: "uk_regulated", since: "2016-06-30", company: "BIG PLC", companyNumber: "00000001", viaParent: false } }),
     { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
-  assert.deepEqual(asks.docs, ["proof_of_address", "authority", "source_of_funds"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  // Woody, 23 November 2026: "If HMRC don't require it then stop it".
+  assert.deepEqual(asks.docs, ["authority", "source_of_funds"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
+  assert.match(asks.notAsked[2].reason, /HMRC asks for their identity check and their authority, not a proof of address/);
   assert.equal(asks.confirmOwners, null);
   // Through a parent, and a market abroad: the officers confirm the chain and the market (KYC4U is no longer used).
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
     { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
-  assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
+  assert.deepEqual(viaParent.docs, ["authority"]);
+  // Nor does a company that is not listed (Woody, 23 November 2026: "If they don't need it then let's not require it").
+  const unlisted = precheckAsks(input({}), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
+  assert.ok(!unlisted.docs.includes("proof_of_address"));
+  assert.equal(unlisted.notAsked.find(n => n.key === "proof_of_address")?.reason, ACTING_NO_ADDRESS);
   assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*The officers confirm the chain\. The officers confirm the market/);
   assert.doesNotMatch(viaParent.notAsked[0].reason, /KYC4U/);
 });
@@ -135,6 +142,7 @@ test("owners on the register are confirmed, not drawn; a director is not asked f
   }), { kind: "company", role: "landlord", idCheck: true, contactName: "Jane Doe", today: TODAY });
   // Each owner has a link of their own (19 November 2026): the one asked is an
   // owner, so only the other owner is named.
+  // Jane Doe is an owner, so she gives a proof of address as one (23 November 2026).
   assert.deepEqual(asks.docs, ["proof_of_address"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "authority"]);
   assert.match(asks.notAsked[1].reason, /^Each owner gets a link of their own for their identity check and proof of address: John Smith\./);
@@ -159,7 +167,11 @@ test("a tenant company's recent accounts on file stand for where the money comes
 });
 
 test("with nothing found, or for a private individual, the usual list is asked", () => {
-  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null }).docs, ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  // The person acting gives a proof of address only as an owner (23 November 2026).
+  const nothing = precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null });
+  assert.deepEqual(nothing.docs, ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(nothing.notAsked.map(n => n.key), ["proof_of_address"]);
+  assert.deepEqual(precheckAsks(null, { kind: "company", role: "tenant", idCheck: false, contactName: null }).docs, ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
   assert.deepEqual(precheckAsks(input({ subjectKind: "individual", ukRegistered: false }), { kind: "individual", role: "purchaser", idCheck: false, contactName: null }).docs, ["photo_id", "proof_of_address", "source_of_funds"]);
   // Not at Companies House: the overseas register extract is asked for.
   assert.ok(precheckAsks(input({ ukRegistered: false }), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("company_documents"));
@@ -638,6 +650,11 @@ test("a company registered abroad that owns the party: asked for, not stood in f
   assert.ok(asks.docs.includes("ownership") && asks.docs.includes("owner_ids"), "not dropped: the register does not name the people");
   assert.deepEqual(asks.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco" }]);
   assert.match(kycDocDetail("ownership", [], asks.ownersAbroad), /Companies House shows Scp Aaa Invest \(Monaco\) owns the company.*register/);
+  // The person asked gives a proof of address only as one of the owners the register names (23 November 2026).
+  assert.ok(!asks.docs.includes("proof_of_address"));
+  const mixed = result({ companiesHouse: { ...tureddi.companiesHouse!, owners: [...tureddi.companiesHouse!.owners, { name: "Mr Marco ROSSI", kind: "individual", controls: ["ownership-of-shares-25-to-50-percent"], notifiedOn: null }] } });
+  assert.ok(precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Marco Rossi", today: TODAY }).docs.includes("proof_of_address"));
+  assert.ok(!precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Sam Lee", today: TODAY }).docs.includes("proof_of_address"));
   // The card says so, and KYC4U's note.
   assert.equal(precheckCardLines(tureddi).find(l => l.key === "owners")?.state, "attention");
   assert.match(precheckNote(tureddi, "done"), /Owned through a company registered abroad: Scp Aaa Invest \(Monaco\)/);
@@ -772,4 +789,80 @@ test("a company's warning-list profiles spelt differently are set aside; sanctio
   const ps = splitProviderMatches(person as any);
   assert.deepEqual(ps.variants, []);
   assert.deepEqual(ps.namesakes.map(m => m.profileId), ["p-jd"]);
+});
+
+// Woody, 23 November 2026, on Inception T2: "this has picked up a red flag but its not clear why?"
+test("an old automatic screening flag says where it came from, and what BGP's checks found since", async () => {
+  const { oldAutomaticScreening, partyRedFlags } = await import("../shared/kyc-red-flags");
+  const history = [{ at: "2026-09-28T10:00:00.000Z", what: "Sanctions screening returned a match — EDD mandatory.", who: "automatic" }];
+  const clear = { result: result({ sanctions: { ran: true, lists: ["the UK Sanctions List", "the US OFAC list", "the EU consolidated list"], lines: [
+    { name: "CORNHILL BAR LTD", role: "the company", outcome: "clear", matches: [] },
+    { name: "GILKES, Charles Nigel Heming", role: "director", outcome: "clear", matches: [] },
+  ] as any, error: null } }), current: true };
+  const old = oldAutomaticScreening({ recordHistory: history, precheck: clear })!;
+  assert.match(old.detail, /^Set automatically on 28 Sept? 2026 by the old in-app screening, switched off in October 2026\. It did not record which name or list matched\./);
+  assert.match(old.detail, /screened 2 names against the UK Sanctions List, the US OFAC list, the EU consolidated list: no match\.$/);
+  assert.match(old.suggestion!, /^Old automatic flag from the in-app screening of 28 Sept? 2026, which kept no record of what matched\./);
+  const flags = partyRedFlags({
+    company: { aml_pep_status: "review_required", aml_edd_required: true, aml_edd_reason: "Sanctions screening returned a match — EDD mandatory." } as any,
+    latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: clear,
+  });
+  const screening = flags.find(f => f.key === "record:screening")!;
+  const edd = flags.find(f => f.key === "record:edd")!;
+  assert.equal(screening.source, "The old in-app screening");
+  assert.ok(screening.suggestion && edd.suggestion, "both carry words to set them aside with");
+  assert.match(edd.detail || "", /did not record which name or list matched/);
+  // A match in BGP's own checks: no suggestion to set it aside.
+  const matched = { result: result({ sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "CORNHILL BAR LTD", role: "the company", outcome: "possible", matches: [] }] as any, error: null } }), current: true };
+  assert.equal(oldAutomaticScreening({ recordHistory: history, precheck: matched })!.suggestion, null);
+  // A person's own entry is not the old screening's.
+  assert.equal(oldAutomaticScreening({ recordHistory: [{ ...history[0], who: "Jack Barratt" }], precheck: clear }), null);
+});
+
+test("an owner Companies House lists twice is one owner (St George plc, 23 November 2026)", () => {
+  // St George plc's register: The Berkeley Group plc notified in 2016 and again in 2017, both active, one number.
+  const berkeley = (notifiedOn: string, registrationNumber = "01454064") => ({
+    name: "The Berkeley Group Plc", kind: "company" as const, notifiedOn, registrationNumber, country: "England & Wales",
+    controls: ["ownership-of-shares-75-to-100-percent", "voting-rights-75-to-100-percent", "right-to-appoint-and-remove-directors"],
+  });
+  const one = dedupeRegisterOwners([berkeley("2017-05-26"), berkeley("2016-04-06")]);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].notifiedOn, "2016-04-06");
+  assert.equal(one[0].controls.length, 3);
+  // The same number written without its leading zero is the same company.
+  assert.equal(dedupeRegisterOwners([berkeley("2016-04-06"), berkeley("2017-05-26", "1454064")]).length, 1);
+  // Two companies stay two; two people of one name born apart stay two.
+  assert.equal(dedupeRegisterOwners([berkeley("2016-04-06"), { ...berkeley("2017-05-05", "07396674"), name: "Tbg (4) Limited" }]).length, 2);
+  const person = (year: number) => ({ name: "Mr John Smith", kind: "individual" as const, controls: [], notifiedOn: null, dob: { year, month: 3 } });
+  assert.equal(dedupeRegisterOwners([person(1970), person(1985)]).length, 2);
+  assert.equal(dedupeRegisterOwners([person(1970), person(1970)]).length, 1);
+  // The list it was given is not changed.
+  const given = [berkeley("2017-05-26"), berkeley("2016-04-06")];
+  dedupeRegisterOwners(given);
+  assert.equal(given[0].notifiedOn, "2017-05-26");
+});
+
+test("a finding about a person's company, not the person, is no red flag on them (23 November 2026)", () => {
+  const cites = [{ url: "https://www.gov.uk/cma-cases/x" }, { url: "https://www.financeuncovered.org/y" }];
+  const read = (about?: string) => checkWebAnswer({
+    publicRole: { status: "none_found", findings: [] },
+    adverseMedia: { status: "found", findings: [{ summary: "The CMA investigated suspected exchanges of competitively sensitive information by Berkeley Group and six other housebuilders.", url: "https://www.gov.uk/cma-cases/x", source: "GOV.UK", ...(about ? { about } : {}) }] },
+  }, cites);
+  assert.equal(read("organisation").findings[0].aboutOrganisation, true);
+  assert.equal(read("person").findings[0].aboutOrganisation, undefined);
+  const line = (name: string, person: boolean, about?: string) => ({ name, role: person ? "director" : "the company", person, ran: true, ...read(about) });
+  const clanford = line("CLANFORD, Piers Martin", true, "organisation");
+  assert.equal(webFindingUnsure(clanford, clanford.findings[0]), true);
+  const run = result({ web: { ran: true, skipped: null, lines: [clanford] } as any });
+  assert.ok(!precheckRedFlags(run, { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
+  const ns = precheckNamesakes(run);
+  assert.equal(ns.length, 1);
+  assert.match(ns[0].what, /^adverse media \(about their company or group, not them\): The CMA/);
+  // About the person, or a run from before the question was asked: still a red flag.
+  for (const l of [line("CLANFORD, Piers Martin", true, "person"), line("CLANFORD, Piers Martin", true)]) {
+    assert.ok(precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [l] } as any }), { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
+  }
+  // A company's own finding is its own, whatever the search says.
+  const company = line("ST GEORGE PLC", false, "organisation");
+  assert.ok(precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [company] } as any }), { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
 });

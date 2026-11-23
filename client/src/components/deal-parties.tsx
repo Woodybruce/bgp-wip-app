@@ -23,6 +23,7 @@ import { AddPersonButton, useClientChecks } from "@/components/kyc-client-checks
 import { DealHotsButton } from "@/components/deal-hots";
 import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
+import { GUARANTOR_CHECKS_WORDS, isGuaranteedRole, type DealGuarantorView } from "@shared/deal-guarantor";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 
@@ -54,9 +55,27 @@ function refresh(dealId: string, data?: DealParties) {
   queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
 }
 
+// Work out the company that signs (Woody, 23 November 2026: "it should just
+// work out what the contracting entity is"): a party with none, whose unit's
+// lease names a company filed under it, gets that company set by itself, once
+// per transaction and party (the PUT writes its own history line).
+const workedOut = new Set<string>();
+export function useWorkOutSigningCompanies(dealId: string, data: DealParties | undefined) {
+  useEffect(() => {
+    if (!data) return;
+    for (const p of data.parties) {
+      if (p.company || p.offer?.why !== "lease" || p.brand.recordTrust || p.brand.recordIndividual) continue;
+      const key = `${dealId}:${p.role}:${p.offer.id}`;
+      if (workedOut.has(key)) continue;
+      workedOut.add(key);
+      apiRequest("PUT", `/api/deals/${dealId}/parties/${p.role}`, { companyId: p.offer.id })
+        .then(r => r.json()).then((d: DealParties) => refresh(dealId, d)).catch(() => undefined);
+    }
+  }, [dealId, data]);
+}
+
 const companyWords = (c: { name: string; companiesHouseNumber: string | null; kind?: string }) =>
   `${c.name}${c.kind === "individual" ? " · a person" : c.companiesHouseNumber ? ` · ${c.companiesHouseNumber}` : ""}`;
-const capital = (s: string) => `${s[0].toUpperCase()}${s.slice(1)}`;
 
 // Sets the company that signs: one filed under the brand, or the brand's own
 // registered company, filed under it first (from Companies House, with no
@@ -106,6 +125,60 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
   });
 }
 
+function useMarkPublicBody(dealId: string, role: DealPartyRole) {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (publicBody: boolean) =>
+      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/public-body`, { publicBody })).json() as Promise<DealParties>,
+    onSuccess: (d) => {
+      refresh(dealId, d);
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith(`/api/kyc/deal/${dealId}`) });
+    },
+    onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
+  });
+}
+
+// A UK public body (Layla, 23 November 2026, on #3965, The Crown Estate: "this
+// is too intense for the crown estate"). Recorded, it is simplified due
+// diligence: no company that signs and no owners to verify. A name that reads
+// like one is a suggestion a person presses, never applied by itself, because
+// a joint venture or company the body has an interest in is not the body.
+export function PublicBodyLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
+  const mark = useMarkPublicBody(dealId, party.role);
+  if (party.brand.kind !== "company" || party.brand.recordTrust || party.company) return null;
+  if (party.brand.recordPublicBody) {
+    if (compact) return null;
+    return (
+      <div className="space-y-1 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" data-testid={`deal-party-public-body-${party.role}`}>
+        <p><strong>Recorded as a UK public body{party.brand.publicBodyKnown ? `: ${party.brand.publicBodyKnown}` : ""}.</strong> Simplified due diligence (SDD): there is no company to find and no owners to verify. It is screened against the sanctions lists by name.</p>
+        <p>Still needed: who instructs us and proof they can act for it, and the SDD note (drafted for you on Parties &amp; AML).</p>
+        <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-public-body-${party.role}`}>Not the public body itself? Undo</button>
+      </div>
+    );
+  }
+  if (party.brand.companiesHouseNumber) return null;
+  if (!party.brand.publicBodyHint) {
+    if (compact) return null;
+    return (
+      <p className="text-xs text-muted-foreground" data-testid={`deal-party-public-body-option-${party.role}`}>
+        Is {party.brand.name} a UK public body (a council, a government department, a statutory corporation)?{" "}
+        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-public-body-${party.role}`}>Record as a public body</button>
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" data-testid={`deal-party-public-body-hint-${party.role}`}>
+      <span className="min-w-0 flex-1">
+        <strong>{party.brand.publicBodyKnown ? `${party.brand.name} is ${party.brand.publicBodyKnown}, a UK public body.` : "Reads like a UK public body."}</strong> It only needs simplified due diligence (SDD): no company to find, no owners to verify. Confirm it is the body itself, not a joint venture or company it has an interest in.
+      </span>
+      <Button type="button" size="sm" className="h-7 text-xs" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-public-body-${party.role}`}>
+        {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Yes, record as a public body
+      </Button>
+    </div>
+  );
+}
+
 // A trust (Jack, 20 November 2026: URC Thames North Trust, the vendor on
 // Fortis Green, read as an ordinary company). Recorded, it is enhanced and BGP's
 // officers check it from its structure, never KYC4U (Jack, 23 November 2026:
@@ -127,15 +200,9 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
       </div>
     );
   }
-  if (!party.brand.trustHint) {
-    if (compact) return null;
-    return (
-      <p className="text-xs text-muted-foreground" data-testid={`deal-party-trust-option-${party.role}`}>
-        Is {party.brand.name} a trust or a foundation, or acting as trustee?{" "}
-        <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>Record as a trust or foundation</button>
-      </p>
-    );
-  }
+  // Asked only when the name reads like a trust, foundation or charity (Woody,
+  // 23 November 2026, on Inception T2: "we dont need this commnetry").
+  if (!party.brand.trustHint) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`deal-party-trust-hint-${party.role}`}>
       <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
@@ -357,7 +424,7 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
       <p className="text-xs text-muted-foreground" data-testid={quiet ? "deal-party-people-quiet" : undefined}>
         {quiet
           ?? (people.basis === "owners"
-            ? `Companies House names these people for ${party.company.name}. Each does an identity check and sends a proof of address through a link of their own: give each one's email (or a mobile) here.`
+            ? "Each gets their own link: add an email or mobile."
             : PARTY_PEOPLE_BASIS_WORDS[people.basis])}
       </p>
       {!!people.ownersAbroad?.length && (
@@ -396,6 +463,71 @@ function refreshBilling(dealId: string, data?: DealParties) {
   refresh(dealId, data);
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "payer"] });
   queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+}
+
+// Guarantors (Woody, 23 November 2026, on Inception T2: "one is signing
+// cornhill bar and the other is guaranteeing so should be able to allocate
+// add as the guarantor"). HMRC treats a guarantor as a party to the tenancy:
+// BGP's checks run on it, and its owners are checked with the party.
+function useGuarantorActions(dealId: string) {
+  const { toast } = useToast();
+  const done = (d?: DealParties) => {
+    refreshBilling(dealId, d);
+    queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+  };
+  const add = useMutation({
+    mutationFn: async (v: { role: DealPartyRole; companyId: string }) => (await apiRequest("POST", `/api/deals/${dealId}/guarantors`, v)).json() as Promise<DealParties & { started?: string | null }>,
+    onSuccess: (d) => {
+      done({ deal: d.deal, parties: d.parties });
+      // BGP's checks on the guarantor run in the background: read again once they have had time.
+      setTimeout(() => done(), 20000);
+    },
+    onError: (e) => toast({ title: "Guarantor not added", description: plain(e), variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/deals/${dealId}/guarantors/${id}`)).json() as Promise<DealParties>,
+    onSuccess: (d) => done(d),
+    onError: (e) => toast({ title: "Not taken off", description: plain(e), variant: "destructive" }),
+  });
+  const run = useMutation({
+    mutationFn: async (id: string) => (await apiRequest("POST", `/api/deals/${dealId}/guarantors/${id}/checks`, {})).json(),
+    onSuccess: () => { done(); setTimeout(() => done(), 20000); toast({ title: "BGP's checks on the guarantor started" }); },
+    onError: (e) => toast({ title: "Checks not started", description: plain(e), variant: "destructive" }),
+  });
+  return { add, remove, run, busy: add.isPending || remove.isPending || run.isPending };
+}
+
+const guarantorWho = (g: DealGuarantorView) => g.kind === "individual" ? "a person" : g.companiesHouseNumber || "no Companies House number";
+
+// One guarantor: who it is and where BGP's checks on it stand, with Run checks
+// when they have not run (or are old) and, in the party box, Remove.
+function GuarantorItem({ dealId, g, canRemove }: { dealId: string; g: DealGuarantorView; canRemove?: boolean }) {
+  const { remove, run, busy } = useGuarantorActions(dealId);
+  const state = g.checks.state;
+  const flags = state === "done" || state === "stale"
+    ? g.checks.redFlags ? <span className="text-red-700 dark:text-red-400"> · {g.checks.redFlags} red flag{g.checks.redFlags === 1 ? "" : "s"} (in Screening)</span> : <span className="text-muted-foreground"> · no red flags</span>
+    : null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid={`deal-guarantor-${g.entityId}`}>
+      <span className="min-w-0">
+        <span className="font-medium">{g.name}</span>
+        <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{guarantorWho(g)}</span>
+        <span className={state === "not_run" || state === "stale" ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}> · {GUARANTOR_CHECKS_WORDS[state]}</span>
+        {flags}
+      </span>
+      {(state === "not_run" || state === "stale") && (
+        <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => run.mutate(g.id)} data-testid={`deal-guarantor-run-${g.entityId}`}>
+          {run.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Run checks
+        </Button>
+      )}
+      {state === "running" && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+      {canRemove && (
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => remove.mutate(g.id)} data-testid={`deal-guarantor-remove-${g.entityId}`}>
+          Remove
+        </Button>
+      )}
+    </div>
+  );
 }
 
 interface PayerView { role: DealPartyRole; payer: DealPartyPayer | null; checks: { state: string; ranAt: string | null; lines: Array<{ key: string; label: string; state: string; detail: string | null }>; company: { owners: Array<{ name: string; control: string }> } | null } | null }
@@ -639,6 +771,11 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
             ? <span data-testid={`deal-party-person-${role}`}>{party.person.name}{party.person.email ? <span className="text-muted-foreground"> · {party.person.email}</span> : <span className="text-amber-700 dark:text-amber-400"> · no email</span>}</span>
             : <span className="text-amber-700 dark:text-amber-400">Nobody set, needed for the client checks</span>}
         </PartyRow>
+        {isGuaranteedRole(role) && (party.guarantors || []).length > 0 && (
+          <PartyRow label={(party.guarantors || []).length > 1 ? "Guarantors" : "Guarantor"} testId={`deal-party-row-guarantor-${role}`}>
+            <div className="space-y-1">{party.guarantors!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} />)}</div>
+          </PartyRow>
+        )}
       </dl>
       <PeopleToReachLine party={party} people={people} aml={aml} onOpen={() => setOpen(true)} />
       {!party.company && party.brand.kind === "company" && <PartyCompanyChoice dealId={dealId} party={party} onChoose={() => setOpen(true)} />}
@@ -692,9 +829,13 @@ export function PartyReadyToStart({ dealId, companyId, aml }: { dealId: string; 
 export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string; role: DealPartyRole; aml?: PartyAmlFacts | null; onClose: () => void }) {
   const { toast } = useToast();
   const { data, isLoading, error } = useDealParties(dealId);
+  useWorkOutSigningCompanies(dealId, data);
   const party = data?.parties.find(p => p.role === role) || null;
   // "person": the dialog opens on a person who signs (2026-11-20).
   const [finding, setFinding] = useState<boolean | "person">(false);
+  // Finding a guarantor at Companies House, or adding a person who guarantees (23 November 2026).
+  const [guarantorFinding, setGuarantorFinding] = useState<false | "company" | "person">(false);
+  const guarantor = useGuarantorActions(dealId);
   // The heads of terms' dialog is open over this one: it must not close under it.
   const [hotsOpen, setHotsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -743,11 +884,11 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const billedElsewhere = !!party?.company && (!party.xero || (party.xero.name || "").trim().toLowerCase() !== party.company.name.trim().toLowerCase());
 
   return (
-    <Dialog open onOpenChange={o => { if (!o && !finding && !hotsOpen) onClose(); }}>
+    <Dialog open onOpenChange={o => { if (!o && !finding && !hotsOpen && !guarantorFinding) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid={`deal-party-editor-${role}`}>
         <DialogHeader>
           <DialogTitle>{party ? `${party.label}: ${party.brand.name}` : "Party"}</DialogTitle>
-          <DialogDescription>Who signs, and who BGP asks for the checks. Each change saves straight away.</DialogDescription>
+          <DialogDescription>Changes save straight away.</DialogDescription>
         </DialogHeader>
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}
         {error && <p className="text-sm text-red-700">{plain(error)}</p>}
@@ -755,7 +896,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
         {party && (
           <div className="space-y-5 text-sm">
             <section className="space-y-2" data-testid="deal-party-company-section">
-              <h4 className="flex items-center gap-1.5 font-semibold"><Building2 className="w-4 h-4 text-muted-foreground" />Who signs: a company or a person</h4>
+              <h4 className="flex items-center gap-1.5 font-semibold"><Building2 className="w-4 h-4 text-muted-foreground" />Who signs</h4>
               {party.brand.recordIndividual && !party.company ? (
                 <div className="space-y-1.5">
                   <p className="text-xs text-muted-foreground">{party.brand.name} is recorded as a private individual, so there is no company to pick. Their date of birth and home address are asked for in the client checks.</p>
@@ -765,17 +906,19 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                   </Button>
                   <IndividualSidePeople dealId={dealId} companyId={party.brand.id} />
                 </div>
+              ) : party.brand.recordPublicBody && !party.company ? (
+                <PublicBodyLine dealId={dealId} party={party} />
               ) : (
                 <>
+                  <PublicBodyLine dealId={dealId} party={party} />
                   <TrustLine dealId={dealId} party={party} />
                   {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
                   {!party.company && (
                     <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border px-2.5 py-2 text-xs" data-testid="deal-party-hots">
-                      <span className="min-w-0 flex-1 text-muted-foreground">Have the heads of terms? They name the company that signs.</span>
+                      <span className="min-w-0 flex-1 text-muted-foreground">The heads of terms name it.</span>
                       <DealHotsButton dealId={dealId} label="Read the heads of terms" testId="deal-party-hots-button" inEditor onOpenChange={setHotsOpen} />
                     </div>
                   )}
-                  <p className="text-xs text-muted-foreground">{party.brand.recordTrust ? "The company that signs, if a company is the trustee (optional for a trust)." : <>{capital(SIGNING_COMPANY_WORDS[role])}. The checks are about it, not {party.brand.name}: the brand is usually a different company.</>}</p>
                   {party.brand.privateMark && !party.company && !party.brand.companiesHouseNumber && (
                     <div className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs">
                       <PrivateIndividualSuggestion dealId={dealId} party={party} />
@@ -799,6 +942,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     <ul className="divide-y rounded-md border">
                       {party.companies.map(c => {
                         const chosen = party.company?.id === c.id;
+                        // One company signs; another of the brand's can guarantee it (Woody, 23 November 2026).
+                        const guarantees = (party.guarantors || []).find(g => g.entityId === c.id) || null;
                         return (
                           <li key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs" data-testid={`deal-party-company-option-${c.id}`}>
                             <span className="min-w-0 flex-1">
@@ -808,13 +953,23 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                             </span>
                             {chosen
                               ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" />Signs</span>
-                              : <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => pickCompany(c)}>Use</Button>}
+                              : guarantees
+                                ? <span className="flex items-center gap-1 text-emerald-700" data-testid={`deal-party-guarantees-${c.id}`}><ShieldCheck className="w-3.5 h-3.5" />Guarantor</span>
+                                : <>
+                                    <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => pickCompany(c)}>Use</Button>
+                                    {isGuaranteedRole(role) && (
+                                      <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy || guarantor.busy}
+                                        onClick={() => guarantor.add.mutate({ role, companyId: c.id })} data-testid={`deal-party-make-guarantor-${c.id}`}>
+                                        Guarantor
+                                      </Button>
+                                    )}
+                                  </>}
                           </li>
                         );
                       })}
                     </ul>
                   ) : (
-                    <p className="text-xs text-muted-foreground">No company is filed under {party.brand.name} yet. Find it at Companies House{party.brandOwn ? ", or use the brand's own company above if it is the one that signs" : ""}.</p>
+                    <p className="text-xs text-muted-foreground">No company filed under {party.brand.name} yet.</p>
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding(true)} data-testid="deal-party-find-company">
@@ -847,14 +1002,33 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
               )}
             </section>
 
-            {party.client && party.billing && party.billing.state !== "individual" && (
+            {isGuaranteedRole(role) && (
+              <section className="space-y-2" data-testid="deal-party-guarantor-section">
+                <h4 className="flex items-center gap-1.5 font-semibold"><ShieldCheck className="w-4 h-4 text-muted-foreground" />Guarantor</h4>
+                {(party.guarantors || []).length > 0 && (
+                  <div className="space-y-1.5 rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-guarantors">
+                    {party.guarantors!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} canRemove />)}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || guarantor.busy} onClick={() => setGuarantorFinding("company")} data-testid="deal-party-find-guarantor">
+                    <Plus className="w-3.5 h-3.5 mr-1" />Find the guarantor at Companies House
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || guarantor.busy} onClick={() => setGuarantorFinding("person")} data-testid="deal-party-add-person-guarantor">
+                    <UserRound className="w-3.5 h-3.5 mr-1" />A person guarantees
+                  </Button>
+                </div>
+              </section>
+            )}
+
+            {party.client && party.billing && party.billing.state !== "individual" && !(party.brand.recordPublicBody && party.billing.state === "no_company") && (
               <section className="space-y-2" data-testid="deal-party-pays-section">
                 <h4 className="flex items-center gap-1.5 font-semibold"><Receipt className="w-4 h-4 text-muted-foreground" />Who pays BGP's invoice</h4>
                 <PartyBillingDetail dealId={dealId} party={party} />
               </section>
             )}
 
-            {party.brand.kind === "company" && (
+            {party.brand.kind === "company" && !(party.brand.recordPublicBody && !party.company) && (
               <section className="space-y-2" data-testid="deal-party-people-section">
                 <h4 className="flex items-center gap-1.5 font-semibold"><ShieldCheck className="w-4 h-4 text-muted-foreground" />Who the AML checks need</h4>
                 <PartyPeopleToCheck dealId={dealId} party={party} busy={busy} aml={aml} onAsk={(id) => save.mutate({ personId: id })} />
@@ -863,11 +1037,6 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
 
             <section className="space-y-2" data-testid="deal-party-person-section">
               <h4 className="flex items-center gap-1.5 font-semibold"><UserRound className="w-4 h-4 text-muted-foreground" />Who to ask</h4>
-              <p className="text-xs text-muted-foreground">
-                {party.brand.kind === "company"
-                  ? "The person dealing with us for the company, often one of the people above: the client checks go to them first."
-                  : "The client checks go to them."}
-              </p>
               {party.person && (
                 <div className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-person-current">
                   <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}</div>
@@ -891,7 +1060,6 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     <div className="space-y-1"><Label className="text-[11px]">Email</Label><Input type="email" value={person.email} onChange={e => setPerson(p => ({ ...p, email: e.target.value }))} data-testid="input-party-person-email" /></div>
                     <div className="space-y-1"><Label className="text-[11px]">Mobile</Label><Input value={person.mobile} onChange={e => setPerson(p => ({ ...p, mobile: e.target.value }))} /></div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Saved to the CRM under {party.brand.name}. Someone already there with that email is used, with any blank details filled in.</p>
                   <div className="flex gap-2">
                     <Button type="button" size="sm" className="h-7 text-xs" disabled={busy || !person.name.trim() || (!person.email.trim() && !person.mobile.trim())} onClick={() => add.mutate()} data-testid="button-party-person-save">
                       {add.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Save
@@ -930,6 +1098,19 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
             onCreated={(contact, company) => { if (company) pickCompany(company, contact); setFinding(false); }}
             onSavedWithoutXero={company => { pickCompany(company); setFinding(false); }}
             testIdPrefix={`deal-party-${role}-find`}
+          />
+        )}
+        {party && guarantorFinding && (
+          <CreateBillingEntityDialog
+            open
+            onOpenChange={v => { if (!v) setGuarantorFinding(false); }}
+            brand={{ id: party.brand.id, name: party.brand.name }}
+            initialQuery=""
+            xero={false}
+            startAsPerson={guarantorFinding === "person"}
+            onCreated={(_contact, company) => { if (company) guarantor.add.mutate({ role, companyId: company.id }); setGuarantorFinding(false); }}
+            onSavedWithoutXero={company => { guarantor.add.mutate({ role, companyId: company.id }); setGuarantorFinding(false); }}
+            testIdPrefix={`deal-party-${role}-guarantor-find`}
           />
         )}
       </DialogContent>

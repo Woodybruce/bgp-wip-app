@@ -287,6 +287,9 @@ export function JointAgencyNoteCard({ dealId, defaults, signedBy, canAdd = false
           <Download className="mr-1 h-3.5 w-3.5" />Word
         </Button>
       </div>
+      <p className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="joint-agency-note-superseded">
+        Saved before Issue 4 of BGP's AML policy. The other side of a joint instruction is now checked: ask the joint agent for their documents under the party's Documents, Other ways, Joint agent.
+      </p>
       <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
         {note.paragraphs.slice(1).map((p, i) => <p key={i}>{p}</p>)}
       </div>

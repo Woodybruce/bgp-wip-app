@@ -45,7 +45,7 @@ test("the trust's people are the ones to check and to screen, read from its stru
   assert.match(pre, /=== "trust"\) \{\s*const \{ trustStructureFor \} = await import\("\.\/trust-structure"\);/);
   assert.match(pre, /trustPerson: true/);
   const portal = read("server/aml-portal.ts");
-  assert.match(portal, /trust: trustAsk \}\);/);
+  assert.match(portal, /trust: trustAsk, publicBody: /);
   // The person acting may pass the trust's people their links, as they do an owner's.
   assert.match(portal, /TRUST_PERSON_ROLES as readonly string\[\]\)\.includes\(r\)/);
 });
@@ -102,7 +102,7 @@ test("a red flag is raised with the AML Officer by name while the officers check
 
 test("a trust stays a trust when a company signs for it (Fortis Green, 23 November 2026)", () => {
   const people = read("server/kyc-people.ts");
-  assert.match(people, /const ownRecord = trustRecord && !party\.entityId;/);
+  assert.match(people, /const ownRecord = \(trustRecord \|\| publicBody\) && !party\.entityId;/);
   assert.match(people, /const trust = trustRecord \? /);
   assert.match(read("server/deal-party-aml.ts"), /const trust = String\(held\?\.aml_subject_type \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "trust";/);
   assert.match(read("server/aml-dashboard.ts"), /const isTrust = String\(companyRow\?\.aml_subject_type \|\| ""\)\.toLowerCase\(\) === "trust";/);
@@ -123,4 +123,17 @@ test("certified copies are offered on every request and accepted only by the off
   assert.match(route, /FROM kyc_documents WHERE id::text = ANY\(\$1::text\[\]\) AND company_id = \$2/);
   assert.match(read("server/index.ts"), /ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text/);
   assert.doesNotMatch(read("client/src/components/kyc-client-checks.tsx").split("function CertifiedDocsDialog")[1].split("function PublicFigureLine")[0], /<form[\s>]/);
+});
+
+test("a certified copy a client sends is read and checked by the app, never taken on trust (Jack, 23 November 2026)", () => {
+  const portal = read("server/aml-portal.ts");
+  const block = portal.slice(portal.indexOf('if (docKey === "certified_ids" && row.company_id)'), portal.indexOf('if (isTrustDocsRequest(request) || docKey === "trust_deed")'));
+  // Filed for the reader, never as seen in the original, and never marked accepted.
+  assert.match(block, /INSERT INTO kyc_document_readings \(document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by_name\)\s*VALUES \(\$1, \$2, \$3, \$4, false, \$5\)/);
+  assert.match(block, /m\.readUpload\(pool, documentId\)/);
+  assert.doesNotMatch(block, /accepted_/);
+  // An identity copy counts only with the certifier's name, profession or firm, and date.
+  const rule = read("shared/kyc-documents.ts");
+  assert.match(rule, /if \(!reading\.certified\) reasons\.push\("Not a certified copy, and no agent saw the original"\);/);
+  assert.match(rule, /return check\.ok \|\| upload\.accepted \? check\.use : null;/);
 });

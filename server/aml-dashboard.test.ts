@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, bucketCounts, daysSince, rowMatches,
+  amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, bucketCounts, daysSince, rowMatches,
   type AmlDashboardRow, type AmlPartyFacts,
 } from "../shared/aml-dashboard";
 
@@ -47,6 +47,38 @@ test("HMRC's timing: landlord and seller on any live deal, tenant and buyer from
   assert.ok(amlDue("tenant", "SOL"));
   assert.ok(!amlDue("purchaser", "NEG"));
   assert.ok(amlDue("purchaser", "EXC"));
+});
+
+test("Issue 4's timing: BGP's client who lets or sells from engagement; everyone else from agreed heads of terms", () => {
+  // BGP acts for the landlord (a letting) or the seller (a sale): due at once.
+  assert.ok(amlDue("landlord", "AVA", "landlord"));
+  assert.ok(amlDue("vendor", "LIVE", "vendor"), "an investment sale at Live is instructed");
+  // BGP acts for the tenant (tenant rep) or the buyer (a purchase): the landlord or seller is the other side.
+  assert.ok(!amlDue("landlord", "NEG", "tenant"));
+  assert.ok(amlDue("landlord", "HOT", "tenant"));
+  assert.ok(!amlDue("vendor", "AVA", "purchaser"));
+  assert.ok(amlDue("vendor", "SOL", "purchaser"));
+  // BGP's own client who buys or takes a lease: from heads of terms too.
+  assert.ok(!amlDue("tenant", "NEG", "tenant"));
+  assert.ok(amlDue("purchaser", "HOT", "purchaser"));
+});
+
+test("Issue 4's deadlines: before marketing for BGP's client who lets or sells, before exchange or completion for the rest", () => {
+  assert.deepEqual(amlDeadline("landlord", "REP", "landlord"), { words: "before the property is marketed", passed: false });
+  assert.equal(amlDeadline("landlord", "Available", "landlord").passed, true, "on the market");
+  assert.equal(amlDeadline("vendor", "LIVE", "vendor").passed, false, "Live on the Investment Tracker is not yet marketed");
+  assert.deepEqual(amlDeadline("purchaser", "SOL", "vendor"), { words: "before exchange of contracts", passed: false });
+  assert.equal(amlDeadline("purchaser", "EXC", "vendor").passed, true);
+  assert.equal(amlDeadline("tenant", "HOT", "landlord").words, "before any agreement is signed (identity) and before the lease completes (the rest)");
+  assert.equal(amlDeadline("tenant", "COM", "landlord").passed, true);
+  assert.deepEqual(amlDeadline("landlord", "SOL", "tenant"), { words: "before the lease completes", passed: false });
+  // Late only while the party is not decided.
+  const passed = amlDeadline("landlord", "SOL", "landlord");
+  assert.equal(amlLate("not_started", passed), true);
+  assert.equal(amlLate("client_sent", passed), true);
+  assert.equal(amlLate("approved", passed), false);
+  assert.equal(amlLate("not_required", passed), false);
+  assert.equal(amlLate("not_started", amlDeadline("tenant", "SOL", "landlord")), false);
 });
 
 test("the pills", () => {
@@ -97,6 +129,19 @@ test("days since anything moved, and the search", () => {
   } as AmlDashboardRow;
   for (const q of ["bakery", "OPERATIONS", "unit 9", "westgate", "#1234", "victoria", ""]) assert.ok(rowMatches(row, q), q);
   assert.ok(!rowMatches(row, "pret"));
+  // The transaction's status is searchable in its words (23 November 2026).
+  assert.ok(rowMatches({ ...row, dealStatus: "SOL", dealType: "New Letting" }, "solicitors"));
+  assert.ok(!rowMatches({ ...row, dealStatus: "SOL", dealType: "New Letting" }, "completed"));
+});
+
+test("the transaction's status in the Transactions board's words (Woody, 23 November 2026)", async () => {
+  const { amlDealStatusWords } = await import("../shared/aml-dashboard");
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "AVA", dealType: "New Letting" }), { code: "AVA", words: "Marketing" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "AVA", dealType: "Sale" }), { code: "AVA", words: "Available" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "REP", dealType: "Sale" }), { code: "REP", words: "Reporting" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "SOL", dealType: null }), { code: "SOL", words: "Solicitors" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: "Completed", dealType: "New Letting" }), { code: "COM", words: "Completed" });
+  assert.deepEqual(amlDealStatusWords({ dealStatus: null, dealType: null }), { code: null, words: null });
 });
 
 test("no Not with KYC4U mark: KYC4U is no longer used (23 November 2026)", async () => {

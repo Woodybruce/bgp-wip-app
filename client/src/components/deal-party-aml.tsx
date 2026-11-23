@@ -326,8 +326,11 @@ export function NotRequiredDialog({ dealId, role, jointRule, partyName, onClose 
 // `approved`: the party is approved and in date, so the reason it cannot be
 // signed off again is not shown. `notRequired`: marked so; the officers can
 // take the marker off.
-export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact, notRequired }: {
+export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact, notRequired, pastKyc4u }: {
   dealId: string; data: DealAmlStatus | undefined; companyId: string; role: string; partyName: string; approved?: boolean; compact?: boolean; notRequired?: boolean;
+  // KYC4U is no longer used (23 November 2026): its result is offered only
+  // where a request was made to it on this transaction before then.
+  pastKyc4u?: boolean;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState<"sign-off" | "kyc4u" | "not-required" | null>(null);
@@ -363,7 +366,7 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
             <BadgeCheck className="w-3.5 h-3.5 mr-1" />Sign off
           </Button>
         )}
-        {decisions.canDecide && (
+        {decisions.canDecide && pastKyc4u && (
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen("kyc4u")} data-testid={`aml-kyc4u-result-${role}`}>
             <FileUp className="w-3.5 h-3.5 mr-1" />Add KYC4U result
           </Button>

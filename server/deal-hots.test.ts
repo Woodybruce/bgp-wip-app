@@ -6,9 +6,10 @@ import assert from "node:assert/strict";
 import {
   checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
   readHotsByRules, readHotsNoteRules,
-  type HotsParty,
+  contactsFromBody, firmLike, isBgpContact, mergeHotsContacts, readHotsContactsByRules,
+  type HotsContact, type HotsParty,
 } from "@shared/deal-hots";
-import { hotsTermViews, matchHotsParties, partiesFromBody, readHotsDocument, readHotsNote, termsFromBody, type RegisterLookups } from "./deal-hots";
+import { hotsContactViews, hotsTermViews, matchHotsParties, partiesFromBody, readHotsDocument, readHotsNote, termsFromBody, type RegisterLookups } from "./deal-hots";
 
 const HOTS = `HEADS OF TERMS
 Subject to contract
@@ -382,3 +383,163 @@ test("a typed note goes to the provider as the note alone, and its answer is che
   assert.ok(r.dropped.some(d => d.value === "Made Up Holdings Ltd"));
 });
 
+
+// ── Solicitors and agents (Woody, 23 November 2026: "the HOTs upload / drop
+// didnt pick up their solcitors or ours or their agent") ───────────────────
+
+const CONTACT_SHEET = `${HOTS}
+CONTACTS
+Landlord Solicitors
+GT - GreenbergTraurig
+FAO: Jo Partner
+T: 020 7900 3000
+Email: jo.partner@gtlaw.example
+Tenant Solicitors
+Shoosmiths LLP
+Contact: Sam Lawyer
+Email: sam.lawyer@shoosmiths.example
+Landlord's Agent
+Bruce Gillingham Pollard
+Alex Agent
+alex.agent@brucegillinghampollard.com
+Tenant's Agent
+Savills (UK) Limited
+James Brown
+M: 07700 900123
+jbrown@savills.example
+`;
+
+const contactOf = (list: HotsContact[], side: string, kind: string) => list.find(c => c.side === side && c.kind === kind);
+
+test("the rules read a contact sheet: each side's solicitors and agents, with the person, email and phone", () => {
+  const c = readHotsContactsByRules(CONTACT_SHEET);
+  assert.equal(c.length, 4);
+  const ll = contactOf(c, "landlord", "solicitor")!;
+  // The clause "5. Landlord's Solicitors: Herbert Smith Freehills LLP" comes first in the document.
+  assert.equal(ll.firm, "Herbert Smith Freehills LLP");
+  const tAgent = contactOf(c, "tenant", "agent")!;
+  assert.equal(tAgent.firm, "Savills");
+  assert.equal(tAgent.person, "James Brown");
+  assert.equal(tAgent.phone, "07700 900123");
+  assert.equal(tAgent.email, "jbrown@savills.example");
+  assert.ok(tAgent.checked);
+  const lAgent = contactOf(c, "landlord", "agent")!;
+  assert.equal(lAgent.firm, "Bruce Gillingham Pollard");
+  assert.ok(isBgpContact(lAgent));
+  assert.ok(!isBgpContact(tAgent));
+  assert.ok(isBgpContact({ firm: "Someone", email: "x@brucegillinghampollard.com" }));
+});
+
+test("a contact sheet on its own: the firm under the label, the person from FAO or Contact", () => {
+  const sheet = CONTACT_SHEET.slice(CONTACT_SHEET.indexOf("CONTACTS"));
+  const c = readHotsContactsByRules(sheet, { note: true });
+  const ll = contactOf(c, "landlord", "solicitor")!;
+  assert.deepEqual([ll.firm, ll.person, ll.email, ll.phone], ["GT - GreenbergTraurig", "Jo Partner", "jo.partner@gtlaw.example", "020 7900 3000"]);
+  const ts = contactOf(c, "tenant", "solicitor")!;
+  assert.deepEqual([ts.firm, ts.person, ts.email], ["Shoosmiths LLP", "Sam Lawyer", "sam.lawyer@shoosmiths.example"]);
+});
+
+test("a row a PDF flattened onto one line is read; a sentence, a blank and the next clause are not", () => {
+  const pdf = readHotsContactsByRules("Landlord Solicitors GT - GreenbergTraurig\nFAO: Jo Partner\n020 7900 3000\nEmail: jo.partner@gtlaw.example", { note: true });
+  assert.deepEqual([pdf[0].firm, pdf[0].person, pdf[0].phone, pdf[0].email], ["GT - GreenbergTraurig", "Jo Partner", "020 7900 3000", "jo.partner@gtlaw.example"]);
+  assert.deepEqual(readHotsContactsByRules("The Landlord's solicitors will prepare the lease and send it to the Tenant", { note: true }), []);
+  assert.deepEqual(readHotsContactsByRules("Landlord's Solicitors: TBC\nTenant's Solicitors: to be confirmed", { note: true }), []);
+  // An empty cell: the next clause is not the firm.
+  assert.deepEqual(readHotsContactsByRules("Tenant's Solicitors\nTerm: 10 years from completion", { note: true }), []);
+  // A clause heading under an inline firm is never the person.
+  const heading = readHotsContactsByRules("Landlord's Solicitors: Herbert Smith Freehills LLP\nRent Free\nSix months", { note: true });
+  assert.equal(heading[0].firm, "Herbert Smith Freehills LLP");
+  assert.equal(heading[0].person, null);
+  // The person written beside the firm.
+  const inline = readHotsContactsByRules("Tenant's Solicitors: Shoosmiths LLP (FAO Sam Lawyer)", { note: true });
+  assert.deepEqual([inline[0].firm, inline[0].person], ["Shoosmiths LLP", "Sam Lawyer"]);
+  assert.ok(firmLike("Savills (UK) Limited"));
+  assert.ok(firmLike("GT - GreenbergTraurig"));
+  assert.ok(!firmLike("will prepare the lease"));
+  assert.ok(!firmLike("Each party to bear its own costs"));
+});
+
+test("the provider's contacts are kept only where the document's own words carry them", () => {
+  const raw = {
+    parties: [],
+    contacts: [
+      { side: "landlord", kind: "solicitor", firm: "GT - GreenbergTraurig", person: "Jo Partner", email: "jo.partner@gtlaw.example", phone: "020 7900 3000", quote: "GT - GreenbergTraurig" },
+      // Firm not in the document.
+      { side: "tenant", kind: "solicitor", firm: "Made Up LLP", quote: "Shoosmiths LLP" },
+      // Its words are not in the document.
+      { side: "tenant", kind: "agent", firm: "Savills", quote: "Savills plc, the tenant's agent" },
+      // An email and a phone the document does not give are dropped, the firm kept.
+      { side: "landlord", kind: "agent", firm: "Bruce Gillingham Pollard", email: "someone@else.example", phone: "0161 000 0000", person: "Nobody Here", quote: "Bruce Gillingham Pollard" },
+      // Not a side or a kind.
+      { side: "guarantor", kind: "solicitor", firm: "Shoosmiths LLP", quote: "Shoosmiths LLP" },
+    ],
+  };
+  const checked = checkHotsAnswer(raw, CONTACT_SHEET);
+  assert.equal(checked.contacts.length, 2);
+  const ll = contactOf(checked.contacts, "landlord", "solicitor")!;
+  assert.deepEqual([ll.person, ll.email, ll.phone], ["Jo Partner", "jo.partner@gtlaw.example", "020 7900 3000"]);
+  const agent = contactOf(checked.contacts, "landlord", "agent")!;
+  assert.deepEqual([agent.email, agent.phone, agent.person], [null, null, null]);
+  const reasons = checked.dropped.map(d => `${d.what}: ${d.reason}`);
+  assert.ok(reasons.includes("Tenant's solicitors: the firm is not in the document"));
+  assert.ok(reasons.includes("Tenant's agent: its words are not in the document"));
+});
+
+test("the provider's contact first, its blanks from the rules' reading of the same firm", () => {
+  const ai: HotsContact[] = [{ side: "tenant", kind: "agent", firm: "Savills (UK) Limited", person: null, email: null, phone: null, quote: "Savills (UK) Limited", checked: true }];
+  const rules = readHotsContactsByRules(CONTACT_SHEET);
+  const merged = mergeHotsContacts(ai, rules);
+  const agent = contactOf(merged, "tenant", "agent")!;
+  assert.equal(agent.firm, "Savills (UK) Limited");
+  assert.equal(agent.person, "James Brown");
+  assert.equal(agent.email, "jbrown@savills.example");
+  // The rules' others follow; one per side and kind.
+  assert.equal(merged.length, 4);
+  // A different firm for the same side and kind is not mixed in.
+  const other = mergeHotsContacts([{ ...ai[0], firm: "Knight Frank" }], rules);
+  assert.equal(contactOf(other, "tenant", "agent")!.person, null);
+});
+
+test("contacts sent back by the screen are kept only in the reader's shape", () => {
+  const back = contactsFromBody([
+    { side: "tenant", kind: "agent", firm: "Savills", email: "not an email", quote: "Savills" },
+    { side: "tenant", kind: "agent", firm: "Second", quote: "x" },
+    { side: "nobody", kind: "agent", firm: "X LLP" },
+    { side: "landlord", kind: "lawyers", firm: "Y LLP" },
+  ]);
+  assert.equal(back.length, 2);
+  assert.equal(back[0].email, null);
+  assert.equal(back[1].kind, "solicitor");
+});
+
+function contactsDb(names: Record<string, string>, checkedFirms: string[]) {
+  return {
+    query: async (sql: string) => {
+      if (/FROM crm_companies/.test(sql)) return { rows: Object.entries(names).map(([id, name]) => ({ id, name })) };
+      if (/FROM kyc_solicitor_checks/.test(sql)) return { rows: checkedFirms.map(firm => ({ firm })) };
+      return { rows: [] };
+    },
+  };
+}
+
+test("each contact beside the transaction: the agent set, our client's solicitors, an SRA check, BGP itself", async () => {
+  const contacts = readHotsContactsByRules(CONTACT_SHEET.slice(CONTACT_SHEET.indexOf("CONTACTS")), { note: true });
+  const deal: any = { id: "d1", deal_type: "New Letting", bgp_acting_for: "landlord", team: ["London Estate"], solicitor_firm: "GT GreenbergTraurig", acquisition_agent_id: "c-sav" };
+  const views = await hotsContactViews(contactsDb({ "c-sav": "Savills (UK) Limited" }, ["Shoosmiths LLP"]), deal, contacts);
+  const view = (side: string, kind: string) => views.find(v => v.side === side && v.read.kind === kind)!;
+  // BGP acts for the landlord: its solicitors are our client's, already on the transaction.
+  assert.ok(view("landlord", "solicitor").clientSide);
+  assert.ok(view("landlord", "solicitor").same);
+  // The tenant's solicitors were checked at the SRA on this transaction.
+  assert.ok(!view("tenant", "solicitor").clientSide);
+  assert.ok(view("tenant", "solicitor").checked);
+  // The landlord's agent is BGP.
+  assert.ok(view("landlord", "agent").us);
+  // The tenant's agent is the firm already on the transaction.
+  assert.equal(view("tenant", "agent").onDeal, "Savills (UK) Limited");
+  assert.ok(view("tenant", "agent").same);
+  // A sale's heads of terms that say landlord and tenant: the seller and the buyer.
+  const sale = await hotsContactViews(contactsDb({}, []), { id: "d2", deal_type: "Sale" } as any, contacts);
+  assert.deepEqual([...new Set(sale.map(v => v.side))].sort(), ["purchaser", "vendor"]);
+  assert.ok(sale.find(v => v.side === "vendor" && v.read.kind === "solicitor")!.clientSide);
+});

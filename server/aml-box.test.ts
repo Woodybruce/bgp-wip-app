@@ -90,7 +90,7 @@ test("a letting under £10,000 a month is signed off on the sanctions checks", (
 test("a tenant before Heads of Terms is not due yet", () => {
   const step = next({ due: false });
   assert.equal(step.who, "nobody");
-  assert.equal(line(step), "Not due yet · once the landlord accepts their offer");
+  assert.equal(line(step), "Not due yet · from agreed heads of terms");
   // Once a request is out, the request leads.
   assert.notEqual(next({ due: false, request: { status: "sent", to: "Jack Barratt" } }).lead, "Not due yet");
 });

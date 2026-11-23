@@ -206,11 +206,41 @@ export interface KycSendResult { ok: boolean; from: string | null; fellBack: boo
 // One door for every client checks email: from the KYC mailbox, else the
 // app's address, else the shared mailbox (the footer names whichever sent
 // it), with the logo inline.
+// Who a client or another agent is told to speak to: the Nominated Officer
+// alone, on every AML email and page (Jack, 23 November 2026: "For every deal
+// across the whole business I need to be the only person referenced under
+// 'Questions?' please as the AML officer"). The transaction's agents are
+// still copied on the emails. With no Nominated Officer set, or when they
+// cannot be read, the people the request holds are used.
+let contactCache: { at: number; agent: KycAgent | null } | null = null;
+export async function primeAmlContact(): Promise<void> {
+  if (contactCache && Date.now() - contactCache.at < 5 * 60_000) return;
+  try {
+    const { amlOfficers } = await import("./aml-authority");
+    const o = (await amlOfficers()).nominated;
+    if (!o) { contactCache = { at: Date.now(), agent: null }; return; }
+    const u = (await pool.query(
+      `SELECT name, email, phone FROM users WHERE is_active IS NOT FALSE AND (id = $1 OR lower(email) = lower($2)) ORDER BY (id = $1) DESC LIMIT 1`,
+      [o.id || "", o.email || ""])).rows[0];
+    const name = u?.name || o.name, email = u?.email || o.email;
+    contactCache = { at: Date.now(), agent: name && email ? { name, email, phone: u?.phone || null } : null };
+  } catch (e: any) {
+    console.warn("[kyc] AML contact not read:", e?.message);
+    if (!contactCache) contactCache = { at: Date.now() - 4 * 60_000, agent: null };
+  }
+}
+/** The contact as last read: call primeAmlContact first (sendKycEmail does). */
+export function amlContact(fallback: KycAgent[] | null | undefined): KycAgent[] {
+  return contactCache?.agent ? [contactCache.agent] : (fallback || []);
+}
+export function resetAmlContactForTests(agent?: KycAgent | null) { contactCache = agent === undefined ? null : { at: Date.now(), agent }; }
+
 export async function sendKycEmail(opts: {
   to: string[];
   cc?: string[];
   build: (sentFrom: string) => { subject: string; html: string };
 }): Promise<KycSendResult> {
+  await primeAmlContact();
   const to = [...new Set(opts.to.map(cleanEmail).filter(isEmail))];
   if (!to.length) return { ok: false, from: null, fellBack: false, error: "No address to send to" };
   const cc = [...new Set((opts.cc || []).map(cleanEmail).filter(isEmail))].filter(address => !to.includes(address));
@@ -404,6 +434,7 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
 }
 
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
+  await primeAmlContact();
   const request = row.request!;
   const progress = await progressOf(row);
   // The joint agent's page (22 November 2026): what to send, and on a
@@ -418,7 +449,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       dealName: request.dealName, expiresAt: new Date(row.expires_at).toISOString(),
       idCheck: null, question: null, owners: null, docs: [],
       otherFiles: progress.files.map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
-      person: null, people: null, note: request.note, agents: request.agents,
+      person: null, people: null, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents),
       finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null, maxFileMb: KYC_MAX_FILE_MB,
       joint: {
         firm: joint?.firm || "your firm", partyRole: request.role, letting,
@@ -451,7 +482,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
   let people: KycPortalView["people"] = null;
   if (!request.person) {
     const found = await partyPeopleForRow(row).catch(() => null);
-    const owners = (found?.people || []).filter(p => p.roles.includes("owner") && !personNamesMatch(p.name, row.contact_name || ""));
+    // A guarantor, and the owners of a company that guarantees, are passed on the same way (23 November 2026).
+    const owners = (found?.people || []).filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && !personNamesMatch(p.name, row.contact_name || ""));
     if (owners.length) {
       people = owners.map(p => {
         const ownLink = !!p.own && !p.own.isMain;
@@ -478,7 +510,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     person: request.person ? { roles: request.person.roles, words: kycPersonRoleWords(request.person.roles, request.partyName) } : null,
     people,
     note: request.note,
-    agents: request.agents,
+    noteFrom: request.sentBy?.name || null,
+    agents: amlContact(request.agents),
     finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     maxFileMb: KYC_MAX_FILE_MB,
     viaAgent: request.viaAgent ? {
@@ -543,6 +576,7 @@ async function dealParties(dealId: string) {
     entityId: string | null; entityNumber: string | null; personField: string;
     // Recorded as a trust or foundation: checked on its own record, so no company that signs is needed (21 November 2026).
     trust: boolean;
+    publicBody?: boolean;
     contacts: Array<{ id: string; name: string; email: string | null; mobile: string | null }> }> = [];
   for (const col of PARTY_COLUMNS) {
     const companyId = d[col.company];
@@ -565,6 +599,7 @@ async function dealParties(dealId: string) {
       contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
       entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
       trust: String(c.aml_subject_type || "").trim().toLowerCase() === "trust",
+      publicBody: !entity && String(c.aml_subject_type || "").trim().toLowerCase() === "public_body",
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
     });
   }
@@ -626,7 +661,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   // asked; this records why the rest was not, and the owners to confirm).
   const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
   const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
-  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk });
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party.publicBody && input.kind === "company" });
   const confirmOwners = !trustDocs && input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
   // The owners other than the person asked, who each get a link of their own
   // (19 November 2026): the person asked can pass them on from their page.
@@ -635,7 +670,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company", dealId }, await dealPeopleRequests(dealId)).catch(() => null);
     ownLinksFor = (people?.people || [])
-      .filter(p => p.roles.includes("owner") && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
+      .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
       .map(p => ({ key: p.key, name: p.name }));
   }
 
@@ -704,9 +739,10 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   }
 
   const link = kycLinkFor(token);
+  await primeAmlContact();
   const common = {
     partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
-    needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: agentList, askPep: !!request.askPep,
+    needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(agentList), askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: ownLinksFor.map(o => o.name),
     purpose: request.purpose || null,
   };
@@ -869,7 +905,7 @@ export async function createPersonCheck(dealId: string, input: z.infer<typeof pe
       to: [email], cc: request.cc,
       build: sentFrom => kycRequestEmail({
         recipientName: person.name, partyName: party.name, kind: "individual", dealName: found.deal.name, ref: request.ref, link, expiresAt: row!.expires_at,
-        needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: request.agents, sentFrom, askPep: true,
+        needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom, askPep: true,
         person: { roles: person.roles },
       }),
     });
@@ -951,10 +987,11 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
   // passed it on to, with the agent copied; else the agent, in their words.
   const via = request.viaAgent || null;
   const passed = via?.passedOn?.length ? via.passedOn[via.passedOn.length - 1] : null;
+  await primeAmlContact();
   const common = {
     partyName: request.partyName, kind: request.kind, dealName: request.dealName,
     ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
-    agents: request.agents, progress, test: !!row.is_test, askPep: !!request.askPep,
+    agents: amlContact(request.agents), progress, test: !!row.is_test, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
     person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
   };
@@ -1084,6 +1121,21 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
       .then(async m => m.recordJointReading(pool, row.token, documentId, await m.readJointFile({ buffer: file.buffer, mime: file.mime || null, name: file.name })))
       .catch((e: any) => console.warn(`[kyc] joint agent file reading not kept: ${e?.message}`));
     return documentId;
+  }
+
+  if (docKey === "certified_ids" && row.company_id) {
+    // Certified copies a client sends (23 November 2026) are read and checked
+    // as a document BGP uploads is (server/kyc-documents.ts): whose it is, in
+    // date, and who certified it and when. One that passes counts for that
+    // person; one that does not waits for an officer. Never seen in the original.
+    const documentId = String(doc.rows[0].id);
+    await pool.query(
+      `INSERT INTO kyc_document_readings (document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by_name)
+       VALUES ($1, $2, $3, $4, false, $5) ON CONFLICT (document_id) DO NOTHING`,
+      [documentId, row.deal_id, row.company_id, row.trading_entity_id || null, `${sender} (client checks, ref ${request.ref})`.slice(0, 300)])
+      .catch((e: any) => console.warn(`[kyc] certified copy not queued for reading: ${e?.message}`));
+    // Read after the reply; one not read here is read when BGP opens the party's documents.
+    void import("./kyc-documents").then(m => m.readUpload(pool, documentId)).catch((e: any) => console.warn(`[kyc] certified copy not read: ${e?.message}`));
   }
 
   if (isTrustDocsRequest(request) || docKey === "trust_deed") {
@@ -1373,7 +1425,7 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
         const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
-        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null, trust: trustAsk });
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody });
         return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, trustAsk };
       })),
       requests: await clientChecksForDeal(dealId),
@@ -1546,7 +1598,7 @@ async function openRow(req: Request, res: Response): Promise<TokenRow | null> {
   const row = await tokenRow(String(req.params.token));
   const reason = closedReason(row);
   if (reason) {
-    res.status(410).json({ message: reason, agents: row?.request?.agents?.slice(0, 2) || [] });
+    res.status(410).json({ message: reason, agents: (await primeAmlContact(), amlContact(row?.request?.agents?.slice(0, 2))) });
     return null;
   }
   return row;
@@ -1745,7 +1797,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/pass-on", async (req: Request, res
       to: [email], cc: [cleanEmail(row.contact_email), ...request.cc],
       build: sentFrom => kycRequestEmail({
         recipientName: name, partyName: request.partyName, kind: request.kind, dealName: request.dealName, ref: request.ref, link,
-        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, agents: request.agents, sentFrom,
+        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
         askPep: !!request.askPep, confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad,
         ownLinksFor: (request.ownLinksFor || []).map(o => o.name), passedOnBy: { name: via.name, firm: via.firm },
       }),

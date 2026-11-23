@@ -93,6 +93,9 @@ export interface AmlBoxFacts {
   // structuring"). trustGaps: what BGP still has to record on its structure.
   trust?: boolean;
   trustGaps?: string[];
+  // The name reads like a UK public body and nobody has said what it is
+  // (shared/aml-sdd.ts): confirming it comes before looking for a company.
+  publicBodyHint?: boolean;
   // Owned through a company registered abroad, in words ("Kirkbi A/S
   // (Denmark)"): enhanced due diligence by the officers, who find the owners
   // behind it (KYC4U did until 23 November 2026).
@@ -133,10 +136,9 @@ export interface AmlNextStep {
   action: AmlBoxAction | null;
 }
 
-const DUE_WORDS: Record<string, string> = {
-  tenant: "once the landlord accepts their offer",
-  purchaser: "before an offer is accepted",
-};
+// Issue 4 of BGP's policy: a buyer, a tenant and every party BGP does not act
+// for are checked from agreed heads of terms (shared/aml-dashboard.ts amlDue).
+const DUE_WORDS = "from agreed heads of terms";
 
 export function andList(names: readonly string[]): string {
   const list = names.filter(Boolean);
@@ -204,6 +206,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   // comes before BGP's own checks on the company that signs.
   const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
   if (f.company && f.companyMissing && !jointRunning) {
+    if (f.publicBodyHint) return step("act", "bgp", "To do", "Confirm it is a public body (SDD), or set who signs", "fill_in");
     return step("act", "bgp", "To do", "Set the company that signs", "fill_in");
   }
   if (f.precheckRunning) {
@@ -268,7 +271,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, "for the documents", "joint");
   }
   if (f.due === false && !f.request) {
-    return step("wait", "nobody", "Not due yet", DUE_WORDS[f.role] || "");
+    return step("wait", "nobody", "Not due yet", DUE_WORDS);
   }
   if (!f.clientChecks) {
     return step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null);

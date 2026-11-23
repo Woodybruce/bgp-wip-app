@@ -73,6 +73,12 @@ export interface KycDocumentReading {
     profession: string | null;         // solicitor, accountant, ...
     firm: string | null;
     date: string | null;               // yyyy-mm-dd
+    // HMRC (AMLG11400) also asks for the certifier's address and telephone
+    // number, and their signature. Absent on a reading made before
+    // 23 November 2026: read it again.
+    address?: string | null;
+    phone?: string | null;
+    signed?: boolean | null;
   } | null;
 }
 
@@ -103,6 +109,7 @@ export function cleanKycDocumentReading(raw: unknown, readAt: string): KycDocume
     certified,
     certification: certified && c ? {
       words: str(c.words, 400), name: str(c.name, 120), profession: str(c.profession, 120), firm: str(c.firm, 160), date: day(c.date),
+      address: str(c.address, 300), phone: str(c.phone, 40), signed: typeof c.signed === "boolean" ? c.signed : null,
     } : null,
   };
 }
@@ -141,16 +148,56 @@ const dobAgrees = (register: KycDocumentPerson["dob"], document: string | null):
 };
 
 /**
- * Whether the certification on a copy carries what BGP's AML policy asks for:
- * the certifier's name, their profession or firm, and the date.
+ * Who may certify a copy (Jack, 23 November 2026: "we will accept -
+ * Solicitors, lawyers, or notaries public, Chartered accountants, Bank or
+ * building society officials"). Read from the profession the certifier wrote,
+ * then their firm. Anyone else is not passed and waits for an officer.
+ */
+export type CertifierGroup = "legal" | "accountant" | "bank";
+export const CERTIFIER_GROUP_WORDS: Record<CertifierGroup, string> = {
+  legal: "a solicitor, lawyer or notary public",
+  accountant: "a chartered accountant",
+  bank: "a bank or building society official",
+};
+export const ACCEPTED_CERTIFIERS_WORDS = "a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official";
+
+const LEGAL_RE = /\b(solicitors?|lawyers?|barristers?|attorneys?|advocates?|notary|notaries|notarial|legal executives?|law firm|llp solicitors)\b/i;
+const ACCOUNTANT_RE = /\bchartered\b[^.;]{0,24}\baccountants?\b|\b(ACA|FCA|ACCA|FCCA|ICAEW|ICAS)\b/;
+const BANK_RE = /\b(bank|banking|building society)\b/i;
+
+export function certifierGroup(profession: string | null | undefined, firm?: string | null): CertifierGroup | null {
+  for (const text of [profession || "", firm || ""]) {
+    if (!text.trim()) continue;
+    if (LEGAL_RE.test(text)) return "legal";
+    if (/\bchartered\b[^.;]{0,24}\baccountants?\b/i.test(text) || ACCOUNTANT_RE.test(text)) return "accountant";
+    if (BANK_RE.test(text)) return "bank";
+  }
+  return null;
+}
+
+/**
+ * Whether the certification on a copy carries what HMRC asks for (AMLG11400):
+ * the words that it is a true copy of the original, the certifier's
+ * signature, the date, their name, occupation, address and telephone number.
  */
 export function certificationGaps(c: KycDocumentReading["certification"]): string[] {
   if (!c) return ["who certified it and when"];
   const gaps: string[] = [];
+  if (!c.words || !/true\s+cop(y|ies)|original/i.test(c.words)) gaps.push("the words that it is a true copy of the original");
+  if (c.signed === false) gaps.push("the certifier's signature");
   if (!c.name) gaps.push("the certifier's name");
-  if (!c.profession && !c.firm) gaps.push("their profession or firm");
+  if (!c.profession && !c.firm) gaps.push("their occupation");
   if (!c.date) gaps.push("the date");
+  if (!c.address) gaps.push("their address");
+  if (!c.phone) gaps.push("their telephone number");
   return gaps;
+}
+
+/** Why the certifier is not one BGP accepts, or null when they are. */
+export function certifierRefusal(c: KycDocumentReading["certification"]): string | null {
+  if (!c || (!c.profession && !c.firm)) return null; // a gap, said by certificationGaps
+  if (certifierGroup(c.profession, c.firm)) return null;
+  return `Certified by ${[c.name, c.profession || c.firm].filter(Boolean).join(", ")}: BGP accepts ${ACCEPTED_CERTIFIERS_WORDS}`;
 }
 
 /**
@@ -201,6 +248,8 @@ export function checkKycDocument(
       else {
         const gaps = certificationGaps(reading.certification);
         if (gaps.length) reasons.push(`The certification does not give ${gaps.join(", ")}`);
+        const refused = certifierRefusal(reading.certification);
+        if (refused) reasons.push(refused);
       }
     }
     const summary = [what, person ? personDisplayName(person.name) : names[0] || null, reading.expires ? `expires ${dayWords(reading.expires)}` : null,

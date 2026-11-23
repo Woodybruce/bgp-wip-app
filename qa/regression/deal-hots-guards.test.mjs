@@ -41,6 +41,26 @@ test('the reader is Anthropic called directly, one forced tool, capped a day', (
 
 test('reading and matching save nothing', () => {
   assert.doesNotMatch(server, /\b(?:INSERT INTO|UPDATE\s+\w+\s+SET|DELETE FROM)\b/i);
+  // The read and match routes never file a contact: only the contact route does.
+  const readAndMatch = server.slice(server.indexOf('router.post("/api/deals/:id/heads-of-terms/read"'), server.indexOf('router.post("/api/deals/:id/heads-of-terms/contact"'));
+  assert.doesNotMatch(readAndMatch, /fileHotsContact\(/);
+});
+
+test('a solicitor or agent from the heads of terms: staff only, never BGP, the CRM record only gains blanks (23 November 2026)', () => {
+  const route = server.slice(server.indexOf('router.post("/api/deals/:id/heads-of-terms/contact"'));
+  assert.match(route, /^router\.post\("\/api\/deals\/:id\/heads-of-terms\/contact", async \(req: Request, res: Response\) => \{\s*try \{\s*if \(!\(await staffMe\(req\)\)\) return res\.status\(403\)/);
+  assert.match(route, /if \(isBgpContact\(c\)\) return res\.status\(400\)/);
+  const filing = read('server/deal-hots-contact.ts');
+  // Blank fields only: never overwrite what the CRM holds.
+  assert.match(filing, /SET email = COALESCE\(NULLIF\(btrim\(email\), ''\), \$2\), phone = COALESCE\(NULLIF\(btrim\(phone\), ''\), \$3\)/);
+  assert.match(filing, /company_id = COALESCE\(company_id, \$4\)/);
+  assert.match(filing, /notes: `Added from the heads of terms of \$\{input\.dealName\}`/);
+  assert.match(filing, /const type = input\.kind === "agent" \? "Agent" : "Solicitor";/);
+  assert.doesNotMatch(filing, /DELETE FROM|UPDATE crm_deals/);
+  // The transaction itself is set through its own save.
+  assert.match(screen, /HOTS_AGENT_FIELDS\[v\.side\]/);
+  assert.match(screen, /\{ firm: "jointAgentId", person: "jointAgentContactId" \}/);
+  assert.match(screen, /solicitorFirm: v\.read\.firm/);
 });
 
 test('the screen saves only through the routes that already exist', () => {
@@ -48,9 +68,16 @@ test('the screen saves only through the routes that already exist', () => {
   const allowed = [
     /^POST \/api\/deals\/\$\{dealId\}\/heads-of-terms\/match$/,
     /^PUT \/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}$/,
+    // The company that signs set by itself from a certain reading (23 November 2026).
+    /^PUT \/api\/deals\/\$\{dealId\}\/parties\/\$\{p\.role\}$/,
+    // A guarantor the heads of terms name, made the transaction's guarantor (23 November 2026).
+    /^POST \/api\/deals\/\$\{dealId\}\/guarantors$/,
     /^POST \/api\/billing-entities$/,
     /^PUT \/api\/crm\/deals\/\$\{dealId\}$/,
     /^POST \/api\/crm\/companies$/,
+    // Solicitors and agents (23 November 2026): the CRM filing, and the SRA check of the AML box.
+    /^POST \/api\/deals\/\$\{dealId\}\/heads-of-terms\/contact$/,
+    /^POST \/api\/deals\/\$\{dealId\}\/solicitors-aml\/check$/,
   ];
   assert.ok(writes.length >= 5, writes.join(', '));
   for (const w of writes) assert.ok(allowed.some(re => re.test(w)), `unexpected write: ${w}`);
@@ -67,7 +94,7 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
-  assert.match(partyBox, /if \(!o && !finding && !hotsOpen\) onClose\(\);/);
+  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
   assert.doesNotMatch(screen, /from "@\/components\/deal-parties"/);
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);

@@ -194,10 +194,13 @@ const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim(
 // refused within the hour is left out, unless it is the last.
 export function senderOrder(first: string[] = [], now = Date.now(), opts: { appMailbox?: boolean } = {}): string[] {
   const order: string[] = [];
-  // AML emails never go from the app's own address (Woody, 2026-11-23: "the
-  // email should come from KYC@brucegillinghampollard.com"): after their own
-  // mailbox they fall back to BGP's shared mailbox only.
-  for (const m of [...first, ...(opts.appMailbox === false ? [] : [APP_MAILBOX]), SHARED_MAILBOX]) {
+  // Every email goes from BGP's own domain (Woody, 2026-11-23: "emails still
+  // coming from chatbgp.app", after "the email should come from
+  // KYC@brucegillinghampollard.com"): the shared mailbox comes before the
+  // app's chatbgp.app address, which is only tried when Microsoft refuses the
+  // shared mailbox. AML emails never go from it at all. A workspace's own
+  // mailbox (Landsec's) still goes first.
+  for (const m of [...first, SHARED_MAILBOX, ...(opts.appMailbox === false ? [] : [APP_MAILBOX])]) {
     const mailbox = String(m || "").trim();
     if (mailbox && !order.some(o => sameAddress(o, mailbox))) order.push(mailbox);
   }

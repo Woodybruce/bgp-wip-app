@@ -262,7 +262,7 @@ async function coverageForRow(db: Db, row: TokenRow, files: FileRow[], now = new
     try {
       const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
       const found = await partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: request.kind === "company" ? "company" : "individual", dealId: row.deal_id }, await dealPeopleRequests(row.deal_id));
-      people = found.people.map(p => ({ name: p.name, roles: p.roles, born: bornKey(p.born) }));
+      people = found.people.map(p => ({ name: p.name, roles: p.roles, born: bornKey(p.born), ...(p.address.notNeeded ? { noAddress: true } : {}) }));
       held = registerHeld(found.basis);
     } catch (e: any) {
       console.warn(`[joint-agent] people to check not read for ${request.ref}: ${e?.message}`);
@@ -580,7 +580,7 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
     to: [email], cc,
     build: sentFrom => jointAgentRequestEmail({
       recipientName: name, firm: firm.name, partyName: party.name, partyRole: party.role, kind: party.kind, dealName: deal.name,
-      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, agents, sentFrom, relation, clientRole: deal.clientRole, clientName: clientNameOf(deal),
+      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, noteFrom: request.sentBy?.name || null, agents: portal.amlContact(agents), sentFrom, relation, clientRole: deal.clientRole, clientName: clientNameOf(deal),
     }),
   });
   request.sentFrom = sent.from;
@@ -703,7 +703,7 @@ export async function chaseJointRequest(db: Db, row: TokenRow, by: { name: strin
     build: sentFrom => jointAgentMissingEmail({
       recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
       kind: request.kind, dealName: request.dealName, ref: request.ref, link: portal.kycLinkFor(row.token), expiresAt,
-      letting: isLettingRule(request.jointAgent?.rule), agents: request.agents, sentFrom,
+      letting: isLettingRule(request.jointAgent?.rule), agents: portal.amlContact(request.agents), sentFrom,
       relation: request.jointAgent?.relation === "own" ? "own" : "joint", clientRole: request.jointAgent?.clientRole || null, clientName: request.jointAgent?.clientName || null,
       missing, nothingYet: !files.length, chase: chases.length + 1,
     }),

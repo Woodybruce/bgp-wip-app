@@ -2764,7 +2764,8 @@ same day, never live). Do not re-litigate. Tests:
   file, the agreed offer, the AML gate) and its event line; with no deal yet
   the convert heals one and the PUT follows. Then the fee split (`saveSplit`:
   `internalAgent` is never sent, the split's own save keeps BGP Contact in
-  step) and the joint agency note. The old Promote route (`/create-deal`) is
+  step) (and the joint agency note, until that was retired on 23 November
+  2026). The old Promote route (`/create-deal`) is
   called by no screen now; it stays for a cached client.
 - **Describe the deal**, the box at the top (BGP staff, New Deal and both
   handovers, never the edit form): `NoteFill` with `readUrl=
@@ -3423,7 +3424,8 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   finds. A guarantor's number is said the same way. A company filed under
   the party by that number is still offered, with "check it is the same
   company" when the names share no such word.
-- **Nothing saves by itself.** The buttons save through the routes that
+- **Nothing saves by itself**, except the company that signs where the
+  reading is certain (below). The buttons save through the routes that
   already exist: Use as the company that signs (`PUT
   /api/deals/:id/parties/:role`), Add under <party> and use it (`POST
   /api/billing-entities` with `xero: false`, then the same PUT), Make them the
@@ -3432,7 +3434,105 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   final agreed heads of terms (`POST /api/unit-hots/:unitId/final`, on the
   tracker unit the transaction is the letting of, PDF or Word only, when none
   are on file; they then go in the AML file). Each writes its own history.
+- **Solicitors and agents** (Woody, the same day: "the HOTs upload / drop
+  didnt pick up their solcitors or ours or their agent"). The reading also
+  gives each side's solicitors and agents (`HotsContact`: side, solicitor or
+  agent, the firm, the person, email and phone), often from a contact sheet
+  at the end. The provider records them under `contacts` and each is kept
+  only where the document's own words carry it (`checkHotsContacts`: the
+  quote and the firm in the text, an email or phone the document does not
+  give dropped). The rules (`readHotsContactsByRules`) read "Landlord's
+  Solicitors: …", a label with the firm on the lines under it, and a row a
+  PDF flattened onto one line ("Landlord Solicitors GT - GreenbergTraurig",
+  only when the words read as a firm name, `firmLike`); a sentence, "TBC",
+  the next clause and a clause heading ("Rent Free") are never a firm or a
+  person. `mergeHotsContacts` fills the provider's blanks from the rules'
+  reading of the same firm. The dialog's **Solicitors and agents** section
+  (`hotsContactViews`) says what each is to this transaction: Bruce
+  Gillingham Pollard is "BGP"; the other side's agent **Set as the tenant's
+  agent** (or landlord's, seller's, buyer's: `HOTS_AGENT_FIELDS`); an agent
+  on our client's side who is not BGP **Set as joint agent**; our client's
+  solicitors **Save as our client's solicitors** (`solicitor_firm`,
+  `solicitor_contact`); the other side's solicitors **Check at the SRA** (the
+  Solicitors check of the AML box). Each first files the firm and its person
+  in the CRM (`POST /api/deals/:id/heads-of-terms/contact`, BGP staff,
+  `fileHotsContact` in `server/deal-hots-contact.ts`, the screen's one write
+  of its own, so the read and match routes still write nothing: the person by email, else the firm by name, else added
+  as type Agent or Solicitor with a note naming the transaction; a record
+  already there only gains blank fields; the person is linked to the
+  transaction), then saves through the transaction's own save. A firm already
+  on the transaction reads "On the transaction". Tests in
+  `server/deal-hots.test.ts`.
 - Not run against Anthropic or Companies House from a build machine.
+
+## Guarantors, and the contracting entity worked out (Woody, 2026-11-23)
+
+Woody, on Inception T2's party box (Cornhill Bar Ltd signs; Inception
+Ventures Group Limited guarantees): "should be able to allocate add as the
+guarantor", then "we dont need this commnetry it should just wiork out what
+the contracting entity is". HMRC's letting guidance (AMLG2300, read
+23 November 2026): s18 "Guarantors are a party to a tenancy agreement" and
+are treated as customers; s19 the ID verification of the "tenant, guarantor
+or trustee" is completed "before any agreement or contract is made"; s21
+source of funds and wealth is verified "when guarantors pay". Do not
+re-litigate. Rules: `shared/deal-guarantor.ts`; reads:
+`server/deal-guarantors.ts`; routes in `server/deal-parties.ts`. Tests:
+`server/deal-guarantor.test.ts` (in `npm test`),
+`qa/regression/deal-guarantor-guards.test.mjs`.
+
+- **A guarantor** is a company or a person filed under the party it stands
+  behind, a tenant or a buyer (`GUARANTEED_ROLES`), never the company that
+  signs; more than one is allowed. Kept in `deal_guarantors` (boot migration
+  in `server/index.ts`: deal, role, the party's brand, the
+  `crm_trading_entities` row, who added it; `removed_at` when taken off, one
+  live row per guarantor). A row counts only while its company is still filed
+  under the party the transaction names and is not the company that signs
+  (`guarantorRows`). Merges repoint it (`COMPANY_REFS`).
+- **Routes** (BGP staff signed in as themselves): `POST
+  /api/deals/:id/guarantors { role, companyId }` (a history line `guarantor`;
+  BGP's checks before asking start on it at once, `startPrecheck` with its
+  entity), `DELETE /api/deals/:id/guarantors/:guarantorId`, and `POST
+  …/:guarantorId/checks` (Run checks). The party view carries `guarantors`
+  (`guarantorViews`: where BGP's checks on each stand, and its red flag
+  count).
+- **What follows from it**: its findings are red flags on the party it stands
+  behind (`guarantorRedFlags`, keys `guarantor:<entity>:…`, labels "The
+  guarantor, X: …"), on the transaction's AML box and the AML board
+  (`withGuarantorFlags`); its people join that party's People to check
+  (`guarantors` on `partyPeople`): a person who guarantees (role
+  `guarantor`) and the people who own or control a guarantor company (role
+  `guarantor_owner`, from its own register read) each owe an identity check
+  and a proof of address and get links of their own (the email and page say
+  why they are asked); its other directors are screened only; the party is
+  signed off only once BGP's checks on each guarantor have run, in the last
+  30 days (`guarantorChecks` on `SignOffFacts`, `guarantorChecksDenial`; a
+  read that fails holds the sign-off); the AML file names each guarantor and
+  what is still needed on it.
+- **Screens**: in the party box each of the brand's companies other than the
+  one that signs has **Guarantor** beside **Use**; the **Guarantor** section
+  lists the guarantors with their checks (**Run checks**, **Remove**) and has
+  **Find the guarantor at Companies House** and **A person guarantees** (the
+  billing entity dialog, never a Xero contact). The party lines and the AML
+  box's Who signs line name the guarantor. Heads of terms that name a
+  guarantor offer **Make them the guarantor** (filed under the party) or
+  **Add under <party> as the guarantor** (from Companies House by the number
+  the document gives): a press, never set by itself.
+- **The party box has no commentary**: the trust question shows only when the
+  name reads like a trust, foundation or charity (`trustHint`); the
+  paragraphs explaining the company that signs, who to ask and the CRM were
+  removed.
+- **The contracting entity is worked out by itself** where the app can be
+  sure, for a party with no company that signs: the company on the unit's
+  lease (`offer.why === "lease"`), set when the AML box or the party box loads
+  (`useWorkOutSigningCompanies`, once per transaction and party, through the
+  party save and its history line); and heads of terms or a typed note that
+  name it for certain (a company filed under the party with that number or
+  name, or the one live company Companies House holds under the number the
+  document gives, with the same name), set when the reading comes back. The
+  brand's main or only company is still a suggestion, never set by itself:
+  Inception T2's main company is not the one that signs.
+- Not built: a guarantor of a landlord or a seller; source of funds asked of a
+  guarantor that pays.
 
 ## KYC4U is no longer used (Woody, 2026-11-23)
 
@@ -3481,6 +3581,8 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   their latest records across while BGP can still sign in (it only reads; it
   fills no form). A company's strip reads "KYC4U's past checks", and an admin
   can still **Record a past KYC4U sign-off** given by email before then.
+  **Add KYC4U result** in a party's Sign-off step is offered only where a
+  KYC4U request was made on that transaction (`pastKyc4u`, 23 November 2026).
 - **Words**: the box's red-flag hints and the red-flag email name the
   officers ("needs enhanced checks"); the risk assessment says the officers
   identify owners abroad; the companies page reads "KYC approved / in review
@@ -3508,7 +3610,8 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   client"); the page says the same. It lists (`jointAgentAsks`) proof of identity (passport,
   photocard driving licence or national identity card, or their electronic
   check report) for each owner and the person acting, proof of address from
-  the last three months, the company's register entry and owners, and any
+  the last three months for each owner (never the person acting alone, since
+  23 November 2026), the company's register entry and owners, and any
   further AML they have done (screening, risk assessment or CDD summary,
   source of funds); **Upload the documents**, or reply to the email with them
   attached (the reference in the subject files the reply, as before). Their
@@ -3578,7 +3681,7 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   outsourcing section now says the checks are carried out in-house in
   ChatBGP, and section D names Layla O'Driscoll and Woody Bruce as Deputy
   Compliance Officers (Issue 2 and Issue 3 still named KYC4U's outsourcing
-  and Victoria Broadhead). Issue 4 waits on Jack's approval.
+  and Victoria Broadhead). Jack approved Issue 4 on 23 November 2026.
 
 ## AML policy Issue 4 is the source of truth (Woody, 2026-11-23)
 
@@ -3606,7 +3709,9 @@ call for action countries only).
   in `server/assets/aml-policy/`; Issues 2 and 3 of the policy and Issue 2 of
   the risk assessment are kept on the quiet line (policy M). The footer of
   Issue 4 names Jack as approver and its change record says what changed;
-  **it waits on Jack's approval**. Each person confirms Issue 4 on My BGP →
+  **Jack approved it on 23 November 2026** (Woody: "jack has approved"), and
+  Jack is changing BGP's HMRC registration to add Layla. The file stays as he
+  approved it. Each person confirms Issue 4 on My BGP →
   AML training (`CURRENT_POLICY_READ_TITLE` takes the latest issue).
   `POLICY_SOURCE` names both. The policy's link to the risk assessment and
   the risk assessment's link to the policy point at the app's Policy pill.
@@ -3638,13 +3743,39 @@ call for action countries only).
     documents are signed off as a letting's: "Waiting on Savills · for the
     documents", then "Ready to sign off · Savills' documents are in: add a
     note". The Rules page says BGP goes further than HMRC here.
-  - **When checks are done**: landlord or seller before marketing; tenant
-    when the landlord accepts the offer; buyer from agreed heads of terms;
-    all complete before exchange of contracts or completion of a lease, and
-    no tenant deposit before. **Not built: the app still lets a transaction
-    move to Exchanged or Completed with checks outstanding and emails the
-    officers** (Woody's "gating remain as is" of 17 November 2026). Whether
-    the app should now hold the move is Woody's call.
+  - **When checks are done** (Issue 4's table; Woody, 23 November 2026: "we
+    want to make sure the app is capable of understanding what we need at
+    each point and then make our own approvals"). BGP's own client who lets
+    or sells: from engagement, complete before the property is marketed. A
+    buyer, a tenant, and every party BGP does not act for: from agreed heads
+    of terms, complete before exchange (a sale) or before the lease
+    completes (a letting; the tenant's identity before any agreement is
+    signed). Rules in `shared/aml-dashboard.ts`: `amlDue(role, status,
+    clientRole)` (the client from `dealClientRole`; a landlord or seller BGP
+    does not act for is now due from heads of terms, not at once),
+    `amlDeadline` (the words and whether the transaction has passed that
+    point: marketed from Available; exchanged from Exchanged) and `amlLate`
+    (past it and not decided). Each dashboard row carries `deadline` and
+    `late`: the AML board shows a red **Late** chip (the deadline in its
+    title), lists late rows first and has a **Late** filter (`?late=1`); the
+    transaction's AML box shows "Needed …" under each party's Next line, in
+    red as "Late: needed …" once passed. On live on 23 November 2026 most of
+    the To do list was BGP's client landlords on lettings already marketed,
+    so most of it reads Late: that is what Issue 4 says. The Next line's
+    "Not due yet" reads "from agreed heads of terms". The Rules page has the
+    policy's line. **The AML board now takes in investment deals still on
+    the Investment Tracker where Issue 4 needs checks** (`amlBoardDealSql` in
+    `server/aml-dashboard.ts`): a sale from Live, Available or Negotiating
+    (its seller is BGP's client), any investment deal from heads of terms;
+    before, nothing showed until Solicitors, so the 11 sale instructions at
+    Live on 23 November 2026 had no AML row. The Investment Tracker opens the
+    AML window ("On the market: check the seller") when a sale first moves to
+    Live or Available from an earlier stage (`amlBeforeMarketing` on the
+    tracker's PATCH reply), as it does at Solicitors. **Not built: the app
+    still lets a transaction move to Exchanged or Completed with checks
+    outstanding and emails the officers** (Woody's "gating remain as is" of
+    17 November 2026; Issue 4 says nothing exchanges or completes first).
+    Whether the app should hold the move is Woody's call.
   - **In-house checks in ChatBGP** (section D and the risk assessment's
     outsourcing row): KYC4U's past checks kept as records; **Dun & Bradstreet
     reports for companies owned from overseas** (the evidence lists also
@@ -3660,6 +3791,22 @@ call for action countries only).
     and that each case is approved by the Nominated Officer or a Deputy; what
     happens when checks cannot be completed (Stop acting); the officers named
     on BGP's HMRC registration; training; independent review.
+- **The report so far** (Woody, 23 November 2026: "a download button of the
+  report todate which we can share with suppliers however we dont intend on
+  doing this"). Under a party's Documents step, **Other ways** has **Report
+  so far** for the officers (the AML file button, `AmlFileButton` with
+  `label` and `quiet`): the report alone (PDF) or with every document (ZIP).
+  Each party's page of the AML report now has **Still needed**
+  (`amlStillNeeded` in `shared/aml-file.ts`, fed by `stillNeededFor` in
+  `server/aml-file.ts`): the deadline (late or not), the company that signs,
+  BGP's checks before asking, a trust's information, each red flag and
+  higher-risk factor, what each open client checks request and each person
+  to check still owes, what the joint agent's files do not cover, and who
+  signs it off (an agent or an officer; the Nominated Officer or a Deputy
+  when enhanced; sanctions only on a small letting). It reads; it decides
+  nothing. The file is still made by the officers only, recorded on the KYC
+  history and the transaction, and never carries the AML register. BGP does
+  not plan to use a supplier: the officers make their own approvals.
 - ChatBGP's prompt and app map name Issue 4 and the risk assessment Issue 3.
 - Tests: `server/aml-policy.test.ts`, `server/joint-agent-checks.test.ts`,
   `server/kyc-prechecks.test.ts` (all in `npm test`);
@@ -3809,8 +3956,13 @@ on the KYC4U pill of My BGP before). Tests: `server/kyc-request.test.ts` (in `np
 - **One email, one page.** The request email has the logo inline (cid), a
   numbered list of what is needed, one **Start your checks** button, the
   agent's note, Why we ask, the agent's phone and email, and the reference
-  in the subject (`(ref 7K2Q9M)`, six letters and digits) so a reply finds
-  its request. The page: a card per step with an Upload button (PDF, photos
+  in the subject so a reply finds its request: a random code made for each
+  request (six letters and digits, none that can be misread), never the
+  transaction's Ref #. Since 23 November 2026 (Woody: "keep it but make it
+  small it's only for our use") it is a bare tag at the end of the subject,
+  `[7K2Q9M]`, pale 10px text at the foot of the email and the page, and
+  nothing asks the client to keep it; `kycRefFromSubject` still reads the
+  old `(ref 7K2Q9M)` on replies to emails sent before, the last tag counting. The page: a card per step with an Upload button (PDF, photos
   including HEIC, Word; 25MB; 40 files a request), the Veriff check (returns
   to the page when done; a new session at most three times), the question,
   progress, and **Finish**, which emails the deal's agents what came in and
@@ -4085,9 +4237,36 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   company keeps no PSC list and the general chain walk stops below it) is
   treated as listed, and the reason says KYC4U is to confirm the chain: the
   regulation names the listed company itself.
+- **One owner listed twice** (23 November 2026, on St George plc, Woody:
+  "still asking for info on a plc? is that needed?"): Companies House can
+  hold the same owner twice, a notification made again and the first never
+  ceased (St George lists The Berkeley Group plc from 2016 and from 2017,
+  both active, one number), and `listedParent` needs one corporate owner at
+  each level, so it never reached The Berkeley Group Holdings plc (exempt as
+  listed on a UK regulated market since 7 July 2017) and the box asked the
+  client who owns St George. `dedupeRegisterOwners` (shared/kyc-prechecks.ts)
+  merges owners by registration number (else name; a person by name and
+  month and year of birth): new runs store them merged, `latestPrecheck`
+  merges stored runs, and `listedParent` reads them merged at every level.
+  The listing is found only by a run: a party checked before needs Run again.
 - **Ask only what's left** (`precheckAsks`, the one rule; the client checks
   dialog and `createClientCheck` both call it): listed, no owners chart and no
-  owners' IDs; owners on the register, the client confirms the list instead of
+  owners' IDs; **no proof of address from the person acting for any company**
+  unless the register names them as an owner (Woody, 23 November 2026, first
+  for a listed group, "If HMRC don't require it then stop it", then for every
+  company, "If they don't need it then let's not require it"): HMRC asks only
+  their identity and authority (MLR 2017 reg 28(10)), and Issue 4 asks an
+  individual for proof of address only as the party or an owner.
+  `defaultKycDocs` no longer lists it for a company, `precheckAsks` adds it
+  back when the person asked is one of the owners and otherwise lists it as
+  not asked (`ACTING_NO_ADDRESS`), and People to check marks the person acting
+  who is not an owner, guarantor or a trust's person `address.notNeeded`
+  (`actingOnly` in `shared/kyc-people.ts`: owing the identity check alone);
+  their own link and the joint agent's list (`jointAgentAsks`: "For each
+  owner") leave it out. A trust's representative and a private individual are
+  asked as before. A request already sent keeps the step (on live that day one
+  open request, 4KM9Q3 on Inception T2): nothing waits on it, the client can
+  press Finish without it, but its reminders still list it; owners on the register, the client confirms the list instead of
   sending a chart (a new card on the client page, `POST
   /api/kyc-upload/:token/owners`, a no needs words, logged as
   `client_owners_confirmation`, a red flag `owners_differ` and a box in the
@@ -4440,6 +4619,18 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   the deal's own AML card (every button: checks before asking, client checks,
   KYC4U request, Sign off, Add KYC4U result), the documents on the party's
   KYC record and its history (the KYC audit log and the deal's AML lines).
+  **The table's columns** (Woody, 23 November 2026: "on this page can we
+  have the deal status i.e reporting, marketing, solicitors, completed etc",
+  "combined due diligence and red flags same as stage to sit under each",
+  "dont let the agents responsible leak off the page they should be
+  listed"): Party, Transaction (the property under it), **Transaction
+  status** (`amlDealStatusWords`: the status in the Transactions board's
+  words and colours, `dealStatusLabel` with the row's `dealType`, so a
+  letting's AVA reads Marketing; the search matches it), **AML stage** (Late
+  stacked under it), **Due diligence and red flags** (the level with the red
+  flags stacked under it, a long flag wrapping in its column), Waiting on,
+  Last moved and **Agents** (every agent, one to a line, never cut off). The
+  phone card shows the status beside the transaction.
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
   is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
@@ -4518,6 +4709,17 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   it kept only the kinds), the web page, the register entry, or for a flag
   read from the brand's KYC record its history lines (who wrote it, when:
   T4's three were the retired in-app screening's of 23 and 24 September).
+  **A flag the old in-app screening set by itself** (Woody, 23 November 2026,
+  on Inception T2: "this has picked up a red flag but its not clear why?"):
+  the brand's KYC record says a screening matched, or enhanced due diligence
+  is needed, and its history line was written by the automatic screening
+  before 1 November 2026 (`oldAutomaticScreening` in `shared/kyc-red-flags.ts`).
+  That screening was switched off in October and did not record which name
+  or list matched, so the flag says so in its detail, with what BGP's own
+  checks found since (their sanctions result), names its source "The old
+  in-app screening", and offers the officer the words to set it aside
+  (`suggestion`, filled into the set-aside box). It is never cleared by
+  itself.
 - **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
   `server/deal-party-aml.ts`; admins until an MLRO is appointed).
   `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
@@ -4610,6 +4812,17 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
 - A flag set aside before this change keeps its review only while its key
   and evidence still match (`applyFlagReviews`); a web flag that now holds
   several sources needs one set-aside covering them.
+- **About the person, or only their company** (23 November 2026, St George
+  plc: the CMA's housebuilders case, about Berkeley Group, was raised as
+  adverse media on a director it never names). The person search answers
+  `about` for each finding ("person", or "organisation" when it is about a
+  company or group they work for or direct and does not say they were
+  involved), stored as `aboutOrganisation`. One about their company only is a
+  possible namesake ("about their company or group, not them"), never a red
+  flag on them (`webFindingUnsure`, read by the flags, the namesakes and the
+  card's count). A run from before then keeps its findings until Run again.
+  A rule that a finding must name the person was tried and dropped: genuine
+  findings often leave the name out ("Member of the Ruritanian parliament").
 - For a person screened with a date of birth, the next section replaces
   these bars.
 
@@ -4790,7 +5003,9 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   person asked and anyone added alongside them (below). With no company that signs, or no register read,
   the owners are not known (`not_read`).
 - **What each sends**: an identity check (Veriff) and a proof of address from
-  the last three months (BGP's AML policy, Issue 2, "Individuals": one proof
+  the last three months, except the person acting for a company who is not an
+  owner, who owes the identity check alone (23 November 2026, "Ask only
+  what's left" above) (BGP's AML policy, Issue 2, "Individuals": one proof
   of identity, one of residential address; the policy lists a photocard
   driving licence for identity only, so it never stands for the address).
   The proof of address wording now names this year's council tax bill too
@@ -4820,7 +5035,8 @@ their sanctions result only". Do not re-litigate. Rules (pure):
 - **The request to the person acting**: when the register names the owners
   it no longer asks for "ID for each of those owners" (`precheckAsks` drops
   it and says why); it asks the person acting for their own proof of address
-  (`defaultKycDocs`), and a step "Pass each owner their own link" lists the
+  only when they are one of the owners (`precheckAsks`; until 23 November
+  2026 always, through `defaultKycDocs`), and a step "Pass each owner their own link" lists the
   owners who still owe something (`ownLinksFor`), done when each has a link.
   The agents' Finished note lists who still owes what.
 - **Finished**: a party's client checks are finished only when the request to
@@ -5279,7 +5495,16 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   at £10,000 a month or more by HMRC: BGP relies on the co-agent's checks
   under a reliance agreement, or checks the tenant itself; under that, the
   letting is outside CDD and sanctions screening still applies. Notes saved
-  before keep their own words.
+  before keep their own words. **Retired on 23 November 2026** (Woody: "this joint
+  agent thing isnt allowed anymore we are sending them an email instead?"):
+  under Issue 4 the other side of a joint instruction is always checked, so
+  New Transaction and Edit no longer offer the Joint Agency Lead Transaction
+  switch, the transaction page no longer offers to add a note, and `POST
+  /api/crm/deals/:id/joint-agency-note` answers 410. A note saved before still
+  shows on its transaction, marked as saved before Issue 4, and every old note
+  stays in the AML Register. Ask the joint agent for their documents instead
+  (the party's Documents step, Other ways, Joint agent). Guard in
+  `qa/regression/joint-agent-checks-guards.test.mjs`.
 - **The request** is a client checks request (`kyc_upload_tokens`) with
   `request.audience = "joint_agent"` and `request.jointAgent` (firm, CRM ids,
   the rule, the reliance agreed, the readings). It is never the party's own
@@ -5585,6 +5810,47 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
+## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
+
+Jack, on the trust request to Adam Harvey, which read "A note from Charlotte"
+over a note he typed and named Charlotte Roberts first under Questions?: "For
+every deal across the whole business I need to be the only person referenced
+under 'Questions?' please as the AML officer", and "It's from me, im the
+person who typed that message so fix that bug". Do not re-litigate.
+
+- **The contact** on every AML email and upload page (client checks, a
+  person's own link, reminders, pass-on, the joint agent's request and
+  chases, a closed link) is the Nominated Officer alone: `amlContact(fallback)`
+  in `server/aml-portal.ts`, read by `primeAmlContact` (the officer's login
+  for the phone; kept five minutes; `sendKycEmail` and `portalView` prime
+  it). With no Nominated Officer set, or unread, the request's own people
+  are used. The transaction's agents are still copied (`request.cc`) and
+  still stored on the request. An admin's test request names the admin. A
+  new AML email passes `agents: amlContact(...)`.
+- **The note** is headed with `noteFrom`, the first name of
+  `request.sentBy` (it was the first name on the contact list); with nobody
+  named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
+- Tests in `server/kyc-request.test.ts`.
+
+## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
+
+Jack: "We probably need to keep an up to date document of all these updates
+and rules we (Wood, Jack, Layla) are making to AML section." It is
+`shared/aml-decisions.ts` (`AML_DECISIONS`: date, who decided, topic, title,
+the rule in plain words), shown to BGP staff on Transactions → AML →
+**Updates** (`client/src/components/aml-decisions.tsx`: by day, filters for
+person and topic, Current rules only, search, Print or save as PDF), served
+by `GET /api/aml-decisions` in `server/aml-rules.ts` (BGP staff only; the
+client imports the type only, so the entries are not in the bundle).
+
+- **Every change to an AML rule adds an entry in the same commit**, at the
+  top (newest first), naming who decided it (Woody, Jack or Layla) in plain
+  words of 70 or fewer, saying "transaction". A build with no decision
+  behind it (a bug fix, a layout change) needs no entry.
+- **Never delete an entry.** When a rule replaces an earlier one, add the new
+  entry and set `changed` on the old one ("23 November 2026: ...").
+- Test: `server/aml-decisions.test.ts` (in `npm test`).
+
 ## Trusts checked by BGP from their structure, never KYC4U (Jack, 2026-11-23)
 
 Jack: "Remove KYC4u on trusts. We need you to build the trust structuring",
@@ -5734,8 +6000,31 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   that party's KYC record). It counts for that person's identity check and
   proof of address exactly as Verified from public sources does, can be
   withdrawn, and their own request then reads as done (`accepted` in
-  `progressOf`), so they are not chased. Nothing reads the documents: the
-  officer checks them by eye.
+  `progressOf`), so they are not chased. **The app reads each one** (Jack,
+  the same day: "As long as the documents are certified then yes they can
+  accept. But how can the app Audit that?"): a `certified_ids` upload is
+  queued and read exactly as a document BGP uploads is
+  (`kyc_document_readings`, `readUpload`, `checkKycDocument`; see "Upload
+  documents on a party"), never as seen in the original. One that names a
+  person to check, is in date and carries the certifier's name, profession
+  or firm and date counts for that person by itself, with the reading kept
+  as the record; anything else shows its reasons in the party's Upload
+  documents box and waits for an officer (Accept it there with a note, or
+  Certified documents on the person's row). Nobody accepts a certified copy
+  on trust. **Who may certify, and what the certification must carry**
+  (Jack, the same day: "we will accept - Solicitors, lawyers, or notaries
+  public, Chartered accountants, Bank or building society officials", and
+  "Require the full HMRC details on the certification"; do not re-litigate):
+  `certifierGroup` in `shared/kyc-documents.ts` reads the occupation the
+  certifier wrote, then their firm (a plain "accountant" is not a chartered
+  one); `certifierRefusal` holds anyone else back with the reason.
+  `certificationGaps` asks for HMRC's list (AMLG11400): the words that it is
+  a true copy of the original, the signature, the date, the certifier's
+  name, occupation, address and telephone number (`address`, `phone`,
+  `signed` on the reading; a reading made before this has none, so Read
+  again). Both rules apply to a copy BGP uploads too. Every request email and
+  page says who can certify and how (`CERTIFIED_WHO`, `CERTIFIED_HOW`). The
+  app does not check the certifier exists: not built.
 - **A trust stays a trust when a company signs for it** (found on Fortis
   Green the same day: URC Thames North Trust has its company, 00075432, set
   as the company that signs, and the people reader, the sign-off, the AML
@@ -6443,7 +6732,9 @@ Tests: `server/foreign-owners.test.ts`, `server/kyc-abroad.test.ts` (both in
   still to find, and **Add its register page**, **Add a register extract**,
   **Record a person behind it**, **Add a note**, **Add a structure chart**; then
   what the app traced (the accounts' words, each GLEIF line with a link to its
-  record) and the structure charts with their comparison.
+  record) and the structure charts with their comparison. With no owner
+  abroad (the accounts name UK parents only) the section is titled
+  **Parent companies** (23 November 2026).
 - **Free registers abroad** (checked 21 November 2026): Denmark's CVR shows a
   company's legal owners (shares and votes) to anyone; its beneficial owners
   are behind an access request. Most EU beneficial ownership registers closed
@@ -6569,6 +6860,17 @@ its parts in `client/src/components/deal-page/`. Tests:
   Parties, as the old Brand tab's cards).
 
 ## Emails come from chatbgp.app (Woody, 2026-11-17)
+
+**Superseded on 23 November 2026** (Woody: "emails still coming from
+chatbgp.app", after AML emails moved to kyc@brucegillinghampollard.com the
+same day): every email now goes from BGP's own domain first. `senderOrder` in
+`server/shared-mailbox.ts` puts BGP's shared mailbox
+(chatbgp@brucegillinghampollard.com) before the app's chatbgp1@chatbgp.app,
+which is tried only when Microsoft refuses the shared mailbox; AML emails
+never use it. A workspace's own mailbox still goes first, so emails about a
+Landsec property still come from landsec2@chatbgp.app (Woody's choice of
+12 November): whether those move too is Woody's call. Read the rest of this
+section as history.
 
 Woody: "just use chatbgp.app for all emails now". Every email the app sends
 goes through `sendFromFirstMailbox` in `server/shared-mailbox.ts` (the old
@@ -8600,3 +8902,64 @@ and database) takes the request's own token.
 | Migrations | `migrations/` |
 | Build script | `script/build.ts` |
 | Project runbook | `replit.md` |
+
+## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
+
+Layla, on transaction #3965 (The Crown Estate, BGP's client and the
+landlord): "we need it to state that its a simplified due diligance check",
+"We need the app to highlight when a company only needs a simplified (SDD)
+check so that employees dont go down a rabbit hole. we will need the
+reasoning of the SDD saved against this deal", "is there a way of the app
+flagging and drafting this wording for SDD checks?", and of the party box
+asking for a company at Companies House: "this is too intense for the crown
+estate". Rules and the draft: `shared/aml-sdd.ts`; box:
+`client/src/components/aml-sdd.tsx`. Tests: `server/aml-sdd.test.ts` (in
+`npm test`).
+
+- **A UK public body is recorded on the party** (`crm_companies.aml_subject_type
+  = 'public_body'`, `PUT /api/deals/:id/parties/:role/public-body
+  { publicBody }`, BGP staff as themselves, in `server/deal-parties.ts`),
+  as a trust or a private individual is. A name that reads like one
+  (`publicBodyMarkInName`: The Crown Estate by its exact name,
+  `knownPublicBody`; a council, a government department, TfL; never a name
+  with Limited, LLP, LP or Partnership in it) is a suggestion a person
+  presses (`PublicBodyLine` in the party box), never applied by itself: a
+  joint venture or company the body has an interest in is not the body and
+  needs standard checks. A record with a Companies House number, or one
+  already a trust or an individual, is refused. The record is shared, so
+  every transaction with it follows.
+- **Recorded, it signs itself** (`SIGNS_ITSELF_SUBJECTS`: every list that
+  read `('individual', 'trust')` now takes `public_body`): no company that
+  signs, no "Set the company that signs" gap. BGP's checks before asking
+  look nothing up by its name (no Companies House, overseas entities, GLEIF
+  or charity look-up: `isPublicBody` in `runPrecheck`) and screen it by
+  name. People to check reads `public_body`: nobody owes an identity check
+  or a proof of address (`publicBody` on `partyPeople`). The client checks
+  ask only for authority to act (`defaultKycDocs`, `precheckAsks` with
+  `publicBody`), with the identity check unticked.
+- **The level carries its case** (`simplifiedCase` in `shared/aml-policy.ts`,
+  `sdd` on `PartyDueDiligence`): a public body (recorded: confirmed; by its
+  name alone: to confirm), a listed company, a market abroad, an FCA fund.
+  Each has its basis, what the file should hold and when it does not carry
+  across. A red flag or factor still makes the party enhanced.
+- **The box** (`SddBox`, under the party's Next line on Parties & AML, BGP
+  staff): green, "Simplified due diligence (SDD)", the basis, the file
+  list, the caveat, and **Draft the SDD note**: `sddNoteDraft` writes the
+  note from the rules (who, the statutory basis, why SDD, no beneficial
+  owner, authority, the joint venture check), with [square brackets] for
+  what a person fills in; it cannot be saved with one left (`sddNoteProblem`).
+  The chip reads **Simplified (SDD)**. No AI.
+- **Saved on the transaction**: `POST /api/deals/:id/parties/:role/sdd-note`
+  (an agent on the transaction, the Nominated Officer or a Deputy; only
+  while the party reads simplified) writes a `deal_audit_log` line (field
+  `aml_sdd_note`, the role in `old_value`, the note in `new_value`) and a
+  KYC history line (`sdd_note`); `GET /api/deals/:id/sdd-notes` (BGP staff)
+  reads the latest per party. The AML file's history and the AML page's
+  trail list it. A simplified party's sign-off line carries the basis, and
+  the saved note stands as its note.
+- Not built: the SDD note as its own page of the AML file; ChatBGP drafting
+  it; other public bodies' statutes (only The Crown Estate's is known).
+  Checked in a browser on a local copy on 23 November 2026 (a landlord
+  named The Crown Estate: the suggestion, recording it, the draft, saving
+  it). Not run on live: #3965's landlord still has to be recorded as a
+  public body by a person.

@@ -205,7 +205,7 @@ test("the request asks for the trust's documents in plain words, and the ready n
     askPep: false, purpose: "trust_structure" as const,
   };
   const ask = kycRequestEmail(base);
-  assert.equal(ask.subject, "Documents about URC Thames North Trust for Fortis Green Tennis Club (ref 7K2Q9M)");
+  assert.equal(ask.subject, "Documents about URC Thames North Trust for Fortis Green Tennis Club [7K2Q9M]");
   assert.match(ask.html, /Who is who in the trust/);
   assert.match(ask.html, /Upload the documents/);
   assert.doesNotMatch(ask.html, /identity checks|public role/i);
@@ -228,7 +228,9 @@ test("every request email offers certified copies with both lists (Jack, 23 Nove
   const company = kycRequestEmail({ ...base, kind: "company" as any }).html;
   assert.match(company, /Or send certified copies/);
   assert.match(company, /anyone who owns more than 25% of the company/);
-  assert.match(company, /List A<\/strong> \(one, certified by a solicitor\)/);
+  assert.match(company, /List A<\/strong> \(one, certified\)/);
+  assert.match(company, /Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official/);
+  assert.match(company, /sign and date it, and print their name, occupation, address and telephone number/);
   assert.match(company, /residence permit issued by the Home Office/);
   assert.match(company, /council tax bill less than 3 months old/);
   const person = kycRequestEmail({ ...base, kind: "individual" as any }).html;

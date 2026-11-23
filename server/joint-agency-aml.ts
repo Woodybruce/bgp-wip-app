@@ -67,19 +67,6 @@ export function jointAgencyNoteParagraphs(f: JointAgencyFacts, signedBy: string,
   ];
 }
 
-function readFacts(body: any): { facts?: JointAgencyFacts; missing: string[] } {
-  const text = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().replace(/\.$/, "");
-  const rent = typeof body?.rentPa === "number" ? body.rentPa : parseFloat(String(body?.rentPa ?? "").replace(/[£,\s]/g, ""));
-  const facts = { property: text(body?.property), client: text(body?.client), coAgent: text(body?.coAgent), rentPa: rent, tenant: text(body?.tenant) };
-  const missing: string[] = [];
-  if (!facts.property) missing.push("property");
-  if (!facts.client) missing.push("client");
-  if (!facts.coAgent) missing.push("coAgent");
-  if (!(Number.isFinite(facts.rentPa) && facts.rentPa > 0)) missing.push("rentPa");
-  if (!facts.tenant) missing.push("tenant");
-  return missing.length ? { missing } : { facts, missing };
-}
-
 const isClient = async (req: Request) => (await import("./company-scope")).isClientRequestUser(req);
 
 async function noteDocx(paragraphs: string[]): Promise<Buffer> {
@@ -97,40 +84,12 @@ async function noteDocx(paragraphs: string[]): Promise<Buffer> {
 }
 
 export function registerJointAgencyAmlRoutes(app: Express): void {
-  /** Save the note against a deal. All five facts are required. */
-  app.post("/api/crm/deals/:id/joint-agency-note", requireAuth, async (req: Request, res: Response) => {
-    try {
-      if (await isClient(req)) return res.status(403).json({ message: "Not available for client accounts" });
-      const dealId = String(req.params.id);
-      const { rows: [deal] } = await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [dealId]);
-      if (!deal) return res.status(404).json({ message: "Transaction not found" });
-      const { facts, missing } = readFacts(req.body);
-      if (!facts) return res.status(400).json({ message: "The joint agency note needs every detail filled in", missing });
-      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
-      const { rows: [user] } = userId ? await pool.query(`SELECT name FROM users WHERE id = $1`, [userId]) : { rows: [] as any[] };
-      const signedBy = String(user?.name || "").trim();
-      if (!signedBy) return res.status(400).json({ message: "Couldn't tell who is signing the note — sign in again and retry" });
-      const now = new Date();
-      const paragraphs = jointAgencyNoteParagraphs(facts, signedBy, now);
-      const payload = {
-        ...facts,
-        signedBy,
-        signedAt: now.toISOString(),
-        reviewedBy: JOINT_AGENCY_REVIEWER,
-        reviewedAt: now.toISOString(),
-        source: req.body?.hotsFileName ? "heads of terms" : "entered by the agent",
-        hotsFileName: req.body?.hotsFileName ? String(req.body.hotsFileName).slice(0, 200) : null,
-        paragraphs,
-      };
-      const { rows: [row] } = await pool.query(
-        `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name) VALUES ($1, $2, $3, $4, $5) RETURNING id, occurred_at`,
-        [dealId, JOINT_AGENCY_EVENT, JSON.stringify(payload), userId, signedBy],
-      );
-      return res.json({ id: row.id, dealId, savedAt: row.occurred_at, ...payload });
-    } catch (e: any) {
-      console.error("[joint-agency-aml] save failed:", e?.message);
-      return res.status(500).json({ message: e?.message || "Couldn't save the note" });
-    }
+  // Saving a note is retired by Issue 4 of BGP's AML policy (23 November 2026;
+  // Woody: "this joint agent thing isnt allowed anymore we are sending them an
+  // email instead?"): the other side of a joint instruction is always checked,
+  // so no new note may say it needs none. Notes saved before stay readable.
+  app.post("/api/crm/deals/:id/joint-agency-note", requireAuth, (_req: Request, res: Response) => {
+    res.status(410).json({ message: "No longer used: under Issue 4 of BGP's AML policy the other side of a joint instruction is checked. Ask the joint agent for their documents from Parties & AML." });
   });
 
   /** The notes on one deal, newest first (the first is the current one). */

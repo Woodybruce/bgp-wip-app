@@ -5,7 +5,9 @@
 // (`DealAmlStatusCard`): each party's company that signs, who to ask, the
 // people to check, the checks before asking, Send client checks, the KYC4U
 // request and the officers' decisions. Opened by the Investment Tracker when a
-// deal moves to Solicitors, and by the AML pill on a property page. Opening it
+// deal moves to Solicitors, or a sale first goes Live or Available (its seller,
+// BGP's client, is checked before marketing: Issue 4 of BGP's AML policy), and
+// by the AML pill on a property page. Opening it
 // reads the deal's AML status, which starts BGP's checks before asking for a
 // party not checked in 30 days, as opening the deal page's Parties & AML pill
 // does: so it opens only when a person asks or moves a deal to Solicitors.
@@ -15,12 +17,12 @@ import { Button } from "@/components/ui/button";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
 import { ExternalLink } from "lucide-react";
 
-export type AmlDialogDeal = { id: string; name?: string | null; dealRef?: number | string | null; status?: string | null };
+export type AmlDialogDeal = { id: string; name?: string | null; dealRef?: number | string | null; status?: string | null; reason?: "solicitors" | "marketing" };
 
 export function DealAmlDialog({ deal, reason, onClose }: {
   deal: AmlDialogDeal | null;
-  /** "solicitors": opened because the deal has just moved to Solicitors. */
-  reason?: "solicitors" | "property";
+  /** "solicitors": opened because the deal has just moved to Solicitors; "marketing": a sale just on the market (its seller is checked before marketing, Issue 4). */
+  reason?: "solicitors" | "marketing" | "property";
   onClose: () => void;
 }) {
   return (
@@ -29,7 +31,7 @@ export function DealAmlDialog({ deal, reason, onClose }: {
         {deal && (<>
           <DialogHeader>
             <DialogTitle>
-              {reason === "solicitors" ? "At Solicitors: start the AML checks" : "AML and KYC"}
+              {reason === "solicitors" ? "At Solicitors: start the AML checks" : reason === "marketing" ? "On the market: check the seller" : "AML and KYC"}
               <span className="block text-sm font-normal text-muted-foreground mt-0.5">
                 {deal.dealRef != null ? `#${deal.dealRef} ` : ""}{deal.name || "Transaction"}
               </span>

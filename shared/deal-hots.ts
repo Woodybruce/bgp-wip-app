@@ -37,6 +37,8 @@ export interface HotsDrop { what: string; value: string; reason: string }
 export interface HotsReading {
   parties: HotsParty[];
   terms: HotsTerm[];
+  /** Each side's solicitors and agents, from the contact sheet or the clauses (23 November 2026). */
+  contacts: HotsContact[];
   /** The provider read it (as well as the rules). */
   usedAi: boolean;
   /** The document had no text to check the reading against. */
@@ -291,7 +293,8 @@ export function checkHotsAnswer(raw: unknown, documentText: string, opts: HotsTe
     if (problem) { dropped.push({ what: def.label, value: String(value), reason: problem }); continue; }
     terms.push({ key: def.key, value, quote, checked: checkable });
   }
-  return { parties, terms, scanned: !checkable, dropped };
+  const contacts = checkHotsContacts(answer.contacts, text, checkable, dropped);
+  return { parties, terms, contacts, scanned: !checkable, dropped };
 }
 
 // ── The rules reader ────────────────────────────────────────────────────────
@@ -541,6 +544,12 @@ export interface HotsPartyMatch {
   numberIsAnother?: HotsOtherCompany | null;
   /** The CRM records of that name, when the transaction has no party there yet. */
   candidates: DealNoteCandidate[];
+  /**
+   * A guarantor (23 November 2026): the party it stands behind (the tenant, or a
+   * sale's buyer) and that party's brand, and whether it is already the
+   * transaction's guarantor. filed is then a company filed under that brand.
+   */
+  guarantees?: { role: "tenant" | "purchaser"; brand: { id: string; name: string } | null; set: boolean } | null;
 }
 export interface HotsTermView extends HotsTerm { label: string; kind: HotsTermKind; current: number | string | null; state: HotsTermState }
 export interface HotsFiling { unitId: string; unitName: string; onFile: string | null }
@@ -552,6 +561,231 @@ export interface HotsReadReply {
   reading?: HotsReading;
   parties: HotsPartyMatch[];
   terms: HotsTermView[];
+  contacts?: HotsContactView[];
   dealType: string | null;
   filing: HotsFiling | null;
+}
+
+// ── Solicitors and agents (Woody, 23 November 2026: "the HOTs upload / drop
+// didnt pick up their solcitors or ours or their agent") ─────────────────────
+// Heads of terms name each side's solicitors and agents, often in a contact
+// sheet at the end ("Landlord Solicitors | GT - GreenbergTraurig | FAO:
+// <partner> | T: ... | Email: ..."). They are not parties: the screen
+// offers to put each on the transaction, and nothing is saved by a reading.
+
+export type HotsContactKind = "solicitor" | "agent";
+export type HotsContactSide = "landlord" | "tenant" | "vendor" | "purchaser";
+export interface HotsContact {
+  side: HotsContactSide;
+  kind: HotsContactKind;
+  /** The firm as the document writes it. */
+  firm: string;
+  person: string | null;
+  email: string | null;
+  phone: string | null;
+  quote: string;
+  checked: boolean;
+}
+
+export const HOTS_CONTACT_SIDE_WORDS: Record<HotsContactSide, string> = { landlord: "Landlord", tenant: "Tenant", vendor: "Seller", purchaser: "Buyer" };
+export const hotsContactLabel = (c: Pick<HotsContact, "side" | "kind">): string =>
+  `${HOTS_CONTACT_SIDE_WORDS[c.side]}'s ${c.kind === "solicitor" ? "solicitors" : "agent"}`;
+
+const CONTACT_SIDES: Record<string, HotsContactSide> = {
+  landlord: "landlord", lessor: "landlord", tenant: "tenant", lessee: "tenant",
+  vendor: "vendor", seller: "vendor", purchaser: "purchaser", buyer: "purchaser",
+};
+export const hotsContactSide = (raw: unknown): HotsContactSide | null => CONTACT_SIDES[String(raw ?? "").trim().toLowerCase()] || null;
+export function hotsContactKind(raw: unknown): HotsContactKind | null {
+  const s = String(raw ?? "").toLowerCase();
+  if (/solicitor|lawyer|legal|law\s*firm|conveyanc/.test(s)) return "solicitor";
+  if (/agent|surveyor/.test(s)) return "agent";
+  return null;
+}
+
+/** BGP itself: Bruce Gillingham Pollard, or an address at its domain. */
+export function isBgpContact(c: Pick<HotsContact, "firm" | "email">): boolean {
+  return /\bbruce\s+gillingham\s+pollard\b|^\s*bgp\b/i.test(c.firm || "") || /@brucegillinghampollard\.com$/i.test(c.email || "");
+}
+
+/** Where the transaction keeps each side's agent (the firm and its person). */
+export const HOTS_AGENT_FIELDS: Record<HotsContactSide, { firm: string; person: string }> = {
+  landlord: { firm: "leasingAgentId", person: "leasingAgentContactId" },
+  tenant: { firm: "acquisitionAgentId", person: "acquisitionAgentContactId" },
+  vendor: { firm: "vendorAgentId", person: "vendorAgentContactId" },
+  purchaser: { firm: "purchaserAgentId", person: "purchaserAgentContactId" },
+};
+
+const EMAIL_RE = /[A-Z0-9._%+'-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}/i;
+const PHONE_LINE = /^(?:t|tel|telephone|m|mob|mobile|phone|dd|ddi|direct(?:\s+line)?)\s*[:.]?\s*(\+?[\d\s()-]{9,})$/i;
+const digitsOf = (s: unknown): string => String(s ?? "").replace(/\D+/g, "");
+
+/** The provider's contacts, kept only where the document's own words carry them. */
+function checkHotsContacts(raw: unknown, text: string, checkable: boolean, dropped: HotsDrop[]): HotsContact[] {
+  const out: HotsContact[] = [];
+  const textKey = alnum(text);
+  const textDigits = digitsOf(text);
+  const lower = text.toLowerCase();
+  for (const c of Array.isArray(raw) ? raw.slice(0, 12) : []) {
+    const side = hotsContactSide(c?.side);
+    const kind = hotsContactKind(c?.kind);
+    const firm = oneLine(c?.firm).slice(0, 160);
+    const quote = oneLine(c?.quote).slice(0, 400);
+    if (!side || !kind || firm.length < 2 || NOT_A_PARTY.test(firm)) continue;
+    const what = hotsContactLabel({ side, kind });
+    if (checkable && !quoteInDocument(quote, text)) { dropped.push({ what, value: firm, reason: "its words are not in the document" }); continue; }
+    if (checkable && !textKey.includes(alnum(firm))) { dropped.push({ what, value: firm, reason: "the firm is not in the document" }); continue; }
+    let person: string | null = oneLine(c?.person).slice(0, 120) || null;
+    if (person && checkable && !textKey.includes(alnum(person))) person = null;
+    let email: string | null = (EMAIL_RE.exec(String(c?.email ?? "")) || [])[0] || null;
+    if (email && checkable && !lower.includes(email.toLowerCase())) email = null;
+    let phone: string | null = oneLine(c?.phone).slice(0, 40) || null;
+    if (phone && (digitsOf(phone).length < 9 || (checkable && !textDigits.includes(digitsOf(phone))))) phone = null;
+    if (out.some(x => x.side === side && x.kind === kind)) continue;
+    out.push({ side, kind, firm, person, email, phone, quote, checked: checkable });
+  }
+  return out;
+}
+
+// "Landlord Solicitors", "Landlord's Agent", "Tenant's Solicitors: ...", "12. Purchaser's solicitors".
+// After the label: a separator and the firm, the firm itself (a PDF flattens a
+// contact sheet's row onto one line), or nothing (the firm is on the next lines).
+const CONTACT_LABEL = new RegExp(String.raw`^\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:the\s+)?(landlord|lessor|tenant|lessee|vendor|seller|purchaser|buyer)(?:'s|s'|s)?\s+((?:letting\s+|leasing\s+|acquiring\s+|acquisition\s+|joint\s+|selling\s+|buying\s+)?(?:solicitors?|lawyers?|legal\s+advisers?|agents?|surveyors?))\b\s*(?:([:\-–—|])\s*)?(.*)$`, "i");
+const SIDE_HEADING = /^(?:the\s+)?(?:landlord|lessor|tenant|lessee|vendor|seller|purchaser|buyer|guarantor)s?\s*:?$/i;
+// A line of a contact's own details (as opposed to the next clause's "Term: 10 years").
+const CONTACT_FIELD = /^(?:fao|f\.a\.o\.?|for the attention of|attention|attn|contact|company|firm|organisation|organization|name|address|tel|telephone|t|m|mob|mobile|phone|dd|ddi|direct(?:\s+line)?|e-?mail(?:\s+address)?|dx|ref|reference)\s*[:.]/i;
+const OTHER_LABEL = /^[A-Za-z][A-Za-z'’ ]{1,40}\s*:\s*\S/;
+// Words of a heads of terms clause heading: "Rent Free" or "Service Charge" is never a person.
+const HEADING_WORDS = /\b(?:rent|free|review|reviews|break|option|service|charge|term|use|user|class|lease|capital|contribution|deposit|guarantor|guarantee|insurance|repair|repairs|alienation|costs?|completion|exchange|conditions?|premises|property|demise|signage|rates|outgoings|vat|fit|works|planning|licence|access|schedule|timing|date|vacant|possession|subject|contract|landlord|tenant|vendor|purchaser|price|area|floor|unit|street|road|lane|square|house|centre|park)\b/i;
+const looksLikePerson = (l: string): boolean =>
+  /^[A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,3}$/.test(l) && !LEGAL_END.test(l) && !HEADING_WORDS.test(l)
+  && !/\b(?:llp|solicitors|law|legal|partners|limited|ltd|plc|agents?|property|properties|estates?|group|associates|company|surveyors)\b/i.test(l);
+// A firm written on the label's own line with no separator: a few capitalised words, never a sentence.
+const SMALL_WORDS = new Set(["and", "&", "of", "the", "de", "la", "le", "du", "von", "van", "-", "–", "+"]);
+export function firmLike(raw: string): boolean {
+  const s = oneLine(raw);
+  if (!s || !/^[A-Z0-9]/.test(s)) return false;
+  const words = s.split(" ");
+  if (words.length > 8) return false;
+  return words.every(w => SMALL_WORDS.has(w.toLowerCase()) || /^[A-Z0-9(\["'&]/.test(w));
+}
+const barePhone = (l: string): boolean => /^\+?[\d\s()-]{9,}$/.test(l) && digitsOf(l).length >= 9;
+// The keyword in any case, the name capitalised.
+const INLINE_FAO = /(?:\b[Ff]\.?[Aa]\.?[Oo]\b\.?|\b(?:[Ff]or the attention of|FOR THE ATTENTION OF|[Aa]ttention|ATTENTION|[Aa]ttn|ATTN|[Cc]ontact|CONTACT)\b)\s*[:.]?\s*([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){1,3})/;
+
+/** One contact block's firm, person, email and phone. */
+function contactFromBlock(block: string[]): { firm: string; person: string | null; email: string | null; phone: string | null } | null {
+  let firm: string | null = null;
+  let person: string | null = null;
+  let email: string | null = null;
+  let phone: string | null = null;
+  const plain: string[] = [];
+  for (const raw of block) {
+    const l = raw.replace(/^[-•*]\s*/, "").trim();
+    if (!l) continue;
+    const e = EMAIL_RE.exec(l);
+    if (e) {
+      email = email || e[0];
+      if (/^(?:e-?mail(?:\s+address)?)\s*[:.]/i.test(l) || l === e[0]) continue;
+    }
+    const ph = PHONE_LINE.exec(l);
+    if (ph) { phone = phone || oneLine(ph[1]); continue; }
+    if (barePhone(l)) { phone = phone || l; continue; }
+    const fao = /^(?:fao|f\.a\.o\.?|for the attention of|attention|attn|contact|name)\s*[:.]?\s*(.+)$/i.exec(l);
+    if (fao) { person = person || oneLine(fao[1]); continue; }
+    const co = /^(?:company|firm|organisation|organization)\s*[:.]\s*(.+)$/i.exec(l);
+    if (co) { firm = firm || oneLine(co[1]); continue; }
+    if (/^(?:address|tel|t|m|mobile|phone|e-?mail|dx|ref|reference)\s*[:.]/i.test(l)) continue;
+    plain.push(l);
+  }
+  // With no "Company:" line the first plain line is the firm, and a name under it the person.
+  for (const l of plain) {
+    if (!firm) { firm = l; continue; }
+    if (!person && looksLikePerson(l)) { person = l; continue; }
+  }
+  // "Shoosmiths LLP (FAO Jane Smith)": the person written beside the firm.
+  if (!person) for (const l of block) { const f = INLINE_FAO.exec(l); if (f && !HEADING_WORDS.test(f[1])) { person = f[1]; break; } }
+  if (!firm) return null;
+  firm = oneLine(firm.split(/\s*[,(;]\s*/)[0]).replace(/[.:\s]+$/, "");
+  if (firm.length < 2 || NOT_A_PARTY.test(firm) || EMAIL_RE.test(firm)) return null;
+  return { firm: firm.slice(0, 160), person: person ? person.slice(0, 120) : null, email, phone };
+}
+
+/** What the rules read of each side's solicitors and agents: a label, then its lines up to the next label or clause. */
+export function readHotsContactsByRules(documentText: string, opts: HotsTextOptions = {}): HotsContact[] {
+  const text = String(documentText || "");
+  const checkable = documentHasText(text, opts);
+  const lines = text.split(/\r?\n/).map(l => oneLine(l.replace(/[‘’‛′]/g, "'")));
+  const out: HotsContact[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = CONTACT_LABEL.exec(lines[i]);
+    if (!m) continue;
+    const side = hotsContactSide(m[1]);
+    const kind = hotsContactKind(m[2]);
+    const rest = oneLine(m[4]);
+    // Words after the label with no separator are the firm only when they read as a firm name
+    // ("Landlord Solicitors GT - GreenbergTraurig"), never a sentence ("the Landlord's solicitors will ...").
+    if (!m[3] && rest && !firmLike(rest)) continue;
+    if (!side || !kind || out.some(x => x.side === side && x.kind === kind)) continue;
+    const block: string[] = rest ? [rest] : [];
+    for (let j = i + 1; j < lines.length && block.length < 8; j++) {
+      const l = lines[j];
+      if (!l) continue;
+      // The next label, a row's number, the next side's heading or the next clause ends the block
+      // (a telephone number on a line of its own is the contact's).
+      if (!barePhone(l) && (CONTACT_LABEL.test(l) || /^\d{1,3}\.?$/.test(l) || SIDE_HEADING.test(l) || NUMBERED.test(l))) break;
+      if (OTHER_LABEL.test(l) && !CONTACT_FIELD.test(l)) break;
+      block.push(l);
+    }
+    const c = contactFromBlock(block);
+    if (!c) continue;
+    out.push({ side, kind, ...c, quote: oneLine(block.join(" ")).slice(0, 400), checked: checkable });
+  }
+  return out;
+}
+
+/** The provider's contacts first, its blanks filled from the rules' reading of the same firm; the rules' others after. */
+export function mergeHotsContacts(ai: HotsContact[] | null | undefined, rules: HotsContact[]): HotsContact[] {
+  const out: HotsContact[] = [];
+  for (const a of ai || []) {
+    const r = rules.find(x => x.side === a.side && x.kind === a.kind);
+    const same = r && (alnum(r.firm).includes(alnum(a.firm)) || alnum(a.firm).includes(alnum(r.firm)));
+    out.push(same ? { ...a, person: a.person || r!.person, email: a.email || r!.email, phone: a.phone || r!.phone } : a);
+  }
+  for (const r of rules) if (!out.some(x => x.side === r.side && x.kind === r.kind)) out.push(r);
+  return out;
+}
+
+/** A contact read beside what the transaction holds for it (server/deal-hots.ts hotsContactViews). */
+export interface HotsContactView {
+  read: HotsContact;
+  /** The side on this transaction (a sale's landlord is its seller). */
+  side: HotsContactSide;
+  /** Bruce Gillingham Pollard itself: nothing to set. */
+  us: boolean;
+  /** The side BGP acts for. */
+  clientSide: boolean;
+  /** What the transaction holds for it now: the agent firm, or our client's solicitors. */
+  onDeal: string | null;
+  /** Already that firm. */
+  same: boolean;
+  /** Solicitors: checked at the SRA on this transaction. */
+  checked: boolean;
+}
+
+/** Contacts the screen sends back, kept only in the shape the reader makes. */
+export function contactsFromBody(raw: unknown): HotsContact[] {
+  const out: HotsContact[] = [];
+  for (const c of Array.isArray(raw) ? raw.slice(0, 12) : []) {
+    const side = hotsContactSide(c?.side);
+    const kind = hotsContactKind(c?.kind);
+    const firm = oneLine(c?.firm).slice(0, 160);
+    if (!side || !kind || firm.length < 2 || out.some(x => x.side === side && x.kind === kind)) continue;
+    const email = (EMAIL_RE.exec(String(c?.email ?? "")) || [])[0] || null;
+    out.push({
+      side, kind, firm, person: oneLine(c?.person).slice(0, 120) || null, email,
+      phone: oneLine(c?.phone).slice(0, 40) || null, quote: oneLine(c?.quote).slice(0, 400), checked: !!c?.checked,
+    });
+  }
+  return out;
 }

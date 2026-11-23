@@ -77,7 +77,10 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   // corporate trustee set as the company that signs: Fortis Green, 23 November 2026).
   const trustRecord = party.kind === "company"
     && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
-  const ownRecord = trustRecord && !party.entityId;
+  // A UK public body (Layla, 23 November 2026): no owners to verify and nobody owes an ID.
+  const publicBody = party.kind === "company" && !party.entityId
+    && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'public_body'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  const ownRecord = (trustRecord || publicBody) && !party.entityId;
   // A private individual's own record is checked too: its sanctions lines name
   // the people on that side (22 November 2026: People read "not screened").
   if (party.kind === "individual" || (party.kind === "company" && (party.entityId || ownRecord))) {
@@ -88,11 +91,18 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
   // A trust's structure as BGP recorded it (23 November 2026): its people are the ones to check.
   const trust = trustRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
+  // The party's guarantors (23 November 2026): a person who guarantees and a
+  // guarantor company's owners are checked with the party.
+  const guarantors = party.dealId
+    ? await import("./deal-guarantors").then(m => m.guarantorsForParty(String(party.dealId), party.companyId)).catch(() => [])
+    : [];
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
     // Documents BGP uploaded on the party, read and checked (23 November 2026).
     uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
     ...(trust !== undefined ? { trust } : {}),
+    ...(guarantors.length ? { guarantors } : {}),
+    ...(publicBody ? { publicBody: true } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });
 }

@@ -16,7 +16,19 @@ test("the Investment Tracker opens it on a move to Solicitors, single and bulk",
   const tracker = read("client/src/pages/investment-tracker.tsx");
   assert.match(tracker, /legacyToCode\(vars\.data\.status\) === "SOL" && !!body\?\.dealId/);
   assert.match(tracker, /legacyToCode\(status\) === "SOL"/);
-  assert.match(tracker, /<DealAmlDialog deal=\{amlDeal\} reason="solicitors"/);
+  assert.match(tracker, /<DealAmlDialog deal=\{amlDeal\} reason=\{amlDeal\?\.reason \|\| "solicitors"\}/);
+});
+
+// Issue 4 of BGP's AML policy (23 November 2026): the seller, BGP's client, is
+// checked before marketing, so a sale's first move to Live or Available opens it too.
+test("the Investment Tracker opens it when a sale first goes on the market", () => {
+  const service = read("server/investment-tracker-service.ts");
+  assert.match(service, /const toMarket = statusMoved && row\.boardType === "Sales" && \["LIVE", "AVA"\]\.includes/);
+  assert.match(service, /\.\.\.\(toMarket && row\.dealId \? \{ amlBeforeMarketing: true \} : \{\}\)/);
+  const tracker = read("client/src/pages/investment-tracker.tsx");
+  assert.match(tracker, /\} else if \(body\?\.amlBeforeMarketing && body\?\.dealId\) \{/);
+  assert.match(tracker, /reason: "marketing" \}\);/);
+  assert.match(read("client/src/components/deal-aml-dialog.tsx"), /reason === "marketing" \? "On the market: check the seller"/);
 });
 
 test("the property page offers an AML pill per open deal, to BGP staff only", () => {

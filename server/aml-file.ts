@@ -20,6 +20,7 @@
 // party (the company that signs when the deal names one), so Request KYC4U
 // check offers it with the other documents and the bookmark attaches it.
 
+import { guarantorLine, type DealGuarantorView } from "@shared/deal-guarantor";
 import { KYC4U_RETIRED_WORDS } from "@shared/kyc4u-portal";
 import type { JointAgentPartyView } from "@shared/joint-agent-checks";
 import { Router, type Request, type Response } from "express";
@@ -29,7 +30,8 @@ import { pool } from "./db";
 import { getFile } from "./file-storage";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
 import { amlRegime, type PartyDueDiligence } from "@shared/aml-policy";
-import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords } from "@shared/aml-file";
+import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords, amlStillNeeded } from "@shared/aml-file";
+import { amlDeadline } from "@shared/aml-dashboard";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
 import type { PartyKycState } from "@shared/party-kyc";
@@ -86,6 +88,8 @@ export interface AmlFileParty {
   joint?: JointAgentPartyView | null;
   // A trust's structure as BGP recorded it, as lines (23 November 2026); null when not a trust.
   trustStructure?: string[] | null;
+  // A tenant's or buyer's guarantors, with where BGP's checks on each stand (23 November 2026).
+  guarantors?: DealGuarantorView[];
 }
 
 export interface AmlFileData {
@@ -110,7 +114,7 @@ export interface AmlFileData {
   madeAt: string;
 }
 
-const HISTORY_FIELDS = ["aml_sign_off", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "aml_reliance", "aml_public_figure", "aml_stopped", "client_checks_sent", "client_checks_link", "aml_file"];
+const HISTORY_FIELDS = ["aml_sign_off", "aml_sdd_note", "kyc4u_result", "aml_red_flag", "aml_person_contact", "aml_not_required", "aml_reliance", "aml_public_figure", "aml_stopped", "client_checks_sent", "client_checks_link", "aml_file"];
 
 /** Everything BGP holds on the checks of the deal's parties (all of them, or the roles given). */
 export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | null, me: { id: string; name: string }): Promise<AmlFileData | null> {
@@ -139,7 +143,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   const view = await loadDealParties(pool, dealId).catch(() => null);
   const brandIds = present.map(r => text(deal[DEAL_PARTY_COLUMNS[r].brand]));
   const kinds = (await pool.query(
-    `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [brandIds])).rows;
+    `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [brandIds])).rows;
   const individuals = new Set(kinds.filter((r: any) => r.kind === "individual").map((r: any) => String(r.id)));
   // A trust or foundation is checked on its own record too (21 November 2026).
   const signsItself = new Set(kinds.map((r: any) => String(r.id)));
@@ -226,6 +230,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       brand: { id: brandId, name: text(brand.name), number: text(brand.companies_house_number) || null },
       company: pv?.company ? { id: pv.company.id, name: pv.company.name, number: pv.company.companiesHouseNumber || null } : null,
       person: pv?.person ? { name: pv.person.name, email: pv.person.email || null } : null,
+      guarantors: pv?.guarantors || [],
       individual: kind === "individual",
       state: (states as Record<string, PartyKycState>)[role] || null,
       notRequired: mark && mark.companyId === brandId ? { reasonWords: mark.reasonWords, comment: mark.comment || null, by: mark.by || null, at: mark.at || null } : null,
@@ -520,6 +525,47 @@ function writeJointAgent(w: Writer, j: JointAgentPartyView) {
   if (c.unread) w.kv("Not read", `${c.unread} file${c.unread === 1 ? "" : "s"}: open them on the transaction`, AMBER);
 }
 
+/** What the party still needs, from what the file holds (shared/aml-file.ts amlStillNeeded). */
+export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = new Date()): string[] {
+  const status = String(p.state?.status || "").toLowerCase();
+  const expires = p.state?.expiresAt ? new Date(p.state.expiresAt as any).getTime() : null;
+  const settled = status === "rejected" ? "rejected" as const
+    : p.notRequired ? "not_required" as const
+    : status === "approved" && (expires === null || expires >= now.getTime()) ? "approved" as const : null;
+  const pre = p.precheck;
+  const ranAt = pre?.ranAt ? new Date(pre.ranAt).getTime() : null;
+  const precheck = !pre || pre.state === "none" || pre.state === "cap" ? "not_run" as const
+    : pre.state === "off" ? "off" as const
+    : pre.state === "running" || pre.state === "waiting" ? "running" as const
+    : pre.state === "done" && ranAt !== null && now.getTime() - ranAt > 30 * 86400000 ? "old" as const : "done" as const;
+  const openRequests = (p.requests || []).filter((r: any) => !["cancelled", "expired", "finished"].includes(String(r.status)));
+  return amlStillNeeded({
+    deadline: amlDeadline(p.role, data.deal.status, p.client ? p.role : "other"),
+    settled,
+    needsCompany: !p.individual && !p.trust,
+    companySet: !!p.company,
+    precheck,
+    flags: p.flags.map(f => ({ label: f.label, factor: !!f.factor })),
+    level: p.level?.level || null,
+    sanctionsOnly: data.regime.regime === "sanctions_only",
+    peopleOutstanding: p.people?.outstanding || [],
+    requests: openRequests.map((r: any) => ({
+      ref: String(r.ref || ""),
+      to: text(r.person?.name) || text(r.recipientName) || text(r.recipientEmail) || "the client",
+      missing: [
+        ...(r.needsIdCheck && !["approved", "submitted"].includes(String(r.idState || "")) ? ["identity check"] : []),
+        // "Photo ID" reads "photo ID" in a sentence; "ID for each owner" keeps its capitals.
+        ...(r.docs || []).filter((d: any) => !d.done).map((d: any) => String(d.title || "")).filter(Boolean)
+          .map((t: string) => /^[A-Z][A-Z]/.test(t) ? t : t[0].toLowerCase() + t.slice(1)),
+      ],
+    })),
+    anyRequest: (p.requests || []).some((r: any) => String(r.status) !== "cancelled"),
+    jointGaps: p.joint?.gaps || [],
+    trustGaps: p.trust && (p.trustStructure || []).some(l => /^No structure recorded/.test(l)) ? ["add the trust's information: what kind of trust, who set it up, the trustees and who benefits"] : [],
+    guarantors: (p.guarantors || []).map(g => ({ name: g.name, state: g.checks.state })),
+  });
+}
+
 function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map<string, string>) {
   const doc = w.doc;
   const name = p.company?.name || p.brand.name;
@@ -531,6 +577,8 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   w.kv("Brand on the transaction", p.brand.name);
   w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
+  if (p.guarantors?.length) w.kv(p.guarantors.length > 1 ? "Guarantors" : "Guarantor", p.guarantors.map(g => guarantorLine(g)).join("\n"),
+    p.guarantors.some(g => g.checks.state !== "done") ? AMBER : INK);
   if (p.trustStructure) w.kv("Trust structure (recorded by BGP)", p.trustStructure.join("\n"));
   const state = amlFileStateWords(p.state, p.notRequired);
   w.kv("Where it stands", state.words, state.tone === "done" ? GREEN : state.tone === "flag" ? RED : AMBER);
@@ -541,6 +589,10 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   }
   if (p.notRequired?.comment) w.kv("Not required because", p.notRequired.comment);
   if (p.unread.length) w.kv("Could not be read", `${[...new Set(p.unread)].join("; ")}. Make the file again, or check these on the transaction.`, RED);
+
+  // What is still needed at this point, in BGP's AML policy's order (Issue 4).
+  const still = stillNeededFor(data, p);
+  w.kv("Still needed", still.join("\n"), still.length === 1 && still[0].startsWith("Nothing") ? GREEN : AMBER);
 
   // The company, as the register gives it.
   const c = p.precheck?.company;

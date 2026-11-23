@@ -272,7 +272,12 @@ export async function updateTrackerAsset(id: string, body: Record<string, any>, 
     }
   }
 
-  return { status: 200, body: { ...row, amlWarning } };
+  // A sale that has just gone on the market (Live or Available, from an
+  // earlier stage): BGP's AML policy, Issue 4, checks the seller, BGP's
+  // client, before marketing, so the tracker opens the AML window for it.
+  const toMarket = statusMoved && row.boardType === "Sales" && ["LIVE", "AVA"].includes(legacyToCode(updates.status as string) || "")
+    && !["LIVE", "AVA", "NEG", "HOT", "SOL", "UOX", "EXC", "COM", "INV"].includes(legacyToCode(before?.status || "") || "");
+  return { status: 200, body: { ...row, amlWarning, ...(toMarket && row.dealId ? { amlBeforeMarketing: true } : {}) } };
 }
 
 // ChatBGP passes names, not ids: link client / vendor / buyer to the CRM

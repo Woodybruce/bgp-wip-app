@@ -3088,6 +3088,22 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       undone_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_party_exemptions_deal_idx ON kyc_party_exemptions (deal_id) WHERE undone_at IS NULL`,
+    // A transaction's guarantors (Woody, 23 November 2026: "one is signing
+    // cornhill bar and the other is guaranteeing"): a company or person filed
+    // under the party it stands behind. server/deal-guarantors.ts.
+    `CREATE TABLE IF NOT EXISTS deal_guarantors (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      role text NOT NULL,
+      company_id varchar NOT NULL,
+      entity_id varchar NOT NULL,
+      added_by varchar,
+      added_by_name text,
+      added_at timestamptz NOT NULL DEFAULT now(),
+      removed_at timestamptz,
+      removed_by_name text
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS deal_guarantors_live_uq ON deal_guarantors (deal_id, role, entity_id) WHERE removed_at IS NULL`,
     // A trust's structure, checked by BGP itself (Jack, 23 November 2026:
     // "Remove KYC4u on trusts. We need you to build the trust structuring"):
     // one per trust record, shared by its deals. server/trust-structure.ts.

@@ -47,8 +47,13 @@ test('each party is read the deal card\'s way', () => {
   assert.match(read('shared/aml-dashboard.ts'), /f\.kyc\.status === "in_review" && f\.kyc4uInReview/);
   // A closed deal's undecided parties are their own pill, never To do.
   assert.match(feed, /bucket: amlBucket\(stage, due, amlDealClosed\(p\.deal\.status\)\)/);
-  // An investment deal only from Solicitors, as everywhere off the Investment Tracker.
-  assert.match(feed, /dealLeftTrackerSql\("d"\)/);
+  // Off the Investment Tracker as everywhere (from Solicitors), and earlier where Issue 4 needs checks:
+  // an investment sale from Live or Available, any investment deal from heads of terms.
+  assert.match(feed, /AND \$\{amlBoardDealSql\("d"\)\}`;/);
+  assert.match(feed, /\$\{dealLeftTrackerSql\(alias\)\} OR \(\$\{investmentDealSql\(alias\)\}/);
+  // Who BGP acts for decides when each party is due and its deadline.
+  assert.match(feed, /const due = amlDue\(p\.role, p\.deal\.status, clientRole\);/);
+  assert.match(feed, /late: amlLate\(stage, deadline\),/);
   // It reads; it never writes.
   assert.doesNotMatch(feed, /\b(INSERT INTO|UPDATE|DELETE FROM)\b/);
 });
@@ -64,12 +69,27 @@ test('the pill is BGP staff only on Deals', () => {
 test('the checks table has a scroll bar above it and a heading that stays in view (Woody, 2026-11-20)', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
   // The rows scroll inside ScrollableTable's box, which the app's sticky table heading needs; a page-height wrapper never scrolls.
-  assert.match(page, /<ScrollableTable minWidth=\{1000\} topScrollbar>\s*<table className="w-full text-sm" data-testid="aml-table">/);
+  assert.match(page, /<ScrollableTable minWidth=\{\d+\} topScrollbar>\s*<table className="w-full text-sm" data-testid="aml-table">/);
   assert.doesNotMatch(page, /<div className="rounded-lg border overflow-x-auto">\s*<table className="w-full text-sm" data-testid="aml-table">/);
   const box = read('client/src/components/scrollable-table.tsx');
   assert.match(box, /\{topScrollbar && \(\s*<div ref=\{topScrollRef\} className="sync-scroll-top"/);
   assert.match(box, /const els = \[tableScrollRef\.current, bottomScrollRef\.current, topScrollRef\.current\]/, 'the bars and the table scroll sideways together');
   assert.match(read('client/src/index.css'), /\.sync-scroll-top \{/);
+});
+
+test('the table shows the transaction status, the red flags under due diligence and every agent (Woody, 23 November 2026)', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(page, /<th className="text-left font-medium px-3 py-2">Transaction status<\/th>/);
+  assert.match(page, /<th className="text-left font-medium px-3 py-2">AML stage<\/th>/);
+  assert.match(page, /<th className="text-left font-medium px-3 py-2">Due diligence and red flags<\/th>/);
+  assert.doesNotMatch(page, />Red flags<\/th>/, 'the red flags sit under due diligence, not in a column of their own');
+  assert.match(page, /<td className="px-3 py-2"><DealStatusChip row=\{r\} \/><\/td>/);
+  assert.match(page, /<td className="px-3 py-2 max-w-\[240px\]"><DiligenceCell row=\{r\} \/><\/td>/);
+  // Every agent on a line of their own, never cut off.
+  assert.match(page, /\{row\.agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
+  assert.doesNotMatch(page, /r\.agents\.join\(", "\)/);
+  // The status in the Transactions board's words, a letting's AVA as Marketing.
+  assert.match(read('shared/aml-dashboard.ts'), /words: dealStatusLabel\(row\.dealStatus, row\.dealType\)/);
 });
 
 test('the top folds once the table scrolls, keeping the title and pills (Woody, 22 November 2026)', () => {

@@ -34,6 +34,7 @@ interface Party {
   // What BGP's checks before asking found, for "ask only what is left".
   askInput: PrecheckAskInput | null; precheckRanAt: string | null;
   // A trust (23 November 2026): its documents held and its trustees recorded.
+  publicBody?: boolean;
   trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
 }
 export interface ClientCheckRequest {
@@ -279,6 +280,7 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
 const ROLE_WORDS: Record<KycPersonRole, string> = {
   owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them",
   settlor: "Settlor", trustee: "Trustee", protector: "Protector", beneficiary: "Beneficiary", controller: "Other control",
+  guarantor: "Guarantor", guarantor_owner: "Owns the guarantor",
 };
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {
@@ -389,9 +391,13 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <span className="font-medium text-sm">{person.name}</span>
           {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
           <span className="inline-flex items-center gap-0.5 text-muted-foreground"><Tick ok={idOk} />ID</span>
+          {!pf && !relied && person.address.notNeeded && !person.address.proof ? (
+            <span className="text-muted-foreground" data-testid={`person-address-chip-not-needed-${testKey}`}>No address needed</span>
+          ) : (
           <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
             {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || !!relied || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
           </span>
+          )}
           {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>{pf.method === "certified" ? "Certified documents" : "Public figure"}</span>}
           {relied && <span className={`${pillMetrics} bg-violet-50 text-violet-800 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900`} data-testid={`person-relied-${testKey}`}>Covered by reliance</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
@@ -432,6 +438,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
         {pf
           ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the {pf.method === "certified" ? "certified documents" : "verification from public sources"}</span></li>
           : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
+          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed from the person acting, who is not an owner</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>
@@ -605,7 +612,7 @@ function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
         <DialogHeader>
           <DialogTitle>{person.name}: certified documents</DialogTitle>
           <DialogDescription>
-            One List A document certified by a solicitor (passport, photocard driving licence or Home Office residence permit) and one List B (a utility or council tax bill under 3 months old). It counts for their ID and address.
+            One List A document certified by a solicitor, lawyer or notary, a chartered accountant, or a bank or building society official (passport, photocard driving licence or Home Office residence permit) and one List B (a utility or council tax bill under 3 months old). It counts for their ID and address.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -1009,14 +1016,15 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const veriff = !!data?.veriff;
   // The online identity check is offered only when it is set up; without
   // it, photo ID is one of the documents (ticked by default).
-  const wantId = veriff && (idCheck ?? true);
+  // A UK public body: simplified due diligence, no identity check unless someone ticks it.
+  const wantId = veriff && (idCheck ?? !party?.publicBody);
   const pickedContact = party?.contacts.find(c => c.id === (contactId ?? party?.contactId ?? party?.contacts[0]?.id ?? "")) || null;
   const usingOther = contactId === SOMEONE_ELSE || (!!party && !party.contacts.length);
   const toName = via ? personName.trim() : usingOther ? name.trim() : pickedContact?.name || "";
   // What is still to ask once BGP's own checks are counted (Woody,
   // 2026-11-17: "we need to do everyhting we can before we ask questions on
   // someone"): the same rule the server records the request by.
-  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null }) : null;
+  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null, publicBody: chosenKind === "company" && !!party.publicBody }) : null;
   const chosenDocs = docs || asks?.docs || [];
   const confirmOwners = chosenKind === "company" && !chosenDocs.includes("ownership") && asks?.confirmOwners?.length ? asks.confirmOwners : null;
   const notAsked = (asks?.notAsked || []).filter(n => !chosenDocs.includes(n.key));

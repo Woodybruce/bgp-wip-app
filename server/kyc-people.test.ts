@@ -106,7 +106,10 @@ test("Woody's check on Jack's link counts for Woody, not for Jack, and a file on
   assert.deepEqual(woody.outstanding, ["proof of address"]);
   assert.equal(jack.id.state, "not_started");
   assert.equal(jack.id.someoneElse, "Woody Bruce");
-  assert.deepEqual(jack.outstanding, ["identity check", "proof of address"]);
+  // Jack acts for the company and is not an owner: his identity check, no proof
+  // of address (Woody, 23 November 2026: "If they don't need it then let's not require it").
+  assert.equal(jack.address.notNeeded, true);
+  assert.deepEqual(jack.outstanding, ["identity check"]);
   assert.equal(jack.canSend, true, "his request is finished, so nothing live asks for them");
   assert.equal(huseyn.id.state, "not_started", "a passport on the old owners' step is not his check");
   assert.deepEqual(out.loose, [{ ref: "7MJEGT", files: 2, names: ["Woody Bruce", "Huseyn Mirhadiyev"] }]);
@@ -178,6 +181,27 @@ test("a listed company, an unread register and a private individual", () => {
   });
   assert.equal(listed.basis, "listed");
   assert.deepEqual(listed.people.map(p => p.name), ["Jack Barratt"]);
+  // The person acting for a listed group owes their identity check, not a
+  // proof of address (Woody, 23 November 2026: "If HMRC don't require it then stop it").
+  const acting = listed.people[0];
+  assert.equal(acting.address.notNeeded, true);
+  assert.deepEqual(acting.outstanding, ["identity check"]);
+  assert.deepEqual(personRequestAsks(acting, false).docs, ["photo_id"]);
+  assert.deepEqual(listed.outstanding, ["Jack Barratt: identity check"]);
+  // Nor for a company that is not listed (Woody, 23 November 2026: "If they
+  // don't need it then let's not require it"): HMRC asks the person acting for
+  // their identity and their authority.
+  const unlisted = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: { ...bgpLtd, owners: [] }, sanctions: sanctions([]) }, requests: [request({})] });
+  const same = unlisted.people.find(p => p.roles.includes("acting"))!;
+  assert.equal(same.address.notNeeded, true);
+  assert.deepEqual(same.outstanding, ["identity check"]);
+  assert.deepEqual(personRequestAsks(same, true).docs, []);
+  // The person acting who is also an owner gives one, as an owner.
+  const ownerActing = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({ recipientName: "Woody Bruce" })] });
+  const woody = ownerActing.people.find(p => p.roles.includes("acting"))!;
+  assert.deepEqual(woody.roles, ["owner", "acting", "director"]);
+  assert.equal(woody.address.notNeeded, undefined);
+  assert.deepEqual(woody.outstanding, ["identity check", "proof of address"]);
   const unread = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: null, requests: [request({})] });
   assert.equal(unread.basis, "not_read");
   assert.deepEqual(unread.people.map(p => [p.name, p.roles]), [["Jack Barrat", ["acting"]]]);
