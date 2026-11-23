@@ -229,6 +229,16 @@ test("what their files cover is set against the people the checks need, each by 
   assert.ok(c.missing.some(m => m.startsWith("Carol White")));
 });
 
+test("the person acting for a listed group is not asked for a proof of address", () => {
+  const c = jointCoverage({
+    partyName: "Big Plc", kind: "company", now: today,
+    people: [{ name: "Carol White", roles: ["acting"], noAddress: true }],
+    readings: [read({ file: "passport-carol.pdf", kind: "photo_id", title: "UK passport", date: "2024-01-10", expiry: "2034-01-09", people: [{ name: "Carol White", born: null }] })],
+  });
+  assert.deepEqual(c.people[0].missing, []);
+  assert.ok(!c.missing.some(m => /proof of address/i.test(m)));
+});
+
 test("an expired ID, a failed check, a screening match and another date of birth are listed to look at", () => {
   const c = jointCoverage({
     partyName: "Jane Smith", kind: "individual", now: today,

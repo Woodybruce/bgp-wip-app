@@ -1085,6 +1085,8 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
+    // Woody, 23 November 2026: "If HMRC don't require it then stop it".
+    drop("proof_of_address", "The person dealing with us for a listed group: HMRC asks for their identity check and their authority, not a proof of address.");
   } else if (input.owners.length && input.ownersAbroad?.length) {
     // A company registered abroad owns it: Companies House cannot show who
     // owns that company, so the structure chart and the owners' IDs are asked

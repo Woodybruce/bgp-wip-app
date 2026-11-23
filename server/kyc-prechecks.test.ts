@@ -109,17 +109,22 @@ const input = (over: Partial<PrecheckAskInput> = {}): PrecheckAskInput => ({
   subjectKind: "company", ukRegistered: true, listing: null, owners: [], peopleUpChain: [], directors: [], accounts: null, ...over,
 });
 
-test("a listed company is not asked for an owners chart or owner IDs", () => {
+test("a listed company is not asked for an owners chart, owner IDs or the person acting's proof of address", () => {
   const asks = precheckAsks(input({ listing: { market: "uk_regulated", since: "2016-06-30", company: "BIG PLC", companyNumber: "00000001", viaParent: false } }),
     { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY });
-  assert.deepEqual(asks.docs, ["proof_of_address", "authority", "source_of_funds"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  // Woody, 23 November 2026: "If HMRC don't require it then stop it".
+  assert.deepEqual(asks.docs, ["authority", "source_of_funds"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
+  assert.match(asks.notAsked[2].reason, /HMRC asks for their identity check and their authority, not a proof of address/);
   assert.equal(asks.confirmOwners, null);
   // Through a parent, and a market abroad: the officers confirm the chain and the market (KYC4U is no longer used).
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
     { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
-  assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
+  assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
+  assert.deepEqual(viaParent.docs, ["authority"]);
+  // A company that is not listed still asks the person acting for a proof of address.
+  assert.ok(precheckAsks(input({}), { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY }).docs.includes("proof_of_address"));
   assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*The officers confirm the chain\. The officers confirm the market/);
   assert.doesNotMatch(viaParent.notAsked[0].reason, /KYC4U/);
 });

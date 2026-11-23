@@ -262,7 +262,7 @@ async function coverageForRow(db: Db, row: TokenRow, files: FileRow[], now = new
     try {
       const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
       const found = await partyPeopleFor({ companyId: row.company_id, entityId: row.trading_entity_id, kind: request.kind === "company" ? "company" : "individual", dealId: row.deal_id }, await dealPeopleRequests(row.deal_id));
-      people = found.people.map(p => ({ name: p.name, roles: p.roles, born: bornKey(p.born) }));
+      people = found.people.map(p => ({ name: p.name, roles: p.roles, born: bornKey(p.born), ...(p.address.notNeeded ? { noAddress: true } : {}) }));
       held = registerHeld(found.basis);
     } catch (e: any) {
       console.warn(`[joint-agent] people to check not read for ${request.ref}: ${e?.message}`);

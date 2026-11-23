@@ -4250,7 +4250,13 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   The listing is found only by a run: a party checked before needs Run again.
 - **Ask only what's left** (`precheckAsks`, the one rule; the client checks
   dialog and `createClientCheck` both call it): listed, no owners chart and no
-  owners' IDs; owners on the register, the client confirms the list instead of
+  owners' IDs, and (Woody, 23 November 2026: "If HMRC don't require it then
+  stop it") no proof of address from the person acting, for a listed company
+  or one owned through one: HMRC asks only their identity and authority (MLR
+  2017 reg 28(10)), and Issue 4 asks an individual for proof of address only
+  as the party or an owner. People to check marks them `address.notNeeded`
+  (owing the identity check alone), their own link and the joint agent's
+  list leave it out, and a request already sent keeps the step; owners on the register, the client confirms the list instead of
   sending a chart (a new card on the client page, `POST
   /api/kyc-upload/:token/owners`, a no needs words, logged as
   `client_owners_confirmation`, a red flag `owners_differ` and a box in the

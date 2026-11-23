@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a listed group",
+    text: "The person dealing with us for a company listed on a regulated market, or a company owned through one, does an identity check and shows their authority to act. They are not asked for a proof of address: HMRC asks only for their identity and authority (MLR 2017 regulation 28(10)), and the policy asks for one only from the party or an owner." },
   { date: "2026-11-23", who: ["Layla"], topic: "Who we check and when", title: "Simplified due diligence is flagged, with its reasons saved",
     text: "When a party only needs simplified due diligence (SDD), its box says so in green, lists what the file should hold and drafts the note of why SDD applies. An agent on the transaction or an AML officer checks the note and saves it on the transaction. SDD reduces the checks; it does not remove them." },
   { date: "2026-11-23", who: ["Layla"], topic: "Who we check and when", title: "UK public bodies, such as The Crown Estate",

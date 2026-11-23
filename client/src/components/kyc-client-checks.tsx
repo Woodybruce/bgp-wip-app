@@ -391,9 +391,13 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <span className="font-medium text-sm">{person.name}</span>
           {person.roles.map(r => <span key={r} className={`${pillMetrics} bg-muted text-muted-foreground border border-border`}>{ROLE_WORDS[r]}</span>)}
           <span className="inline-flex items-center gap-0.5 text-muted-foreground"><Tick ok={idOk} />ID</span>
+          {!pf && !relied && person.address.notNeeded && !person.address.proof ? (
+            <span className="text-muted-foreground" data-testid={`person-address-chip-not-needed-${testKey}`}>No address needed</span>
+          ) : (
           <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
             {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || !!relied || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
           </span>
+          )}
           {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>{pf.method === "certified" ? "Certified documents" : "Public figure"}</span>}
           {relied && <span className={`${pillMetrics} bg-violet-50 text-violet-800 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900`} data-testid={`person-relied-${testKey}`}>Covered by reliance</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
@@ -434,6 +438,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
         {pf
           ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the {pf.method === "certified" ? "certified documents" : "verification from public sources"}</span></li>
           : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
+          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed from the person acting for a listed group</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>

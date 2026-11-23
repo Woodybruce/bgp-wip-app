@@ -178,6 +178,18 @@ test("a listed company, an unread register and a private individual", () => {
   });
   assert.equal(listed.basis, "listed");
   assert.deepEqual(listed.people.map(p => p.name), ["Jack Barratt"]);
+  // The person acting for a listed group owes their identity check, not a
+  // proof of address (Woody, 23 November 2026: "If HMRC don't require it then stop it").
+  const acting = listed.people[0];
+  assert.equal(acting.address.notNeeded, true);
+  assert.deepEqual(acting.outstanding, ["identity check"]);
+  assert.deepEqual(personRequestAsks(acting, false).docs, ["photo_id"]);
+  assert.deepEqual(listed.outstanding, ["Jack Barratt: identity check"]);
+  // The same person acting for a company that is not listed still owes it.
+  const unlisted = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: { ...bgpLtd, owners: [] }, sanctions: sanctions([]) }, requests: [request({})] });
+  const same = unlisted.people.find(p => p.roles.includes("acting"))!;
+  assert.equal(same.address.notNeeded, undefined);
+  assert.deepEqual(same.outstanding, ["identity check", "proof of address"]);
   const unread = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: null, requests: [request({})] });
   assert.equal(unread.basis, "not_read");
   assert.deepEqual(unread.people.map(p => [p.name, p.roles]), [["Jack Barrat", ["acting"]]]);
