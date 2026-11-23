@@ -83,7 +83,7 @@ test("Request trust structure: staff only, a client checks request marked for th
   assert.doesNotMatch(readFn, /kyc_trust_structures/);
   assert.match(read("server/index.ts"), /CREATE TABLE IF NOT EXISTS kyc_trust_deed_readings/);
   const ui = read("client/src/components/trust-structure.tsx");
-  assert.match(ui, /\/>Request trust structure\n/);
-  assert.match(ui, /\/>Add trust structure yourself\n/);
+  assert.match(ui, /\/>Ask for trust information\n/);
+  assert.match(ui, /\/>Add trust information yourself\n/);
   assert.doesNotMatch(ui, /<form[\s>]/);
 });

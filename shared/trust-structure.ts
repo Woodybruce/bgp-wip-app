@@ -186,7 +186,7 @@ export interface TrustGap {
 export function trustStructureGaps(s: TrustStructure | null, docs: TrustDocumentsHeld): TrustGap[] {
   const gaps: TrustGap[] = [];
   if (!s) {
-    gaps.push({ key: "structure", words: "Record the trust's structure: its kind, settlor, trustees and beneficiaries", from: "recorded" });
+    gaps.push({ key: "structure", words: "Add the trust's information: what kind of trust, who set it up, the trustees and who benefits", from: "recorded" });
   } else {
     if (s.kind === "unknown") gaps.push({ key: "kind", words: "Say what kind of trust it is", from: "recorded" });
     if (!s.people.some(p => p.roles.includes("settlor"))) gaps.push({ key: "settlor", words: "Record the settlor", from: "recorded" });

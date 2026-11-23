@@ -530,7 +530,7 @@ export function trustDocsReadyEmail(ctx: {
     ctx.missing.length ? h2("Not sent") + p(escHtml(ctx.missing.join(", "))) : "",
     deedLine,
     h2("Next"),
-    `<ol style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}"><li style="margin:0 0 4px">Open the transaction's Parties &amp; AML and check the trust structure against the documents, then save it.</li><li style="margin:0 0 4px">Send each trustee, the settlor and anyone else with control their own link under People to check.</li><li style="margin:0 0 4px">An officer signs off once nothing is outstanding.</li></ol>`,
+    `<ol style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}"><li style="margin:0 0 4px">Open the transaction's Parties &amp; AML and check the trust information against the documents, then save it.</li><li style="margin:0 0 4px">Send each trustee, the settlor and anyone else with control their own link under People to check.</li><li style="margin:0 0 4px">An officer signs off once nothing is outstanding.</li></ol>`,
     button("Open the transaction's AML", ctx.dealLink),
   ].join("\n");
   return {
