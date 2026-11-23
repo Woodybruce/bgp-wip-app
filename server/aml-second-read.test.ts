@@ -5,7 +5,6 @@ import { checkSecondRead, quoteInSource, secondReadItems, secondReadSystem } fro
 import { TRUST_CHECKLIST, policyFactorFlags, trustChecklistNote } from "../shared/aml-policy";
 import { foundationMarkInName, isTrustRecord, partyGaps, trustMarkInName } from "../shared/deal-parties";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
-import { amlNeedsKyc4u } from "../shared/aml-dashboard";
 
 test("a name that reads like a trust is spotted, as a suggestion only", () => {
   assert.equal(trustMarkInName("URC Thames North Trust"), true);
@@ -64,24 +63,21 @@ test("a party recorded as a trust is enhanced, and needs no company that signs",
   assert.deepEqual(partyGaps({ role: "vendor", kind: "company", brandName: "A Co", companySet: false, person: { name: "A", email: "a@x.com" } }).map(g => g.key), ["company"]);
 });
 
-test("a trust goes to KYC4U in full, and the red mark shows until it is with them", () => {
+test("a trust is the officers' in full: client checks, then their sign-off (KYC4U is no longer used, 23 November 2026)", () => {
   const facts: AmlBoxFacts = {
     role: "vendor", stage: "bgp_checked", due: true, approvedBy: null, expiresAt: null, notRequiredWords: null,
     company: true, companyMissing: false, gaps: [], askName: "Adam Harvey", precheckRunning: false, redFlags: 0, factors: 1,
-    sanctionsOnly: false, clientChecks: true, request: null, people: [], kyc4u: "none", canSignOff: true, canDecide: true,
+    sanctionsOnly: false, clientChecks: true, request: null, people: [], canSignOff: true, canDecide: true,
     signOffBlocked: null, needsNote: false, trust: true,
   };
   const step = amlNextStep(facts);
-  assert.equal(step.action, "request_kyc4u");
-  // The red mark (Jack, 20 November 2026) is the Next line's own, in a few words (22 November 2026).
-  assert.equal(step.lead, "Not yet with KYC4U");
-  assert.equal(step.words, "a trust");
-  assert.equal(step.tone, "flag");
-  assert.equal(amlNextStep({ ...facts, kyc4u: "queued" }).action, "kyc4u_form");
-  assert.equal(amlNextStep({ ...facts, kyc4u: "raised" }).who, "kyc4u");
-  assert.equal(amlNeedsKyc4u("enhanced", "bgp_checked"), true);
-  assert.equal(amlNeedsKyc4u("enhanced", "with_kyc4u"), false);
-  assert.equal(amlNeedsKyc4u("standard", "not_started"), false);
+  assert.equal(step.action, "send_client_checks");
+  assert.doesNotMatch(`${step.lead} ${step.words}`, /KYC4U/);
+  const done = amlNextStep({ ...facts, request: { status: "finished", to: "Adam Harvey" } });
+  assert.equal(done.action, "sign_off");
+  assert.equal(done.who, "officers");
+  // A KYC4U request made before 23 November 2026 holds nothing up.
+  assert.equal(amlNextStep({ ...facts, kyc4u: "raised" }).action, "send_client_checks");
 });
 
 test("KYC4U's note carries the trust checklist, without the officer's sign-off", () => {

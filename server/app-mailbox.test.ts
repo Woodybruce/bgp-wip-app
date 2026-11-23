@@ -16,6 +16,8 @@ test("the app's emails go from chatbgp.app, then the shared mailbox", { skip: !!
   assert.deepEqual(senderOrder(["landsec2@chatbgp.app", "", "  "]), ["landsec2@chatbgp.app", "chatbgp1@chatbgp.app", "chatbgp@brucegillinghampollard.com"]);
   // Each address once, whatever its case.
   assert.deepEqual(senderOrder(["ChatBGP1@ChatBGP.app"]), ["ChatBGP1@ChatBGP.app", "chatbgp@brucegillinghampollard.com"]);
+  // AML emails: their own mailbox, then BGP's shared mailbox, never the app's address (Woody, 2026-11-23).
+  assert.deepEqual(senderOrder(["kyc@brucegillinghampollard.com"], Date.now(), { appMailbox: false }), ["kyc@brucegillinghampollard.com", "chatbgp@brucegillinghampollard.com"]);
 });
 
 test("with Microsoft refusing every address, the send fails and names each one", async () => {

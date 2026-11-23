@@ -8,7 +8,7 @@ import { RELIANCE_TERMS, relianceInput, relianceWords, type PartyReliance } from
 import { partyPeople, type PartyPeopleInput, type PeopleRequest } from "../shared/kyc-people";
 import { signOffDenial, type SignOffFacts } from "../shared/party-kyc";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
-import { amlBucket, amlNeedsKyc4u, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
+import { amlBucket, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
 
 const today = new Date("2026-11-21T10:00:00Z");
 const form = {
@@ -112,12 +112,12 @@ const facts = (over: Partial<SignOffFacts> = {}): SignOffFacts => ({
   precheck: { ranAt: "2026-11-20T10:00:00Z" }, precheckRunning: false, clientChecksFinished: false, note: "", now: today, ...over,
 });
 
-test("the sign-off needs no note while BGP relies on the firm's checks, but a red flag still goes to KYC4U", () => {
+test("the sign-off needs no note while BGP relies on the firm's checks, but a red flag needs the officers' note", () => {
   assert.match(signOffDenial(facts()) || "", /client checks are not finished/);
   assert.equal(signOffDenial(facts({ reliance: relianceWords(relied) })), null);
-  // Reliance does not cover enhanced due diligence (HMRC).
-  assert.match(signOffDenial(facts({ reliance: relianceWords(relied), redFlags: 1 })) || "", /KYC4U/);
-  assert.match(signOffDenial(facts({ reliance: relianceWords(relied), ownersAbroad: ["Kirkbi A/S, Denmark"] })) || "", /KYC4U/);
+  // Reliance does not cover enhanced due diligence (HMRC): the officers do it, with a note (KYC4U is no longer used).
+  assert.match(signOffDenial(facts({ reliance: relianceWords(relied), redFlags: 1 })) || "", /Enhanced due diligence by BGP/);
+  assert.match(signOffDenial(facts({ reliance: relianceWords(relied), ownersAbroad: ["Kirkbi A/S, Denmark"] })) || "", /Enhanced due diligence by BGP/);
 });
 
 const box: AmlBoxFacts = {
@@ -127,14 +127,18 @@ const box: AmlBoxFacts = {
   canSignOff: true, canDecide: true, signOffBlocked: null, needsNote: false, reliance: relianceWords(relied), relianceFirm: relied.firm,
 };
 
-test("the Next line: sign it off on the firm's checks, after the KYC4U, red flag and billing steps", () => {
+test("the Next line: sign it off on the firm's checks, after the red flag and billing steps", () => {
   const step = amlNextStep(box);
   assert.equal(step.action, "sign_off");
   // A short line (22 November 2026): the firm's details are in the Documents step.
   assert.equal(`${step.lead} · ${step.words}`, "Ready to sign off · relying on Smith & Co");
-  assert.equal(amlNextStep({ ...box, redFlags: 2 }).action, "request_kyc4u");
-  assert.equal(amlNextStep({ ...box, ownersAbroad: "Kirkbi A/S, Denmark" }).action, "request_kyc4u");
-  assert.equal(amlNextStep({ ...box, kyc4u: "raised" }).who, "kyc4u");
+  // Enhanced: the officers sign it off with a note (KYC4U is no longer used, 23 November 2026).
+  const flagged = amlNextStep({ ...box, redFlags: 2 });
+  assert.equal(flagged.action, "sign_off");
+  assert.equal(`${flagged.lead} · ${flagged.words}`, "Ready to sign off · relying on Smith & Co; add a note");
+  assert.equal(amlNextStep({ ...box, ownersAbroad: "Kirkbi A/S, Denmark" }).action, "sign_off");
+  assert.equal(amlNextStep({ ...box, redFlags: 2, canDecide: false }).action, null, "an agent cannot");
+  assert.equal(amlNextStep({ ...box, kyc4u: "raised" }).action, "sign_off", "a past KYC4U request holds nothing up");
   assert.equal(amlNextStep({ ...box, billingDiffers: true }).action, "billing");
   const blocked = amlNextStep({ ...box, signOffBlocked: "BGP's checks before asking have not run for this party. Press Run again on the card first." });
   assert.equal(blocked.action, null);
@@ -144,7 +148,7 @@ test("the Next line: sign it off on the firm's checks, after the KYC4U, red flag
   assert.equal(`${agentOnly.lead} · ${agentOnly.words}`, "Relying on Smith & Co · an agent or an officer signs off");
 });
 
-test("the AML dashboard: its own stage, in progress, waiting on BGP's sign-off; an enhanced party still needs KYC4U", () => {
+test("the AML dashboard: its own stage, in progress, waiting on BGP's sign-off", () => {
   const stage = amlStage({
     role: "purchaser", dealStatus: "SOL", kyc: { status: null, expiresAt: null }, precheckAt: "2026-11-20T10:00:00Z",
     clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, reliedAt: "2026-11-21T10:00:00Z",
@@ -152,8 +156,6 @@ test("the AML dashboard: its own stage, in progress, waiting on BGP's sign-off; 
   assert.equal(stage, "relied");
   assert.equal(amlBucket(stage, true), "in_progress");
   assert.equal(amlWaitingOn(stage, 0), "BGP: sign off");
-  assert.equal(amlNeedsKyc4u("enhanced", stage), true);
-  assert.equal(amlNeedsKyc4u("standard", stage), false);
   // A decision still comes first.
   assert.equal(amlStage({
     role: "purchaser", dealStatus: "SOL", kyc: { status: "approved", expiresAt: "2029-11-21T00:00:00Z" }, precheckAt: null,

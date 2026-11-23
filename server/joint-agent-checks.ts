@@ -24,7 +24,7 @@ import { jointAgentChaseStoppedEmail, jointAgentMissingEmail, jointAgentRequestE
 import {
   JOINT_CHASE_MAX, JOINT_DOC_KINDS, JOINT_RESULTS, agentWords, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceTerms, jointWorkingDay, londonDayNumber,
   type JointAgentChecksView, type JointAgentPartyView, type JointAgentRelation, type JointAgentRequestView, type JointCoverage,
-  type JointChase, type JointCoveragePerson, type JointFileReading, type JointRequestStatus,
+  type JointChase, type JointCoveragePerson, type JointFileReading, type JointRequestStatus, JOINT_ASKS_RELIANCE,
 } from "@shared/joint-agent-checks";
 import { JOINT_AGENT_RULE_WORDS, jointAgentRule, type JointAgentRule, type JointRequestForRecord } from "@shared/aml-policy";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, partySubjectKind, type DealPartyRole } from "@shared/deal-parties";
@@ -278,7 +278,8 @@ async function coverageForRow(db: Db, row: TokenRow, files: FileRow[], now = new
 export function gapsFor(row: TokenRow, files: FileRow[], coverage: JointCoverage | null, you: boolean): string[] {
   const request = row.request!;
   return jointGapLines(coverage, {
-    you, reliance: isLettingRule(request.jointAgent?.rule), agreed: !!request.jointAgent?.reliance,
+    // No reliance terms are asked for (Woody, 23 November 2026: "we cant agree reliance").
+    you, reliance: JOINT_ASKS_RELIANCE && isLettingRule(request.jointAgent?.rule), agreed: !!request.jointAgent?.reliance,
     nothingYet: !files.length, partyName: request.partyName,
   });
 }
@@ -367,7 +368,9 @@ export function jointRelationFor(input: { relation?: unknown; firmCompanyId?: st
   const id = text(input.firmCompanyId);
   if (id && party.agentId && id === party.agentId) return "own";
   if (id && deal.firmId && id === deal.firmId) return "joint";
-  return deal.firmId ? "joint" : "own";
+  // The joint agent unless only the party's own agent is recorded (Woody, 23
+  // November 2026: "you are getting confused with the agents").
+  return party.agentId && !deal.firmId ? "own" : "joint";
 }
 
 async function loadJointDeal(db: Db, dealId: string): Promise<JointDeal | null> {
@@ -414,6 +417,11 @@ function statusOf(row: TokenRow, files: number, now = new Date()): JointRequestS
 }
 
 
+
+/** BGP's client on the deal, by name: "We are jointly instructed by <client>". */
+function clientNameOf(deal: Pick<JointDeal, "clientRole" | "parties">): string | null {
+  return deal.parties.find(p => p.role === deal.clientRole)?.name || null;
+}
 
 /** Why the joint agent cannot be asked about this party, or null. */
 export function jointAskRefusal(deal: Pick<JointDeal, "rule" | "clientRole">, role: DealPartyRole): string | null {
@@ -592,7 +600,7 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
     agents, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
     openedAt: null, veriffSessionIds: [], idCheckNote: null, askPep: false, answers: null,
     audience: "joint_agent",
-    jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, contactId, rule: deal.rule, reliance: null, readings: {} },
+    jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, clientName: clientNameOf(deal), contactId, rule: deal.rule, reliance: null, readings: {} },
   };
   await db.query(
     `INSERT INTO kyc_upload_tokens (token, deal_id, contact_email, contact_name, created_by, expires_at, company_id, contact_id, request, is_test, trading_entity_id)
@@ -603,7 +611,7 @@ export async function createJointAgentRequest(dealId: string, input: JointAskInp
     to: [email], cc,
     build: sentFrom => jointAgentRequestEmail({
       recipientName: name, firm: firm.name, partyName: party.name, partyRole: party.role, kind: party.kind, dealName: deal.name,
-      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, agents, sentFrom, relation, clientRole: deal.clientRole,
+      ref, link, expiresAt, letting: isLettingRule(deal.rule), note: request.note, agents, sentFrom, relation, clientRole: deal.clientRole, clientName: clientNameOf(deal),
     }),
   });
   request.sentFrom = sent.from;
@@ -670,7 +678,7 @@ export async function addJointFiles(dealId: string, input: JointUploadInput, fil
       agents, cc, sentBy: { id: me.id, name: me.name }, sentFrom: null, sentAt: null, sendError: null,
       openedAt: null, veriffSessionIds: [], idCheckNote: null, askPep: false, answers: null,
       audience: "joint_agent", manual: true,
-      jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, contactId: null, rule: deal.rule, reliance: null, readings: {} },
+      jointAgent: { firm: firm.name, firmCompanyId: firm.id, relation, clientRole: deal.clientRole, clientName: clientNameOf(deal), contactId: null, rule: deal.rule, reliance: null, readings: {} },
     };
     // A manual request is never emailed and its link is not given out: it
     // runs out as any other, and the files stay on the party's record.
@@ -727,7 +735,7 @@ export async function chaseJointRequest(db: Db, row: TokenRow, by: { name: strin
       recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
       kind: request.kind, dealName: request.dealName, ref: request.ref, link: portal.kycLinkFor(row.token), expiresAt,
       letting: isLettingRule(request.jointAgent?.rule), agents: request.agents, sentFrom,
-      relation: request.jointAgent?.relation === "own" ? "own" : "joint", clientRole: request.jointAgent?.clientRole || null,
+      relation: request.jointAgent?.relation === "own" ? "own" : "joint", clientRole: request.jointAgent?.clientRole || null, clientName: request.jointAgent?.clientName || null,
       missing, nothingYet: !files.length, chase: chases.length + 1,
     }),
   });

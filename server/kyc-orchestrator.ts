@@ -317,7 +317,7 @@ export async function runAllAmlChecks(
   if (!process.env.IN_APP_AML_ENABLED) {
     return { companyId, companyName: null, investigationId: null, risk: null, sanctionsMatch: false,
       veriffLaunched: [], veriffSkipped: [], adverseMedia: { ran: false }, historicalKyc: [], marketData: null,
-      checklistTicked: [], warnings: ["The old in-app AML is retired: AML runs from the transaction's Parties & AML, with KYC4U as BGP's outsourced KYC provider"] };
+      checklistTicked: [], warnings: ["The old in-app AML is retired: AML runs from the transaction's Parties & AML"] };
   }
   const warnings: string[] = [];
   const companyRow = await pool.query(

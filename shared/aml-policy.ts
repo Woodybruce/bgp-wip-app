@@ -69,7 +69,7 @@ export const ENHANCED_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 8, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
 ];
 
-/** The trust checklist as lines for KYC4U's note. */
+/** The trust checklist as lines (the officers' second read; KYC4U's note until 23 November 2026). */
 export function trustChecklistNote(): string {
   return ["TRUST: BGP's AML checklist for trusts, please collect and review in full:",
     ...TRUST_CHECKLIST.filter(i => i.n <= 10).map(i => `${i.n}. ${i.title}: ${i.detail}`),
@@ -502,7 +502,7 @@ export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; pa
   const ch = input.precheck?.companiesHouse || null;
   const listing = ch?.listing || null;
   if (listing) {
-    if (listing.viaParent) return `Owned through ${listing.company}, a company listed on a regulated market: simplified due diligence (policy 4.2), the chain confirmed by KYC4U.`;
+    if (listing.viaParent) return `Owned through ${listing.company}, a company listed on a regulated market: simplified due diligence (policy 4.2), the chain confirmed by the officers.`;
     if (listing.market === "other_regulated" || listing.market === "listed_market") return `Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`;
     return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2).`;
   }
@@ -597,10 +597,10 @@ export function jointAgentRule(deal: { dealType?: string | null; team?: string[]
 // HMRC references are on the Rules page).
 export const JOINT_AGENT_RULE_WORDS: Record<JointAgentRule, string> = {
   sale: "A sale: ask the joint agent for their checks and record what comes back.",
-  letting: "A letting: rely on the joint agent's checks under the reliance terms, or check this party yourself.",
+  letting: "A letting: ask the joint agent for the documents and check this party yourself.",
   letting_under: "A letting under £10,000 a month: sanctions checks only.",
   advisory: "Advisory work: no checks on the other side.",
-  other: "Not a sale: rely on the joint agent's checks under the reliance terms, or check this party yourself.",
+  other: "Not a sale: ask the joint agent for the documents and check this party yourself.",
 };
 
 /** Why the joint agent reason cannot be used on this deal, in HMRC's terms, or null when it can. */

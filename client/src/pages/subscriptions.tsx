@@ -78,7 +78,7 @@ const subscriptions: Subscription[] = [
   {
     name: "KYC4U",
     category: "Compliance",
-    description: "BGP's outsourced KYC provider: their checks on a transaction's party, sent from the transaction's AML box. Their requests and every file on their site are kept in the app: open KYC4U below.",
+    description: "No longer used (since 23 November 2026): enhanced checks are done by BGP's officers. KYC4U's past checks and every file copied from their site are kept in the app as records: open KYC4U below.",
     url: "https://www.kyc4u.com",
     icon: ShieldCheck,
     color: "bg-red-500/10 text-red-600 dark:text-red-400",

@@ -13,10 +13,11 @@ import { readFileSync } from 'node:fs';
 
 const read = (p) => readFileSync(p, 'utf8');
 
-test('the bars: sanctions and warning lists always, a public role at 60%, anything else at 90%, an agreeing birth year always', () => {
+test('the bars: sanctions always, a public role at 60%, anything else (warning lists too, since 23 November 2026) at 90%, an agreeing birth year always', () => {
   const rules = read('shared/kyc-prechecks.ts');
   assert.match(rules, /export const PROVIDER_FLAG_BARS = \{ pep: 0\.6, other: 0\.9 \} as const;/);
-  assert.match(rules, /const ALWAYS_FLAG_KIND = \/sanction\|warning\/;/);
+  // Woody, 23 November 2026: "buffalo bill restaurant" at 20% on a warning list was a red flag against BILLS RESTAURANTS LTD.
+  assert.match(rules, /const ALWAYS_FLAG_KIND = \/sanction\/;/);
   const fn = rules.slice(rules.indexOf('export function providerMatchFlags'), rules.indexOf('/** A ComplyAdvantage line'));
   // Since later on 19 November 2026 a person screened with their date of birth is judged by it: only sanctions
   // whatever the score, and a profile with no date of birth is a possible namesake.
@@ -78,10 +79,11 @@ test('only the company and its beneficial owners go to ComplyAdvantage and the w
 
 // Woody, 21 November 2026: "comply advantage keeps hitting miss spells of the names and picking up adverse media
 // on things not spelt the same but are similar", then "Yes want it". Rules tested in server/kyc-prechecks.test.ts.
-test('adverse media under a name spelt differently is set aside, never sanctions or public roles, and the officers still see it', () => {
+test('adverse media (and a company\'s warning lists) under a name spelt differently is set aside, never sanctions or public roles, and the officers still see it', () => {
   const rules = read('shared/kyc-prechecks.ts');
   const fn = rules.slice(rules.indexOf('export function providerSpellingVariant'), rules.indexOf('/** A ComplyAdvantage line'));
-  assert.match(fn, /if \(String\(m\.kind \|\| ""\) !== "adverse_media"\) return false;/, 'adverse media only');
+  assert.match(fn, /const companyList = !providerLineIsPerson\(line\) && \/warning\|fitness\/\.test\(kind\);/, 'a company\'s warning lists too');
+  assert.match(fn, /if \(kind !== "adverse_media" && !companyList\) return false;/, 'never sanctions or public roles');
   assert.match(fn, /if \(m\.birthYearAgrees === true\) return false;/, 'a date of birth that agrees keeps it');
   assert.match(rules, /const variants = all\.filter\(m => providerSpellingVariant\(m, line\)\);/);
   // Set aside, not hidden: the deal card, KYC4U's note and the red flag's facts all list them.

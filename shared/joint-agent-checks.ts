@@ -17,9 +17,18 @@
 //
 // The request is a client checks request (kyc_upload_tokens) with
 // request.audience "joint_agent": one email from the KYC mailbox to the joint
-// agent's contact, copied to the deal's agents, a page of their own (upload,
-// and for a letting the reliance terms to agree), or a reply by email with the
-// reference. What they send is filed on the party's KYC record, each file read
+// agent's contact, copied to the deal's agents, a page of their own to upload
+// on, or a reply by email with the reference.
+//
+// No reliance terms are asked for any more (Woody, 23 November 2026: "the
+// reliance on the joint agent doesnt work we cant agree reliance. What we need
+// is an email ... saying we are finalising the KYC on this joint agent
+// transaction and need you to upload or email back the following files. This
+// should include all the docs including their proof of identity and any
+// further AML they have done", and "should also be able to reply with the
+// documents"). BGP checks what they send itself, and on a letting the
+// officers sign the party off on it. A reliance agreed before then still
+// shows and can still be recorded. What they send is filed on the party's KYC record, each file read
 // once (server/joint-agent-checks.ts), and set against the people the checks
 // need here. It lists; it never decides: the officers record the outcome.
 //
@@ -28,6 +37,9 @@
 import { personNamesMatch } from "./kyc-prechecks";
 import type { JointAgentRule } from "./aml-policy";
 import { ENGLAND_BANK_HOLIDAYS } from "./aml-register";
+
+/** The joint agent is never asked to agree reliance terms (Woody, 23 November 2026: "we cant agree reliance"). */
+export const JOINT_ASKS_RELIANCE = false;
 
 /**
  * Who BGP asks for their checks on a party: the joint agent (BGP and they act
@@ -50,6 +62,8 @@ export interface JointAgentRequestDetails {
   relation?: JointAgentRelation;
   // BGP's client's role when the request was made ("We act for the tenant").
   clientRole?: string | null;
+  // BGP's client by name, for "We are jointly instructed by <client>" (Woody, 23 November 2026).
+  clientName?: string | null;
   // The joint agent's contact in the CRM, when one was picked.
   contactId?: string | null;
   rule: JointAgentRule;
@@ -492,7 +506,7 @@ export type JointRequestStatus = "not_sent" | "sent" | "opened" | "in" | "finish
 export function jointLine(input: { rule: JointAgentRule; firm: string | null; status: JointRequestStatus | null; files: number; reliance: boolean; who?: string | null }): string {
   const firm = input.firm || `the ${input.who || "joint agent"}`;
   switch (input.status) {
-    case null: return input.rule === "letting" ? `Not asked: ask ${firm} for their checks under a reliance agreement` : `Not asked: ask ${firm} for their checks`;
+    case null: return `Not asked: ask ${firm} for the documents`;
     case "not_sent": return `The email to ${firm} did not go: send it again`;
     case "expired": return `${firm}'s link ran out: ask again`;
     case "cancelled": return "Cancelled";
@@ -500,7 +514,7 @@ export function jointLine(input: { rule: JointAgentRule; firm: string | null; st
     case "opened": return `Asked ${firm}: they opened it`;
     default: {
       const files = `${input.files} file${input.files === 1 ? "" : "s"}`;
-      if (input.rule === "letting") return `${firm} sent ${files}${input.reliance ? " and agreed to the reliance terms" : ": reliance terms not agreed yet"}`;
+      if (input.rule === "letting" && input.reliance) return `${firm} sent ${files} and agreed to the reliance terms`;
       return `${firm} sent ${files}`;
     }
   }

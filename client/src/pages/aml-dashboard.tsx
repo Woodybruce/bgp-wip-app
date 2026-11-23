@@ -22,7 +22,7 @@ import { AmlRulesBoard } from "@/components/aml-rules";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { AML_BUCKETS, AML_STAGE_LABEL, amlNeedsKyc4u, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { AML_BUCKETS, AML_STAGE_LABEL, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 import { legacyToCode } from "@shared/deal-status";
 
@@ -39,20 +39,10 @@ const LEVEL_TONE: Record<AmlDashboardRow["level"], string> = {
   standard: "text-foreground",
   enhanced: "text-red-700 dark:text-red-300 font-medium",
 };
-function LevelCell({ row, inHouseEdd = false }: { row: AmlDashboardRow; inHouseEdd?: boolean }) {
+function LevelCell({ row }: { row: AmlDashboardRow }) {
   // Marked Not required: no checks are needed, so no level applies.
   if (row.stage === "not_required") return <span className="text-muted-foreground" title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>—</span>;
-  return (
-    <span className="inline-flex flex-wrap items-center gap-1">
-      <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>
-      {/* With the officers' in-house setting on, enhanced due diligence is BGP's own: no KYC4U mark (21 November 2026). */}
-      {!inHouseEdd && amlNeedsKyc4u(row.level, row.stage, !!row.ownersAbroad?.length) && (
-        <span className="whitespace-nowrap rounded border border-red-600 bg-red-50 px-1 text-[10px] font-semibold uppercase text-red-700 dark:bg-red-950/40 dark:text-red-300"
-          title={row.level === "enhanced" ? "Enhanced: request the KYC4U check and submit it on KYC4U's portal" : `Owned through a company registered abroad (${(row.ownersAbroad || []).join("; ")}): request the KYC4U check and submit it on KYC4U's portal`}
-          data-testid={`aml-kyc4u-needed-${row.key}`}>Not with KYC4U</span>
-      )}
-    </span>
-  );
+  return <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>;
 }
 
 const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[role] : role);
@@ -327,7 +317,7 @@ export default function AmlDashboard() {
                 <div className="flex items-start justify-between gap-2"><PartyCell row={r} /><StageChip row={r} /></div>
                 <div className="text-xs"><DealCell row={r} /></div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  <LevelCell row={r} inHouseEdd={!!roles?.inHouseEdd?.on} />
+                  <LevelCell row={r} />
                   <span><span className="text-muted-foreground">Waiting on</span> {r.waitingOn}</span>
                   <span className="text-muted-foreground">{moved(r.movedDays)}</span>
                 </div>
@@ -362,7 +352,7 @@ export default function AmlDashboard() {
                   <td className="px-3 py-2 max-w-[230px]"><PartyCell row={r} /></td>
                   <td className="px-3 py-2 max-w-[260px]"><DealCell row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
-                  <td className="px-3 py-2"><LevelCell row={r} inHouseEdd={!!roles?.inHouseEdd?.on} /></td>
+                  <td className="px-3 py-2"><LevelCell row={r} /></td>
                   <td className="px-3 py-2 max-w-[220px] truncate"><Flags row={r} /></td>
                   <td className="px-3 py-2 min-w-[150px] max-w-[220px]">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>

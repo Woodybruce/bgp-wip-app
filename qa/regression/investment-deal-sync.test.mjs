@@ -69,13 +69,13 @@ test('HOTs / Solicitors starts AML once, and only with a counterparty', async ()
     [/^INSERT INTO deal_events/, () => { recent = [{ x: 1 }]; return { rows: [] }; }],
   ]);
   const launch = async (id) => { launched.push(id); };
-  // Retired on 2026-10-05: KYC4U is BGP's MLRO, so by default the app starts no AML of its own and reads nothing.
+  // Retired on 2026-10-05: by default the app starts no AML of its own and reads nothing (the checks start from Parties & AML).
   const before = process.env.IN_APP_AML_ENABLED;
   delete process.env.IN_APP_AML_ENABLED;
   try {
     const retired = await startAmlOnStatus('d1', 'NEG', 'HOT', {}, { pool: q, launch });
     assert.equal(retired.started, false);
-    assert.match(retired.reason, /KYC4U/);
+    assert.match(retired.reason, /Parties & AML/);
     assert.deepEqual([q.calls.length, launched], [0, []]);
     // The rule it keeps behind IN_APP_AML_ENABLED is unchanged.
     process.env.IN_APP_AML_ENABLED = '1';

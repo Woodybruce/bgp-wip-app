@@ -3,13 +3,19 @@
 // BGP accounts are guests there (Woody, 2026-09-28: "anyone with our email
 // can access the Sharepoint"). A BGP user (Woody's own email) signs in once, as a
 // guest in KYC4U's tenant, through this app; its token cache is kept on the
-// server and the request grid is pulled every six hours into kyc4u_requests.
+// server and the request grid was pulled every six hours into kyc4u_requests
+// (no longer: KYC4U is not used since 23 November 2026; the bookmark copies
+// their records across).
 // No password is ever typed into the app or a chat.
 //
 // Azure prerequisites (the app registration behind AZURE_CLIENT_ID):
 //   - Supported account types: accounts in any organisational directory
 //   - Redirect URI (Web): https://chatbgp.app/api/kyc4u/callback
 //   - Delegated Microsoft Graph permissions: Sites.Read.All, User.Read, offline_access
+import { KYC4U_RETIRED_WORDS } from "@shared/kyc4u-portal";
+// KYC4U is no longer used (Woody, 23 November 2026): the routes that start
+// or send work to them answer 410; their records stay readable.
+const KYC4U_RETIRED = true;
 import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { ConfidentialClientApplication } from "@azure/msal-node";
@@ -28,7 +34,6 @@ const SITE_HOST = process.env.KYC4U_SITE_HOST || "kyc4ultd.sharepoint.com";
 const SITE_PATH = process.env.KYC4U_SITE_PATH || "/sites/customers/CST1092";
 const SCOPES = ["https://graph.microsoft.com/Sites.Read.All", "https://graph.microsoft.com/User.Read"];
 const CACHE_KEY = "kyc4u:connection";
-const SYNC_EVERY_MS = 6 * 3600_000;
 
 let client: ConfidentialClientApplication | null = null;
 function msal(): ConfidentialClientApplication {
@@ -795,6 +800,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   });
 
   app.get("/api/kyc4u/connect", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     try {
       const state = crypto.randomBytes(24).toString("hex");
       pendingStates.set(state, { userId: req.session.userId || (req as any).tokenUserId || null, at: Date.now() });
@@ -812,6 +818,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   // permissions (no ".default"). Microsoft brings the admin back to the
   // callback, which says whether it was approved. Nothing secret is in it.
   app.get("/api/kyc4u/admin-consent-link", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     const clientId = process.env.AZURE_CLIENT_ID;
     if (!clientId) return res.status(503).json({ message: "The app's Microsoft sign-in is not set up (AZURE_CLIENT_ID)." });
     const base = String(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
@@ -851,6 +858,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   });
 
   app.post("/api/kyc4u/sync", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     try { res.json(await syncKyc4u()); } catch (e: any) { res.status(502).json({ message: e.message }); }
   });
 
@@ -944,6 +952,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   };
 
   app.get("/api/kyc4u/drafts/prefill", requireAuth, async (req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     try {
       if (!await staffOnly(req, res)) return;
       res.json(await kyc4uPrefill(String(req.query.dealId || ""), String(req.query.companyId || ""), String(req.query.role || ""), userIdOf(req)));
@@ -951,6 +960,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   });
 
   app.post("/api/kyc4u/drafts", requireAuth, async (req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     try {
       if (!await staffOnly(req, res)) return;
       const b = req.body || {};
@@ -975,6 +985,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   // The bookmark's helper window asks for the next request to fill: the
   // caller's own oldest queued one first, then anyone's.
   app.get("/api/kyc4u/drafts/next", requireAuth, async (req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.json({ draft: null, docs: [], waiting: 0 });
     try {
       if (!await staffOnly(req, res)) return;
       const r = await pool.query(
@@ -1030,6 +1041,7 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
   // prepared request submitted, or, when the request was raised on the portal
   // without one, records one. Only then is the party with KYC4U.
   app.post("/api/kyc4u/submitted", requireAuth, async (req: Request, res: Response) => {
+    if (KYC4U_RETIRED) return res.status(410).json({ message: KYC4U_RETIRED_WORDS });
     try {
       if (!await staffOnly(req, res)) return;
       const { kyc4uSubmittedInput } = await import("@shared/kyc4u-portal");
@@ -1155,7 +1167,6 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
 
   registerKyc4uArchiveRoutes(app, requireAuth, requireAdmin);
 
-  setInterval(() => {
-    loadConnection().then(conn => { if (conn) return syncKyc4u(); }).catch((e: any) => console.warn("[kyc4u] scheduled sync failed:", e?.message));
-  }, SYNC_EVERY_MS).unref?.();
+  // No scheduled sync: KYC4U is no longer used (23 November 2026). The
+  // bookmark still copies their records across.
 }

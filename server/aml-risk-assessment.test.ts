@@ -53,12 +53,12 @@ test("each flag sits under one of KYC4U's four risk headings", () => {
   assert.equal(riskHeadingOf(flag({ kind: "sanctions" })), "client");
 });
 
-test("a clean, standard party reads as KYC4U's report would, with the owner verified from public sources", () => {
+test("a clean, standard party: the officers identify owners abroad (KYC4U is no longer used), the owner verified from public sources", () => {
   const ra = buildRiskAssessment(input());
   assert.equal(ra.levelOfRisk.value, "Standard");
   assert.ok(ra.job.some(r => r.label === "Job type" && /Counterparty/.test(r.value)));
   assert.deepEqual(ra.risks.map(r => [r.factor, r.value]), [["client", "Low"], ["geographic", "Low"], ["other", "Low"], ["pep", "Low"]]);
-  assert.match(ra.risks.find(r => r.factor === "geographic")!.details.join(" "), /Owned through EXAMPLE HOLDING A\/S, registered in Denmark: KYC4U to identify the owners behind it/);
+  assert.match(ra.risks.find(r => r.factor === "geographic")!.details.join(" "), /Owned through EXAMPLE HOLDING A\/S, registered in Denmark: the officers identify the owners behind it/);
   const dil = Object.fromEntries(ra.diligence.map(r => [r.label, r.value]));
   assert.match(dil["Structure chart"], /^Needed: owned through EXAMPLE HOLDING A\/S \(Denmark\)/);
   assert.equal(dil["Authority to instruct"], "Jane Doe is a director at Companies House");
@@ -69,7 +69,7 @@ test("a clean, standard party reads as KYC4U's report would, with the owner veri
   assert.equal(ra.owners.length, 1);
   assert.equal(ra.owners[0].nationality, "Danish");
   assert.match(ra.owners[0].idMethod, /^Public figure: verified from public sources by Jack Barratt/);
-  assert.match(ra.conclusion[0], /^Owned through a company registered abroad: it goes to KYC4U/);
+  assert.match(ra.conclusion[0], /^Owned through a company registered abroad: the officers identify the people behind it/);
   assert.ok(ra.counterparty.some(r => r.label === "Solicitors" && /Not checked yet/.test(r.value)));
   assert.ok(ra.mitigating.some(m => /Erik Example verified from public sources by Jack Barratt/.test(m)));
 });

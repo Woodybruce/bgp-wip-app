@@ -23,10 +23,9 @@ test("a trust is recorded by BGP staff, and a name is only a suggestion", () => 
   assert.match(read("server/kyc4u.ts"), /trustNote, relianceNote, flagNote, checkedNote\]/);
 });
 
-test("the AML box and the dashboard carry the red mark until KYC4U has it", () => {
+test("no Not with KYC4U mark on the box or the board: KYC4U is no longer used (23 November 2026)", () => {
   const box = read("client/src/components/deal-aml-status.tsx");
-  assert.match(box, /data-testid=\{`aml-kyc4u-needed-\$\{cp\.role\}`\}/);
+  assert.doesNotMatch(box, /aml-kyc4u-needed-/);
   assert.match(box, /<SecondReadPanel dealId=\{dealId\} role=\{cp\.role\} partyName=\{partyName\} trust=\{isTrust\} \/>/);
-  // Since 21 November 2026 a party owned through a company abroad carries the mark too.
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u\(row\.level, row\.stage, !!row\.ownersAbroad\?\.length\)/);
+  assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u|Not with KYC4U/);
 });

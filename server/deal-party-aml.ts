@@ -307,7 +307,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
 
     const relied = [
       DUE_DILIGENCE_LABEL[level].toLowerCase(),
-      edd ? "done by BGP's officers, not KYC4U" : null,
+      edd ? "done by BGP's officers" : null,
       party.regime === "sanctions_only" ? "sanctions checks only (a letting under £10,000 a month)" : null,
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,

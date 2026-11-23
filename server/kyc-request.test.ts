@@ -7,7 +7,7 @@ import {
   clientChecksSwitchOn, KYC_CLIENT_CHECK_ROUTES,
   KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
   kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycSteps, kycUploadAllowed,
-  kycPersonRoleWords, kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
+  kycPersonRoleWords, kycViaAgentIdWho, kycViaAgentReminderEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
 } from "../shared/kyc-request";
 import { readFileSync } from "node:fs";
 import { reminderDue } from "./aml-portal";
@@ -112,6 +112,43 @@ test("the reminder lists what is done and what is still needed", () => {
   assert.ok(id > done && id < left);
   assert.ok(html.indexOf(KYC_DOCS.owner_ids.title, done) > left);
   assert.ok(html.indexOf(KYC_PEP_QUESTION.title, done) > left, "the unanswered question is still needed");
+});
+
+// Woody, 23 November 2026: "with the agent acting for the tenant or against us we need them to pass on the standard KYC
+// requests for their clients to complete the agent should have the ability to help organise by uploading docs etc."
+test("through the other side's agent: the standard checks to pass on, the documents uploadable by either of them", () => {
+  const agentCtx = {
+    ...ctx({ recipientName: "Sam Agent", partyName: "Bills Restaurants Ltd", dealName: "Southbank - Unit 5b" }),
+    agentFirm: "Knight Frank", partyRole: "tenant", clientRole: "landlord", clientName: "Brucecap Ltd", personName: null,
+  };
+  const { subject, html } = kycViaAgentRequestEmail(agentCtx);
+  assert.match(subject, /^Please pass on: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \(ref 7K2Q9M\)$/);
+  assert.equal(kycRefFromSubject(`RE: ${subject}`), "7K2Q9M", "a reply with the documents finds its request");
+  assert.match(html, /Hello Sam,/);
+  assert.match(html, /We act for <strong>Brucecap Ltd<\/strong>, the landlord, on <strong>Southbank - Unit 5b<\/strong>, and you act for <strong>Bills Restaurants Ltd<\/strong>, the tenant\./);
+  assert.match(html, /Please pass our standard checks on to your client to complete\./);
+  for (const step of kycSteps(agentCtx)) assert.ok(html.includes(step.title.replace(/'/g, "&#39;")) || html.includes(step.title), `lists ${step.title}`);
+  assert.equal((html.match(/Open the checks/g) || []).length, 1);
+  assert.match(html, /forward this email to your client, or send the link to them from the page\. You can upload any documents you hold for them on the same page\./);
+  assert.match(html, /The identity check must be done by the person at Bills Restaurants Ltd dealing with us\./);
+  assert.match(html, /the other side&#39;s agent receives|the other side's agent receives|Sent from kyc@chatbgp\.app/);
+  assert.doesNotMatch(html, /AMLG|regulation \d|reg \d|reliance/);
+  const named = kycViaAgentRequestEmail({ ...agentCtx, personName: "Daniel North", clientName: null });
+  assert.match(named.html, /We act for the landlord on <strong>Southbank - Unit 5b<\/strong>/);
+  assert.match(named.html, /forward this email to Daniel North/);
+  assert.match(named.html, /The identity check must be done by Daniel North\./);
+  assert.equal(kycViaAgentIdWho({ kind: "individual", partyName: "Jane Doe", personName: null }), "your client");
+  const noId = kycViaAgentRequestEmail({ ...agentCtx, needsIdCheck: false });
+  assert.doesNotMatch(noId.html, /The identity check must be done/);
+  const reminder = kycViaAgentReminderEmail({ ...agentCtx, progress: { idDone: false, docsDone: ["ownership"] } });
+  assert.match(reminder.subject, /^Reminder: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \(ref 7K2Q9M\)$/);
+  assert.match(reminder.html, /Please chase your client, or upload what you hold for them\./);
+  assert.ok(reminder.html.indexOf("Done, thank you") < reminder.html.indexOf("Still needed"));
+  // Passed on from the page: the client's email names the agent who asked.
+  const passed = kycRequestEmail(ctx({ passedOnBy: { name: "Sam Agent", firm: "Knight Frank" } }));
+  assert.match(passed.html, /Sam Agent of <strong>Knight Frank<\/strong>, your agent, asked us to send you this\./);
+  assert.match(kycRequestEmail(ctx({ passedOnBy: { name: null, firm: "Knight Frank" } })).html, /Your agent, <strong>Knight Frank<\/strong>, asked us to send you this\./);
+  assert.doesNotMatch(kycRequestEmail(ctx()).html, /asked us to send you this/);
 });
 
 test("a test email says so in its subject and at the top", () => {

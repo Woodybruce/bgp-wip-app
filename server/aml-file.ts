@@ -4,7 +4,7 @@
 // they can move quicker").
 //
 //   GET  /api/deals/:id/aml-file?role=&format=zip|pdf   one party, or every party on the deal
-//   POST /api/deals/:id/aml-file/kyc4u   { role }        the report filed on the party's KYC record
+//   POST /api/deals/:id/aml-file/kyc4u   410: KYC4U is no longer used (23 November 2026)
 //
 // The Nominated Officer and the Deputies only (admins until a Nominated
 // Officer is set): decider() in server/deal-party-aml.ts. The report says
@@ -20,15 +20,16 @@
 // party (the company that signs when the deal names one), so Request KYC4U
 // check offers it with the other documents and the bookmark attaches it.
 
+import { KYC4U_RETIRED_WORDS } from "@shared/kyc4u-portal";
 import type { JointAgentPartyView } from "@shared/joint-agent-checks";
 import { Router, type Request, type Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import { pool } from "./db";
-import { getFile, saveFile } from "./file-storage";
+import { getFile } from "./file-storage";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
 import { amlRegime, type PartyDueDiligence } from "@shared/aml-policy";
-import { AML_FILE_DOC_TYPE, amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords } from "@shared/aml-file";
+import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords } from "@shared/aml-file";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
 import type { PartyKycState } from "@shared/party-kyc";
@@ -253,7 +254,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       agents, rentPa: deal.rent_pa == null ? null : Number(deal.rent_pa),
     },
     regime: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }),
-    inHouse: await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false),
+    inHouse: await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true),
     agents: (agentRows?.agents || []).map((a: any) => ({ roleWords: text(a.roleWords), name: text(a.name), words: text(a.state?.words) })),
     dealFlags: flags?.deal || [],
     dealAside: flags?.dealSetAside || [],
@@ -447,10 +448,10 @@ class Writer {
 
 const RISK_COLOUR = { ok: GREEN, attention: AMBER, info: INK } as const;
 
-/** BGP's written risk assessment, in KYC4U's shape (21 November 2026). */
+/** BGP's written risk assessment (21 November 2026). */
 function writeRiskAssessment(w: Writer, ra: RiskAssessment) {
   w.sub("Risk assessment");
-  w.para("BGP's written assessment, in the shape of KYC4U's AML Risk Assessment Report. Every line is read from the checks below.", MUTED, 8.5);
+  w.para("BGP's written risk assessment. Every line is read from the checks below.", MUTED, 8.5);
   for (const r of ra.job) w.kv(r.label, r.value, RISK_COLOUR[r.tone]);
   w.sub("Risk details");
   for (const h of ra.risks) w.kv(`${h.label}: ${h.value}`, h.details.join("\n") || "None", h.value === "Higher" ? AMBER : INK);
@@ -622,8 +623,8 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   if (p.joint) writeJointAgent(w, p.joint);
 
   // KYC4U.
-  w.sub("KYC4U");
-  if (!p.kyc4u.drafts.length && !p.kyc4u.records.length) w.para("Not raised with KYC4U.", MUTED);
+  w.sub("KYC4U (past checks)");
+  if (!p.kyc4u.drafts.length && !p.kyc4u.records.length) w.para("None. KYC4U is no longer used (since 23 November 2026).", MUTED);
   for (const d of p.kyc4u.drafts) {
     w.item("•", `Request prepared ${day(d.created_at)}: ${d.status === "queued" ? "waiting to be filled on KYC4U's form" : d.status === "filled" ? `filled on KYC4U's form ${day(d.filled_at)}` : d.status === "submitted" ? "raised with KYC4U" : d.status}`,
       INK, [d.request_title ? `KYC4U's request: ${d.request_title}` : null, d.request_status ? `their status: ${d.request_status}` : null, d.request_url].filter(Boolean).join("\n"));
@@ -835,33 +836,9 @@ router.get("/api/deals/:id/aml-risk-assessment", async (req: Request, res: Respo
   }
 });
 
-// The report filed on the party's KYC record, for KYC4U: Request KYC4U check
-// offers it with the other documents, and the bookmark attaches it.
-router.post("/api/deals/:id/aml-file/kyc4u", async (req: Request, res: Response) => {
-  try {
-    const me = await officer(req);
-    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
-    const role = text(req.body?.role);
-    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
-    const data = await gatherAmlFile(String(req.params.id), [role], me);
-    if (!data) return res.status(404).json({ message: "No such transaction." });
-    const p = data.parties[0];
-    if (!p) return res.status(404).json({ message: "The transaction has no such party." });
-    const pdf = await renderAmlReport(data);
-    const fileName = `${amlFileName(data, "report")}.pdf`;
-    const stored = `aml-file-${data.deal.id.slice(0, 8)}-${role}-${Date.now()}.pdf`;
-    await saveFile(`chat-media/${stored}`, pdf, "application/pdf", fileName);
-    const row = (await pool.query(
-      `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'application/pdf', $8, $9) RETURNING id`,
-      [p.brand.id, p.company?.id || null, data.deal.id, AML_FILE_DOC_TYPE, `/api/chat-media/${stored}`, fileName, pdf.length,
-        `The AML file for KYC4U, made by ${me.name}: everything BGP holds on this party's checks.`, me.id])).rows[0];
-    await recordMade(data, me, "filed on the KYC record for KYC4U");
-    res.json({ ok: true, documentId: String(row.id), fileName });
-  } catch (err: any) {
-    console.error("[aml-file] not filed:", err?.message);
-    res.status(500).json({ message: "The AML file could not be filed." });
-  }
+// The report filed for KYC4U: KYC4U is no longer used (23 November 2026).
+router.post("/api/deals/:id/aml-file/kyc4u", (_req: Request, res: Response) => {
+  res.status(410).json({ message: KYC4U_RETIRED_WORDS });
 });
 
 export default router;

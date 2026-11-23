@@ -3356,6 +3356,151 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   are on file; they then go in the AML file). Each writes its own history.
 - Not run against Anthropic or Companies House from a build machine.
 
+## KYC4U is no longer used (Woody, 2026-11-23)
+
+Woody: "We are no longer using KYC 4U update the app accross everyhting",
+then "we want to keep and record the hiostoric AML checks from KYC4U though
+which are downloaded on the app". Do not re-litigate. **This supersedes every
+rule further down that sends a party to KYC4U, asks for KYC4U's result or
+keeps a party waiting on KYC4U**: the red-flag hand-off (17 November), trusts
+to KYC4U in full (20 November), KYC4U's portal, pack and Submitted record
+(20 November), foreign-owned parties to KYC4U (21 November), the officers'
+in-house switch (21 November) and ChatBGP's prepare_kyc4u_request. Read those
+sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
+`shared/kyc4u-portal.ts`. Guards: `qa/regression/kyc4u-portal.test.mjs`,
+`uk-screening-guards.test.mjs`, `kyc4u-gaps-guards.test.mjs`,
+`aml-trust-second-read.test.mjs`, `aml-policy-guards.test.mjs`.
+
+- **Enhanced due diligence is always the officers'.** `readInHouseEdd()`
+  (`server/aml-authority.ts`) always answers on; there is no switch (`PUT
+  /api/aml-policy/in-house-edd` answers 410, and the Policy pill reads
+  "Enhanced due diligence: done by BGP's officers"). An enhanced, trust,
+  foundation or owned-abroad party's client checks run as any party's, and
+  the Nominated Officer or a Deputy signs it off with a note of what was
+  checked (`signOffDenial`'s enhanced path; an agent cannot). The pure rules
+  read a missing flag as in-house (`inHouseEdd !== false`, `inHouse !==
+  false`); `false` only reads a file as it stood before 23 November.
+- **Nothing goes to KYC4U.** The Next line has no KYC4U step (`amlNextStep`
+  lost `request_kyc4u`, `kyc4u_form` and `kyc4u_result`); there is no Request
+  KYC4U check, Download for KYC4U, Submitted on KYC4U's portal, red **Not yet
+  with KYC4U** box or board mark (`amlNeedsKyc4u` is gone); Kick off AML sends
+  every party the client checks, a flagged one too; the Heads of Terms
+  convert offers the tenant the client checks; the AML file has no File for
+  KYC4U (`POST /api/deals/:id/aml-file/kyc4u` answers 410); the WIP report's
+  Not raised with KYC4U list is gone; ChatBGP has no prepare_kyc4u_request (a
+  stale call is refused) and its prompt and app map say so. The server routes
+  that start or send work to KYC4U answer 410 (connect, the admin consent
+  link, sync, the drafts prefill and create, submitted), the bookmark's draft
+  queue is always empty and the six-hourly sync is gone.
+- **KYC4U's past checks stay and still count.** `kyc4u_requests`,
+  `kyc4u_drafts`, `kyc4u_archive_files` and every KYC document filed from them
+  are kept (the five-year deletion covers them as before); a past KYC4U
+  approval keeps a party approved until its re-check; the AML file prints any
+  past KYC4U check under "KYC4U (past checks)". A request made before
+  23 November holds nothing up: the Documents step shows it as one history
+  line. **Subscriptions & APIs → KYC4U** is the record: the request grid, the
+  files copied into the app, and the Send to ChatBGP bookmark, kept to copy
+  their latest records across while BGP can still sign in (it only reads; it
+  fills no form). A company's strip reads "KYC4U's past checks", and an admin
+  can still **Record a past KYC4U sign-off** given by email before then.
+- **Words**: the box's red-flag hints and the red-flag email name the
+  officers ("needs enhanced checks"); the risk assessment says the officers
+  identify owners abroad; the companies page reads "KYC approved / in review
+  / rejected"; the unit panel "KYC:"; the brand pages "KYC4U's past checks".
+- **Joint agent: we ask for their documents, never reliance** (Woody, the
+  same day: "can we call another firm Joint agent", then "the reliance on the
+  joint agent doesnt work we cant agree reliance. What we need is an email to
+  come from us similar to the other emails sayng we are finanlise the KYC on
+  this joint agent transaction and need you to upload or email back the
+  following files. This should include all the docs including their proof of
+  identity and any further AML they have dione", and "should also be able to
+  reply with the documents"). Under the Documents step's Other ways the
+  reliance button (Another firm) is gone; **Joint agent** sends the request
+  (the party's own agent has its own route since the same day, below). The
+  email (`jointAgentRequestEmail`, from the KYC mailbox) is headed
+  "Finalising our KYC on <party>" and opens (Woody, the same day, on the
+  page of request FC5BT6: "the intro changing to reflect the fact that we
+  are jointly instructed by xxx client and you have undertaken the
+  negotiations of this transaction ... the rest is pretty good")
+  "We are jointly instructed by <BGP's client> on <transaction>, and you
+  have undertaken the negotiations of this transaction with <party>, the
+  <role>. We are finalising our KYC on them and need the documents below"
+  (`jointlyInstructed`: the client's name from the transaction, kept on the
+  request as `jointAgent.clientName`, else "the landlord", else "our
+  client"); the page says the same. It lists (`jointAgentAsks`) proof of identity (passport,
+  photocard driving licence or national identity card, or their electronic
+  check report) for each owner and the person acting, proof of address from
+  the last three months, the company's register entry and owners, and any
+  further AML they have done (screening, risk assessment or CDD summary,
+  source of funds); **Upload the documents**, or reply to the email with them
+  attached (the reference in the subject files the reply, as before). Their
+  page is headed the same and has no reliance terms step; the chase emails
+  ask for what is missing in the same words. No reliance terms are asked for
+  anywhere (`JOINT_ASKS_RELIANCE = false` in `shared/joint-agent-checks.ts`:
+  the missing list, the page and the box): on a letting, with their documents
+  in, the Next line reads "Ready to sign off · <firm>'s documents are in: add
+  a note" and the officers (or an agent, on a routine party) sign the party
+  off on BGP's own check of them. A reliance agreed before then still shows
+  and can still be recorded. A sale keeps HMRC's ask and record (Not
+  required with what came back). Guards:
+  `qa/regression/joint-agent-checks-guards.test.mjs`; tests
+  `server/joint-agent-checks.test.ts`.
+- **The other side's agent passes on the standard checks** (Woody, the same
+  day: "you are getting confused with the agents", then "with the agent
+  acting for the tenant or against us we need them to pass on the standard
+  KYC requests for their clients to complete the agent should have the
+  ability to help organise by uploading docs etc."). Do not re-litigate.
+  The joint agent (jointly instructed with BGP) is asked for their
+  documents (above); the party's own agent (acting for the other side) is
+  sent the party's ordinary client checks to pass on, never the joint
+  agent's documents request. The joint agent's dialog asks the joint agent
+  only, and a request with no relation is the joint agent's unless only the
+  party's own agent is recorded (`jointRelationFor`).
+  - **Sending**: Other ways offers **<Tenant's agent>** (the agent the
+    transaction records, `askAgentLabel`; else Their agent) on any party BGP
+    does not act for, and Send client checks has a **Send to** choice: the
+    party's contact, or **Their agent, to pass on** (firm, who at the agent,
+    and who at the party will complete it if known). `POST
+    /api/aml/deal/:id/client-checks` with `viaAgent` (`createClientCheck`):
+    the agent's address (never a BGP one), never for BGP's own client,
+    nothing typed into the CRM, kept on the request as `request.viaAgent`
+    (firm, who, BGP's client and role, `passedOn`). The token's address is
+    the agent's, its name the person at the party (or none). With nobody to
+    ask set at the party and its agent recorded, the Next line reads "To do ·
+    Send the checks to <firm> to pass on" (`send_via_agent`, `theirAgent` in
+    `shared/aml-box.ts`) and the who-to-ask gaps do not hold it up; then
+    "Waiting on <firm>" until it is passed on, then on the person. The
+    Sent confirmation stays open until the dialog is closed (the
+    transaction's checks are read again on close).
+  - **The email to the agent** (`kycViaAgentRequestEmail`): "We act for
+    <client>, the landlord, on <transaction>, and you act for <party>, the
+    tenant ... Please pass our standard checks on to your client to
+    complete", the steps, **Open the checks**, forward this email or send
+    the link from the page, upload what you hold for them, the identity
+    check is the client's. Subject "Please pass on: our checks on <party>
+    for <transaction> (ref X)", so a reply files.
+  - **The page** is the client's ordinary page with a line saying who it
+    was sent through, and **Send this to <party>** (`POST
+    /api/kyc-upload/:token/pass-on`: name and email; the standard request
+    email to them from the KYC mailbox, saying the agent asked, the agent
+    and BGP's agents copied; three a day, two minutes apart, never a BGP
+    address, never into the CRM). Either of them uploads the documents.
+    With nobody named, the identity check asks for the full name of the
+    person doing it first (it is set against that name); the person it is
+    passed on to is the person, until a check has started.
+  - **Replies** file from the agent, a colleague at the agent's firm, or
+    whoever it was passed on to. **Reminders** go to the person it was
+    passed on to with the agent copied, else to the agent in their words
+    (`kycViaAgentReminderEmail`). Everything else (people to check, the
+    sign-off, the board) reads it as the party's own client checks.
+  - Guards: `qa/regression/kyc-via-agent-guards.test.mjs`; tests in
+    `server/kyc-request.test.ts`. Not run against Microsoft from a build
+    machine.
+- **For Jack, not done**: Issue 2 of the AML policy says BGP "uses a
+  third-party service provider to conduct due diligence checks" (Outsourcing
+  of KYC administration). That is no longer true and is not one of the four
+  Issue 3 changes he signed off.
+
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
 Woody: the emails should "come from kyc@chatbgp.app", "copy the agent that
@@ -4164,6 +4309,21 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
 
 ## Which screening matches are red flags (Woody, 2026-11-19)
 
+**Warning lists are judged like adverse media since 23 November 2026** (Woody,
+on BILLS RESTAURANTS LTD.: "why is it picking up adversea media on buffalow
+bills restruants its a waste if time", then "same issue here not the actual
+company" on Bill's: "bills" on an Ohio enforcement list and Singapore's
+investor alerts at 70%). Only a sanctions match is a red flag whatever its
+score (`ALWAYS_FLAG_KIND = /sanction/`); a warning-list match needs the 90% bar
+(or an agreeing date of birth), and for a company a warning-list or fitness
+and probity profile whose name is not spelt as the company's ("buffalo bill
+restaurant", 20%, on Ireland's Revenue Defaulters List) is set aside as a
+spelling variant (`providerSpellingVariant`). A person's warning list is never
+set aside on spelling. Stored checks are judged again when they are read, so
+no re-run is needed. This supersedes "a sanctions or warning-list match
+(whatever the score)" below. Test: `server/kyc-prechecks.test.ts` (the Bills
+case), `qa/regression/kyc-screening-bars.test.mjs`.
+
 Woody, on deal #4491 (BGP's own two companies, every officer red-flagged):
 "why is complyadvantage red flagging everything?". The app sent Mesh a bare
 name and turned every hit into a red flag, so common names (Jack Barratt,
@@ -4784,7 +4944,12 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
 
 - **The other side's own agent** (Woody, the same day: "we also need to AML
   the Landlord if we are acting for a tenant.. which might be via their agent
-  in this way"). The same request goes to the party's own agent as the
+  in this way"). **Superseded on 23 November 2026**: the party's own agent
+  is sent the party's standard client checks to pass on (see "The other
+  side's agent passes on the standard checks" in "KYC4U is no longer
+  used"); the joint agent's request below is offered for the joint agent
+  only. What follows describes requests made before then, which still read.
+  The same request goes to the party's own agent as the
   transaction records it (`PARTY_AGENT_COLUMNS` in
   `server/joint-agent-checks.ts`: the landlord's leasing agent, the tenant's
   acquiring agent, the seller's and the buyer's agents), stored as
@@ -6004,6 +6169,17 @@ mailbox stay in its thread, from there; staff sending as themselves
   before and live still sent from this address after two fresh deploys, so
   either the deletion is waiting to be applied in Railway (then discard it)
   or `BGP_AML_MAILBOX` holds the address. Leave it unless Woody asks.
+- **AML emails come from kyc@brucegillinghampollard.com, whatever Railway
+  holds** (Woody, 2026-11-23: "the email should come from
+  KYC@brucegillinghampollard.com? its changed to the app version?"; live's
+  admin card read that address and every request of 22 and 23 November went
+  from it). `KYC_MAILBOX` now defaults to it (it was kyc@chatbgp.app), and
+  `sendKycEmail` never falls back to the app's own address: after the KYC
+  mailbox an AML email goes from BGP's shared mailbox
+  (`sendFromFirstMailbox`'s `appMailbox: false`, `senderOrder`'s third
+  argument). This supersedes "the first address Microsoft takes ... then
+  APP_MAILBOX" for AML emails; every other email is unchanged. Tests:
+  `server/app-mailbox.test.ts`, `qa/regression/kyc-client-checks.test.mjs`.
 
 ## Super Brands are BGP's VIP brands (Woody, 2026-11-17)
 

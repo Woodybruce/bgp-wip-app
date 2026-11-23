@@ -149,7 +149,6 @@ import { hotsCall } from "@/components/unit-hots/hots-api";
 import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, findCompanyByName, hotsParties, hotsPricePatch, isInvestmentDealType, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType, teamPatch } from "@/lib/deal-note";
 import { DealNoteReadPanel } from "@/components/deal-note-read";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
-import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceContact } from "@shared/deal-parties";
@@ -3239,14 +3238,14 @@ export function DealFormDialog({
   const [propertySeed, setPropertySeed] = useState<{ text: string; key: number } | null>(null);
   // After New Deal or a move to Solicitors saves (Woody, 2026-11-17: "on the
   // form we need a button to allow us to Kick off the AML"): the form shows
-  // a Kick off AML button for each party, each the deal page's KYC4U request.
+  // a Kick off AML button for each party: the client checks.
   type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
   const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
   useEffect(() => { if (!open) setAmlStep(null); }, [open]);
   // While the client checks are on (their own switch since 18 November
   // 2026), Kick off AML sends them (one email from the KYC mailbox, the
-  // deal's agents copied); a party with a red flag, or every party while
-  // they are off, goes to KYC4U.
+  // deal's agents copied). A party with a red flag gets them too: its
+  // enhanced checks are the officers' (KYC4U is no longer used, 23 November 2026).
   const { data: amlStepStatus } = useDealAmlStatus(amlStep?.dealId ?? "", !!amlStep);
   const clientChecks = !!amlStepStatus?.clientChecks;
   // A handover's landlord, when the deal has none: the property's.
@@ -3557,7 +3556,7 @@ export function DealFormDialog({
   };
 
   // The saved deal's parties, for the Kick off AML step: BGP staff only (the
-  // KYC4U request is BGP's). Shown when the deal has at least one party.
+  // client checks are BGP's). Shown when the deal has at least one party.
   const showAmlStep = (dealId: string | null | undefined, dealRef: string | number | null | undefined): boolean => {
     if (!dealId || isClientCreate) return false;
     const sides: Array<[AmlParty["role"], string, string]> = [
@@ -3793,7 +3792,7 @@ export function DealFormDialog({
         <DialogHeader>
           <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : "New Transaction"}</DialogTitle>
           <DialogDescription>
-            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "Start the checks on each party with KYC4U.") : handover
+            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "The client checks are switched off: the officers sign each party off on the transaction's AML.") : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the transaction, then save: it moves to Solicitors.`
               : isEdit ? "Update transaction details below." : "Fill in the details to create a new transaction."}
           </DialogDescription>
@@ -3805,11 +3804,10 @@ export function DealFormDialog({
             </p>
             <div className="space-y-2">
               {amlStep.parties.map(p => {
-                // A party with a red flag already goes to KYC4U, not the
-                // routine client checks (Woody, 2026-11-17), unless the
-                // officers do enhanced checks in-house (2026-11-22).
+                // A party with a red flag gets the client checks too: its
+                // enhanced checks are the officers' (KYC4U is no longer used,
+                // 23 November 2026).
                 const flags = amlStepStatus?.redFlags?.parties[p.id] || [];
-                const inHouse = !!amlStepStatus?.decisions?.inHouseEdd;
                 return (
                   <div key={`${p.role}:${p.id}`} className="space-y-1.5 rounded-md border px-3 py-2" data-testid={`deal-aml-party-${p.role}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3817,22 +3815,19 @@ export function DealFormDialog({
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{p.label}</div>
                         <div className="text-sm font-medium break-words">{p.name}</div>
                       </div>
-                      {clientChecks && (!flags.length || inHouse)
-                        ? <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />
-                        : <Kyc4uRequestButton dealId={amlStep.dealId} companyId={p.id} role={p.role} partyName={p.name} label="Kick off AML" />}
+                      {clientChecks && <SendClientChecksButton dealId={amlStep.dealId} companyId={p.id} partyName={p.name} label="Kick off AML" />}
                     </div>
                     {flags.length > 0 && (
                       <p className="text-xs text-red-800" data-testid={`deal-aml-party-flags-${p.role}`}>
-                        Red flag: {flags.map(f => f.label).join("; ")}. {inHouse ? "Enhanced checks: an officer signs it off." : "Raise it with KYC4U: the red flags go in the request's note."}
+                        Red flag: {flags.map(f => f.label).join("; ")}. Enhanced checks: an officer signs it off.
                       </p>
                     )}
                     {/* The company that signs and the person to ask, and
                         anything missing before the checks can start
                         (2026-11-18), filled in place. */}
                     <PartyReadyToStart dealId={amlStep.dealId} companyId={p.id} aml={partyAmlFacts(amlStepStatus, p.id)} />
-                    {/* BGP's sign-off and KYC4U's result, for the MLRO (or
-                        an admin while none is appointed): a party KYC4U has
-                        already approved is recorded here (2026-11-18). */}
+                    {/* BGP's sign-off, for the Nominated Officer or a Deputy
+                        (an admin while none is appointed), 2026-11-18. */}
                     <PartyDecisions dealId={amlStep.dealId} data={amlStepStatus} companyId={p.id} role={p.role} partyName={p.name}
                       approved={!!amlStepStatus?.counterparties.find(c => c.id === p.id && c.isApproved && !c.isExpired)} compact />
                   </div>
@@ -3842,7 +3837,7 @@ export function DealFormDialog({
             <p className="text-[11px] text-muted-foreground">
               {clientChecks
                 ? "Each button opens the client checks: pick who to ask, see the email, send. Progress shows on the transaction's AML."
-                : "Each button fills in KYC4U's request from the transaction: check it and save. Then, on KYC4U's Raise New Service Request page, click your Send to ChatBGP bookmark and press Submit there. KYC4U's answer comes back to the transaction after the next sync."}
+                : "The client checks are switched off: the officers sign each party off on the transaction's AML."}
             </p>
             <DialogFooter className="flex items-center gap-2">
               <Button type="button" variant="outline" onClick={() => { const id = amlStep.dealId; onOpenChange(false); navigateTo(`/deals/${id}`); }} data-testid="deal-aml-open-deal">Open the transaction</Button>
@@ -7332,7 +7327,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
     inlineUpdateMutation.mutate({ id: dealId, field, value });
 
-    // No in-app AML sweep on a party change — KYC4U is BGP's MLRO (2026-10-05).
+    // No in-app AML sweep on a party change: the checks run from the transaction's Parties & AML.
   }, [deals, companies, toast, isClientDeals, jointAgentDeals]);
 
   // Inline "search and set up" for party cells — when the typed name matches

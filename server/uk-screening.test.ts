@@ -253,9 +253,11 @@ const facts = (over: Partial<SignOffFacts> = {}): SignOffFacts => ({
 });
 const eddNote = "Trust deed and TRS excerpt seen; settlor's source of wealth is a 2019 property sale, completion statement on file; trustees screened clear.";
 
-test("off, an enhanced party goes to KYC4U as before; on, the officers sign it off with a note, after any sanctions match", () => {
-  assert.match(signOffDenial(facts()) || "", /KYC4U/);
-  assert.match(signOffDenial(facts({ ownersAbroad: ["KIRKBI A/S, Denmark"] })) || "", /KYC4U/);
+test("an enhanced party: the officers sign it off with a note, after any sanctions match (KYC4U is no longer used, 23 November 2026)", () => {
+  // Read as it stood before then, it went to KYC4U.
+  assert.match(signOffDenial(facts({ inHouseEdd: false })) || "", /KYC4U/);
+  assert.match(signOffDenial(facts({ inHouseEdd: false, ownersAbroad: ["KIRKBI A/S, Denmark"] })) || "", /KYC4U/);
+  assert.match(signOffDenial(facts()) || "", /Enhanced due diligence by BGP: say what was checked/);
   assert.ok(signOffEnhanced(facts({ redFlags: 0, higherRisk: true })));
   assert.ok(!signOffEnhanced(facts({ redFlags: 0 })));
   const on = { inHouseEdd: true };
@@ -266,9 +268,9 @@ test("off, an enhanced party goes to KYC4U as before; on, the officers sign it o
   assert.equal(signOffDenial(facts({ ...on, redFlags: 0, ownersAbroad: ["KIRKBI A/S, Denmark"], note: eddNote })), null);
   // The same freshness rules as any sign-off.
   assert.match(signOffDenial(facts({ ...on, precheck: null, note: eddNote })) || "", /have not run/);
-  // In-house, a KYC4U request raised earlier no longer holds the party (22 November 2026); off, it does.
-  assert.equal(signOffDenial(facts({ ...on, withKyc4u: true, note: eddNote })), null);
-  assert.match(signOffDenial(facts({ withKyc4u: true, note: eddNote })) || "", /raised with KYC4U/);
+  // A KYC4U request raised earlier no longer holds the party; read as before 23 November 2026, it did.
+  assert.equal(signOffDenial(facts({ withKyc4u: true, note: eddNote })), null);
+  assert.match(signOffDenial(facts({ withKyc4u: true, inHouseEdd: false, note: eddNote })) || "", /raised with KYC4U/);
   assert.ok(isSanctionsFlag({ kind: "provider_screen", evidence: ["type:sanctions"] }));
   assert.ok(!isSanctionsFlag({ kind: "provider_screen", evidence: ["type:pep"] }));
 });
@@ -280,8 +282,8 @@ const box = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({
   canSignOff: true, canDecide: false, signOffBlocked: null, needsNote: true, trust: true, ...over,
 });
 
-test("the Next line: KYC4U while the setting is off; in-house, the client checks and then the officers", () => {
-  assert.equal(amlNextStep(box()).action, "request_kyc4u");
+test("the Next line: the client checks and then the officers (KYC4U is no longer used)", () => {
+  assert.equal(amlNextStep(box()).action, "send_client_checks");
   const sent = amlNextStep(box({ inHouseEdd: true }));
   assert.equal(sent.action, "send_client_checks");
   assert.match(sent.words, /Send the client checks to Jane Trustee/);
@@ -298,21 +300,20 @@ test("the Next line: KYC4U while the setting is off; in-house, the client checks
 });
 
 test("in-house, KYC4U holds nothing up: the Next line, the board's stage and who it waits on (22 November 2026)", () => {
-  // A request prepared or raised with KYC4U earlier: off, it is the next step; in-house, the checks carry on.
-  assert.equal(amlNextStep(box({ kyc4u: "queued" })).action, "kyc4u_form");
-  assert.equal(amlNextStep(box({ kyc4u: "raised" })).who, "kyc4u");
+  // A request prepared or raised with KYC4U earlier: the checks carry on.
+  assert.equal(amlNextStep(box({ kyc4u: "queued" })).action, "send_client_checks");
+  assert.equal(amlNextStep(box({ kyc4u: "raised" })).action, "send_client_checks");
   assert.equal(amlNextStep(box({ kyc4u: "queued", inHouseEdd: true })).action, "send_client_checks");
   assert.equal(amlNextStep(box({ kyc4u: "raised", inHouseEdd: true })).action, "send_client_checks");
-  assert.notEqual(amlNextStep(box({ stage: "with_kyc4u", inHouseEdd: true })).who, "kyc4u");
-  // Client checks switched off: KYC4U, or in-house the officers with a note.
-  assert.equal(amlNextStep(box({ clientChecks: false, trust: false, factors: 0 })).action, "request_kyc4u");
+  assert.equal(amlNextStep(box({ stage: "with_kyc4u", inHouseEdd: true })).action, "send_client_checks");
+  // Client checks switched off: the officers with a note.
+  assert.equal(amlNextStep(box({ clientChecks: false, trust: false, factors: 0 })).action, null);
   assert.equal(amlNextStep(box({ clientChecks: false, trust: false, factors: 0, inHouseEdd: true, canDecide: true })).action, "sign_off");
   // An approval running out never sends anyone to KYC4U in-house.
   assert.equal(amlNextStep(box({ stage: "expired", clientChecks: false, inHouseEdd: true })).action, null);
   const facts = { role: "landlord", dealStatus: "SOL", kyc: { status: "in_review", expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: true, kyc4uInReview: true };
-  assert.equal(amlStage(facts as any), "with_kyc4u");
-  assert.equal(amlStage({ ...facts, inHouse: true } as any), "not_started");
-  assert.equal(amlWaitingOn("client_finished", 2), "BGP: raise it with KYC4U");
-  assert.equal(amlWaitingOn("client_finished", 2, true), "Officers: sign off");
-  assert.equal(amlWaitingOn("bgp_checked", 1, true), "BGP: send the client checks");
+  assert.equal(amlStage(facts as any), "not_started");
+  assert.equal(amlStage({ ...facts, inHouse: false } as any), "with_kyc4u", "as it stood before 23 November 2026");
+  assert.equal(amlWaitingOn("client_finished", 2), "Officers: sign off");
+  assert.equal(amlWaitingOn("bgp_checked", 1), "BGP: send the client checks");
 });

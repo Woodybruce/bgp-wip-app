@@ -6,7 +6,7 @@
 //   GET  /api/aml-policy/documents/:key          a document as a download (BGP staff)
 //   PUT  /api/aml-policy/officers                { nominatedId, deputyIds } (admins; deputyId from a cached screen)
 //   POST /api/aml-policy/officers/from-policy    sets the officers the policy names (admins)
-//   PUT  /api/aml-policy/in-house-edd            { on }: BGP does enhanced due diligence itself, not KYC4U (the officers)
+//   PUT  /api/aml-policy/in-house-edd            410: KYC4U is no longer used, so enhanced due diligence is always BGP's
 //
 // Outside /api/aml/, which the retired in-app AML answers 410, and on no
 // client gateway list: BGP staff signed in as themselves only.
@@ -238,23 +238,10 @@ router.post("/api/aml-policy/officers/from-policy", async (req: Request, res: Re
   }
 });
 
-// ── In-house enhanced due diligence (the officers) ─────────────────────────
-// Woody, 21 November 2026: "I'm trying to set this up without using kyc4u".
-// Off by default: until an officer switches it on, an enhanced, trust or
-// owned-abroad party goes to KYC4U as before.
-router.put("/api/aml-policy/in-house-edd", async (req: Request, res: Response) => {
-  try {
-    const me = await staffMe(req);
-    if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    const { amlActor, officerRefusal, writeInHouseEdd } = await import("./aml-authority");
-    const actor = await amlActor(req);
-    if (!actor.isMlro) return res.status(403).json({ message: officerRefusal(actor, "change how enhanced due diligence is done") });
-    if (typeof req.body?.on !== "boolean") return res.status(400).json({ message: "Say whether BGP does enhanced due diligence itself (on: true or false)." });
-    res.json({ ok: true, inHouseEdd: await writeInHouseEdd(req.body.on, { id: me.id, name: me.name }) });
-  } catch (err: any) {
-    console.error("[aml-policy] in-house setting not saved:", err?.message);
-    res.status(500).json({ message: "The setting could not be saved." });
-  }
+// ── Enhanced due diligence is always in-house ───────────────────────────────
+// KYC4U is no longer used (Woody, 23 November 2026): there is nothing to switch.
+router.put("/api/aml-policy/in-house-edd", (_req: Request, res: Response) => {
+  res.status(410).json({ message: "KYC4U is no longer used: enhanced due diligence is always done by BGP's officers." });
 });
 
 export default router;

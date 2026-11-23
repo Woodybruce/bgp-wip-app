@@ -1098,7 +1098,14 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: { kind: KycPar
 // judged as anything else (90%). A company, and any check from before this
 // change, keeps the rule above.
 export const PROVIDER_FLAG_BARS = { pep: 0.6, other: 0.9 } as const;
-const ALWAYS_FLAG_KIND = /sanction|warning/;
+// Only a sanctions match is a red flag whatever its score. A warning list
+// (tax defaulters, disqualified directors and the like) was too, until Woody
+// saw "buffalo bill restaurant" on Ireland's Revenue Defaulters List at a 20%
+// match raised against BILLS RESTAURANTS LTD. (23 November 2026: "why is it
+// picking up adversea media on buffalow bills restruants its a waste if
+// time"): a warning list is now judged as anything else (90%), and for a
+// company one spelt differently is set aside (providerSpellingVariant).
+const ALWAYS_FLAG_KIND = /sanction/;
 
 export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "person" | "dobKnown">): boolean {
   const kind = String(m.kind || "");
@@ -1158,9 +1165,17 @@ export function nameSpeltAsTheirs(screened: string, profile: string, person: boo
 const providerLineIsPerson = (line: Pick<ProviderLine, "name" | "person">): boolean =>
   line.person === true || (line.person === undefined && !CORPORATE_NAME.test(line.name));
 
-/** An adverse media profile spelt differently from the person or company screened, with no date of birth tying it to them. */
+/**
+ * An adverse media profile spelt differently from the person or company
+ * screened, with no date of birth tying it to them; for a company, a
+ * warning-list or fitness and probity profile too (23 November 2026). A
+ * person's warning-list profile is never set aside on spelling: it is judged
+ * by the bars, or by the date of birth.
+ */
 export function providerSpellingVariant(m: ProviderMatch, line: Pick<ProviderLine, "name" | "person">): boolean {
-  if (String(m.kind || "") !== "adverse_media") return false;
+  const kind = String(m.kind || "");
+  const companyList = !providerLineIsPerson(line) && /warning|fitness/.test(kind);
+  if (kind !== "adverse_media" && !companyList) return false;
   if (m.birthYearAgrees === true) return false;
   // A profile that could not be read has no name to judge: it stays as the bars say.
   if ((m.unread ?? !m.profileId) || !m.name) return false;
@@ -1188,7 +1203,7 @@ export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMat
 
 export interface PrecheckSpellingVariant { name: string; profile: string; source: string | null; score: number | null }
 
-/** The adverse media profiles a run set aside because their names are spelt differently. */
+/** The profiles a run set aside because their names are spelt differently (adverse media; a company's warning lists too). */
 export function precheckSpellingVariants(result: Pick<KycPrecheckResult, "complyAdvantage">): PrecheckSpellingVariant[] {
   return result.complyAdvantage.lines.flatMap(line => splitProviderMatches(line).variants.map(m => ({ name: line.name, profile: m.name, source: m.source, score: m.score })));
 }

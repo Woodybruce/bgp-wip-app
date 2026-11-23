@@ -78,9 +78,13 @@ export function jointAskable(view: JointAgentChecksView | undefined, companyId: 
   return p && !p.isClient ? p : null;
 }
 
-/** The quiet button's word: the agent the transaction records, else "Their agent". */
-export function askAgentLabel(view: JointAgentChecksView, p: JointAgentPartyView): string {
-  const words = p.agent ? p.agentWords : view.firm ? "joint agent" : "their agent";
+/**
+ * The button that sends the party's own agent the standard checks to pass on
+ * (23 November 2026): the agent the transaction records ("Tenant's agent"),
+ * else "Their agent". The joint agent has its own button.
+ */
+export function askAgentLabel(p: JointAgentPartyView): string {
+  const words = p.agent ? p.agentWords : "their agent";
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
@@ -336,29 +340,19 @@ export function AskJointAgentButton({ dealId, view, party, label, quiet }: { dea
 
 function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; onClose: () => void }) {
   const { toast } = useToast();
-  // The party's own agent (the landlord's agent when BGP acts for the tenant),
-  // or the joint agent: the one the transaction records, the own agent first
-  // when there is no joint agent (22 November 2026).
-  const [relation, setRelation] = useState<"own" | "joint">(view.firm && !party.agent ? "joint" : "own");
-  const recorded = relation === "own"
-    ? (party.agent ? { companyId: party.agent.companyId, name: party.agent.name, contacts: party.agent.contacts, contactId: party.agent.contactId } : null)
-    : (view.firm ? { companyId: view.firm.companyId, name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null);
-  const who = relation === "own" ? party.agentWords : "joint agent";
+  // The joint agent only (23 November 2026): the party's own agent is sent
+  // the standard client checks to pass on instead (Send client checks,
+  // through their agent).
+  const relation = "joint" as const;
+  const recorded = view.firm ? { companyId: view.firm.companyId, name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null;
+  const who = "joint agent";
   const withEmail = (recorded?.contacts || []).filter(c => c.email);
   const [firm, setFirm] = useState(recorded?.name || "");
   const [contactId, setContactId] = useState<string>(recorded?.contactId || (withEmail[0]?.id ?? "other"));
-  const choose = (next: "own" | "joint") => {
-    setRelation(next);
-    const r = next === "own" ? party.agent : view.firm ? { name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null;
-    setFirm(r?.name || "");
-    const people = (r?.contacts || []).filter(c => c.email);
-    setContactId(r?.contactId || (people[0]?.id ?? "other"));
-  };
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const picked = withEmail.find(c => c.id === contactId) || null;
-  const letting = view.rule === "letting" || view.rule === "other";
   const toName = picked ? picked.name : name.trim();
   const toEmail = picked ? picked.email || "" : email.trim();
   const missing = firm.trim().length < 2 ? `Name the ${who}'s firm.` : toName.length < 2 ? `Who at the ${who}?` : !/^\S+@\S+\.\S+$/.test(toEmail) ? "Their email address." : null;
@@ -381,24 +375,10 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
         <DialogHeader>
           <DialogTitle>Ask the {who} about {party.name}</DialogTitle>
           <DialogDescription>
-            {letting
-              ? "They send their checks and agree on their page to BGP relying on them."
-              : "They send their checks on this party. What comes back is recorded."}
+            They send every document they hold on this party: IDs, proof of address and any AML they did.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {party.agent && view.firm && (
-            <div className="space-y-1.5">
-              <Label>Who has their checks</Label>
-              <Select value={relation} onValueChange={v => choose(v === "joint" ? "joint" : "own")}>
-                <SelectTrigger data-testid="joint-relation"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="own">The {party.agentWords}, {party.agent.name}</SelectItem>
-                  <SelectItem value="joint">The joint agent, {view.firm.name}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
           <div className="space-y-1.5">
             <Label htmlFor="joint-firm">The {who}'s firm</Label>
             <Input id="joint-firm" value={firm} onChange={e => setFirm(e.target.value)} maxLength={160} placeholder="Savills" data-testid="joint-firm" />
@@ -431,7 +411,7 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
             <Label htmlFor="joint-note">A note to them (optional)</Label>
             <Textarea id="joint-note" value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={2000} data-testid="joint-note" />
           </div>
-          <p className="text-[11px] text-muted-foreground">They get an email with a link to upload their checks. The transaction's agents are copied.</p>
+          <p className="text-[11px] text-muted-foreground">They get an email with a link to upload them, or reply with them attached. The transaction's agents are copied.</p>
           {missing && <p className="text-[11px] text-muted-foreground" data-testid="joint-ask-missing">{missing}</p>}
         </div>
         <DialogFooter>
@@ -461,8 +441,9 @@ export function AddJointFilesButton({ dealId, view, party }: { dealId: string; v
 function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; onClose: () => void }) {
   const { toast } = useToast();
   const current = currentJointRequest(party);
-  // Whose files: the request's agent, else the party's own agent, else the joint agent (22 November 2026).
-  const relation: "own" | "joint" = current ? current.relation : party.agent || !view.firm ? "own" : "joint";
+  // Whose files: the request's agent, else the joint agent (23 November 2026:
+  // the party's own agent passes the client checks on instead).
+  const relation: "own" | "joint" = current ? current.relation : "joint";
   const agentWord = current ? current.who : relation === "own" ? party.agentWords : "joint agent";
   const recorded = relation === "own" ? party.agent : view.firm;
   const [files, setFiles] = useState<File[]>([]);

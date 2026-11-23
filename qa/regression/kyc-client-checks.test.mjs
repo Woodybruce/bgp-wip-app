@@ -18,11 +18,12 @@ const compliance = read("server/aml-compliance.ts");
 const app = read("client/src/App.tsx");
 const page = read("client/src/pages/kyc-upload.tsx");
 
-test("the emails go from the KYC mailbox (kyc@chatbgp.app unless set), then the app's address, then the shared one", () => {
-  assert.match(portal, /KYC_MAILBOX = \(process\.env\.KYC_MAILBOX \|\| process\.env\.BGP_AML_MAILBOX \|\| "kyc@chatbgp\.app"\)/);
-  assert.match(portal, /sendFromFirstMailbox\(\{ mailboxes: \[KYC_MAILBOX\], to, cc:/);
+test("the emails go from kyc@brucegillinghampollard.com unless set, then the shared one, never the app's address (Woody, 2026-11-23)", () => {
+  assert.match(portal, /KYC_MAILBOX = \(process\.env\.KYC_MAILBOX \|\| process\.env\.BGP_AML_MAILBOX \|\| "kyc@brucegillinghampollard\.com"\)/);
+  assert.match(portal, /sendFromFirstMailbox\(\{ mailboxes: \[KYC_MAILBOX\], to, cc:[^\n]*appMailbox: false \}\)/);
   const mailbox = readFileSync(new URL('../../server/shared-mailbox.ts', import.meta.url), 'utf8');
-  assert.match(mailbox, /for \(const m of \[\.\.\.first, APP_MAILBOX, SHARED_MAILBOX\]\)/);
+  assert.match(mailbox, /for \(const m of \[\.\.\.first, \.\.\.\(opts\.appMailbox === false \? \[\] : \[APP_MAILBOX\]\), SHARED_MAILBOX\]\)/);
+  assert.doesNotMatch(portal, /"kyc@chatbgp\.app"/);
   assert.doesNotMatch(portal, /return \{ ok: false, error: "BGP_AML_MAILBOX env not configured" \}/, "an unset variable no longer stops every email");
 });
 
@@ -181,8 +182,10 @@ test("the client checks run on their own switch, not the old in-app AML one (Woo
   // The Documents step (22 November 2026) offers them only while the switch is on.
   assert.match(card, /\{data\.clientChecks && clientRoute && !people\?\.reliance && \(/, "Send client checks follows the client checks' switch");
   assert.match(card, /\{!clientRoute && data\.clientChecks && !sanctionsOnly && <SendClientChecksButton/, "and so do Other ways");
+  // Through the party's own agent, to pass on (23 November 2026): Other ways, while the switch is on.
+  assert.match(card, /\{!request && data\.clientChecks && !sanctionsOnly && !cp\.notRequired && theirAgent && askParty && <SendClientChecksButton/);
   assert.match(card, /clientChecks: !!data\.clientChecks,/, "and so does the Next line");
-  assert.equal((card.match(/<SendClientChecksButton dealId=\{dealId\} companyId=\{cp\.id\} partyName=\{partyName\}/g) || []).length, 4, "the Next line, the Documents step (send, send again) and Other ways");
+  assert.equal((card.match(/<SendClientChecksButton dealId=\{dealId\} companyId=\{cp\.id\} partyName=\{partyName\}/g) || []).length, 6, "the Next line (send, through their agent), the Documents step (send, send again) and Other ways (client checks, through their agent)");
   assert.doesNotMatch(card, /data\.inAppAml/);
   assert.match(deals, /const clientChecks = !!amlStepStatus\?\.clientChecks;/);
   assert.doesNotMatch(deals, /amlInApp|inAppAml/);

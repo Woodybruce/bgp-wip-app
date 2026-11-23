@@ -115,61 +115,21 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
   );
 }
 
-// Who does enhanced due diligence (Woody, 21 November 2026: "I'm trying to set
-// this up without using kyc4u"): KYC4U, or BGP's own officers. Off by default.
-function InHouseEddLine({ feed }: { feed: PolicyFeed }) {
-  const { toast } = useToast();
-  const [asking, setAsking] = useState(false);
-  const on = !!feed.inHouseEdd?.on;
-  const save = useMutation({
-    mutationFn: async (next: boolean) => (await apiRequest("PUT", "/api/aml-policy/in-house-edd", { on: next })).json(),
-    onSuccess: (_r: any, next: boolean) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/aml-policy"] });
-      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith("/api/kyc/deal/") || String(q.queryKey[0] || "").startsWith("/api/aml-dashboard") });
-      toast({ title: next ? "BGP does enhanced due diligence" : "Enhanced due diligence goes to KYC4U", description: next ? "The officers sign off enhanced parties themselves, with a note of what was checked." : "Enhanced, trust and owned-abroad parties go to KYC4U again." });
-      setAsking(false);
-    },
-    onError: (e: any) => toast({ title: "Not changed", description: plain(e), variant: "destructive" }),
-  });
-  const when = feed.inHouseEdd?.at ? new Date(feed.inHouseEdd.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : null;
+// Enhanced due diligence is BGP's own: KYC4U is no longer used (Woody,
+// 23 November 2026). Its past checks stay on record.
+function InHouseEddLine() {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-testid="aml-in-house-edd">
       <span className="text-muted-foreground">Enhanced due diligence:</span>
-      <span className="text-foreground font-medium" data-testid="aml-in-house-edd-state">{on ? "done by BGP's officers" : "sent to KYC4U"}</span>
-      {feed.inHouseEdd?.by && <span className="text-muted-foreground">(set by {feed.inHouseEdd.by}{when ? `, ${when}` : ""})</span>}
-      {feed.isOfficer && (
-        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAsking(true)} data-testid="aml-in-house-edd-change">
-          {on ? "Send it to KYC4U again" : "Do it in-house"}
-        </Button>
-      )}
-      {asking && (
-        <Dialog open onOpenChange={o => { if (!o) setAsking(false); }}>
-          <DialogContent className="max-w-md" data-testid="aml-in-house-edd-dialog">
-            <DialogHeader>
-              <DialogTitle>{on ? "Send enhanced due diligence to KYC4U again?" : "Do enhanced due diligence in-house?"}</DialogTitle>
-              <DialogDescription>
-                {on
-                  ? "Enhanced, trust and owned-abroad parties go back to KYC4U, and an officer adds their result."
-                  : "Enhanced parties no longer go to KYC4U. An officer signs each off with a note of what was checked; agents can't. A possible sanctions match is resolved first. KYC4U stays available."}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAsking(false)}>Cancel</Button>
-              <Button type="button" disabled={save.isPending} onClick={() => save.mutate(!on)} data-testid="aml-in-house-edd-confirm">
-                {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}{on ? "Send to KYC4U" : "Do it in-house"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      <span className="text-foreground font-medium" data-testid="aml-in-house-edd-state">done by BGP's officers</span>
+      <span className="text-muted-foreground">KYC4U is no longer used (23 November 2026); its past checks stay on record.</span>
     </div>
   );
 }
 
-/** The officers' switch for enhanced checks (in-house or KYC4U), read where words depend on it. */
+/** Enhanced checks are always the officers' (KYC4U is no longer used). */
 export function useAmlInHouse(): boolean {
-  const { data } = useQuery<{ inHouseEdd?: { on: boolean } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
-  return !!data?.inHouseEdd?.on;
+  return true;
 }
 
 export function AmlPolicyPanel() {
@@ -215,7 +175,7 @@ export function AmlPolicyPanel() {
         </section>
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enhanced checks</h3>
-          <InHouseEddLine feed={feed} />
+          <InHouseEddLine />
         </section>
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</h3>
@@ -234,7 +194,7 @@ export function AmlPolicyPanel() {
           <ul className="space-y-1.5 text-xs text-muted-foreground list-disc pl-4" data-testid="aml-policy-rules">
             <li><span className="text-foreground">Simplified</span>: a listed company, an FCA-authorised fund or a UK public body. No owners to verify.</li>
             <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the transaction or an officer.</li>
-            <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. {feed.inHouseEdd?.on ? "Signed off by the Nominated Officer or a Deputy, with a note of what was checked." : "Sent to KYC4U; an officer adds KYC4U's result."}</li>
+            <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. "Signed off by the Nominated Officer or a Deputy, with a note of what was checked."</li>
             <li>Approvals last {feed.recheckYears.standard} years ({feed.recheckYears.enhanced} for enhanced).</li>
             <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month: sanctions checks only.</li>
             <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; everyone before exchange. A transaction that exchanges with checks outstanding still moves, and the officers are emailed.</li>

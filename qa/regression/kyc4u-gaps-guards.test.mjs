@@ -47,9 +47,10 @@ test("the solicitors check and the risk assessment are BGP staff's, and the AML 
   assert.doesNotMatch(file, /aml_internal_reports/);
 });
 
-test("a party owned through a company abroad goes to KYC4U on the box, the dashboard and the sign-off", () => {
-  // Unless the officers do enhanced due diligence in-house (21 November 2026; uk-screening-guards).
-  assert.match(read("shared/aml-box.ts"), /if \(!edd\) \{[\s\S]{0,200}: f\.ownersAbroad \? `owned from abroad[\s\S]{0,250}if \(why\) return step\("flag", "bgp", "Not yet with KYC4U", why, "request_kyc4u"\);/);
-  assert.match(read("shared/party-kyc.ts"), /if \(f\.ownersAbroad\?\.length\) return `Owned through a company registered abroad/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u\(row\.level, row\.stage, !!row\.ownersAbroad\?\.length\)/);
+test("a party owned through a company abroad is enhanced due diligence by the officers (KYC4U is no longer used, 23 November 2026)", () => {
+  const box = read("shared/aml-box.ts");
+  assert.match(box, /const edd = !!f\.trust \|\| !!f\.ownersAbroad \|\| f\.redFlags > 0 \|\| f\.factors > 0;/);
+  assert.doesNotMatch(box, /request_kyc4u|Not yet with KYC4U/);
+  assert.match(read("shared/party-kyc.ts"), /export const signOffEnhanced = [\s\S]{0,200}!!f\.ownersAbroad\?\.length/);
+  assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u/);
 });

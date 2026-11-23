@@ -11,7 +11,7 @@
 // Pure rules. The facts come from what the box already reads: the deal's AML
 // status (GET /api/kyc/deal/:id/status), its parties (GET /api/deals/:id/
 // parties), its client checks (GET /api/aml/deal/:id/client-checks), KYC4U's
-// drafts, and the dashboard's stage for the party (shared/aml-dashboard.ts,
+// drafts (history only since 23 November 2026), and the dashboard's stage for the party (shared/aml-dashboard.ts,
 // read for the one deal), so the box and the AML dashboard say the same thing.
 // The box is client/src/components/deal-aml-status.tsx.
 
@@ -19,16 +19,14 @@ import type { AmlStage } from "./aml-dashboard";
 import { personNamesMatch } from "./kyc-prechecks";
 
 export type AmlBoxTone = "done" | "wait" | "act" | "flag";
-export type AmlBoxWho = "nobody" | "bgp" | "client" | "kyc4u" | "officers" | "joint_agent";
+export type AmlBoxWho = "nobody" | "bgp" | "client" | "officers" | "joint_agent";
 /** What the Next line's button does. */
 export type AmlBoxAction =
   | "fill_in"            // the party box: the company that signs, who to ask, an email
   | "add_details"        // the party box, for the people the checks need
   | "send_client_checks"
+  | "send_via_agent"     // the client checks, through the party's own agent to pass on
   | "people"             // open People: send each their own link
-  | "request_kyc4u"
-  | "kyc4u_form"         // KYC4U's own form, to press the Send to ChatBGP bookmark
-  | "kyc4u_result"       // the Nominated Officer or a Deputy adds KYC4U's result
   | "sign_off"
   | "red_flags"          // open Red flags
   | "billing"            // open Who pays: BGP's invoice goes to another company
@@ -39,7 +37,6 @@ export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   nobody: "Nothing to do",
   bgp: "Waiting on BGP",
   client: "Waiting on the client",
-  kyc4u: "Waiting on KYC4U",
   officers: "For the Nominated Officer",
   joint_agent: "Waiting on the other agent",
 };
@@ -66,6 +63,11 @@ export interface AmlBoxFacts {
   companyMissing: boolean;               // a company party with no company that signs set
   gaps: string[];                        // the party box's other gaps, in words (who to ask, an email)
   askName: string | null;                // who to ask, as the deal names them
+  // The party's own agent, on a party BGP does not act for (23 November 2026:
+  // "with the agent acting for the tenant or against us we need them to pass
+  // on the standard KYC requests"): with nobody to ask at the party, the
+  // client checks go to them to pass on.
+  theirAgent?: string | null;
   precheckRunning: boolean;
   redFlags: number;                      // live red flags (set aside ones do not count)
   factors: number;                       // live higher-risk factors under BGP's AML policy
@@ -74,7 +76,9 @@ export interface AmlBoxFacts {
   // The latest request to the person acting that is not cancelled.
   request: { status: "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired"; to: string | null } | null;
   people: AmlBoxPerson[];                // the people to check who still owe something
-  kyc4u: "none" | "queued" | "raised";   // queued: prepared, not yet on KYC4U's form
+  // KYC4U is no longer used (Woody, 23 November 2026): a request made before
+  // then holds nothing up. Kept so a caller may still say what was there.
+  kyc4u?: "none" | "queued" | "raised";
   canSignOff: boolean;
   canDecide: boolean;                    // the Nominated Officer or a Deputy (admins until one is set)
   signOffBlocked: string | null;         // why it cannot be signed off now; null: it can
@@ -83,22 +87,22 @@ export interface AmlBoxFacts {
   // nobody saying who pays (shared/deal-billing.ts, 20 November 2026). Asked
   // before sign-off; it never jumps ahead of the checks themselves.
   billingDiffers?: boolean;
-  // Recorded as a trust (Jack, 20 November 2026): KYC4U checks it in full.
+  // Recorded as a trust (Jack, 20 November 2026): enhanced due diligence by the officers.
   trust?: boolean;
   // Owned through a company registered abroad, in words ("Kirkbi A/S
-  // (Denmark)"): KYC4U find the owners behind it (Woody, 21 November 2026:
-  // "foreign companies I think we will send to KYC4U").
+  // (Denmark)"): enhanced due diligence by the officers, who find the owners
+  // behind it (KYC4U did until 23 November 2026).
   ownersAbroad?: string | null;
   // Another firm's checks the officers rely on (MLR 2017 reg 39), in words
   // ("Relying on Smith & Co's checks (...)"). It stands in for the client
   // checks, not for enhanced due diligence, which is why it comes after the
-  // KYC4U, trust, owners abroad and red flag steps.
+  // trust, owners abroad and red flag steps.
   reliance?: string | null;
-  // In-house enhanced due diligence (Woody, 21 November 2026: "I'm trying to
-  // set this up without using kyc4u"): with the officers' setting on, an
-  // enhanced, trust or owned-abroad party is not sent to KYC4U. Its client
-  // checks run as any party's, and the Nominated Officer or a Deputy signs it
-  // off with a note. A possible sanctions match is resolved first.
+  // Enhanced due diligence is always BGP's own since KYC4U stopped being used
+  // (Woody, 23 November 2026): an enhanced, trust or owned-abroad party's
+  // client checks run as any party's, and the Nominated Officer or a Deputy
+  // signs it off with a note. A possible sanctions match is resolved first.
+  // Kept for callers that still send it; it changes nothing.
   inHouseEdd?: boolean;
   sanctionsFlags?: number;
   // The joint agent asked for their checks on the party (22 November 2026),
@@ -184,9 +188,9 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
     case "approved":
       return step("done", "nobody", "Cleared", until ? `until ${until}` : "");
     case "expiring":
-      return step("act", "bgp", `Expires ${until || "soon"}`, "check again", f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u");
+      return step("act", "bgp", `Expires ${until || "soon"}`, "check again", f.clientChecks ? "send_client_checks" : null);
     case "expired":
-      return step("flag", "bgp", "Expired", "check again", f.clientChecks ? "send_client_checks" : f.inHouseEdd ? null : "request_kyc4u");
+      return step("flag", "bgp", "Expired", "check again", f.clientChecks ? "send_client_checks" : null);
     default:
       break;
   }
@@ -199,27 +203,12 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
   if (f.precheckRunning) {
     return step("wait", "bgp", "Screening", "running now");
   }
-  // Jack, 20 November 2026: a big red mark until the request is on KYC4U's
-  // portal. With the officers doing enhanced checks in-house, a KYC4U request
-  // holds nothing up (Woody, 22 November 2026).
-  if (f.kyc4u === "queued" && !f.inHouseEdd) {
-    return step("flag", "bgp", "Not yet with KYC4U", "submit it on their portal", "kyc4u_form");
-  }
-  if ((f.kyc4u === "raised" || f.stage === "with_kyc4u") && !f.inHouseEdd) {
-    return step("wait", "kyc4u", "Waiting on KYC4U", f.canDecide ? "add their result when it comes" : "", f.canDecide ? "kyc4u_result" : null);
-  }
-  const edd = !!f.inHouseEdd && (!!f.trust || !!f.ownersAbroad || f.redFlags > 0 || f.factors > 0);
+  // Higher risk is the officers' enhanced due diligence: KYC4U is no longer
+  // used (Woody, 23 November 2026), and a KYC4U request made before then
+  // holds nothing up.
+  const edd = !!f.trust || !!f.ownersAbroad || f.redFlags > 0 || f.factors > 0;
   if (edd && (f.sanctionsFlags || 0) > 0) {
     return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
-  }
-  // Higher risk goes to KYC4U, unless the officers do it in-house.
-  if (!edd) {
-    const why = f.trust ? "a trust"
-      : f.ownersAbroad ? `owned from abroad (${shortReason(f.ownersAbroad, 50)})`
-      : f.redFlags > 0 ? `${f.redFlags} red flag${s(f.redFlags)}`
-      : f.factors > 0 ? "higher risk"
-      : null;
-    if (why) return step("flag", "bgp", "Not yet with KYC4U", why, "request_kyc4u");
   }
   // Enhanced due diligence by BGP is the officers' to sign off, not an agent's.
   const canSign = edd ? f.canDecide : f.canSignOff;
@@ -252,32 +241,38 @@ export function amlNextStep(f: AmlBoxFacts): AmlNextStep {
         : step("act", "bgp", "To do", `ask ${firm} for ${joint.missing === 1 ? "the missing document" : `${joint.missing} missing documents`}`, "joint_remind");
     }
     if (joint.rule === "sale") return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: mark Not required`, "joint");
+    // A reliance they agreed before 23 November 2026 can still be recorded.
     if (joint.reliance) return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: record the reliance`, "joint");
-    return step("wait", "joint_agent", `Waiting on ${firm}`, "to agree the reliance terms", "joint_remind");
+    // No reliance terms any more (Woody, 23 November 2026: "we cant agree
+    // reliance"): with their documents in, BGP signs the party off on its own
+    // check of them.
+    if (f.billingDiffers) return BILLING_STEP;
+    if (f.signOffBlocked === null && canSign) return ready(`${possessive(firm)} documents are in: add a note`);
+    if (f.signOffBlocked) return blocked();
+    return step("wait", "officers", "For the officers", `${possessive(firm)} documents are in`);
   }
   if (joint && joint.status === "not_sent" && !clientGoing) {
     return step("act", "bgp", "To do", `the email to ${firmShort(joint.firm)} didn't go: ask again`, "joint");
   }
   if (joint && (joint.status === "sent" || joint.status === "opened") && !clientGoing) {
-    return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, joint.rule === "sale" ? "for their checks" : "for their checks and the terms", "joint");
+    return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, joint.rule === "sale" ? "for their checks" : "for the documents", "joint");
   }
   if (f.due === false && !f.request) {
     return step("wait", "nobody", "Not due yet", DUE_WORDS[f.role] || "");
   }
   if (!f.clientChecks) {
-    return f.inHouseEdd
-      ? step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null)
-      : step("act", "bgp", "To do", "send it to KYC4U", "request_kyc4u");
+    return step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null);
   }
   if (f.gaps.length) {
     return step("act", "bgp", "To do", f.gaps[0].replace(/\.$/, ""), "fill_in");
   }
   const unreachable = f.people.filter(p => !p.reachable && !p.linked);
   if (!f.request || f.request.status === "not_sent" || f.request.status === "expired") {
-    const words = !f.request
-      ? `Send the client checks${f.askName ? ` to ${f.askName}` : ""}`
+    const viaAgent = !f.request && !f.askName && !!f.theirAgent;
+    const words = viaAgent ? `Send the checks to ${firmShort(f.theirAgent)} to pass on`
+      : !f.request ? `Send the client checks${f.askName ? ` to ${f.askName}` : ""}`
       : f.request.status === "not_sent" ? "The client checks email didn't go: send it again" : "The link ran out: send a new one";
-    return step("act", "bgp", "To do", words, "send_client_checks");
+    return step("act", "bgp", "To do", words, viaAgent ? "send_via_agent" : "send_client_checks");
   }
   if (unreachable.length) {
     return step("act", "bgp", "To do", `Add contact details for ${andList(unreachable.map(p => p.name))}`, "add_details");

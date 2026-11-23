@@ -328,6 +328,63 @@ function OwnerLinkRow({ token, person, onView }: { token: string; person: NonNul
   );
 }
 
+// Sent through the party's own agent (23 November 2026): the agent passes the
+// checks on to someone at the party from here, or forwards our email. Either
+// of them can upload the party's documents on this page.
+function PassOnCard({ token, view, onView }: { token: string; view: KycPortalView; onView: (view: KycPortalView) => void }) {
+  const via = view.viaAgent!;
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const ready = name.trim().split(/\s+/).length >= 2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const send = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/pass-on`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), email: email.trim() }),
+      });
+      const body = await readJson(res);
+      if (!res.ok) { setMessage(body.message || "That didn't work. Please try again."); return; }
+      onView(body);
+      setMessage(`Sent to ${name.trim()}.`);
+      setName("");
+      setEmail("");
+    } catch {
+      setMessage("That didn't work. Please check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-lg border p-4" data-testid="kyc-pass-on">
+      <h3 className="font-semibold text-base leading-snug">Send this to {view.partyName}</h3>
+      <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+        Give us the name and email of the person at {view.partyName} who will complete it, and we'll send them this page. Or forward our email to them.
+      </p>
+      {via.passedOn.length > 0 && (
+        <ul className="mt-2 space-y-1 text-sm" data-testid="kyc-passed-on">
+          {via.passedOn.map((x, i) => (
+            <li key={`${x.name}-${i}`} className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />Sent to {x.name} on {new Date(x.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Their full name" maxLength={120}
+          className="w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm" data-testid="kyc-pass-on-name" />
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Their email address" maxLength={200}
+          className="w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm" data-testid="kyc-pass-on-email" />
+        <Button type="button" disabled={busy || !ready} onClick={send} className="bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" data-testid="kyc-pass-on-send">
+          {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}Send
+        </Button>
+      </div>
+      {message && <p className="mt-2 text-sm text-muted-foreground" data-testid="kyc-pass-on-message">{message}</p>}
+    </div>
+  );
+}
+
 const ID_COPY: Record<string, { line: string; button: string | null }> = {
   not_started: { line: "On your phone or computer: a photo of your passport, driving licence or identity card and a short selfie. It takes about two minutes.", button: "Start the identity check" },
   started: { line: "You've started the identity check. Pick up where you left off.", button: "Continue the identity check" },
@@ -366,8 +423,8 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
   const contactName = firstName(view.agents[0]?.name) || "your contact at Bruce Gillingham Pollard";
   const stillNeeded = joint.missing || [];
   const outstanding = [
-    ...(!files.length ? ["your checks"] : stillNeeded.length ? [`${stillNeeded.length === 1 ? "one thing" : `${stillNeeded.length} things`} we still need`] : []),
-    ...(joint.letting && !joint.reliance ? ["your agreement to the reliance terms"] : []),
+    ...(!files.length ? ["the documents"] : stillNeeded.length ? [`${stillNeeded.length === 1 ? "one thing" : `${stillNeeded.length} things`} we still need`] : []),
+    ...(joint.letting && joint.terms && !joint.reliance ? ["your agreement to the reliance terms"] : []),
   ];
 
   const upload = async (list: FileList | File[]) => {
@@ -442,16 +499,12 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
       )}
 
       <p className="text-base">Hello{firstName(view.recipientName) ? ` ${firstName(view.recipientName)}` : ""},</p>
-      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]" data-testid="joint-title">Your AML checks on {view.partyName}</h1>
+      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]" data-testid="joint-title">Finalising our KYC on {view.partyName}</h1>
       <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="joint-intro">
         {joint.relation === "own"
           ? <>We act for {ROLE_NOUN[joint.clientRole || ""] ? `the ${ROLE_NOUN[joint.clientRole || ""]}` : "the other side"} on <strong className="text-foreground">{view.dealName}</strong>, and you act for <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}</>
-          : <>We are joint agents with {joint.firm} on <strong className="text-foreground">{view.dealName}</strong>, and you dealt with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}</>}
-        {joint.letting
-          ? "Every party to a letting of £10,000 a month or more must be checked. Rather than ask them again, we'd like to rely on your checks."
-          : joint.relation === "own"
-            ? "We check every party to a transaction. Rather than ask them again, please send us your checks on them."
-            : `HMRC asks us to get your checks on the ${noun || "other side"} and record what comes back.`}
+          : <>We are jointly instructed by {joint.clientName ? <strong className="text-foreground">{joint.clientName}</strong> : ROLE_NOUN[joint.clientRole || ""] ? `the ${ROLE_NOUN[joint.clientRole || ""]}` : "our client"} on <strong className="text-foreground">{view.dealName}</strong>, and you have undertaken the negotiations of this transaction with <strong className="text-foreground">{view.partyName}</strong>{noun ? `, the ${noun}` : ""}.{" "}</>}
+        We are finalising our KYC on them and need the documents below: upload them here, or reply to our email with them attached.
       </p>
 
       {view.note && (
@@ -488,7 +541,7 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
           <div className="flex gap-3">
             <StepNumber n={1} done={files.length > 0 && !stillNeeded.length} />
             <div className="min-w-0 flex-1">
-              <h3 className="font-semibold text-base leading-snug">Your checks on {view.partyName}</h3>
+              <h3 className="font-semibold text-base leading-snug">The documents on {view.partyName}</h3>
               <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground" data-testid="joint-asks">
                 {joint.asks.filter(a => a.title !== "The reliance terms").map(a => <li key={a.title}><strong className="text-foreground">{a.title}.</strong> {a.detail}</li>)}
               </ul>
@@ -499,11 +552,11 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
                   {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
                   {busy ? "Uploading…" : files.length ? "Add more files" : "Upload"}
                 </Button>
-                <span className="hidden sm:inline text-xs text-muted-foreground">or drop files here. A zip is fine.</span>
+                <span className="hidden sm:inline text-xs text-muted-foreground">or drop the documents here. A zip is fine.</span>
               </div>
               <input ref={input} type="file" accept={JOINT_ACCEPT} multiple className="hidden"
                 onChange={e => { if (e.target.files?.length) void upload(e.target.files); e.target.value = ""; }} data-testid="joint-upload-input" />
-              <p className="mt-2 text-xs text-muted-foreground">Or reply to our email with the files attached, keeping the reference in the subject.</p>
+              <p className="mt-2 text-xs text-muted-foreground">Or reply to our email with the documents attached, keeping the reference in the subject.</p>
             </div>
           </div>
         </div>
@@ -585,6 +638,7 @@ export default function KycUploadPage() {
   const [errors, setErrors] = useState<Partial<Record<KycDocKey, string>>>({});
   const [idBusy, setIdBusy] = useState(false);
   const [idMessage, setIdMessage] = useState<string | null>(null);
+  const [idName, setIdName] = useState("");
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
@@ -613,7 +667,7 @@ export default function KycUploadPage() {
   }, [loaded, load]);
 
   if (loaded.state === "loading") {
-    return <Shell><div className="flex items-center gap-2 text-sm text-muted-foreground py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" />Loading your checks…</div></Shell>;
+    return <Shell><div className="flex items-center gap-2 text-sm text-muted-foreground py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div></Shell>;
   }
   if (loaded.state === "error") {
     return <Shell><div className="py-6 text-center space-y-4"><p className="text-sm">{loaded.message}</p><Button variant="outline" onClick={() => { setLoaded({ state: "loading" }); void load(); }}>Try again</Button></div></Shell>;
@@ -673,7 +727,10 @@ export default function KycUploadPage() {
     setIdBusy(true);
     setIdMessage(null);
     try {
-      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/id-check`, { method: "POST" });
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/id-check`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(askIdName ? { name: idName.trim() } : {}),
+      });
       const body = await readJson(res);
       if (!res.ok) { setIdMessage(body.message || "The identity check couldn't be started. Please try again."); return; }
       if (body.test) { setIdMessage("Test page: in a real request this opens the identity check, run for BGP by Veriff. You come back here when it's done."); return; }
@@ -724,6 +781,9 @@ export default function KycUploadPage() {
   };
 
   const contactName = firstName(view.agents[0]?.name) || "your agent";
+  // Through the party's agent with nobody named yet: the person doing the
+  // identity check gives their name first (23 November 2026).
+  const askIdName = !!view.viaAgent && !view.viaAgent.personNamed;
   let step = 0;
 
   return (
@@ -739,15 +799,15 @@ export default function KycUploadPage() {
           <div className="flex items-start gap-3">
             <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
             <div>
-              <h2 className="font-semibold text-base">Thank you{firstName(view.recipientName) ? `, ${firstName(view.recipientName)}` : ""}. That's all done.</h2>
+              <h2 className="font-semibold text-base">Thank you{firstName(view.recipientName) && !view.viaAgent ? `, ${firstName(view.recipientName)}` : ""}. That's all done.</h2>
               <p className="mt-1 text-sm text-muted-foreground">We've let {contactName} know. If anything else is needed, they'll be in touch. You can still add files here until {kycLongDate(view.expiresAt)}.</p>
             </div>
           </div>
         </div>
       ) : null}
 
-      <p className="text-base">Hello{firstName(view.recipientName) ? ` ${firstName(view.recipientName)}` : ""},</p>
-      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">Your identity checks for {view.dealName}</h1>
+      <p className="text-base">Hello{firstName(view.recipientName) && !view.viaAgent ? ` ${firstName(view.recipientName)}` : ""},</p>
+      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.viaAgent ? `Identity checks on ${view.partyName}` : `Your identity checks for ${view.dealName}`}</h1>
       {view.person ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
           {view.person.roles.includes("owner")
@@ -760,6 +820,16 @@ export default function KycUploadPage() {
           Before the transaction can go ahead, the law requires us to confirm who we're dealing with
           {view.kind === "company" ? <> for <strong className="text-foreground">{view.partyName}</strong></> : null}. It takes about ten minutes.
           {view.kind === "company" ? " We read the company's Companies House record ourselves." : ""}
+        </p>
+      )}
+
+      {view.viaAgent && !view.person && (
+        <p className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm leading-relaxed text-sky-900 dark:bg-sky-950/20 dark:text-sky-200" data-testid="kyc-via-agent">
+          Sent to {view.viaAgent.agentName ? `${view.viaAgent.agentName} of ${view.viaAgent.firm}` : view.viaAgent.firm}, {view.partyName}'s agent on {view.dealName}, to pass on.
+          {" "}Either of you can upload the documents here.
+          {view.idCheck ? (view.kind === "company"
+            ? ` The identity check is for the person at ${view.partyName} dealing with us, not the agent.`
+            : ` The identity check is for ${view.partyName}, not the agent.`) : ""}
         </p>
       )}
 
@@ -776,6 +846,8 @@ export default function KycUploadPage() {
       )}
 
       <div className="mt-6 space-y-3">
+        {view.viaAgent && !view.person && !view.finishedAt && <PassOnCard token={token} view={view} onView={setView} />}
+
         {view.idCheck && (() => {
           step++;
           const copy = idOther ? ID_COPY.not_started : ID_COPY[view.idCheck.state] || ID_COPY.not_started;
@@ -791,8 +863,12 @@ export default function KycUploadPage() {
                     </p>
                   )}
                   <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{copy.line}</p>
+                  {copy.button && view.idCheck.canStart && askIdName && (
+                    <input value={idName} onChange={e => setIdName(e.target.value)} placeholder="Your full name, as on your passport or licence" maxLength={120}
+                      className="mt-3 w-full rounded-md border bg-background px-3 py-2 text-sm" data-testid="kyc-id-name" />
+                  )}
                   {copy.button && view.idCheck.canStart && (
-                    <Button type="button" className="mt-3 bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" disabled={idBusy} onClick={startId} data-testid="kyc-start-id">
+                    <Button type="button" className="mt-3 bg-[#6E0C25] hover:bg-[#5a0a1f] text-white" disabled={idBusy || (askIdName && idName.trim().split(/\s+/).length < 2)} onClick={startId} data-testid="kyc-start-id">
                       {idBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}{copy.button}
                     </Button>
                   )}

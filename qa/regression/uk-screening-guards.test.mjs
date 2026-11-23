@@ -43,23 +43,21 @@ test("a trust or foundation is checked on its own record: no company that signs 
   assert.match(portal, /if \(party\.kind === "company" && !party\.entityId && !party\.trust\)/);
 });
 
-test("in-house enhanced due diligence is off unless an officer switches it on, and only the officers sign it off", () => {
-  assert.match(read("server/aml-authority.ts"), /on: v\?\.on === true/);
+test("enhanced due diligence is always in-house (KYC4U is no longer used, 23 November 2026), and only the officers sign it off", () => {
+  assert.match(read("server/aml-authority.ts"), /export async function readInHouseEdd\(\): Promise<InHouseEdd> \{\s*return \{ on: true,/);
   const policy = read("server/aml-policy.ts");
   const route = policy.slice(policy.indexOf('router.put("/api/aml-policy/in-house-edd"'));
-  assert.match(route.slice(0, 800), /if \(!actor\.isMlro\) return res\.status\(403\)/);
-  assert.match(route.slice(0, 900), /typeof req\.body\?\.on !== "boolean"/);
+  assert.match(route.slice(0, 300), /res\.status\(410\)/, "nothing to switch");
   const aml = read("server/deal-party-aml.ts");
   assert.match(aml, /if \(edd && me\.as !== "officer"\) return res\.status\(403\)/);
   assert.match(aml, /const level = edd \? "enhanced" :/);
-  // The screens: no Sign off for an agent on an in-house enhanced party, and no KYC4U mark while it is on.
+  // The screens: no Sign off for an agent on an enhanced party, and no KYC4U mark.
   const ui = read("client/src/components/deal-party-aml.tsx");
   assert.match(ui, /const mayPress = canSignOff && !\(view\?\.edd && !decisions\.canDecide\);/);
   assert.match(ui, /view\.blocked \|\| \(view\.edd && !decisions\.canDecide\)\) return null;/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /!inHouseEdd && amlNeedsKyc4u\(/);
-  // The red KYC4U mark is the Next line's own (22 November 2026), which never asks for KYC4U while the officers do it in-house.
-  assert.match(read("client/src/components/deal-aml-status.tsx"), /const kyc4uNeeded = step\.lead === "Not yet with KYC4U";/);
+  assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u/);
+  assert.doesNotMatch(read("client/src/components/deal-aml-status.tsx"), /kyc4uNeeded/);
   const rules = read("shared/aml-box.ts");
-  assert.match(rules, /if \(f\.kyc4u === "queued" && !f\.inHouseEdd\) \{\s*return step\("flag", "bgp", "Not yet with KYC4U"/);
-  assert.match(rules, /if \(!edd\) \{/);
+  assert.doesNotMatch(rules, /Not yet with KYC4U|request_kyc4u|kyc4u_form|kyc4u_result/);
+  assert.match(read("client/src/components/aml-policy-panel.tsx"), /export function useAmlInHouse\(\): boolean \{\s*return true;/);
 });

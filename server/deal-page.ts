@@ -426,7 +426,7 @@ const HOTS_EVENT_TITLES: Record<string, string> = {
 };
 const AML_LINE_TITLES: Record<string, string> = {
   aml_sign_off: "AML signed off by BGP",
-  kyc4u_result: "KYC4U result added",
+  kyc4u_result: "KYC4U result added (past check)",
   kycApproved: "KYC approval changed",
   amlCheckCompleted: "AML check changed",
 };

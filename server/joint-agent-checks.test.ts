@@ -18,9 +18,9 @@ import {
   JOINT_CHASE_MAX, agentWords, bornAgrees, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceInput, jointRelianceTerms, jointWorkingDay, londonDayNumber, sameJointCompany,
   type JointChase, type JointFileReading,
 } from "../shared/joint-agent-checks";
-import { jointAgentAsks, jointAgentChaseStoppedEmail, jointAgentFinishedEmail, jointAgentMissingEmail, jointAgentRequestEmail } from "../shared/kyc-request";
+import { jointAgentAsks, jointAgentChaseStoppedEmail, jointAgentFinishedEmail, jointAgentMissingEmail, jointAgentRequestEmail, jointlyInstructed } from "../shared/kyc-request";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
-import { amlBucket, amlNeedsKyc4u, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
+import { amlBucket, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
 import { agentAmlState } from "../shared/agent-aml";
 import { jointAskRefusal, jointRelationFor, readJointFile, registerHeld } from "./joint-agent-checks";
 import { sameFirmDomain } from "./aml-portal";
@@ -122,7 +122,7 @@ test("every joint agent's HMRC registration is checked: a record is needed wheth
   assert.equal(agentAmlState({ role: "buyers_agent", feeShared: false, record: null }).required, false);
 });
 
-test("the email to the joint agent names the party, the reference and HMRC's reason, and escapes what it is given", () => {
+test("the email to the joint agent: finalising our KYC, every document asked for, upload or reply, and it escapes what it is given", () => {
   const base = {
     recipientName: "Jane <b>Smith</b>", firm: "Savills", partyName: "Acme <script>alert(1)</script> Ltd", partyRole: "purchaser", kind: "company" as const,
     dealName: "12 Example Street", ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/abc", expiresAt: "2026-12-06T10:00:00Z",
@@ -130,22 +130,36 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
   };
   const sale = jointAgentRequestEmail({ ...base, letting: false });
   assert.match(sale.subject, /\(ref 7K2Q9M\)/);
-  assert.match(sale.html, /HMRC asks us, as the joint agent who didn&#39;t deal with the buyer|HMRC asks us, as the joint agent who didn't deal with the buyer/);
+  // Woody, 23 November 2026: "an email ... saying we are finalising the KYC on this joint agent transaction and need you to
+  // upload or email back the following files ... all the docs including their proof of identity and any further AML they have done".
+  // Woody, 23 November 2026: "the intro changing to reflect the fact that we are jointly instructed by xxx client and you have
+  // undertaken the negotiations of this transaction".
+  assert.match(sale.html, /We are jointly instructed by our client on <strong>12 Example Street<\/strong>, and you have undertaken the negotiations of this transaction with <strong>/);
+  assert.match(sale.html, /We are finalising our KYC on them and need the documents below\./);
+  const named = jointAgentRequestEmail({ ...base, letting: false, clientName: "Brucecap Ltd", clientRole: "landlord", partyRole: "tenant" });
+  assert.match(named.html, /We are jointly instructed by <strong>Brucecap Ltd<\/strong> on <strong>12 Example Street<\/strong>, and you have undertaken the negotiations of this transaction with <strong>Acme .*? Ltd<\/strong>, the tenant\./);
+  assert.equal(jointlyInstructed({ clientName: null, clientRole: "landlord" }), "We are jointly instructed by the landlord");
+  assert.equal(jointlyInstructed({ clientName: null, clientRole: null }), "We are jointly instructed by our client");
+  assert.match(sale.subject, /^Finalising our KYC on /);
+  assert.match(sale.html, /Proof of identity/);
+  assert.match(sale.html, /Any further AML you have done/);
+  assert.match(sale.html, /Or reply to this email with the documents attached/);
   assert.doesNotMatch(sale.html, /AMLG|regulation \d|reg \d/, "no regulation numbers in the email");
   assert.match(sale.html, /https:\/\/chatbgp\.app\/kyc-upload\/abc/);
   assert.doesNotMatch(sale.html, /<script>/);
   assert.doesNotMatch(sale.html, /<b>Smith<\/b>/);
   const letting = jointAgentRequestEmail({ ...base, partyRole: "tenant", letting: true });
-  assert.match(letting.html, /we&#39;d like to rely on your checks|we'd like to rely on your checks/);
+  // No reliance terms (Woody, 23 November 2026: "we cant agree reliance").
+  assert.doesNotMatch(letting.html, /rely on your checks|reliance/i);
   assert.doesNotMatch(letting.html, /AMLG|regulation \d|reg \d/);
-  assert.ok(jointAgentAsks({ kind: "company", letting: true }).some(a => a.title === "The reliance terms"));
-  assert.ok(!jointAgentAsks({ kind: "company", letting: false }).some(a => a.title === "The reliance terms"));
+  assert.ok(!jointAgentAsks({ kind: "company", letting: true }).some(a => /reliance/i.test(a.title)));
+  assert.deepEqual(jointAgentAsks({ kind: "company", letting: true }).map(a => a.title), ["Proof of identity", "Proof of address", "The company", "Any further AML you have done"]);
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
   const nudge = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1 });
   assert.match(nudge.subject, /^Reminder/);
-  assert.match(nudge.html, /Send your checks/);
+  assert.match(nudge.html, /Upload the documents/);
   const still = jointAgentMissingEmail({ ...base, letting: false, missing: ["Daniel North: a proof of address <b>x</b>", "Your sanctions and PEP screening"], nothingYet: false, chase: 2 });
-  assert.match(still.subject, /^Still needed: your AML checks on/);
+  assert.match(still.subject, /^Still needed: our KYC on/);
   assert.match(still.html, /Daniel North: a proof of address/);
   assert.doesNotMatch(still.html, /<b>x<\/b>/);
   assert.match(still.html, /HMRC asks us to record what was and wasn't provided/);
@@ -158,7 +172,7 @@ test("the email to the joint agent names the party, the reference and HMRC's rea
   assert.match(stopped.html, /they sent part of their checks/);
   const done = jointAgentFinishedEmail({ firm: "Savills", recipientName: "Jane Smith", partyName: "Acme Ltd", dealName: "12 Example Street", ref: "7K2Q9M",
     dealLink: "https://chatbgp.app/deals/1", files: ["passport.pdf"], letting: true, reliance: null, missing: ["Jane Owner: address"], sentFrom: "kyc@chatbgp.app" });
-  assert.match(done.html, /not agreed yet/);
+  assert.match(done.html, /signs the party off/);
   assert.match(done.html, /Jane Owner: address/);
 });
 
@@ -325,11 +339,11 @@ test("what BGP's own checks read from the register is not asked of the agent aga
 });
 
 test("the line under the party says where the joint agent's checks are, in HMRC's route", () => {
-  assert.match(jointLine({ rule: "letting", firm: "Savills", status: null, files: 0, reliance: false }), /reliance agreement/);
+  assert.equal(jointLine({ rule: "letting", firm: "Savills", status: null, files: 0, reliance: false }), "Not asked: ask Savills for the documents");
   assert.match(jointLine({ rule: "sale", firm: "Savills", status: null, files: 0, reliance: false }), /^Not asked: ask Savills/);
   assert.match(jointLine({ rule: "sale", firm: "Savills", status: "sent", files: 0, reliance: false }), /waiting/);
   assert.equal(jointLine({ rule: "sale", firm: "Savills", status: "in", files: 3, reliance: false }), "Savills sent 3 files");
-  assert.match(jointLine({ rule: "letting", firm: "Savills", status: "in", files: 1, reliance: false }), /reliance terms not agreed/);
+  assert.equal(jointLine({ rule: "letting", firm: "Savills", status: "in", files: 1, reliance: false }), "Savills sent 1 file", "no reliance terms asked for");
   assert.match(jointLine({ rule: "letting", firm: "Savills", status: "finished", files: 1, reliance: true }), /agreed to the reliance terms/);
 });
 
@@ -400,7 +414,6 @@ test("the AML board reads the joint agent asked, then their checks in, as in pro
   assert.equal(amlBucket("joint_in", true), "in_progress");
   assert.equal(amlWaitingOn("joint_asked", 0), "The joint agent");
   assert.match(amlWaitingOn("joint_in", 0), /Officers/);
-  assert.equal(amlNeedsKyc4u("enhanced", "joint_in"), true);
 });
 
 const facts = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({
@@ -424,14 +437,17 @@ test("the Next line follows the joint agent: waiting on them, then the officers 
   assert.equal(gapsSale.action, "joint_remind");
   assert.equal(`${gapsSale.lead} · ${gapsSale.words}`, "To do · ask Savills for 2 missing documents");
   const letting = { firm: "Savills (UK) Limited", rule: "letting" as const, missing: 0 };
-  const terms = amlNextStep(facts({ joint: { ...letting, status: "in", reliance: false } }));
-  assert.equal(terms.who, "joint_agent");
-  assert.equal(`${terms.lead} · ${terms.words}`, "Waiting on Savills · to agree the reliance terms", "the firm without its legal form");
+  // No reliance terms (23 November 2026): with their documents in, BGP signs the party off on its own check of them.
+  const docsIn = amlNextStep(facts({ joint: { ...letting, status: "in", reliance: false }, signOffBlocked: null, canSignOff: true }));
+  assert.equal(docsIn.action, "sign_off");
+  assert.equal(`${docsIn.lead} · ${docsIn.words}`, "Ready to sign off · Savills' documents are in: add a note", "the firm without its legal form");
+  assert.equal(amlNextStep(facts({ joint: { ...letting, status: "sent" } })).words, "for the documents");
   assert.equal(amlNextStep(facts({ joint: { ...letting, status: "finished", reliance: true } })).words, "Savills' checks are in: record the reliance");
   // A link that ran out goes back to the client checks.
   assert.equal(amlNextStep(facts({ stage: "not_started", joint: { ...sale, status: "expired" } })).action, "send_client_checks");
   // Red flags still come first.
-  assert.equal(amlNextStep(facts({ redFlags: 1, joint: { ...sale, status: "in" } })).action, "request_kyc4u");
+  // A red flag: the joint agent's route still runs; the officers sign off with a note (KYC4U is no longer used).
+  assert.equal(amlNextStep(facts({ redFlags: 1, joint: { ...sale, status: "in" } })).action, "joint");
   // With their route running, BGP's own step of setting the company that signs waits.
   assert.equal(amlNextStep(facts({ companyMissing: true, joint: { ...sale, status: "in" } })).action, "joint");
   assert.equal(amlNextStep(facts({ companyMissing: true, stage: "not_started", joint: { ...sale, status: "not_sent" } })).action, "fill_in");
@@ -583,12 +599,14 @@ test("the Next line says what is still missing and that the app is chasing", () 
 // the Landlord if we are acting for a tenant.. which might be via their agent
 // in this way") ─────────────────────────────────────────────────────────────
 
-test("who is asked: what BGP chose, else the firm named, else the party's own agent when no joint agent is recorded", () => {
+test("who is asked: what BGP chose, else the firm named, else the joint agent unless only the party's own agent is recorded", () => {
   assert.equal(jointRelationFor({ relation: "own" }, { firmId: "j" }, { agentId: null }), "own");
   assert.equal(jointRelationFor({ relation: "joint" }, { firmId: null }, { agentId: "a" }), "joint");
   assert.equal(jointRelationFor({ firmCompanyId: "a" }, { firmId: "j" }, { agentId: "a" }), "own");
   assert.equal(jointRelationFor({ firmCompanyId: "j" }, { firmId: "j" }, { agentId: "a" }), "joint");
-  assert.equal(jointRelationFor({}, { firmId: null }, { agentId: null }), "own", "no joint agent: the other side's agent");
+  // Woody, 23 November 2026: "you are getting confused with the agents".
+  assert.equal(jointRelationFor({}, { firmId: null }, { agentId: null }), "joint", "nothing recorded: the joint agent");
+  assert.equal(jointRelationFor({}, { firmId: null }, { agentId: "a" }), "own", "only the party's own agent recorded");
   assert.equal(jointRelationFor({}, { firmId: "j" }, { agentId: null }), "joint");
   assert.equal(jointRelationFor({ relation: "boss" }, { firmId: "j" }, { agentId: "a" }), "joint", "an unknown relation is not taken");
   assert.equal(agentWords("own", "landlord"), "landlord's agent");
@@ -606,16 +624,16 @@ test("the landlord's agent's email: BGP acts for the tenant, they act for the la
   };
   const letting = jointAgentRequestEmail({ ...base, letting: true });
   assert.match(letting.html, /We act for the tenant on <strong>Unit 4 Riverside Walk<\/strong>, and you act for <strong>Riverside Holdings Ltd<\/strong>, the landlord\./);
-  assert.match(letting.html, /we&#39;d like to rely on your checks|we'd like to rely on your checks/);
-  assert.doesNotMatch(letting.html, /joint agents/);
+  assert.match(letting.html, /We are finalising our KYC on them and need the documents below\./);
+  assert.doesNotMatch(letting.html, /joint agents|reliance/);
   assert.match(jointAgentRequestEmail({ ...base, letting: true, test: true }).html, /the other side&#39;s agent receives|the other side's agent receives/);
   const sale = jointAgentRequestEmail({ ...base, partyRole: "vendor", clientRole: "purchaser", letting: false });
-  assert.match(sale.html, /We act for the buyer on <strong>Unit 4 Riverside Walk<\/strong>, and you act for <strong>Riverside Holdings Ltd<\/strong>, the seller\. We check every party to a transaction\./);
+  assert.match(sale.html, /We act for the buyer on <strong>Unit 4 Riverside Walk<\/strong>, and you act for <strong>Riverside Holdings Ltd<\/strong>, the seller\. We are finalising our KYC on them/);
   assert.doesNotMatch(sale.html, /as the joint agent/);
   const joint = jointAgentRequestEmail({ ...base, relation: null, letting: false, partyRole: "purchaser", clientRole: "vendor" });
-  assert.match(joint.html, /We are joint agents with Knight Frank/);
+  assert.match(joint.html, /We are jointly instructed by the seller on <strong>Unit 4 Riverside Walk<\/strong>, and you have undertaken the negotiations of this transaction with <strong>Riverside Holdings Ltd<\/strong>, the buyer\./);
   const chase = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1, test: true });
   assert.match(chase.html, /the other side&#39;s agent receives|the other side's agent receives/);
-  assert.equal(jointLine({ rule: "letting", firm: null, status: null, files: 0, reliance: false, who: "landlord's agent" }), "Not asked: ask the landlord's agent for their checks under a reliance agreement");
+  assert.equal(jointLine({ rule: "letting", firm: null, status: null, files: 0, reliance: false, who: "landlord's agent" }), "Not asked: ask the landlord's agent for the documents");
   assert.equal(jointLine({ rule: "sale", firm: "Knight Frank", status: "not_sent", files: 0, reliance: false, who: "seller's agent" }), "The email to Knight Frank did not go: send it again");
 });

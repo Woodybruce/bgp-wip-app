@@ -5384,7 +5384,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
         <More className={`${brandPage ? "min-w-0 empty:hidden" : "border-t border-border pt-2 mt-auto"}`} data-testid={brandPage ? "brand-checks-more" : "landlord-checks-details"} onToggle={brandPage ? undefined : (event: any) => setDetailsOpen(event.currentTarget.open)}>
           {!brandPage && <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>}
           {(!brandPage || detailsOpen) && <div className="pt-2 space-y-3">
-            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's outsourced KYC provider">Open KYC4U</Link>}
+            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U is no longer used; its past checks are kept as records">KYC4U's past checks</Link>}
             {/* A brand's page with an entity: the checks run are on the card at rest; this is the staff's entity edit. */}
             {!(brandPage && !noEntity && isClientViewer) && <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} part={brandPage && !noEntity ? "entity" : undefined} />}
             {facts && <CompanyFactsRows company={company} report={covenant.data} headingClass={subHeading} />}
@@ -5416,12 +5416,11 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
               <h3 className="text-xs font-semibold">Billing</h3>
               <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
             </section>}
-            {/* A brand's page: BGP's company and group summary (once there is an entity to assess), then the KYC4U housekeeping last. */}
+            {/* A brand's page: BGP's company and group summary (once there is an entity to assess), then KYC4U's past checks last. */}
             {!isClientViewer && brandPage && !noEntity && <div className="border-t border-border pt-3" data-testid="brand-covenant-summary"><LandlordCovenantSummary dense companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} /></div>}
             {!isClientViewer && brandPage && (
-              <section className="border-t border-border pt-3 space-y-1.5 [&_p]:text-[13px] [&_li]:text-[13px]" aria-label="KYC4U" data-testid="brand-checks-kyc4u">
+              <section className="border-t border-border pt-3 space-y-1.5 [&_p]:text-[13px] [&_li]:text-[13px]" aria-label="KYC4U's past checks" data-testid="brand-checks-kyc4u">
                 <Kyc4uStatusStrip companyId={companyId} />
-                <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's outsourced KYC provider">Open KYC4U</Link>
               </section>
             )}
           </div>}
@@ -5745,7 +5744,7 @@ export function BrandComplianceCard({
             <p className="text-[11px] text-muted-foreground italic mt-2 leading-snug">
               {bcIsClient
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
-                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML/KYC is KYC4U's — raise a request from the transaction."}
+                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML runs from each transaction's Parties & AML."}
             </p>
           )}
           {/* The unticked rows above already say what's still to collect —
@@ -5773,9 +5772,9 @@ export function BrandComplianceCard({
           <Link
             href="/kyc-clouseau"
             className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
-            title="KYC4U — BGP's outsourced KYC provider"
+            title="KYC4U is no longer used; its past checks are kept as records"
           >
-            KYC4U <ChevronRight className="w-2.5 h-2.5" />
+            KYC4U's past checks <ChevronRight className="w-2.5 h-2.5" />
           </Link>
           )}
         </div>
@@ -7332,7 +7331,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   const canDeleteImage = brandPage ? !!sbViewer?.isAdmin : true;
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
-    // Covenant only (in-app AML retired 2026-10-05; KYC4U is BGP's MLRO).
+    // Covenant only (in-app AML retired 2026-10-05; the checks run from each transaction's Parties & AML).
     mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
     onSettled: () => { void covenantReport.refetch(); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
   });

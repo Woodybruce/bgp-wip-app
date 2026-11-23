@@ -97,8 +97,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadPartyKyc } = await import("./deal-gates");
   const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
   const { loadNotRequired } = await import("./aml-policy");
-  // The officers' in-house switch: with it on, KYC4U holds no party (shared/aml-dashboard.ts).
-  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
+  // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
+  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
   const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
@@ -234,7 +234,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
       redFlags: allFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length, inHouse),
+      waitingOn: amlWaitingOn(stage, allFlags.length),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

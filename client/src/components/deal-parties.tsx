@@ -112,10 +112,8 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
 // presses, never applied by itself.
 export function TrustLine({ dealId, party, compact }: { dealId: string; party: DealPartyView; compact?: boolean }) {
   const mark = useMarkTrust(dealId, party.role);
-  // The officers' setting (21 November 2026): enhanced due diligence by BGP, not KYC4U.
-  const { data: policy } = useQuery<{ inHouseEdd?: { on: boolean } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
-  const inHouse = !!policy?.inHouseEdd?.on;
-  const who = inHouse ? "the officers check it in full" : "KYC4U check it in full";
+  // Enhanced due diligence is the officers' (KYC4U is no longer used, 23 November 2026).
+  const who = "the officers check it in full";
   if (party.brand.kind !== "company" && !party.brand.recordTrust) return null;
   if (party.brand.recordTrust) {
     if (compact) return null;
@@ -866,8 +864,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
               <h4 className="flex items-center gap-1.5 font-semibold"><UserRound className="w-4 h-4 text-muted-foreground" />Who to ask</h4>
               <p className="text-xs text-muted-foreground">
                 {party.brand.kind === "company"
-                  ? "The person dealing with us for the company, often one of the people above: the client checks go to them first, and they are named on a KYC4U request."
-                  : "The client checks go to them, and they are named on a KYC4U request."}
+                  ? "The person dealing with us for the company, often one of the people above: the client checks go to them first."
+                  : "The client checks go to them."}
               </p>
               {party.person && (
                 <div className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-person-current">

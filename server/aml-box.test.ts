@@ -48,7 +48,8 @@ test("an approval running out asks for the checks again", () => {
   const soon = next({ stage: "expiring", expiresAt: "2026-12-01T00:00:00Z" });
   assert.equal(soon.action, "send_client_checks");
   assert.equal(line(soon), "Expires 1 Dec 2026 · check again");
-  assert.equal(next({ stage: "expired", clientChecks: false }).action, "request_kyc4u");
+  // KYC4U is no longer used (23 November 2026): without the client checks there is no button to press.
+  assert.equal(next({ stage: "expired", clientChecks: false }).action, null);
 });
 
 test("nothing starts until the company that signs is set", () => {
@@ -59,20 +60,22 @@ test("nothing starts until the company that signs is set", () => {
   assert.notEqual(next({ company: false, companyMissing: true }).action, "fill_in");
 });
 
-test("red flags and higher-risk factors go to KYC4U, with a red mark; once raised, it waits on KYC4U", () => {
+test("red flags and higher-risk factors are the officers' to sign off; KYC4U is no longer used (23 November 2026)", () => {
   const flagged = next({ redFlags: 2, canDecide: true });
-  assert.equal(flagged.action, "request_kyc4u");
-  assert.equal(flagged.tone, "flag");
-  assert.equal(line(flagged), "Not yet with KYC4U · 2 red flags");
-  assert.equal(line(next({ factors: 1 })), "Not yet with KYC4U · higher risk");
-  const queued = next({ redFlags: 1, kyc4u: "queued" });
-  assert.equal(queued.action, "kyc4u_form");
-  assert.equal(line(queued), "Not yet with KYC4U · submit it on their portal");
-  const raised = next({ redFlags: 1, kyc4u: "raised", canDecide: true });
-  assert.equal(raised.who, "kyc4u");
-  assert.equal(raised.action, "kyc4u_result");
-  assert.equal(line(raised), "Waiting on KYC4U · add their result when it comes");
-  assert.equal(next({ stage: "with_kyc4u" }).action, null, "an agent waits; the officers add the result");
+  assert.equal(flagged.action, "send_client_checks", "the client checks first, as for any party");
+  assert.equal(line(flagged), "To do · Send the client checks to Jack Barratt");
+  assert.doesNotMatch(line(next({ factors: 1 })), /KYC4U/);
+  // A KYC4U request made before 23 November 2026 holds nothing up.
+  assert.equal(next({ redFlags: 1, kyc4u: "queued" }).action, "send_client_checks");
+  assert.equal(next({ redFlags: 1, kyc4u: "raised", canDecide: true }).action, "send_client_checks");
+  assert.equal(next({ stage: "with_kyc4u" }).action, "send_client_checks");
+  // With everything in, the officers sign it off with a note; an agent cannot.
+  const done = { redFlags: 1, request: { status: "finished" as const, to: "Jack Barratt" }, signOffBlocked: null };
+  const ready = next({ ...done, canDecide: true });
+  assert.equal(ready.action, "sign_off");
+  assert.equal(ready.who, "officers");
+  assert.equal(line(ready), "Ready to sign off · enhanced: add a note");
+  assert.equal(next({ ...done, canDecide: false }).action, null);
 });
 
 test("a letting under £10,000 a month is signed off on the sanctions checks", () => {
@@ -107,6 +110,19 @@ test("the client checks: who to ask, then send, then the people with no details,
   assert.equal(line(link), "To do · Send Huseyn Mirhadiyev their own link");
   assert.equal(line(next({ request: { status: "not_sent", to: "Jack Barratt" } })), "To do · The client checks email didn't go: send it again");
   assert.equal(next({ request: { status: "expired", to: "Jack Barratt" } }).action, "send_client_checks");
+});
+
+// Woody, 23 November 2026: "with the agent acting for the tenant or against us we need them to pass on the standard KYC
+// requests for their clients to complete".
+test("the other side's agent: with nobody to ask at the party, the checks go to them to pass on", () => {
+  const send = next({ askName: null, theirAgent: "Savills (UK) Limited" });
+  assert.equal(send.action, "send_via_agent");
+  assert.equal(line(send), "To do · Send the checks to Savills to pass on");
+  // Someone to ask at the party: the ordinary route, the agent still under Other ways.
+  assert.equal(next({ theirAgent: "Savills (UK) Limited" }).action, "send_client_checks");
+  // Sent: waiting on the firm until it is passed on, then on the person.
+  assert.equal(line(next({ askName: null, theirAgent: "Savills (UK) Limited", request: { status: "sent", to: "Savills (UK) Limited" } })), "Waiting on Savills (UK) Limited");
+  assert.equal(next({ askName: null, theirAgent: "Savills (UK) Limited", request: { status: "expired", to: "Savills (UK) Limited" } }).action, "send_client_checks");
 });
 
 test("waiting on the client names who it waits on", () => {
@@ -147,8 +163,11 @@ test("BGP's checks running say so first", () => {
   assert.equal(line(next({ precheckRunning: true })), "Screening · running now");
 });
 
-test("without the client checks, KYC4U does them", () => {
-  assert.equal(next({ clientChecks: false }).action, "request_kyc4u");
+test("without the client checks, the officers sign it off with a note", () => {
+  const step = next({ clientChecks: false, canDecide: true });
+  assert.equal(step.action, "sign_off");
+  assert.equal(step.who, "officers");
+  assert.equal(next({ clientChecks: false }).action, null, "an agent waits for the officers");
 });
 
 test("names read as a list; a firm without its legal form; a reason to its first clause", () => {
@@ -167,12 +186,13 @@ test("names read as a list; a firm without its legal form; a reason to its first
   assert.equal(shortReason("Owned through KIRKBI A/S (Denmark)"), "Owned through KIRKBI A/S (Denmark)");
 });
 
-test("a party owned through a company registered abroad goes to KYC4U (Woody, 21 November 2026)", () => {
+test("a party owned through a company registered abroad is the officers' (KYC4U is no longer used)", () => {
   const step = amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark" });
-  assert.equal(step.action, "request_kyc4u");
-  assert.equal(step.who, "bgp");
-  assert.equal(line(step), "Not yet with KYC4U · owned from abroad (Example Holding A/S, Denmark)");
-  // Once raised with KYC4U, it waits on them as any party does.
-  assert.equal(amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark", kyc4u: "raised" }).who, "kyc4u");
-  assert.notEqual(amlNextStep({ ...base, ownersAbroad: null }).action, "request_kyc4u");
+  assert.equal(step.action, "send_client_checks");
+  assert.doesNotMatch(line(step), /KYC4U/);
+  // A KYC4U request raised before 23 November 2026 holds nothing up.
+  assert.notEqual(amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark", kyc4u: "raised" }).who, "officers");
+  const done = amlNextStep({ ...base, ownersAbroad: "Example Holding A/S, Denmark", canDecide: true, request: { status: "finished", to: "Jack Barratt" }, signOffBlocked: null });
+  assert.equal(done.action, "sign_off");
+  assert.equal(done.who, "officers");
 });

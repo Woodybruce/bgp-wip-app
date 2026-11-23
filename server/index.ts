@@ -5343,7 +5343,7 @@ app.use("/api/branding/assets", express.static(
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
-      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the transaction's Parties & AML: BGP's checks before asking, the client checks, and KYC4U, BGP's outsourced KYC provider (Request KYC4U check)." });
+      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the transaction's Parties & AML: BGP's checks before asking, the client checks, and the officers' sign-off." });
     }
     next();
   });
