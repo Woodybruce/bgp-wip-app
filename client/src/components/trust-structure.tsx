@@ -25,6 +25,8 @@ export interface TrustStructureView {
   companyId: string; name: string; trust: boolean;
   record: TrustStructureRecord | null;
   documents: { deed: boolean; trs: boolean };
+  // Which of the trust's documents (TRUST_REQUEST_DOCS) are on its KYC record.
+  held?: KycDocKey[];
   gaps: TrustGap[];
   // The latest "Request trust structure" (23 November 2026), and the deed it brought in, read.
   request?: {
@@ -71,22 +73,35 @@ export function trustSummary(view: TrustStructureView | undefined): string {
   return `${TRUST_KINDS[s.kind].split(" (")[0].toLowerCase()}, ${n} ${n === 1 ? "person" : "people"}${view.gaps.length ? ` · ${view.gaps.length} to do` : ""}`;
 }
 
-function DocUpload({ companyId, dealId, docType, label }: { companyId: string; dealId?: string | null; docType: string; label: string }) {
+// Upload documents (Layla, 23 November 2026): one button beside Ask for trust
+// information. The box lists the documents a trust's file needs, each with
+// whether it is on file and a Choose file button.
+const UPLOAD_HINTS: Partial<Record<KycDocKey, string>> = {
+  trust_deed: "A certified copy, with any later deeds of appointment, retirement or variation.",
+  trust_people: "A list of the settlor, the trustees now, any protector and the beneficiaries.",
+  trs_excerpt: "From HMRC's Trust Registration Service, or a line saying why the trust need not register.",
+  trust_wealth: "How the settlor came to have the money or property, with something showing it.",
+  trust_authority: "Only when the person dealing with us is not a trustee.",
+};
+
+function UploadRow({ companyId, dealId, doc, onFile }: { companyId: string; dealId?: string | null; doc: KycDocKey; onFile: boolean }) {
   const { toast } = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState<string | null>(null);
+  const title = KYC_DOCS[doc].title;
   const send = async (file: File) => {
     setBusy(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("companyId", companyId);
-      fd.append("docType", docType);
+      fd.append("docType", KYC_DOCS[doc].docType);
       if (dealId) fd.append("dealId", dealId);
-      fd.append("notes", `${label}, added by BGP from the trust's information`);
+      fd.append("notes", `${title}, added by BGP from the trust's information`);
       const res = await fetch("/api/kyc/documents/upload", { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(plain(await res.text()));
-      toast({ title: `${label} added to the trust's KYC record` });
+      setAdded(file.name);
       refreshAfter(companyId, dealId);
     } catch (e) {
       toast({ title: "Not added", description: plain(e), variant: "destructive" });
@@ -95,13 +110,43 @@ function DocUpload({ companyId, dealId, docType, label }: { companyId: string; d
       if (input.current) input.current.value = "";
     }
   };
+  const done = onFile || !!added;
   return (
-    <>
+    <li className="flex items-center gap-3 px-3 py-2.5" data-testid={`trust-upload-row-${doc}`}>
+      {done ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" /> : <Circle className="h-5 w-5 shrink-0 text-muted-foreground" />}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{added ? `Added: ${added}` : onFile ? "On file" : UPLOAD_HINTS[doc]}</p>
+      </div>
       <input ref={input} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.doc,.docx" onChange={e => { const f = e.target.files?.[0]; if (f) void send(f); }} />
-      <button type="button" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline disabled:opacity-50" disabled={busy} onClick={() => input.current?.click()} data-testid={`trust-upload-${docType}`}>
-        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}Add it
-      </button>
-    </>
+      <Button type="button" size="sm" variant={done ? "ghost" : "outline"} className="h-8 shrink-0 text-xs" disabled={busy} onClick={() => input.current?.click()} data-testid={`trust-upload-${KYC_DOCS[doc].docType}`}>
+        {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}{busy ? "Uploading…" : done ? "Add another" : "Choose file"}
+      </Button>
+    </li>
+  );
+}
+
+function TrustUploadDialog({ view, dealId, onClose }: { view: TrustStructureView; dealId?: string | null; onClose: () => void }) {
+  const held = new Set<KycDocKey>(view.held || []);
+  if (view.documents.deed) held.add("trust_deed");
+  if (view.documents.trs) held.add("trs_excerpt");
+  const docs = TRUST_REQUEST_DOCS.filter(k => !(k === "trs_excerpt" && view.record?.structure.trsStatus === "not_required"));
+  return (
+    <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" data-testid="trust-upload-dialog">
+        <DialogHeader>
+          <DialogTitle>Upload the trust's documents</DialogTitle>
+          <DialogDescription>These are the documents we need for {view.name}. Press Choose file beside each one and pick it from your computer.</DialogDescription>
+        </DialogHeader>
+        <ul className="divide-y divide-border/60 rounded-md border border-border/70">
+          {docs.map(k => <UploadRow key={k} companyId={view.companyId} dealId={dealId} doc={k} onFile={held.has(k)} />)}
+        </ul>
+        <p className="text-xs text-muted-foreground">PDF, Word or a photo. Each file is saved to the trust's KYC record as soon as you choose it.</p>
+        <DialogFooter>
+          <Button type="button" onClick={onClose} data-testid="trust-upload-done">Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -153,19 +198,27 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
   const [deedRead, setDeedRead] = useState<{ reading: TrustDeedReading; proposal: TrustStructure | null } | null>(null);
   const [asking, setAsking] = useState(false);
   const [yourself, setYourself] = useState(false);
+  const [uploading, setUploading] = useState(false);
   if (q.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trust's information…</p>;
   if (q.isError || !q.data) return <p className="text-xs text-red-700 dark:text-red-400">The trust's information could not be read: {plain(q.error)}</p>;
   const view = q.data;
   const s = view.record?.structure || null;
   const recorded = view.gaps.filter(g => g.from === "recorded");
+  const starting = !s && !view.draft;
+  const uploadButton = (
+    <Button type="button" size="sm" variant="outline" className={starting ? "h-8 text-xs" : "h-7 text-xs"} onClick={() => setUploading(true)} data-testid={`trust-upload-open-${companyId}`}>
+      <Upload className={starting ? "mr-1 h-3.5 w-3.5" : "mr-1 h-3 w-3"} />Upload documents
+    </Button>
+  );
   return (
     <div className="space-y-2 rounded-md border border-border/70 px-2.5 py-2 text-xs" data-testid={`trust-structure-${companyId}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">Trust information</span>
         {view.record && <span className="text-muted-foreground">recorded by {view.record.updatedBy || "BGP"} · {new Date(view.record.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>}
+        {!starting && <span className="ml-auto" />}
+        {!starting && uploadButton}
         {s && (
           <>
-            <span className="ml-auto" />
             <ReadDeedButton companyId={companyId} dealId={dealId} onFile={view.documents.deed} onRead={r => { setDeedRead(r); setEditing(true); }} />
             <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setDeedRead(null); setEditing(true); }} data-testid={`trust-structure-edit-${companyId}`}>
               <Pencil className="mr-1 h-3 w-3" />Change
@@ -181,7 +234,7 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
         </div>
       )}
       {view.request && <TrustRequestLine request={view.request} onAskAgain={() => setAsking(true)} companyId={companyId} dealId={dealId} />}
-      {!s && !view.draft && (
+      {starting && (
         <div className="space-y-2" data-testid={`trust-start-${companyId}`}>
           <div className="flex flex-wrap gap-2">
             {!view.request && (
@@ -189,6 +242,7 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
                 <Mail className="mr-1 h-3.5 w-3.5" />Ask for trust information
               </Button>
             )}
+            {uploadButton}
             <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setYourself(v => !v)} data-testid={`trust-yourself-${companyId}`}>
               <Plus className="mr-1 h-3.5 w-3.5" />Add trust information yourself
             </Button>
@@ -226,25 +280,24 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
         <span className="inline-flex items-center gap-1">
           {view.documents.deed ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
           Trust deed {view.documents.deed ? "on file" : "not on file"}
-          {!view.documents.deed && <DocUpload companyId={companyId} dealId={dealId} docType="trust_deed" label="Trust deed" />}
         </span>
         {s?.trsStatus !== "not_required" && (
           <span className="inline-flex items-center gap-1">
             {view.documents.trs ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />}
             HMRC's proof of registration {view.documents.trs ? "on file" : "not on file"}
-            {!view.documents.trs && <DocUpload companyId={companyId} dealId={dealId} docType="trs_excerpt" label="HMRC's proof of registration" />}
           </span>
         )}
       </div>
       {view.gaps.length > 0 && (
         <ul className="list-disc space-y-0.5 pl-4 text-amber-800 dark:text-amber-300" data-testid={`trust-gaps-${companyId}`}>
           {recorded.map(g => <li key={g.key}>{g.words}</li>)}
-          {view.gaps.filter(g => g.from === "document").map(g => <li key={g.key}>{g.words}: the client checks ask for it, or add it above</li>)}
+          {view.gaps.filter(g => g.from === "document").map(g => <li key={g.key}>{g.words}: the client checks ask for it, or press Upload documents above</li>)}
         </ul>
       )}
       {s && s.people.some(p => trustPersonOwesChecks(p, s.kind)) && onPeople && (
         <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={onPeople}>Send each person their own link, under People to check</button>
       )}
+      {uploading && <TrustUploadDialog view={view} dealId={dealId} onClose={() => setUploading(false)} />}
       {asking && dealId && <TrustRequestDialog view={view} dealId={dealId} onClose={() => setAsking(false)} />}
       {editing && <TrustStructureDialog companyId={companyId} dealId={dealId} partyName={partyName} initial={deedRead?.proposal || s} reading={deedRead?.reading || null} onClose={() => { setEditing(false); setDeedRead(null); }} />}
     </div>
