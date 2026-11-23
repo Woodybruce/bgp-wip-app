@@ -1901,7 +1901,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
               {currentUser?.role !== "Client" && !isLandlord && <>
-                <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to transaction</Button>
                 {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
             </div>}
@@ -2603,7 +2602,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       ...(isLandlord ? [] : [
         { key: "add-contact", label: "Add contact", onSelect: () => setAddContactOpen(true), testId: "button-add-contact-brand" },
         { key: "find-people", label: contactsFinding ? "Finding people…" : "Find people (paid search)", onSelect: runContactDiscovery, disabled: contactsFinding, testId: "button-refresh-contacts" },
-        { key: "add-deal", label: "Add to transaction", onSelect: () => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`), testId: "button-add-to-deal" },
       ]),
       { key: "edit-facts", label: editing ? "Stop editing profile facts" : "Edit profile facts", onSelect: editing ? () => setEditing(false) : startEdit, separatorBefore: !isLandlord, testId: "button-brand-edit" },
       { key: "refresh", label: enrichMutation.isPending ? "Refreshing profile…" : "Refresh profile", onSelect: () => enrichMutation.mutate(), disabled: enrichMutation.isPending, testId: "button-brand-refresh" },
@@ -3244,7 +3242,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {staffPlan && c.hunter_flag && <CompanyStartStrategy companyId={companyId} companyName={c.name} variant="outline" />}
     {currentUser?.role !== "Client" && <>
       <Button size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)} data-testid="button-pitch-property"><Building2 />Pitch property</Button>
-      <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)} data-testid="button-add-to-deal"><Plus />Add to transaction</Button>
     </>}
     {emailContact && <Button variant="outline" size="sm" asChild><a href={`mailto:${emailContact.email}`} data-testid="link-email"><Mail />Email</a></Button>}
     {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}

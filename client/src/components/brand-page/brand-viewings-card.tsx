@@ -51,9 +51,14 @@ export function BrandViewingsCard({ companyId, staff }: { companyId: string; sta
           return (
             <div key={viewing.id} className="py-1.5 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-viewing-row-${viewing.id}`}>
               <div className="flex items-baseline justify-between gap-2">
-                <a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`} className="min-w-0 text-sm font-medium hover:underline break-words">
-                  {viewing.propertyName || "Property to confirm"} · {viewing.unitName || "Unit to confirm"}
-                </a>
+                {/* The property opens the property record; the unit opens the viewing. */}
+                <span className="min-w-0 text-sm font-medium break-words">
+                  {viewing.propertyId && viewing.propertyName
+                    ? <a href={`/properties/${encodeURIComponent(viewing.propertyId)}`} className="hover:text-primary hover:underline" data-testid={`brand-viewing-property-${viewing.id}`}>{viewing.propertyName}</a>
+                    : (viewing.propertyName || "Property to confirm")}
+                  {" · "}
+                  <a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`} className="hover:text-primary hover:underline" data-testid={`brand-viewing-open-${viewing.id}`}>{viewing.unitName || "Unit to confirm"}</a>
+                </span>
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums whitespace-nowrap">{viewingDayMonth(viewing.viewingDate)}{viewing.viewingTime ? ` · ${viewing.viewingTime}` : ""}</span>
               </div>
               <p className="text-[11px] text-muted-foreground break-words">

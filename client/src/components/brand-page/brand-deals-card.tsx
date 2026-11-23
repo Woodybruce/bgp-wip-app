@@ -9,7 +9,7 @@ import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { dealStagePillClass } from "@/components/brand-crm/scheme-plan-card";
 import { gbDate } from "@/lib/format";
 import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
-import { BrandCard, BrandQuietLine, ShowAll, brandCardAction, brandQuietLink, useCap } from "./brand-card";
+import { BrandCard, BrandQuietLine, ShowAll, brandCardAction, useCap } from "./brand-card";
 
 export interface BrandDealRow {
   id: string;
@@ -68,7 +68,7 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
   if (rows.length === 0) {
     return staff && knownEmpty ? (
       <BrandQuietLine testId="brand-deals-empty">
-        No transactions recorded with this brand yet · <Link href={dealsHref} className={brandQuietLink}>Add to transaction</Link>
+        No transactions recorded with this brand yet
       </BrandQuietLine>
     ) : null;
   }
@@ -132,17 +132,28 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
           the deal. */}
       <div className="[@container(min-width:560px)]:hidden divide-y divide-border/40">
         {cap.shown.map(d => {
-          const detail = [d.role ? ROLE_LABEL[d.role] : null, refLine(d) || null, d.property_name, unitOf(d), lastUpdate(d.updated_at)].filter(Boolean).join(" · ");
-          const row = <>
+          // The name opens the transaction and the property opens the property
+          // record: two links, never one link round the whole row.
+          const before = [d.role ? ROLE_LABEL[d.role] : null, refLine(d) || null].filter(Boolean).join(" · ");
+          const after = [unitOf(d), lastUpdate(d.updated_at)].filter(Boolean).join(" · ");
+          const property = d.property_name
+            ? (d.property_id && !plain
+              ? <Link href={`/properties/${d.property_id}`} className="text-foreground/80 hover:text-primary hover:underline" data-testid={`brand-deal-card-property-${d.id}`}>{d.property_name}</Link>
+              : d.property_name)
+            : null;
+          return (
+            <div key={d.id} className="py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>
               <span className="flex items-start justify-between gap-2">
-                <span className="min-w-0 text-sm font-medium text-foreground break-words">{d.name || "Transaction"}</span>
+                {plain
+                  ? <span className="min-w-0 text-sm font-medium text-foreground break-words">{d.name || "Transaction"}</span>
+                  : <Link href={`/deals/${d.id}`} className="min-w-0 text-sm font-medium text-foreground hover:text-primary hover:underline break-words" data-testid={`brand-deal-card-link-${d.id}`}>{d.name || "Transaction"}</Link>}
                 <span className="shrink-0"><StageChip status={d.status} /></span>
               </span>
-              <span className="block text-[11px] text-muted-foreground break-words" title={fullDate(d.updated_at)}>{detail}</span>
-          </>;
-          return plain
-            ? <div key={d.id} className="block py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>{row}</div>
-            : <Link key={d.id} href={`/deals/${d.id}`} className="block py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>{row}</Link>;
+              <span className="block text-[11px] text-muted-foreground break-words" title={fullDate(d.updated_at)}>
+                {before}{before && (property || after) ? " · " : ""}{property}{property && after ? " · " : ""}{after}
+              </span>
+            </div>
+          );
         })}
       </div>
 
