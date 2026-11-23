@@ -22,7 +22,7 @@ const ctx = (over: Partial<KycEmailContext> = {}): KycEmailContext => ({
 
 test("the request carries the logo, one button to the client's own page and the reference in the subject", () => {
   const { subject, html } = kycRequestEmail(ctx());
-  assert.match(subject, /12 Example Street \(ref 7K2Q9M\)$/);
+  assert.match(subject, /12 Example Street \[7K2Q9M\]$/);
   assert.equal(kycRefFromSubject(`RE: ${subject}`), "7K2Q9M");
   assert.ok(html.includes(`cid:${KYC_LOGO_CID}`), "the logo is the inline image");
   assert.equal((html.match(/Start your checks/g) || []).length, 1);
@@ -122,7 +122,7 @@ test("through the other side's agent: the standard checks to pass on, the docume
     agentFirm: "Knight Frank", partyRole: "tenant", clientRole: "landlord", clientName: "Brucecap Ltd", personName: null,
   };
   const { subject, html } = kycViaAgentRequestEmail(agentCtx);
-  assert.match(subject, /^Please pass on: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \(ref 7K2Q9M\)$/);
+  assert.match(subject, /^Please pass on: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \[7K2Q9M\]$/);
   assert.equal(kycRefFromSubject(`RE: ${subject}`), "7K2Q9M", "a reply with the documents finds its request");
   assert.match(html, /Hello Sam,/);
   assert.match(html, /We act for <strong>Brucecap Ltd<\/strong>, the landlord, on <strong>Southbank - Unit 5b<\/strong>, and you act for <strong>Bills Restaurants Ltd<\/strong>, the tenant\./);
@@ -141,7 +141,7 @@ test("through the other side's agent: the standard checks to pass on, the docume
   const noId = kycViaAgentRequestEmail({ ...agentCtx, needsIdCheck: false });
   assert.doesNotMatch(noId.html, /The identity check must be done/);
   const reminder = kycViaAgentReminderEmail({ ...agentCtx, progress: { idDone: false, docsDone: ["ownership"] } });
-  assert.match(reminder.subject, /^Reminder: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \(ref 7K2Q9M\)$/);
+  assert.match(reminder.subject, /^Reminder: our checks on Bills Restaurants Ltd for Southbank - Unit 5b \[7K2Q9M\]$/);
   assert.match(reminder.html, /Please chase your client, or upload what you hold for them\./);
   assert.ok(reminder.html.indexOf("Done, thank you") < reminder.html.indexOf("Still needed"));
   // Passed on from the page: the client's email names the agent who asked.
@@ -201,7 +201,7 @@ test("an identity check passed by someone else on the link is reported as theirs
   const base = { recipientName: "jack Barrat", partyName: "BRUCE GILLINGHAM POLLARD LIMITED", dealName: "barrette does bruce cap", ref: "7MJEGT",
     dealLink: "https://chatbgp.app/deals/d1", idState: "approved" as const, files: [], missing: ["jack Barrat's own identity check"], sentFrom: "kyc@chatbgp.app" };
   const other = kycFinishedEmail({ ...base, idPerson: { verifiedName: "WOODY BRUCE", isThePerson: false } });
-  assert.equal(other.subject, "The checks sent to jack Barrat were finished with WOODY BRUCE's identity check, for barrette does bruce cap (ref 7MJEGT)");
+  assert.equal(other.subject, "The checks sent to jack Barrat were finished with WOODY BRUCE's identity check, for barrette does bruce cap [7MJEGT]");
   assert.match(other.html, /The checks sent to jack Barrat were finished/);
   assert.match(other.html, /Identity check: passed by WOODY BRUCE, not jack Barrat, who this request was for\./);
   assert.match(other.html, /jack Barrat has not done their own identity check\./);
@@ -325,4 +325,18 @@ test("clients read \"transaction\", never \"deal\" (Woody, 22 November 2026)", (
     .split("\n").filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
   assert.doesNotMatch(page, /\b(the|this|a|your|our) deal\b/i);
   assert.match(page, /Before the transaction can go ahead/);
+});
+
+test("the reference is a small tag at the end of the subject, only for BGP's use (23 November 2026)", () => {
+  const { subject, html } = kycRequestEmail(ctx());
+  assert.match(subject, / \[7K2Q9M\]$/);
+  assert.doesNotMatch(subject, /\(ref /);
+  // The footer carries it small and pale; nothing asks the client to keep it.
+  assert.match(html, /<span style="font-size:10px;color:#b5ada8">7K2Q9M<\/span>/);
+  assert.doesNotMatch(html, /keeping the reference/);
+  // Replies find their request: to the new tag, to an email sent before it, and past a bracket in the transaction's name.
+  assert.equal(kycRefFromSubject("RE: Please complete your identity checks for 12 Example Street [7K2Q9M]"), "7K2Q9M");
+  assert.equal(kycRefFromSubject("RE: Please complete your identity checks for 12 Example Street (ref 7k2q9m)"), "7K2Q9M");
+  assert.equal(kycRefFromSubject("Re: Fwd: Please complete your identity checks for [RENT26] Unit 4 [7K2Q9M]"), "7K2Q9M");
+  assert.equal(kycRefFromSubject("Re: [TEST AML] Unit 4"), null);
 });

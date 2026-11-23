@@ -556,7 +556,7 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
               </div>
               <input ref={input} type="file" accept={JOINT_ACCEPT} multiple className="hidden"
                 onChange={e => { if (e.target.files?.length) void upload(e.target.files); e.target.value = ""; }} data-testid="joint-upload-input" />
-              <p className="mt-2 text-xs text-muted-foreground">Or reply to our email with the documents attached, keeping the reference in the subject.</p>
+              <p className="mt-2 text-xs text-muted-foreground">Or reply to our email with the documents attached.</p>
             </div>
           </div>
         </div>
@@ -625,7 +625,7 @@ function JointAgentPage({ token, view, setView, load }: { token: string; view: K
           <AgentContact agents={view.agents} />
         </div>
         <p className="text-xs text-muted-foreground">We use what you send only for our anti-money laundering checks, and keep it securely for five years. Our <a href={KYC_PRIVACY_URL} target="_blank" rel="noreferrer" className="underline hover:text-foreground">privacy notice</a> has more.</p>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard · Reference {view.ref}</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard<span className="ml-auto text-[10px] text-muted-foreground/60">{view.ref}</span></p>
       </div>
     </Shell>
   );
@@ -969,7 +969,7 @@ export default function KycUploadPage() {
             </div>
           )}
         </div>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard · Reference {view.ref}</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Bruce Gillingham Pollard<span className="ml-auto text-[10px] text-muted-foreground/60">{view.ref}</span></p>
       </div>
     </Shell>
   );

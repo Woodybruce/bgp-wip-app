@@ -245,10 +245,15 @@ export const KYC_PRIVACY_URL = "https://www.brucegillinghampollard.com/privacy/"
 // with documents attached finds its request. Six letters and digits with
 // the easily confused ones (0/O, 1/I/L) left out.
 export const KYC_REF_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-export const KYC_REF_RE = /\(ref ([2-9A-HJKMNP-Z]{6})\)/i;
+// The reference sits at the end of the subject as a small tag, [7K2Q9M]
+// (Woody, 23 November 2026: "keep it but make it small it's only for our
+// use"); emails sent before then end "(ref 7K2Q9M)", and replies to them
+// still carry it, so both are read. The last one in the subject counts.
+export const KYC_REF_RE = /\(ref ([2-9A-HJKMNP-Z]{6})\)|\[([2-9A-HJKMNP-Z]{6})\]/gi;
 export function kycRefFromSubject(subject: string | null | undefined): string | null {
-  const m = KYC_REF_RE.exec(String(subject || ""));
-  return m ? m[1].toUpperCase() : null;
+  let last: string | null = null;
+  for (const m of String(subject || "").matchAll(KYC_REF_RE)) last = String(m[1] || m[2]).toUpperCase();
+  return last;
 }
 
 export interface KycAgent {
@@ -453,7 +458,7 @@ const p = (html: string, style = "") => `<p style="margin:0 0 14px;${style}">${h
 const h2 = (text: string) => `<h2 style="margin:22px 0 6px;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(text)}</h2>`;
 
 function footerFor(ctx: Pick<KycEmailContext, "sentFrom" | "ref" | "agents">): string {
-  return `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)} for ${escHtml(agentNamesText(ctx.agents))}. If you were not expecting this email, please reply and let us know. Reference ${escHtml(ctx.ref)}.`;
+  return `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)} for ${escHtml(agentNamesText(ctx.agents))}. If you were not expecting this email, please reply and let us know. <span style="font-size:10px;color:#b5ada8">${escHtml(ctx.ref)}</span>`;
 }
 
 function linkFallback(link: string): string {
@@ -477,7 +482,7 @@ function noteBlock(note: string | null | undefined, agents: KycAgent[]): string 
 }
 
 const subjectFor = (ctx: Pick<KycEmailContext, "dealName" | "ref" | "test">, lead: string) =>
-  `${ctx.test ? "[Test] " : ""}${lead} ${ctx.dealName} (ref ${ctx.ref})`;
+  `${ctx.test ? "[Test] " : ""}${lead} ${ctx.dealName} [${ctx.ref}]`;
 
 // The first email: what we need, one button to the client's own page.
 export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
@@ -602,7 +607,7 @@ export function trustDocsReadyEmail(ctx: {
     button("Open the transaction's AML", ctx.dealLink),
   ].join("\n");
   return {
-    subject: `${ctx.test ? "[Test] " : ""}Ready for due diligence: ${ctx.partyName}'s trust documents, ${ctx.dealName} (ref ${ctx.ref})`,
+    subject: `${ctx.test ? "[Test] " : ""}Ready for due diligence: ${ctx.partyName}'s trust documents, ${ctx.dealName} [${ctx.ref}]`,
     html: frame("Trust documents in", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents and the AML officers receive"),
   };
 }
@@ -745,7 +750,7 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     h2("Please send us"),
     stepsList(jointAgentAsks(ctx)),
     button("Upload the documents", ctx.link),
-    p(`Or reply to this email with the documents attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    p(`Or reply to this email with the documents attached. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     noteBlock(ctx.note, ctx.agents),
     p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
@@ -775,7 +780,7 @@ export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: 
     ctx.nothingYet ? stepsList(jointAgentAsks(ctx)) : list(ctx.missing),
     p(why, `font-size:14px;color:${BODY}`),
     button(ctx.nothingYet ? "Upload the documents" : "Send what's missing", ctx.link),
-    p(`Or reply to this email with the documents attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    p(`Or reply to this email with the documents attached. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
@@ -798,7 +803,7 @@ export function jointAgentChaseStoppedEmail(ctx: {
     p(next),
     button("Open the transaction", ctx.dealLink),
   ].join("\n");
-  return { subject: `${ctx.firm} has not sent what is missing on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
+  return { subject: `${ctx.firm} has not sent what is missing on ${ctx.partyName}: ${ctx.dealName} [${ctx.ref}]`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
 
 /** To the deal's agents when the joint agent has sent the documents. */
@@ -819,7 +824,7 @@ export function jointAgentFinishedEmail(ctx: {
     p(next),
     button("Open the transaction", ctx.dealLink),
   ].join("\n");
-  return { subject: `${ctx.firm} sent the documents on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
+  return { subject: `${ctx.firm} sent the documents on ${ctx.partyName}: ${ctx.dealName} [${ctx.ref}]`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
 
 // ── Through the other side's agent (Woody, 23 November 2026) ───────────────
@@ -968,8 +973,8 @@ export function kycFinishedEmail(ctx: {
   ].join("\n");
   return {
     subject: someoneElse
-      ? `${ctx.test ? "[Test] " : ""}The checks sent to ${who} were finished with ${someoneElse}'s identity check, for ${ctx.dealName} (ref ${ctx.ref})`
-      : `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} (ref ${ctx.ref})`,
+      ? `${ctx.test ? "[Test] " : ""}The checks sent to ${who} were finished with ${someoneElse}'s identity check, for ${ctx.dealName} [${ctx.ref}]`
+      : `${ctx.test ? "[Test] " : ""}${who} has finished their identity checks for ${ctx.dealName} [${ctx.ref}]`,
     html: frame("Checks finished", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents receive"),
   };
 }
@@ -1030,7 +1035,7 @@ export function kycRedFlagEmail(ctx: {
     p(ctx.inHouse !== false ? "Nothing has been sent to the client." : "Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
-    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse !== false ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} (ref ${ctx.ref})`,
+    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse !== false ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} [${ctx.ref}]`,
     html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents receive"),
   };
 }

@@ -205,7 +205,7 @@ test("the request asks for the trust's documents in plain words, and the ready n
     askPep: false, purpose: "trust_structure" as const,
   };
   const ask = kycRequestEmail(base);
-  assert.equal(ask.subject, "Documents about URC Thames North Trust for Fortis Green Tennis Club (ref 7K2Q9M)");
+  assert.equal(ask.subject, "Documents about URC Thames North Trust for Fortis Green Tennis Club [7K2Q9M]");
   assert.match(ask.html, /Who is who in the trust/);
   assert.match(ask.html, /Upload the documents/);
   assert.doesNotMatch(ask.html, /identity checks|public role/i);

@@ -118,7 +118,7 @@ test("the alert to the agents: what was found, what to do, nothing sent to the c
     dealLink: "https://chatbgp.app/deals/abc", flags, sentFrom: "kyc@chatbgp.app",
   });
   // KYC4U is no longer used (23 November 2026): the officers do the enhanced checks.
-  assert.equal(email.subject, "Red flag on 12 Example Street: Example & Co Ltd needs enhanced checks (ref 7K2Q9M)");
+  assert.equal(email.subject, "Red flag on 12 Example Street: Example & Co Ltd needs enhanced checks [7K2Q9M]");
   assert.match(email.html, /Red flag: Example &amp; Co Ltd needs enhanced checks/);
   assert.match(email.html, /Said yes to the question about public roles: &lt;b&gt;MP&lt;\/b&gt; <span style="color:#6b6b6b">\(Client checks, ref 7K2Q9M\)<\/span>/);
   assert.doesNotMatch(email.html, /<b>MP<\/b>/);

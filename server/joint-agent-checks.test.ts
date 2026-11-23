@@ -98,7 +98,7 @@ test("the email to the joint agent: finalising our KYC, every document asked for
     agents: [{ name: "Woody Bruce", email: "woody@example.com", phone: null }], sentFrom: "kyc@chatbgp.app",
   };
   const sale = jointAgentRequestEmail({ ...base, letting: false });
-  assert.match(sale.subject, /\(ref 7K2Q9M\)/);
+  assert.match(sale.subject, /\[7K2Q9M\]$/);
   // Woody, 23 November 2026: "an email ... saying we are finalising the KYC on this joint agent transaction and need you to
   // upload or email back the following files ... all the docs including their proof of identity and any further AML they have done".
   // Woody, 23 November 2026: "the intro changing to reflect the fact that we are jointly instructed by xxx client and you have

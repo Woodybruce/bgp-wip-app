@@ -3955,8 +3955,13 @@ on the KYC4U pill of My BGP before). Tests: `server/kyc-request.test.ts` (in `np
 - **One email, one page.** The request email has the logo inline (cid), a
   numbered list of what is needed, one **Start your checks** button, the
   agent's note, Why we ask, the agent's phone and email, and the reference
-  in the subject (`(ref 7K2Q9M)`, six letters and digits) so a reply finds
-  its request. The page: a card per step with an Upload button (PDF, photos
+  in the subject so a reply finds its request: a random code made for each
+  request (six letters and digits, none that can be misread), never the
+  transaction's Ref #. Since 23 November 2026 (Woody: "keep it but make it
+  small it's only for our use") it is a bare tag at the end of the subject,
+  `[7K2Q9M]`, pale 10px text at the foot of the email and the page, and
+  nothing asks the client to keep it; `kycRefFromSubject` still reads the
+  old `(ref 7K2Q9M)` on replies to emails sent before, the last tag counting. The page: a card per step with an Upload button (PDF, photos
   including HEIC, Word; 25MB; 40 files a request), the Veriff check (returns
   to the page when done; a new session at most three times), the question,
   progress, and **Finish**, which emails the deal's agents what came in and
