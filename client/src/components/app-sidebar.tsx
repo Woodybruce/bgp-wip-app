@@ -22,14 +22,11 @@ import {
   Mail,
   MessageCircle,
   Zap,
-  FileSpreadsheet,
-  FileText as FileTextIcon,
   CreditCard,
   Puzzle,
   Sparkles,
   Landmark,
   Layers,
-  UserPlus,
   ChevronsUpDown,
   ChevronDown,
   ChevronRight,
@@ -198,39 +195,15 @@ const microsoftNav = [
   { title: "Mail", url: "/mail", icon: Mail },
 ];
 
-// Modules being polished — grouped together so they're easy for admins to
-// find without cluttering Core. Hidden from non-admins entirely. Order
-// matches the list Woody dictated (AML → Enrichment Hub).
-const unfinishedNav = [
-  { title: "Portfolios", url: "/portfolios", icon: Layers },
-  // KYC4U is a section of Subscriptions & APIs (Woody, 2026-11-21: "Move
-  // KYC4U into subscriptions and APIS"); /kyc-clouseau still opens it.
-  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
-  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
-  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
-  { title: "Double Bill", url: "/leisure-platform", icon: Film, badge: "NEW" },
-  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
-  // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
-  // Tracker are the two boards now. Route stays live for old links.
-  // Lease Advisory (with Evidence Plans + Comps folded in) graduated to
-  // Core (Woody, 2026-09-02).
-  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  // Document Studio v2 — the unified documents hub (library + previews +
-  // upload + SharePoint filing). The briefs cockpit (/document-briefs, with
-  // Templates + Decks folded in as tabs) stays as its own entry — the hub's
-  // "New document → AI briefs" also links into it.
-  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
-  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
-  // Reporting and Board Report are Finance → Fees & pipeline (Woody,
-  // 2026-11-17: "fold reporting and board report in to finance").
-  { title: "Leads", url: "/leads", icon: UserPlus },
-  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
-];
-
+// The More group was archived (Woody, 2026-11-23: "archive out all the more
+// stuff. unlikely to use any of it"): Portfolios, Tenant Rep, the Hunters,
+// Landlord Intelligence, London Restaurants, Model Studio, Document Studio,
+// Document Briefs, Leads and Enrichment Hub are off the menus. Their pages
+// still open by their address. Double Bill moved to Admin.
 const adminNavBase = [
   { title: "Finance", url: "/finance", icon: Landmark },
   { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "Double Bill", url: "/leisure-platform", icon: Film },
   // Public website content (bgp.uk.com team / case studies / news), also
   // editable through ChatBGP's manage_website_content tool. In Admin since
   // Woody, 2026-11-16: "Website goes to admin".
@@ -523,9 +496,6 @@ export function AppSidebar() {
   const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
     ? [...coreNavTeam, { title: "Finance", url: "/finance", icon: Landmark }]
     : coreNavTeam;
-  const unfinishedNavCleaned = isClientUser
-    ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
-    : unfinishedNav;
   const adminNav = approvalsEntry ? adminNavBase.flatMap(i => i.url === "/expenses" ? [i, approvalsEntry] : [i]) : adminNavBase;
   // The Landsec menu (docs/landsec-menu-plan-2026-11-12.md, part 1):
   // Properties, Deals, Letting Tracker, Tasks and Brands. Applies to Landsec
@@ -617,21 +587,11 @@ export function AppSidebar() {
         <SidebarSeparator />
         {user?.isAdmin && viewingAsTeam && (
           <p className="px-4 py-2 text-[11px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden" data-testid="nav-viewing-as-team">
-            More and Admin are under All Teams.
+            Admin is under All Teams.
           </p>
         )}
         {user?.isAdmin && !viewingAsTeam && (
           <>
-            {/* Shown as "More" — "Unfinished" read as broken to anyone
-                glancing at the nav (Woody, 2026-09-27). storageKey kept so
-                the open/closed memory survives. */}
-            <NavSection
-              label="More"
-              items={unfinishedNavCleaned}
-              storageKey="unfinished"
-              defaultOpen={false}
-            />
-            <SidebarSeparator />
             <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false}
               closedBadge={approvalsEntry ? { text: approvalsEntry.badge, title: `${approvalCount} expense${approvalCount === 1 ? "" : "s"} to approve` } : null} />
           </>
@@ -780,38 +740,27 @@ export function AppSidebar() {
 export const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
-  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
-  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
   { title: "Brands", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "My BGP", url: "/hr", icon: IdCard },
-  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
   { title: "Investment", url: "/investment", icon: TrendingUp },
-  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
-  // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
-  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon, adminOnly: true },
-  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
   // On mobile everyone uses the lightweight images page (works on auth; the
   // full /image-studio power page is desktop-admin only).
   { title: "Image Studio", url: "/m/images", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
-  // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
+  // Admin gating mirrors the desktop sidebar (the Admin group)
   // so non-admins don't get mobile links into pages whose APIs will 403.
   { title: "Website", url: "/website", icon: Globe, adminOnly: true },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
   { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
-  { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
   { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
 ];

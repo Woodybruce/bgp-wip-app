@@ -52,6 +52,7 @@ function fixture({ presentation = 'compact', readOnly = false, saved = {}, width
     // A property without estate schemes: every row passes the scheme filter.
     usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
     usePropertyUnits: () => ({ data: { units: feed } }), unitOccupancy,
+    useAddTrackerToSchedule: () => ({ isPending: false, variables: undefined, mutate() {} }),
     useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result, value))); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({}) }; },
   });

@@ -5895,6 +5895,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // The 14 August email import's untouched offers (Preview → Apply → Undo, admin).
   const { registerEmailOfferCleanupRoutes } = await import("./email-offer-cleanup");
   registerEmailOfferCleanupRoutes(app, { pool, requireAuth, requireAdmin });
+  // A Letting Tracker unit missing from the tenancy schedule: one unit, or an admin's Preview → Apply.
+  const { registerTrackerToScheduleRoutes } = await import("./tracker-to-schedule");
+  registerTrackerToScheduleRoutes(app, { pool, requireAuth, requireAdmin });
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);

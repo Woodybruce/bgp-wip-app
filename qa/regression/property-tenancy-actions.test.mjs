@@ -54,6 +54,7 @@ function fixture({ units = [], user = staff, readOnly = false, links = { deals: 
     useLocation: () => ['/properties/property-1'], useToast: () => ({ toast: event => notifications.push(event) }),
     useQueryClient: () => ({ invalidateQueries: query => invalidations.push(query) }),
     useQuery: ({ queryKey }) => ({ data: queryKey[0] === '/api/auth/me' ? user : queryKey[2] === 'links' ? links : units }),
+    useAddTrackerToSchedule: () => ({ isPending: false, variables: undefined, mutate() {} }),
     useMutation(options) {
       return { isPending: false, mutate(data, callbacks = {}) {
         const promise = Promise.resolve().then(() => options.mutationFn(data)).then(result => {

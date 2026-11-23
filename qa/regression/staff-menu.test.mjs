@@ -73,13 +73,22 @@ test('My BGP is People & HR renamed, with My Card and Business card folded in', 
   assert.match(subs, /new URLSearchParams\(window\.location\.search\)\.get\("section"\) === "kyc4u"/);
   assert.match(source('client/src/pages/kyc-hub.tsx'), /params\.set\("section", "kyc4u"\);\s*navigate\(`\/subscriptions\?\$\{params\.toString\(\)\}`, \{ replace: true \}\)/);
   for (const items of [core, phone]) assert.ok(!items.some(i => i.url === '/kyc-clouseau'), 'KYC4U off the menu');
-  const unfinished = find(SIDEBAR, node => ts.isVariableStatement(node) && node.getText().startsWith('const unfinishedNav ='));
-  assert.ok(!unfinished.includes('url: "/kyc-clouseau"'));
   assert.match(source('client/src/App.tsx'), /<Route path="\/kyc-clouseau" component=\{KycHub\} \/>/);
   assert.match(hr, /\{isOwn && <TabsTrigger value="business-card"/);
   assert.match(hr, /\{isOwn \? "Card & expenses" : "Expenses"\}/);
   assert.match(hr, /<MyCardAndExpenses embedded \/>/);
   assert.match(hr, /<BusinessCardPanel embedded \/>/);
+});
+
+test('the More group is archived; Double Bill is in Admin', () => {
+  // Woody, 2026-11-23: "move doubkle bill to admin and archive out all the more stuff".
+  const sidebar = source(SIDEBAR);
+  assert.ok(!sidebar.includes('const unfinishedNav') && !/label="More"/.test(sidebar), 'no More group');
+  assert.deepEqual(admin.filter(i => i.url === '/leisure-platform').map(i => i.title), ['Double Bill']);
+  assert.deepEqual(phone.filter(i => i.url === '/leisure-platform').map(i => i.adminOnly), [true]);
+  for (const url of ['/portfolios', '/tenant-rep', '/hunters/letting', '/hunters/investment', '/landlords', '/westminster-restaurants', '/models', '/document-studio', '/document-briefs', '/leads', '/enrichment']) {
+    for (const items of [core, admin, phone]) assert.ok(!items.some(i => i.url === url), url);
+  }
 });
 
 test('Website is in Admin: off Core, admin only on the phone', () => {
@@ -143,8 +152,6 @@ test('Requirements is a pill in Brands for every login; Reporting and Board Repo
   for (const items of [core, phone]) {
     for (const url of ['/requirements', '/reporting', '/board-report']) assert.ok(!items.some(i => i.url === url), url);
   }
-  const unfinished = find(SIDEBAR, node => ts.isVariableStatement(node) && node.getText().startsWith('const unfinishedNav ='));
-  assert.ok(!unfinished.includes('url: "/reporting"') && !unfinished.includes('url: "/board-report"'));
   const hub = source('client/src/pages/brands-hub.tsx');
   assert.match(hub, /const HUB_TABS: HubTab\[\] = \["overview", "explorer", "requirements", "turnover", "hunter", "crm"\];/);
   assert.match(hub, /\{ key: "requirements", label: "Requirements", icon: ClipboardList \}/);

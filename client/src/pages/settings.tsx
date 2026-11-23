@@ -28,6 +28,8 @@ import { HolidayCalendarImportDialog } from "@/components/holiday-calendar-impor
 import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 import { LettingSuggestionsAdmin } from "@/components/letting-note/suggestions-admin";
 import { EmailOfferCleanupPanel } from "@/components/email-offer-cleanup";
+import { TrackerScheduleGapsPanel } from "@/components/tracker-schedule-gaps";
+import type { DuplicateGroup } from "@shared/property-duplicates";
 
 interface TeamMember {
   id: string;
@@ -665,7 +667,7 @@ interface DupeScanResult {
     nameDuplicates: Array<{ name: string; ids: string[]; companies: string[]; count: number }>;
     nameCount: number;
   };
-  properties: { duplicates: Array<{ name: string; ids: string[]; count: number }>; count: number };
+  properties: { duplicates: DuplicateGroup[]; count: number };
   summary: { totalDuplicateGroups: number; clean: boolean };
 }
 
@@ -1699,6 +1701,7 @@ function LettingIntegritySection() {
           <p className="text-xs text-muted-foreground">Each repair is an explicit action: Preview is a dry run the server records; Apply runs only within an hour of one, needs the word APPLY, and writes every id it touched to system settings. Nothing here runs at boot.</p>
           {BACKFILL_JOBS.map((j) => <LettingBackfillPanel key={j.job} {...j} />)}
           <TenantEntityBackfillPanel />
+          <TrackerScheduleGapsPanel />
           <EmailOfferCleanupPanel />
           <LettingSuggestionsAdmin />
         </div>
@@ -1804,21 +1807,28 @@ function DataHealthSection() {
     },
   });
 
-  const mergeAll = async (entity: string, duplicates: Array<{ ids: string[] }>) => {
+  // Merge All on properties takes only groups at the same place (samePlace:
+  // the scan's own check), keeping the record the scan put first.
+  const mergeAll = async (entity: string, duplicates: Array<{ ids: string[]; samePlace?: boolean }>) => {
     let succeeded = 0;
     let failed = 0;
-    for (const group of duplicates) {
+    let lastError = "";
+    for (const group of duplicates.filter(g => g.samePlace !== false)) {
       try {
         const [keepId, ...deleteIds] = group.ids;
         await mergeMutation.mutateAsync({ entity, keepId, deleteIds });
         succeeded++;
-      } catch {
+      } catch (e: any) {
         failed++;
+        lastError = String(e?.message || "");
       }
     }
-    if (failed > 0) {
-      toast({ title: `Merge partially complete`, description: `${succeeded} merged, ${failed} failed`, variant: "destructive" });
-    }
+    const skipped = duplicates.filter(g => g.samePlace === false).length;
+    toast({
+      title: failed > 0 ? "Merge partially complete" : "Duplicates merged",
+      description: `${succeeded} merged${failed ? `, ${failed} failed (${lastError})` : ""}${skipped ? `, ${skipped} left to check by hand` : ""}`,
+      variant: failed > 0 ? "destructive" : undefined,
+    });
   };
 
   return (
@@ -1945,16 +1955,38 @@ function DataHealthSection() {
                     <Badge variant="destructive" className="text-xs">{scanResult.properties.count}</Badge>
                   </h4>
                   <Button size="sm" variant="outline" onClick={() => mergeAll("property", scanResult.properties.duplicates)} disabled={mergeMutation.isPending} data-testid="button-merge-all-properties">
-                    <Trash2 className="w-3 h-3 mr-1" /> Merge All
+                    <Trash2 className="w-3 h-3 mr-1" /> Merge all at the same place
                   </Button>
                 </div>
-                <div className="space-y-1 max-h-40 overflow-y-auto">
+                <div className="space-y-1 max-h-80 overflow-y-auto">
                   {scanResult.properties.duplicates.slice(0, 20).map((d, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs py-1 px-2 bg-muted/50 rounded">
-                      <span>"{d.name}" — {d.count} copies</span>
-                      <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => mergeMutation.mutate({ entity: "property", keepId: d.ids[0], deleteIds: d.ids.slice(1) })} data-testid={`button-merge-property-${i}`}>
-                        Merge
-                      </Button>
+                    <div key={d.ids.join(",")} className="space-y-0.5 text-xs py-1 px-2 bg-muted/50 rounded" data-testid={`property-dupe-${i}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">"{d.name}" — {d.count} copies</span>
+                        {d.samePlace
+                          ? <span className="text-muted-foreground">Same place</span>
+                          : <span className="text-amber-700 dark:text-amber-400">{d.why}: check by hand</span>}
+                      </div>
+                      {d.records.map((r, j) => (
+                        <div key={r.id} className="flex items-center justify-between gap-2">
+                          <a href={`/properties/${r.id}`} target="_blank" rel="noreferrer" className="min-w-0 truncate text-primary hover:underline" title={r.place || "No address"}>
+                            {r.place || "No address"}{r.postcode && !(r.place || "").includes(r.postcode) ? ` · ${r.postcode}` : ""}
+                          </a>
+                          <span className="shrink-0 text-muted-foreground">{r.deals} txn · {r.scheduleRows} schedule · {r.trackerUnits} tracker{r.hasLandlord ? " · landlord" : ""}</span>
+                          <Button
+                            size="sm" variant="ghost" className="h-6 shrink-0 text-xs"
+                            disabled={mergeMutation.isPending}
+                            onClick={() => {
+                              const others = d.ids.filter(id => id !== r.id);
+                              if (!d.samePlace && !confirm(`${d.why}. Merge ${others.length} other record${others.length === 1 ? "" : "s"} into this one anyway?`)) return;
+                              mergeMutation.mutate({ entity: "property", keepId: r.id, deleteIds: others });
+                            }}
+                            data-testid={`button-merge-property-${i}-keep-${j}`}
+                          >
+                            {j === 0 && d.samePlace ? "Keep this (suggested)" : "Keep this"}
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
