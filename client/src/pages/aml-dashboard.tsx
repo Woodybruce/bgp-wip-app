@@ -332,13 +332,14 @@ export default function AmlDashboard() {
             </Pill>
           ))}
         </div>
-        <div className="flex items-center gap-1.5 md:ml-auto">
+        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
           <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
-          <div className="relative">
+          {/* Full width on a phone: at 56 it ran off the screen there. */}
+          <div className="relative w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-full sm:w-56 text-sm" data-testid="aml-search" />
           </div>
         </div>
       </div>
