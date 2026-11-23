@@ -4491,6 +4491,7 @@ import kycRequestRouter from "./aml-portal";
 import { jointAgentRouter } from "./joint-agent-checks";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
+import dealHotsRouter from "./deal-hots";
 import dealPartyAmlRouter from "./deal-party-aml";
 import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
@@ -5869,6 +5870,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycPrecheckRouter);
   // Each deal party's company that signs and the person to ask (BGP staff only).
   app.use(dealPartiesRouter);
+  // Heads of terms read on the transaction page (BGP staff only, 23 November 2026).
+  app.use(dealHotsRouter);
   app.use(dealPartyAmlRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);

@@ -3277,6 +3277,57 @@ not showing". On live the reader had no vendor, purchaser or price; the club
   from `GET /api/crm/properties/:id/deals`) lists them under Property on New
   Deal for a sale or purchase, each opening its deal.
 
+## Heads of terms on the transaction page (Woody, 2026-11-23)
+
+Woody, on Bill's · Unit 7a's Parties & AML pill at "To do · Set the company
+that signs": "where is the upload HOTs place? so can populate?". Until then
+heads of terms were read only by New Deal and the Transactions table's move to
+HOTs (the HOTs checklist), and neither set the company that signs. Rules and
+checks: `shared/deal-hots.ts`; reading and look-ups: `server/deal-hots.ts`;
+screen: `client/src/components/deal-hots.tsx`. Tests:
+`server/deal-hots.test.ts` (in `npm test`),
+`qa/regression/deal-hots-guards.test.mjs`.
+
+- **Where**: **Heads of terms** in the heading of the transaction's Parties
+  and AML box (BGP staff), and **Read the heads of terms** in the party box
+  (Fill in) under Who signs while no company signs. The party box stays open
+  under the dialog (`hotsOpen`); from there, Choose the company goes back to
+  the box.
+- **The read** (`POST /api/deals/:id/heads-of-terms/read`, BGP staff signed
+  in as themselves, checked before the file is taken; 25MB; PDF, Word, text):
+  each party the document names (landlord, tenant, guarantor; vendor and
+  purchaser on a sale) with its registered company and Companies House number,
+  and the terms the transaction holds (rent a year, lease in years, break, rent
+  free in months, capital contribution, area, target date; price on a sale).
+  Anthropic, called directly, one forced-tool call (`read_heads_of_terms`),
+  capped a day (`HOTS_READER_DAILY_CAP`, default 100, 0 = off), sent the
+  document and nothing from the CRM; the rules (`readHotsByRules`, the
+  "Label: value" and table layouts) fill what it leaves out and read the
+  document alone when it is off. Every value is checked against the document's
+  own text (`checkHotsAnswer`): the quote is in it, the name is in its quote,
+  the number is in the document, each figure is one its own words give in the
+  unit the transaction stores. A scan cannot be checked: its lines say check
+  by eye. Solicitors and agents are not parties; "Guarantor: None" is none.
+- **Where each party is** (`matchHotsParties`, and `POST …/match` after
+  anything is set, without reading the document again): the company filed
+  under the transaction's party with that number or exact registered name
+  (`legalNameKey`: the legal form aside, every word kept, so "Braeburn Estates
+  (Holdings) Limited" is another company); else Companies House by the number
+  (a name that differs is said), else by the exact name (several are a
+  choice); a brand name with no company ("Bill's") is no company; with no
+  party on the transaction, the CRM records of that name (`findParty`). A
+  guarantor is shown, never set.
+- **Nothing saves by itself.** The buttons save through the routes that
+  already exist: Use as the company that signs (`PUT
+  /api/deals/:id/parties/:role`), Add under <party> and use it (`POST
+  /api/billing-entities` with `xero: false`, then the same PUT), Make them the
+  tenant and Add as the tenant (the deal save, `POST /api/crm/companies`),
+  Fill in and Fill the N blank ones (the deal save), and File these as the
+  final agreed heads of terms (`POST /api/unit-hots/:unitId/final`, on the
+  tracker unit the transaction is the letting of, PDF or Word only, when none
+  are on file; they then go in the AML file). Each writes its own history.
+- Not run against Anthropic or Companies House from a build machine.
+
 ## Client checks: the in-app KYC request (Woody, 2026-11-17)
 
 Woody: the emails should "come from kyc@chatbgp.app", "copy the agent that

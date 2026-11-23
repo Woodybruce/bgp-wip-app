@@ -20,6 +20,7 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 import { AddPersonButton, useClientChecks } from "@/components/kyc-client-checks";
+import { DealHotsButton } from "@/components/deal-hots";
 import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -695,6 +696,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const party = data?.parties.find(p => p.role === role) || null;
   // "person": the dialog opens on a person who signs (2026-11-20).
   const [finding, setFinding] = useState<boolean | "person">(false);
+  // The heads of terms' dialog is open over this one: it must not close under it.
+  const [hotsOpen, setHotsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [person, setPerson] = useState({ name: "", jobTitle: "", email: "", mobile: "" });
 
@@ -741,7 +744,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const billedElsewhere = !!party?.company && (!party.xero || (party.xero.name || "").trim().toLowerCase() !== party.company.name.trim().toLowerCase());
 
   return (
-    <Dialog open onOpenChange={o => { if (!o && !finding) onClose(); }}>
+    <Dialog open onOpenChange={o => { if (!o && !finding && !hotsOpen) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid={`deal-party-editor-${role}`}>
         <DialogHeader>
           <DialogTitle>{party ? `${party.label}: ${party.brand.name}` : "Party"}</DialogTitle>
@@ -766,6 +769,13 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
               ) : (
                 <>
                   <TrustLine dealId={dealId} party={party} />
+                  {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
+                  {!party.company && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border px-2.5 py-2 text-xs" data-testid="deal-party-hots">
+                      <span className="min-w-0 flex-1 text-muted-foreground">Have the heads of terms? They name the company that signs.</span>
+                      <DealHotsButton dealId={dealId} label="Read the heads of terms" testId="deal-party-hots-button" inEditor onOpenChange={setHotsOpen} />
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground">{party.brand.recordTrust ? "The company that signs, if a company is the trustee (optional for a trust)." : <>{capital(SIGNING_COMPANY_WORDS[role])}. The checks are about it, not {party.brand.name}: the brand is usually a different company.</>}</p>
                   {party.brand.privateMark && !party.company && !party.brand.companiesHouseNumber && (
                     <div className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs">
