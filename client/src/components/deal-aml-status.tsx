@@ -860,7 +860,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const nextAction: ReactNode = (() => {
     const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
-      case "trust": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Trust structure</Button>;
+      case "trust": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
       case "fill_in": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} />;

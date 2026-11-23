@@ -66,7 +66,7 @@ function refreshAfter(companyId: string, dealId?: string | null) {
 export function trustSummary(view: TrustStructureView | undefined): string {
   if (!view) return "";
   const s = view.record?.structure;
-  if (!s) return "structure not recorded";
+  if (!s) return "trust information not added yet";
   const n = s.people.length;
   return `${TRUST_KINDS[s.kind].split(" (")[0].toLowerCase()}, ${n} ${n === 1 ? "person" : "people"}${view.gaps.length ? ` · ${view.gaps.length} to do` : ""}`;
 }
@@ -83,7 +83,7 @@ function DocUpload({ companyId, dealId, docType, label }: { companyId: string; d
       fd.append("companyId", companyId);
       fd.append("docType", docType);
       if (dealId) fd.append("dealId", dealId);
-      fd.append("notes", `${label}, added by BGP from the trust's structure`);
+      fd.append("notes", `${label}, added by BGP from the trust's information`);
       const res = await fetch("/api/kyc/documents/upload", { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(plain(await res.text()));
       toast({ title: `${label} added to the trust's KYC record` });
@@ -153,15 +153,15 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
   const [deedRead, setDeedRead] = useState<{ reading: TrustDeedReading; proposal: TrustStructure | null } | null>(null);
   const [asking, setAsking] = useState(false);
   const [yourself, setYourself] = useState(false);
-  if (q.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trust's structure…</p>;
-  if (q.isError || !q.data) return <p className="text-xs text-red-700 dark:text-red-400">The trust's structure could not be read: {plain(q.error)}</p>;
+  if (q.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trust's information…</p>;
+  if (q.isError || !q.data) return <p className="text-xs text-red-700 dark:text-red-400">The trust's information could not be read: {plain(q.error)}</p>;
   const view = q.data;
   const s = view.record?.structure || null;
   const recorded = view.gaps.filter(g => g.from === "recorded");
   return (
     <div className="space-y-2 rounded-md border border-border/70 px-2.5 py-2 text-xs" data-testid={`trust-structure-${companyId}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold">Trust structure</span>
+        <span className="font-semibold">Trust information</span>
         {view.record && <span className="text-muted-foreground">recorded by {view.record.updatedBy || "BGP"} · {new Date(view.record.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>}
         {s && (
           <>
@@ -186,14 +186,14 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
           <div className="flex flex-wrap gap-2">
             {!view.request && (
               <Button type="button" size="sm" className="h-8 text-xs" onClick={() => setAsking(true)} data-testid={`trust-request-${companyId}`}>
-                <Mail className="mr-1 h-3.5 w-3.5" />Request trust structure
+                <Mail className="mr-1 h-3.5 w-3.5" />Ask for trust information
               </Button>
             )}
             <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setYourself(v => !v)} data-testid={`trust-yourself-${companyId}`}>
-              <Plus className="mr-1 h-3.5 w-3.5" />Add trust structure yourself
+              <Plus className="mr-1 h-3.5 w-3.5" />Add trust information yourself
             </Button>
           </div>
-          {!view.request && <p className="text-muted-foreground">Request it: we email the trust's representative a link to upload the trust deed, who is who, HMRC's registration and where the money came from. When it's all in, you and the AML officers get an email that it's ready for due diligence, with the deed already read into a draft.</p>}
+          {!view.request && <p className="text-muted-foreground">Ask for it: we email the trust's representative a link to upload the trust deed, who is who, HMRC's registration and where the money came from. When it's all in, you and the AML officers get an email that it's ready for due diligence, with the deed already read into a draft.</p>}
           {yourself && (
             <div className="flex flex-wrap items-center gap-2 rounded border border-border/60 px-2 py-1.5">
               <span className="text-muted-foreground">If you have the deed:</span>
@@ -319,7 +319,7 @@ function TrustRequestDialog({ view, dealId, onClose }: { view: TrustStructureVie
     <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" data-testid="trust-request-dialog">
         <DialogHeader>
-          <DialogTitle>Request the trust's structure</DialogTitle>
+          <DialogTitle>Ask for the trust's information</DialogTitle>
           <DialogDescription>We email them a secure link to upload these documents. They're filed on {view.name}'s KYC record, and you and the AML officers are emailed when they're in.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
@@ -402,7 +402,7 @@ export function TrustStructureDialog({ companyId, dealId, partyName, initial, re
       return (await apiRequest("PUT", `/api/trust-structure/${companyId}`, { structure, dealId: dealId || null })).json();
     },
     onSuccess: () => {
-      toast({ title: "Trust structure saved", description: "Everyone on it is screened again now." });
+      toast({ title: "Trust information saved", description: "Everyone on it is screened again now." });
       refreshAfter(companyId, dealId);
       onClose();
     },
@@ -413,7 +413,7 @@ export function TrustStructureDialog({ companyId, dealId, partyName, initial, re
     <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto" data-testid="trust-structure-dialog">
         <DialogHeader>
-          <DialogTitle>Trust structure: {partyName}</DialogTitle>
+          <DialogTitle>Trust information: {partyName}</DialogTitle>
           <DialogDescription>From the trust deed. The settlor, the trustees, any protector and anyone else with control each do their own identity check and proof of address; beneficiaries too unless the trust is discretionary. Everyone named is screened.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">

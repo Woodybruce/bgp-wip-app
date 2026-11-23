@@ -5306,6 +5306,13 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   `trust_documents_requested`, then `trust_documents_in`. Tests in
   `server/trust-structure.test.ts` and the guards file. Not run against
   Microsoft or Anthropic from a build machine.
+- **The words are "trust information"** (Jack, the same day: "it needs to
+  be simple English like 'Add trust information'"): the Next line's button
+  is **Add trust information**, the panel is **Trust information** with
+  **Ask for trust information** and **Add trust information yourself**, and
+  the gap reads "Add the trust's information: what kind of trust, who set
+  it up, the trustees and who benefits". Code names (`trust-structure`,
+  `TrustStructure`) are unchanged. No screen says "trust structure".
 - Not built: the client naming the trust's people on their page; Scotland's
   and Northern Ireland's registers. Not run against live data or Anthropic:
   checked by tests only, not in a browser.
