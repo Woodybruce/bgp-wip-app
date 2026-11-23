@@ -3581,6 +3581,8 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   their latest records across while BGP can still sign in (it only reads; it
   fills no form). A company's strip reads "KYC4U's past checks", and an admin
   can still **Record a past KYC4U sign-off** given by email before then.
+  **Add KYC4U result** in a party's Sign-off step is offered only where a
+  KYC4U request was made on that transaction (`pastKyc4u`, 23 November 2026).
 - **Words**: the box's red-flag hints and the red-flag email name the
   officers ("needs enhanced checks"); the risk assessment says the officers
   identify owners abroad; the companies page reads "KYC approved / in review
@@ -4229,6 +4231,18 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   company keeps no PSC list and the general chain walk stops below it) is
   treated as listed, and the reason says KYC4U is to confirm the chain: the
   regulation names the listed company itself.
+- **One owner listed twice** (23 November 2026, on St George plc, Woody:
+  "still asking for info on a plc? is that needed?"): Companies House can
+  hold the same owner twice, a notification made again and the first never
+  ceased (St George lists The Berkeley Group plc from 2016 and from 2017,
+  both active, one number), and `listedParent` needs one corporate owner at
+  each level, so it never reached The Berkeley Group Holdings plc (exempt as
+  listed on a UK regulated market since 7 July 2017) and the box asked the
+  client who owns St George. `dedupeRegisterOwners` (shared/kyc-prechecks.ts)
+  merges owners by registration number (else name; a person by name and
+  month and year of birth): new runs store them merged, `latestPrecheck`
+  merges stored runs, and `listedParent` reads them merged at every level.
+  The listing is found only by a run: a party checked before needs Run again.
 - **Ask only what's left** (`precheckAsks`, the one rule; the client checks
   dialog and `createClientCheck` both call it): listed, no owners chart and no
   owners' IDs; owners on the register, the client confirms the list instead of
@@ -4765,6 +4779,17 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
 - A flag set aside before this change keeps its review only while its key
   and evidence still match (`applyFlagReviews`); a web flag that now holds
   several sources needs one set-aside covering them.
+- **About the person, or only their company** (23 November 2026, St George
+  plc: the CMA's housebuilders case, about Berkeley Group, was raised as
+  adverse media on a director it never names). The person search answers
+  `about` for each finding ("person", or "organisation" when it is about a
+  company or group they work for or direct and does not say they were
+  involved), stored as `aboutOrganisation`. One about their company only is a
+  possible namesake ("about their company or group, not them"), never a red
+  flag on them (`webFindingUnsure`, read by the flags, the namesakes and the
+  card's count). A run from before then keeps its findings until Run again.
+  A rule that a finding must name the person was tried and dropped: genuine
+  findings often leave the name out ("Member of the Ruritanian parliament").
 - For a person screened with a date of birth, the next section replaces
   these bars.
 
@@ -6617,7 +6642,9 @@ Tests: `server/foreign-owners.test.ts`, `server/kyc-abroad.test.ts` (both in
   still to find, and **Add its register page**, **Add a register extract**,
   **Record a person behind it**, **Add a note**, **Add a structure chart**; then
   what the app traced (the accounts' words, each GLEIF line with a link to its
-  record) and the structure charts with their comparison.
+  record) and the structure charts with their comparison. With no owner
+  abroad (the accounts name UK parents only) the section is titled
+  **Parent companies** (23 November 2026).
 - **Free registers abroad** (checked 21 November 2026): Denmark's CVR shows a
   company's legal owners (shares and votes) to anyone; its beneficial owners
   are behind an access request. Most EU beneficial ownership registers closed

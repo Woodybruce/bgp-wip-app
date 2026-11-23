@@ -139,3 +139,27 @@ test("the deal card shows the run for each party and reads again while it runs",
   assert.equal((card.match(/<PartyPrechecks dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 1);
   assert.match(card, /apiRequest\("POST", `\/api\/kyc\/deal\/\$\{dealId\}\/prechecks`, \{ companyId \}\)/);
 });
+
+test('an owner listed twice is one owner, so a listed parent is found (St George plc, 23 November 2026)', () => {
+  // listedParent needs one corporate owner at each level: it reads the owners merged.
+  const fn = checks.slice(checks.indexOf('async function listedParent('), checks.indexOf('async function readCompaniesHouse('));
+  assert.match(fn, /const single = dedupeRegisterOwners\(owners\);/);
+  assert.match(fn, /const above = dedupeRegisterOwners\(/);
+  // New runs store each owner once; runs stored before are merged when read.
+  assert.match(checks, /const owners: RegisterOwner\[\] = dedupeRegisterOwners\(rawPscs\.slice\(0, 30\)/);
+  assert.match(checks, /row\.result\.companiesHouse\.owners = dedupeRegisterOwners\(row\.result\.companiesHouse\.owners\)/);
+});
+
+test('the web search says whether a finding is about the person or only their company (23 November 2026)', () => {
+  assert.match(checks, /Set about to "person" when the source reports something this person did, holds or faces/);
+  assert.match(checks, /about: \{ type: "string", enum: \["person", "organisation"\] \}/);
+  // Every reader of a person's findings goes through webFindingUnsure.
+  assert.doesNotMatch(rules, /filter\(\(?\w+\)? => !?\w+\.unsureIdentity\)/);
+});
+
+test('the AML box: Parent companies when nothing is abroad, Add KYC4U result only after a past request', () => {
+  assert.match(card, /<SubHead>\{ownedAbroad\.length \? "Owners abroad" : "Parent companies"\}<\/SubHead>/);
+  assert.match(card, /pastKyc4u=\{!!draft\}/);
+  assert.match(read('client/src/components/deal-party-aml.tsx'), /\{decisions\.canDecide && pastKyc4u && \(/);
+  assert.doesNotMatch(rules, /attached to a KYC4U request/);
+});

@@ -112,6 +112,40 @@ export interface RegisterOwner {
   idv?: PrecheckIdv | null;
 }
 
+// Companies House can list one owner twice: a notification made again and
+// the first never ceased (St George plc lists The Berkeley Group plc from
+// 2016 and from 2017, both active, with the same registration number,
+// 23 November 2026). One owner is one entry: a company by its registration
+// number (else its name), a person by name and month and year of birth.
+const ownerNumberKey = (raw: string | null | undefined): string => {
+  const n = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return /^\d+$/.test(n) ? n.padStart(8, "0") : n;
+};
+const registerOwnerKey = (o: Pick<RegisterOwner, "name" | "kind" | "registrationNumber" | "dob">): string => {
+  const name = String(o.name || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  if (o.kind === "individual") return `person:${name}:${o.dob?.year || ""}-${o.dob?.month || ""}`;
+  const number = ownerNumberKey(o.registrationNumber);
+  return number ? `company:${number}` : `company:${name}`;
+};
+export function dedupeRegisterOwners<T extends Pick<RegisterOwner, "name" | "kind" | "controls" | "notifiedOn"> & Partial<RegisterOwner>>(owners: T[] | null | undefined): T[] {
+  const out: T[] = [];
+  const seen = new Map<string, T>();
+  for (const o of owners || []) {
+    const key = registerOwnerKey(o);
+    const found = seen.get(key);
+    if (!found) {
+      const copy = { ...o, controls: [...(o.controls || [])] };
+      seen.set(key, copy);
+      out.push(copy);
+      continue;
+    }
+    for (const c of o.controls || []) if (!found.controls.includes(c)) found.controls.push(c);
+    if (o.notifiedOn && (!found.notifiedOn || o.notifiedOn < found.notifiedOn)) found.notifiedOn = o.notifiedOn;
+    if (o.sanctioned) found.sanctioned = true;
+  }
+  return out;
+}
+
 export function ownerKind(chKind: unknown): RegisterOwnerKind {
   const k = String(chKind || "");
   if (/^individual/.test(k)) return "individual";
@@ -327,6 +361,9 @@ export interface WebFinding {
   category: string | null;
   // The source may be about someone else of the same name.
   unsureIdentity: boolean;
+  // The search says the finding is about the person's company or group, not
+  // the person (asked since 23 November 2026; absent on earlier runs).
+  aboutOrganisation?: boolean;
 }
 
 export interface WebSearchLine {
@@ -403,6 +440,7 @@ export function checkWebAnswer(raw: unknown, citations: Array<{ url: string }>):
         kind, summary, url, source: clip(item?.source, 80) || host,
         date: clip(item?.date, 20) || null, category: clip(item?.category, 40) || null,
         unsureIdentity: item?.sameIdentity === "unsure",
+        ...(item?.about === "organisation" ? { aboutOrganisation: true } : {}),
       });
       kept++;
     }
@@ -1233,9 +1271,25 @@ const CORPORATE_NAME = /\b(limited|ltd|llp|plc|lp|inc|corp|corporation|company|h
 export const webLineIsCompany = (line: Pick<WebSearchLine, "name" | "person">): boolean =>
   line.person === false || (line.person === undefined && CORPORATE_NAME.test(line.name));
 
+/**
+ * A web finding about a person counts against them only when it is about
+ * them (23 November 2026): asked about St George plc's director Piers
+ * Clanford, the search returned the CMA's housebuilders case, which is about
+ * Berkeley Group and never says he was involved. The search now says what
+ * each finding is about; one about their company or group only is a possible
+ * namesake to check, never a red flag. A run from before then has no answer
+ * and keeps its findings as they were. Findings about a company are its own.
+ */
+export const webFindingAboutThem = (line: Pick<WebSearchLine, "name" | "person">, finding: Pick<WebFinding, "aboutOrganisation">): boolean =>
+  webLineIsCompany(line) || finding.aboutOrganisation !== true;
+
+/** A web finding that may not be about the person: the search was unsure who it is about, or it is about their company or group only. */
+export const webFindingUnsure = (line: Pick<WebSearchLine, "name" | "person">, finding: Pick<WebFinding, "unsureIdentity" | "aboutOrganisation">): boolean =>
+  !!finding.unsureIdentity || !webFindingAboutThem(line, finding);
+
 export interface PrecheckNamesake { name: string; via: "ComplyAdvantage" | "web search"; what: string; url: string | null }
 
-/** The possible namesakes of a run: matches below the bars and web results that may be about someone else. */
+/** The possible namesakes of a run: matches below the bars, and web results that may be about someone else or only about their company. */
 export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvantage" | "web">): PrecheckNamesake[] {
   const out: PrecheckNamesake[] = [];
   for (const line of result.complyAdvantage.lines) {
@@ -1249,8 +1303,8 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
     }
   }
   for (const line of result.web.lines) {
-    for (const f of webFindingsOf(line).filter(x => x.unsureIdentity)) {
-      out.push({ name: line.name, via: "web search", url: f.url, what: `${f.kind === "public_role" ? (webLineIsCompany(line) ? "ownership by the state or a politically exposed person" : "public role") : "adverse media"}: ${f.summary}` });
+    for (const f of webFindingsOf(line).filter(x => webFindingUnsure(line, x))) {
+      out.push({ name: line.name, via: "web search", url: f.url, what: `${f.kind === "public_role" ? (webLineIsCompany(line) ? "ownership by the state or a politically exposed person" : "public role") : "adverse media"}${webFindingAboutThem(line, f) ? "" : " (about their company or group, not them)"}: ${f.summary}` });
     }
   }
   return out;
@@ -1455,7 +1509,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   }
   for (const line of result.web.lines) {
     for (const kind of ["public_role", "adverse_media"] as const) {
-      const sure = webFindingsOf(line).filter(f => f.kind === kind && !f.unsureIdentity);
+      const sure = webFindingsOf(line).filter(f => f.kind === kind && !webFindingUnsure(line, f));
       if (!sure.length) continue;
       // For a company the search asks whether the state or a politically exposed person owns or controls it.
       const label = kind === "adverse_media" ? `Adverse media about ${line.name}`
@@ -1691,7 +1745,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
       out.push({
         key: "documents", label: `Documents from Companies House: ${filed.length ? filed.map(d => DOC_WORDS[d.kind]).join(", ") : "none downloaded"}`,
         state: failed.length && !filed.length ? "attention" : "ok",
-        detail: [filed.length ? "Filed on the party's KYC record and attached to a KYC4U request." : "", failed.length ? `Not downloaded: ${failed.map(d => `${DOC_WORDS[d.kind]}${d.error ? ` (${d.error})` : ""}`).join("; ")}` : ""].filter(Boolean).join(" "),
+        detail: [filed.length ? "Filed on the party's KYC record." : "", failed.length ? `Not downloaded: ${failed.map(d => `${DOC_WORDS[d.kind]}${d.error ? ` (${d.error})` : ""}`).join("; ")}` : ""].filter(Boolean).join(" "),
         links: [],
       });
     }
@@ -1787,7 +1841,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
-    const findings = searched.flatMap(l => webFindingsOf(l).filter(f => !f.unsureIdentity).map(f => ({ l, f })));
+    const findings = searched.flatMap(l => webFindingsOf(l).filter(f => !webFindingUnsure(l, f)).map(f => ({ l, f })));
     const failed = result.web.lines.filter(l => !l.ran);
     out.push({
       key: "web", label: `Public roles and adverse media: ${searched.length} searched, ${findings.length ? `${findings.length} to review` : "nothing found"}`,
@@ -1815,7 +1869,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   if (namesakes.length) {
     out.push({
       key: "namesakes", label: `Possible namesakes to check: ${namesakes.length}`, state: "info",
-      detail: `ComplyAdvantage profiles nothing ties to the person (no date of birth to set against the one Companies House gives, or under its bars of 60% for a public role and 90% for anything else when the person's date of birth is not known) and web results that may be about someone else of the same name. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
+      detail: `ComplyAdvantage profiles nothing ties to the person (no date of birth to set against the one Companies House gives, or under its bars of 60% for a public role and 90% for anything else when the person's date of birth is not known) and web results that may be about someone else of the same name, or only about their company. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
       links: namesakes.filter(n => n.url).slice(0, 8).map(n => ({ label: `${n.name}: ${n.what}`.slice(0, 140), url: n.url! })),
     });
   }

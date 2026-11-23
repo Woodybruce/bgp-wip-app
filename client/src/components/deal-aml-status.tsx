@@ -458,7 +458,7 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               );
             })}
           </ul>
-          <p className="mt-1.5">{step}{canDecide ? " Or, if one does not apply, set it aside with a comment." : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
+          <p className="mt-1.5">{step}{canDecide ? (/aside/.test(step) ? "" : " Or, if one does not apply, set it aside with a comment.") : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
         </div>
       )}
       {setAside.length > 0 && (
@@ -1076,7 +1076,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
-                <SubHead>Owners abroad</SubHead>
+                <SubHead>{ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />
               </div>
             )}
@@ -1136,7 +1136,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           </StepRow>
           <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
             <PartyNotRequiredBox cp={cp} />
-            <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} />
+            <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
             {canDecide && !cp.notRequired && (
               <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
             )}

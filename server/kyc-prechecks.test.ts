@@ -6,7 +6,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
+  askInputFrom, checkWebAnswer, chooseScreened, companyNamesMatch, dedupeRegisterOwners, webFindingUnsure, controlWords, idCheckIsThePerson, isOffshoreCountry, isRegisterDirector, listingFromExemptions, verifiedPersonName,
   ownerControlLine, ownerKind, personNamesMatch, precheckAsks, precheckCardLines, precheckNamesakes, precheckNote, precheckRedFlags, providerMatchFlags,
   nameSpeltAsTheirs, precheckSpellingVariants, splitProviderMatches, webFindingSaysNothing, webFindingsOf, idvOf, idvState,
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
@@ -800,4 +800,52 @@ test("an old automatic screening flag says where it came from, and what BGP's ch
   assert.equal(oldAutomaticScreening({ recordHistory: history, precheck: matched })!.suggestion, null);
   // A person's own entry is not the old screening's.
   assert.equal(oldAutomaticScreening({ recordHistory: [{ ...history[0], who: "Jack Barratt" }], precheck: clear }), null);
+});
+
+test("an owner Companies House lists twice is one owner (St George plc, 23 November 2026)", () => {
+  // St George plc's register: The Berkeley Group plc notified in 2016 and again in 2017, both active, one number.
+  const berkeley = (notifiedOn: string, registrationNumber = "01454064") => ({
+    name: "The Berkeley Group Plc", kind: "company" as const, notifiedOn, registrationNumber, country: "England & Wales",
+    controls: ["ownership-of-shares-75-to-100-percent", "voting-rights-75-to-100-percent", "right-to-appoint-and-remove-directors"],
+  });
+  const one = dedupeRegisterOwners([berkeley("2017-05-26"), berkeley("2016-04-06")]);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].notifiedOn, "2016-04-06");
+  assert.equal(one[0].controls.length, 3);
+  // The same number written without its leading zero is the same company.
+  assert.equal(dedupeRegisterOwners([berkeley("2016-04-06"), berkeley("2017-05-26", "1454064")]).length, 1);
+  // Two companies stay two; two people of one name born apart stay two.
+  assert.equal(dedupeRegisterOwners([berkeley("2016-04-06"), { ...berkeley("2017-05-05", "07396674"), name: "Tbg (4) Limited" }]).length, 2);
+  const person = (year: number) => ({ name: "Mr John Smith", kind: "individual" as const, controls: [], notifiedOn: null, dob: { year, month: 3 } });
+  assert.equal(dedupeRegisterOwners([person(1970), person(1985)]).length, 2);
+  assert.equal(dedupeRegisterOwners([person(1970), person(1970)]).length, 1);
+  // The list it was given is not changed.
+  const given = [berkeley("2017-05-26"), berkeley("2016-04-06")];
+  dedupeRegisterOwners(given);
+  assert.equal(given[0].notifiedOn, "2017-05-26");
+});
+
+test("a finding about a person's company, not the person, is no red flag on them (23 November 2026)", () => {
+  const cites = [{ url: "https://www.gov.uk/cma-cases/x" }, { url: "https://www.financeuncovered.org/y" }];
+  const read = (about?: string) => checkWebAnswer({
+    publicRole: { status: "none_found", findings: [] },
+    adverseMedia: { status: "found", findings: [{ summary: "The CMA investigated suspected exchanges of competitively sensitive information by Berkeley Group and six other housebuilders.", url: "https://www.gov.uk/cma-cases/x", source: "GOV.UK", ...(about ? { about } : {}) }] },
+  }, cites);
+  assert.equal(read("organisation").findings[0].aboutOrganisation, true);
+  assert.equal(read("person").findings[0].aboutOrganisation, undefined);
+  const line = (name: string, person: boolean, about?: string) => ({ name, role: person ? "director" : "the company", person, ran: true, ...read(about) });
+  const clanford = line("CLANFORD, Piers Martin", true, "organisation");
+  assert.equal(webFindingUnsure(clanford, clanford.findings[0]), true);
+  const run = result({ web: { ran: true, skipped: null, lines: [clanford] } as any });
+  assert.ok(!precheckRedFlags(run, { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
+  const ns = precheckNamesakes(run);
+  assert.equal(ns.length, 1);
+  assert.match(ns[0].what, /^adverse media \(about their company or group, not them\): The CMA/);
+  // About the person, or a run from before the question was asked: still a red flag.
+  for (const l of [line("CLANFORD, Piers Martin", true, "person"), line("CLANFORD, Piers Martin", true)]) {
+    assert.ok(precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [l] } as any }), { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
+  }
+  // A company's own finding is its own, whatever the search says.
+  const company = line("ST GEORGE PLC", false, "organisation");
+  assert.ok(precheckRedFlags(result({ web: { ran: true, skipped: null, lines: [company] } as any }), { sanctionsCurrent: true }).some(f => f.kind === "web_adverse"));
 });
