@@ -4792,7 +4792,19 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   and, when BGP would rely on them, simplified due diligence (HMRC AMLG11410:
   never relied on) are flags (`flagItems`, by kind). With no people read by
   BGP, the owners their own register or chart names are the people. It lists;
-  it decides nothing.
+  it decides nothing. **Their CDD summary counts for more than its people**
+  (found by playing the agent on live on 23 November 2026: a summary saying
+  the owner's address was not verified asked for nothing about her, and a
+  complete one was asked for the owners and the screening again): the owners
+  a summary or risk assessment names are the people when BGP read no
+  register, naming them answers who owns the company, and the screening it
+  reports answers their screening (clear) or is a flag (match); the reader
+  records that as the summary's `result`, and a summary that says nothing of
+  screening leaves it asked for. What BGP's own checks already read from the
+  company's register is not asked of them again (`registerHeld`, from the
+  people-to-check basis): the register entry of a company read at Companies
+  House or on the charity register, and who owns it when the register names
+  the owners, it is listed, or a charity's trustees control it.
 - **What is missing, and chasing it** (Woody, 22 November 2026: "we need to
   explain whats missing and keep emailing do as suggested"). `jointGapLines`
   words each gap once, for the joint agent ("Daniel North: a proof of

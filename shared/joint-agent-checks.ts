@@ -285,7 +285,12 @@ export function jointFlagWords(f: JointFlag): string {
  * and, when BGP relies on them, simplified checks are flags. It lists; the
  * officers decide.
  */
-export function jointCoverage(input: { partyName: string; kind: "company" | "individual"; people: JointCoveragePerson[]; readings: JointFileReading[]; now?: Date; reliance?: boolean }): JointCoverage {
+export function jointCoverage(input: {
+  partyName: string; kind: "company" | "individual"; people: JointCoveragePerson[]; readings: JointFileReading[]; now?: Date; reliance?: boolean;
+  // What BGP's own checks already hold from the company's register, in words
+  // (22 November 2026): the agent is not asked for it again.
+  held?: { register?: string | null; ownership?: string | null } | null;
+}): JointCoverage {
   const now = input.now || new Date();
   const read = input.readings.filter(r => r.state === "read");
   const unopened = input.readings.filter(r => r.state !== "read" && r.unreadable).map(r => r.file);
@@ -293,10 +298,12 @@ export function jointCoverage(input: { partyName: string; kind: "company" | "ind
   const items: JointFlag[] = [];
   const flag = (f: JointFlag) => { if (!items.some(x => x.kind === f.kind && x.person === f.person && x.file === f.file)) items.push(f); };
   // With no people to check read by BGP (no register read for the company),
-  // the owners the joint agent's own register entry or structure chart names.
+  // the owners the joint agent's own register entry, structure chart or CDD
+  // summary names (23 November 2026: a summary's owner was never asked for
+  // the proof of address it said was missing).
   const fromFiles: JointCoveragePerson[] = [];
   if (input.kind === "company" && !input.people.length) {
-    for (const name of read.filter(r => r.kind === "company_register" || r.kind === "ownership").flatMap(r => r.owners || [])) {
+    for (const name of read.filter(r => r.kind === "company_register" || r.kind === "ownership" || r.kind === "risk_assessment").flatMap(r => r.owners || [])) {
       if (!CORPORATE.test(name) && !fromFiles.some(p => personNamesMatch(p.name, name))) fromFiles.push({ name, roles: ["owner"] });
     }
   }
@@ -338,13 +345,22 @@ export function jointCoverage(input: { partyName: string; kind: "company" | "ind
   if (input.kind === "company") {
     const register = read.find(r => r.kind === "company_register" && (r.companies || []).some(c => sameJointCompany(c, input.partyName)))
       || read.find(r => r.kind === "company_register");
-    const ownership = read.find(r => r.kind === "ownership") || read.find(r => r.kind === "company_register" && (r.owners || []).length);
-    company = { register: register ? evidence(register) : null, ownership: ownership ? evidence(ownership) : null };
+    // Their CDD summary naming the owners is the information reliance needs.
+    const ownership = read.find(r => r.kind === "ownership") || read.find(r => (r.kind === "company_register" || r.kind === "risk_assessment") && (r.owners || []).length);
+    company = {
+      register: register ? evidence(register) : input.held?.register || null,
+      ownership: ownership ? evidence(ownership) : input.held?.ownership || null,
+    };
   }
   let screening: string | null = null;
   for (const r of read.filter(x => x.kind === "screening")) {
     if (r.result === "match" || r.result === "refer") flag({ kind: "match", person: null, file: r.file, title: r.title || null, detail: r.summary || (r.result === "refer" ? "referred" : null) });
     else screening = screening || `${evidence(r)}${r.result === "clear" ? ": clear" : ""}`;
+  }
+  // Their CDD summary or risk assessment saying what their screening found.
+  for (const r of read.filter(x => x.kind === "risk_assessment" && (x.result === "clear" || x.result === "match"))) {
+    if (r.result === "match") flag({ kind: "match", person: null, file: r.file, title: r.title || null, detail: r.summary || null });
+    else screening = screening || `${evidence(r)} (screening clear)`;
   }
   if (input.reliance) for (const r of read.filter(x => x.simplified)) flag({ kind: "simplified", person: null, file: r.file, title: r.title || null, detail: null });
   const known = [...people.map(p => p.name)];

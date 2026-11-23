@@ -22,7 +22,7 @@ import { jointAgentAsks, jointAgentChaseStoppedEmail, jointAgentFinishedEmail, j
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 import { amlBucket, amlNeedsKyc4u, amlStage, amlWaitingOn } from "../shared/aml-dashboard";
 import { agentAmlState } from "../shared/agent-aml";
-import { jointAskRefusal, jointRelationFor, readJointFile } from "./joint-agent-checks";
+import { jointAskRefusal, jointRelationFor, readJointFile, registerHeld } from "./joint-agent-checks";
 import { sameFirmDomain } from "./aml-portal";
 
 const today = new Date("2026-11-22T10:00:00Z");
@@ -281,6 +281,47 @@ test("with no people read by BGP, the owners their own register names are the pe
   const person = jointCoverage({ partyName: "John Buyer", kind: "individual", people: [], readings: [], now: today });
   assert.deepEqual(person.people.map(p => p.name), ["John Buyer"]);
   assert.ok(person.missing.includes("their sanctions and PEP screening"));
+});
+
+// Found by playing the agent on live on 23 November 2026: a CDD summary that
+// said the owner's address was not verified asked for nothing about her, and
+// a complete summary was asked for the owners and the screening again.
+test("their CDD summary: its owners are the people, what it says was verified counts, and so does its screening", () => {
+  const tenant = jointCoverage({
+    partyName: "AML Test Tenant Ltd", kind: "company", people: [], now: today,
+    readings: [read({ file: "cdd.pdf", kind: "risk_assessment", title: "CDD summary", owners: ["Jane Testperson"], result: "clear",
+      people: [{ name: "Jane Testperson", born: "1980-05", idVerified: true, addressVerified: false }] })],
+  });
+  assert.deepEqual(tenant.people.map(p => [p.name, p.missing]), [["Jane Testperson", ["address"]]]);
+  assert.match(tenant.company?.ownership || "", /cdd\.pdf|CDD summary/);
+  assert.match(tenant.screening || "", /screening clear/);
+  assert.deepEqual(tenant.missing, ["Jane Testperson: address", "the company's register entry"]);
+  const lines = jointGapLines(tenant, { you: true, reliance: true, agreed: true, nothingYet: false, partyName: "AML Test Tenant Ltd" });
+  assert.ok(lines.some(l => /^Jane Testperson: a proof of address/.test(l)), lines.join(" | "));
+  assert.ok(!lines.some(l => /screening|Who owns/.test(l)), lines.join(" | "));
+  // A summary reporting a match is a flag, never a clear screen; one that says nothing of screening leaves it asked for.
+  const matched = jointCoverage({ partyName: "X Ltd", kind: "company", people: [], now: today, readings: [read({ kind: "risk_assessment", result: "match", summary: "The owner matched a PEP list" })] });
+  assert.equal(matched.screening, null);
+  assert.ok(matched.flagItems.some(f => f.kind === "match"));
+  const silent = jointCoverage({ partyName: "X Ltd", kind: "company", people: [], now: today, readings: [read({ kind: "risk_assessment", result: null })] });
+  assert.ok(silent.missing.includes("their sanctions and PEP screening"));
+});
+
+test("what BGP's own checks read from the register is not asked of the agent again", () => {
+  assert.equal(registerHeld("not_read"), null);
+  assert.equal(registerHeld("individual"), null);
+  assert.equal(registerHeld("abroad_company"), null);
+  assert.match(registerHeld("owners")!.ownership || "", /read by BGP's checks/);
+  assert.equal(registerHeld("owners_abroad")!.ownership, null, "the people behind a company abroad are still asked for");
+  const done = jointCoverage({
+    partyName: "Acme Ltd", kind: "company", now: today, held: registerHeld("owners"),
+    people: [{ name: "Jane Smith", roles: ["owner"], born: "1980-05" }],
+    readings: [read({ kind: "risk_assessment", result: "clear", people: [{ name: "Jane Smith", born: "1980-05", idVerified: true, addressVerified: true }] })],
+  });
+  assert.equal(done.complete, true, done.missing.join(" | "));
+  assert.match(done.company!.register!, /Companies House, read by BGP's checks/);
+  const abroad = jointCoverage({ partyName: "Acme Ltd", kind: "company", now: today, held: registerHeld("owners_abroad"), people: [], readings: [read({ kind: "screening", result: "clear" })] });
+  assert.deepEqual(abroad.missing, ["who owns the company"]);
 });
 
 test("the line under the party says where the joint agent's checks are, in HMRC's route", () => {
