@@ -29,7 +29,8 @@ import { pool } from "./db";
 import { getFile } from "./file-storage";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, dealClientRole, isDealPartyRole, type DealPartyRole } from "@shared/deal-parties";
 import { amlRegime, type PartyDueDiligence } from "@shared/aml-policy";
-import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords } from "@shared/aml-file";
+import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords, amlStillNeeded } from "@shared/aml-file";
+import { amlDeadline } from "@shared/aml-dashboard";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
 import type { PartyKycState } from "@shared/party-kyc";
@@ -520,6 +521,46 @@ function writeJointAgent(w: Writer, j: JointAgentPartyView) {
   if (c.unread) w.kv("Not read", `${c.unread} file${c.unread === 1 ? "" : "s"}: open them on the transaction`, AMBER);
 }
 
+/** What the party still needs, from what the file holds (shared/aml-file.ts amlStillNeeded). */
+export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = new Date()): string[] {
+  const status = String(p.state?.status || "").toLowerCase();
+  const expires = p.state?.expiresAt ? new Date(p.state.expiresAt as any).getTime() : null;
+  const settled = status === "rejected" ? "rejected" as const
+    : p.notRequired ? "not_required" as const
+    : status === "approved" && (expires === null || expires >= now.getTime()) ? "approved" as const : null;
+  const pre = p.precheck;
+  const ranAt = pre?.ranAt ? new Date(pre.ranAt).getTime() : null;
+  const precheck = !pre || pre.state === "none" || pre.state === "cap" ? "not_run" as const
+    : pre.state === "off" ? "off" as const
+    : pre.state === "running" || pre.state === "waiting" ? "running" as const
+    : pre.state === "done" && ranAt !== null && now.getTime() - ranAt > 30 * 86400000 ? "old" as const : "done" as const;
+  const openRequests = (p.requests || []).filter((r: any) => !["cancelled", "expired", "finished"].includes(String(r.status)));
+  return amlStillNeeded({
+    deadline: amlDeadline(p.role, data.deal.status, p.client ? p.role : "other"),
+    settled,
+    needsCompany: !p.individual && !p.trust,
+    companySet: !!p.company,
+    precheck,
+    flags: p.flags.map(f => ({ label: f.label, factor: !!f.factor })),
+    level: p.level?.level || null,
+    sanctionsOnly: data.regime.regime === "sanctions_only",
+    peopleOutstanding: p.people?.outstanding || [],
+    requests: openRequests.map((r: any) => ({
+      ref: String(r.ref || ""),
+      to: text(r.person?.name) || text(r.recipientName) || text(r.recipientEmail) || "the client",
+      missing: [
+        ...(r.needsIdCheck && !["approved", "submitted"].includes(String(r.idState || "")) ? ["identity check"] : []),
+        // "Photo ID" reads "photo ID" in a sentence; "ID for each owner" keeps its capitals.
+        ...(r.docs || []).filter((d: any) => !d.done).map((d: any) => String(d.title || "")).filter(Boolean)
+          .map((t: string) => /^[A-Z][A-Z]/.test(t) ? t : t[0].toLowerCase() + t.slice(1)),
+      ],
+    })),
+    anyRequest: (p.requests || []).some((r: any) => String(r.status) !== "cancelled"),
+    jointGaps: p.joint?.gaps || [],
+    trustGaps: p.trust && (p.trustStructure || []).some(l => /^No structure recorded/.test(l)) ? ["add the trust's information: what kind of trust, who set it up, the trustees and who benefits"] : [],
+  });
+}
+
 function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map<string, string>) {
   const doc = w.doc;
   const name = p.company?.name || p.brand.name;
@@ -541,6 +582,10 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   }
   if (p.notRequired?.comment) w.kv("Not required because", p.notRequired.comment);
   if (p.unread.length) w.kv("Could not be read", `${[...new Set(p.unread)].join("; ")}. Make the file again, or check these on the transaction.`, RED);
+
+  // What is still needed at this point, in BGP's AML policy's order (Issue 4).
+  const still = stillNeededFor(data, p);
+  w.kv("Still needed", still.join("\n"), still.length === 1 && still[0].startsWith("Nothing") ? GREEN : AMBER);
 
   // The company, as the register gives it.
   const c = p.precheck?.company;

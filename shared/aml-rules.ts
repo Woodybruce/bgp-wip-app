@@ -45,6 +45,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "Our client: as soon as they instruct us, and before we market the property.", refs: ["amlg2200", "amlg2300"] },
       { text: "A buyer: before their offer is accepted where we can, and always before exchange.", refs: ["amlg2200"] },
       { text: "A tenant: once the landlord accepts their offer. ID is checked before anything is signed. No deposit before the checks are done.", refs: ["amlg2300"] },
+      { text: "BGP's policy (Issue 4): a buyer, a tenant and the other side are checked from agreed heads of terms. Nothing exchanges or completes until every party is checked.", refs: ["bgp_policy"] },
       { text: "A letting under £10,000 a month is outside HMRC's rules. We still run sanctions checks.", refs: ["amlg2300", "bgp_policy"] },
       { text: "Anyone acting for a party, such as an agent or a director: identify them and check they can act.", refs: ["amlg2200", "amlg2300"] },
       { text: "Someone else paying our invoice: find out why and check them. No link to the transaction is high risk.", refs: ["amlg3200"] },

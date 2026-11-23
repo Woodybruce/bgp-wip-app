@@ -5,7 +5,7 @@
 import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { amlFileDocWords, amlFileName, amlFileSafeName, amlFileStateWords } from "../shared/aml-file";
+import { amlFileDocWords, amlFileName, amlFileSafeName, amlFileStateWords, amlStillNeeded, type StillNeededInput } from "../shared/aml-file";
 import { renderAmlReport, type AmlFileData } from "./aml-file";
 
 test("documents are named in words, and any name is safe for a file or folder", () => {
@@ -81,4 +81,54 @@ test("the report renders as a PDF, names outside Latin-1 included", async () => 
   const pdf = await renderAmlReport(sample, new Map([["landlord:k1", "documents/01 Accounts - Accounts.pdf"]]));
   assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
   assert.ok(pdf.length > 3000, `a real report, not an empty page (${pdf.length} bytes)`);
+});
+
+// ── Still needed (Woody, 23 November 2026: "the report todate ... we want to
+// make sure the app is capable of understanding what we need at each point") ─
+
+const need = (over: Partial<StillNeededInput> = {}): StillNeededInput => ({
+  deadline: { words: "before exchange of contracts", passed: false }, settled: null, needsCompany: true, companySet: true,
+  precheck: "done", flags: [], level: "standard", sanctionsOnly: false, peopleOutstanding: [], requests: [], anyRequest: true,
+  jointGaps: [], trustGaps: [], ...over,
+});
+
+test("still needed: nothing once decided", () => {
+  assert.deepEqual(amlStillNeeded(need({ settled: "approved" })), ["Nothing: the checks are approved."]);
+  assert.deepEqual(amlStillNeeded(need({ settled: "not_required" })), ["Nothing: marked Not required."]);
+  assert.match(amlStillNeeded(need({ settled: "rejected" }))[0], /^Nothing more: rejected/);
+});
+
+test("still needed: the deadline, the company, BGP's checks, the client checks, then who signs off", () => {
+  const lines = amlStillNeeded(need({
+    deadline: { words: "before the property is marketed", passed: true }, companySet: false, precheck: "not_run", anyRequest: false,
+  }));
+  assert.equal(lines[0], "Late: the checks were needed before the property is marketed.");
+  assert.match(lines[1], /^Set the company that signs/);
+  assert.match(lines[2], /^Run BGP's checks before asking/);
+  assert.equal(lines[3], "Send the client checks.");
+  assert.match(lines[lines.length - 1], /^Sign-off: an agent on the transaction or an officer/);
+  const open = amlStillNeeded(need({
+    requests: [{ ref: "7K2Q9M", to: "Jane Smith", missing: ["identity check", "proof of address"] }],
+    peopleOutstanding: ["Daniel North: identity check and proof of address"],
+  }));
+  assert.ok(open.includes("From Jane Smith (request 7K2Q9M): identity check; proof of address."));
+  assert.ok(open.includes("From Daniel North: identity check and proof of address."));
+  // What a request to the same person already asks for is not listed twice.
+  const once = amlStillNeeded(need({
+    requests: [{ ref: "67GX46", to: "Daniel North", missing: ["photo ID (a certified copy)", "proof of address"] }],
+    peopleOutstanding: ["Daniel North: proof of address", "Ann Lee: identity check and proof of address"],
+  }));
+  assert.ok(once.includes("From Daniel North (request 67GX46): photo ID (a certified copy); proof of address."));
+  assert.ok(!once.some(l => l === "From Daniel North: proof of address."));
+  assert.ok(once.includes("From Ann Lee: identity check and proof of address."));
+});
+
+test("still needed: red flags and higher-risk factors go to the officers; a small letting needs sanctions only", () => {
+  const flagged = amlStillNeeded(need({ flags: [{ label: "Possible PEP" }, { label: "A trust in the ownership", factor: true }], level: "enhanced" }));
+  assert.ok(flagged.some(l => /^Look into the red flag: Possible PEP/.test(l)));
+  assert.ok(flagged.some(l => /^Enhanced due diligence for a higher-risk factor: A trust in the ownership/.test(l)));
+  assert.match(flagged[flagged.length - 1], /^Sign-off: the Nominated Officer or a Deputy/);
+  const small = amlStillNeeded(need({ sanctionsOnly: true, anyRequest: false }));
+  assert.ok(!small.includes("Send the client checks."));
+  assert.match(small[small.length - 1], /sanctions checks only/);
 });

@@ -382,7 +382,8 @@ test("the AML board reads the joint agent asked, then their checks in, as in pro
   assert.equal(amlBucket("joint_asked", true), "in_progress");
   assert.equal(amlBucket("joint_in", true), "in_progress");
   assert.equal(amlWaitingOn("joint_asked", 0), "The joint agent");
-  assert.match(amlWaitingOn("joint_in", 0), /Officers/);
+  assert.equal(amlWaitingOn("joint_in", 0), "BGP: sign off", "Issue 4: their documents in, BGP signs off");
+  assert.match(amlWaitingOn("joint_in", 1), /Officers/);
 });
 
 const facts = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({

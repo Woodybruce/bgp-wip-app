@@ -3572,7 +3572,7 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   outsourcing section now says the checks are carried out in-house in
   ChatBGP, and section D names Layla O'Driscoll and Woody Bruce as Deputy
   Compliance Officers (Issue 2 and Issue 3 still named KYC4U's outsourcing
-  and Victoria Broadhead). Issue 4 waits on Jack's approval.
+  and Victoria Broadhead). Jack approved Issue 4 on 23 November 2026.
 
 ## AML policy Issue 4 is the source of truth (Woody, 2026-11-23)
 
@@ -3600,7 +3600,9 @@ call for action countries only).
   in `server/assets/aml-policy/`; Issues 2 and 3 of the policy and Issue 2 of
   the risk assessment are kept on the quiet line (policy M). The footer of
   Issue 4 names Jack as approver and its change record says what changed;
-  **it waits on Jack's approval**. Each person confirms Issue 4 on My BGP →
+  **Jack approved it on 23 November 2026** (Woody: "jack has approved"), and
+  Jack is changing BGP's HMRC registration to add Layla. The file stays as he
+  approved it. Each person confirms Issue 4 on My BGP →
   AML training (`CURRENT_POLICY_READ_TITLE` takes the latest issue).
   `POLICY_SOURCE` names both. The policy's link to the risk assessment and
   the risk assessment's link to the policy point at the app's Policy pill.
@@ -3632,13 +3634,39 @@ call for action countries only).
     documents are signed off as a letting's: "Waiting on Savills · for the
     documents", then "Ready to sign off · Savills' documents are in: add a
     note". The Rules page says BGP goes further than HMRC here.
-  - **When checks are done**: landlord or seller before marketing; tenant
-    when the landlord accepts the offer; buyer from agreed heads of terms;
-    all complete before exchange of contracts or completion of a lease, and
-    no tenant deposit before. **Not built: the app still lets a transaction
-    move to Exchanged or Completed with checks outstanding and emails the
-    officers** (Woody's "gating remain as is" of 17 November 2026). Whether
-    the app should now hold the move is Woody's call.
+  - **When checks are done** (Issue 4's table; Woody, 23 November 2026: "we
+    want to make sure the app is capable of understanding what we need at
+    each point and then make our own approvals"). BGP's own client who lets
+    or sells: from engagement, complete before the property is marketed. A
+    buyer, a tenant, and every party BGP does not act for: from agreed heads
+    of terms, complete before exchange (a sale) or before the lease
+    completes (a letting; the tenant's identity before any agreement is
+    signed). Rules in `shared/aml-dashboard.ts`: `amlDue(role, status,
+    clientRole)` (the client from `dealClientRole`; a landlord or seller BGP
+    does not act for is now due from heads of terms, not at once),
+    `amlDeadline` (the words and whether the transaction has passed that
+    point: marketed from Available; exchanged from Exchanged) and `amlLate`
+    (past it and not decided). Each dashboard row carries `deadline` and
+    `late`: the AML board shows a red **Late** chip (the deadline in its
+    title), lists late rows first and has a **Late** filter (`?late=1`); the
+    transaction's AML box shows "Needed …" under each party's Next line, in
+    red as "Late: needed …" once passed. On live on 23 November 2026 most of
+    the To do list was BGP's client landlords on lettings already marketed,
+    so most of it reads Late: that is what Issue 4 says. The Next line's
+    "Not due yet" reads "from agreed heads of terms". The Rules page has the
+    policy's line. **The AML board now takes in investment deals still on
+    the Investment Tracker where Issue 4 needs checks** (`amlBoardDealSql` in
+    `server/aml-dashboard.ts`): a sale from Live, Available or Negotiating
+    (its seller is BGP's client), any investment deal from heads of terms;
+    before, nothing showed until Solicitors, so the 11 sale instructions at
+    Live on 23 November 2026 had no AML row. The Investment Tracker opens the
+    AML window ("On the market: check the seller") when a sale first moves to
+    Live or Available from an earlier stage (`amlBeforeMarketing` on the
+    tracker's PATCH reply), as it does at Solicitors. **Not built: the app
+    still lets a transaction move to Exchanged or Completed with checks
+    outstanding and emails the officers** (Woody's "gating remain as is" of
+    17 November 2026; Issue 4 says nothing exchanges or completes first).
+    Whether the app should hold the move is Woody's call.
   - **In-house checks in ChatBGP** (section D and the risk assessment's
     outsourcing row): KYC4U's past checks kept as records; **Dun & Bradstreet
     reports for companies owned from overseas** (the evidence lists also
@@ -3654,6 +3682,22 @@ call for action countries only).
     and that each case is approved by the Nominated Officer or a Deputy; what
     happens when checks cannot be completed (Stop acting); the officers named
     on BGP's HMRC registration; training; independent review.
+- **The report so far** (Woody, 23 November 2026: "a download button of the
+  report todate which we can share with suppliers however we dont intend on
+  doing this"). Under a party's Documents step, **Other ways** has **Report
+  so far** for the officers (the AML file button, `AmlFileButton` with
+  `label` and `quiet`): the report alone (PDF) or with every document (ZIP).
+  Each party's page of the AML report now has **Still needed**
+  (`amlStillNeeded` in `shared/aml-file.ts`, fed by `stillNeededFor` in
+  `server/aml-file.ts`): the deadline (late or not), the company that signs,
+  BGP's checks before asking, a trust's information, each red flag and
+  higher-risk factor, what each open client checks request and each person
+  to check still owes, what the joint agent's files do not cover, and who
+  signs it off (an agent or an officer; the Nominated Officer or a Deputy
+  when enhanced; sanctions only on a small letting). It reads; it decides
+  nothing. The file is still made by the officers only, recorded on the KYC
+  history and the transaction, and never carries the AML register. BGP does
+  not plan to use a supplier: the officers make their own approvals.
 - ChatBGP's prompt and app map name Issue 4 and the risk assessment Issue 3.
 - Tests: `server/aml-policy.test.ts`, `server/joint-agent-checks.test.ts`,
   `server/kyc-prechecks.test.ts` (all in `npm test`);

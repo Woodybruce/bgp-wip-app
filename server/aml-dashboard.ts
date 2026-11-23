@@ -8,8 +8,11 @@
 //   GET /api/aml-dashboard/party?dealId=&role=         the party's documents and history
 //
 // Live deals: every deal not withdrawn or archived, and completed or
-// invoiced ones changed in the last 90 days; an investment deal only from
-// Solicitors, as everywhere off the Investment Tracker (dealLeftTrackerSql).
+// invoiced ones changed in the last 90 days; an investment deal from
+// Solicitors, as everywhere off the Investment Tracker (dealLeftTrackerSql),
+// and earlier where BGP's AML policy (Issue 4) needs the checks: a sale from
+// Live or Available, its seller checked before marketing; any investment deal
+// from heads of terms (amlBoardDealSql).
 // Each party is read the deal card's way: its state on the company that signs
 // when the deal names one (loadPartyKyc), and the red flags by the same rules
 // on the same records (shared/kyc-red-flags.ts), read for all the deals at
@@ -18,8 +21,8 @@
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
-import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, statusSpellingsFor } from "@shared/deal-status";
-import { amlBucket, amlDealClosed, amlDue, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, investmentDealSql, statusSpellingsFor } from "@shared/deal-status";
+import { amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
 import { payerRedFlags } from "@shared/deal-billing";
 import { dealClientRole } from "@shared/deal-parties";
@@ -30,6 +33,18 @@ import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
 const sqlList = (codes: readonly any[]) => statusSpellingsFor(codes).map(s => `'${s.replace(/'/g, "''")}'`).join(", ");
 export const AML_DASHBOARD_CLOSED_DAYS = 90;
+
+/**
+ * The deals the board takes in: those off the Investment Tracker, and an
+ * investment deal still on it once Issue 4 needs checks on a party: a sale
+ * from Live or Available (its seller, BGP's client, before marketing), any
+ * investment deal from heads of terms.
+ */
+export function amlBoardDealSql(alias: string): string {
+  const st = `lower(btrim(coalesce(${alias}.status, '')))`;
+  return `(${dealLeftTrackerSql(alias)} OR (${investmentDealSql(alias)} AND (${st} IN (${sqlList(["HOT"])})`
+    + ` OR (${alias}.deal_type = 'Sale' AND ${st} IN (${sqlList(["LIVE", "AVA", "NEG"])})))))`;
+}
 
 async function staffMe(req: Request): Promise<{ id: string; name: string } | null> {
   const userId = (req as any).session?.userId || (req as any).tokenUserId;
@@ -63,7 +78,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     ? `d.id = $1`
     : `${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
         AND (${st} NOT IN (${sqlList(closedOnly)}) OR d.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
-        AND ${dealLeftTrackerSql("d")}`;
+        AND ${amlBoardDealSql("d")}`;
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
@@ -219,7 +234,9 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       precheckAt: pre?.conducted_at || null, clientSentAt: sent, clientFinishedAt: finished, kyc4uOpen, kyc4uInReview,
       notRequired: markHolds, reliedAt: relied?.recorded_at || null, inHouse: partyInHouse, jointAskedAt, jointInAt,
     }, now);
-    const due = amlDue(p.role, p.deal.status);
+    const clientRole = dealClientRole({ dealType: p.deal.deal_type, bgpActingFor: p.deal.bgp_acting_for, team: p.deal.team });
+    const due = amlDue(p.role, p.deal.status, clientRole);
+    const deadline = amlDeadline(p.role, p.deal.status, clientRole);
     const allFlags = [...flags, ...onDeal.map(f => `Transaction: ${f.label}`)];
     const agentIds: string[] = Array.isArray(p.deal.internal_agent_ids) ? p.deal.internal_agent_ids.filter(Boolean) : [];
     const agentNames: string[] = Array.isArray(p.deal.internal_agent) ? p.deal.internal_agent.map(text).filter(Boolean) : [];
@@ -243,6 +260,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       stage,
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
+      deadline: deadline.words,
+      late: amlLate(stage, deadline),
       redFlags: allFlags,
       waitingOn: amlWaitingOn(stage, allFlags.length),
       movedDays: daysSince([

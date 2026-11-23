@@ -1014,6 +1014,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     </div>
   );
 
+  // When the checks must be complete (Issue 4 of BGP's policy), and in red once
+  // the transaction has passed that point with the party not decided.
+  const deadline = row && showNext && !cp.notRequired && row.deadline ? (
+    <p className={`px-0.5 text-[11px] ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
+      {row.late ? "Late: needed " : "Needed "}{row.deadline}
+    </p>
+  ) : null;
+
   return (
     <div className="min-w-0 rounded-lg border border-border bg-card" data-testid={`counterparty-${cp.id}`}>
       <div className="space-y-2 px-3 py-2.5">
@@ -1050,6 +1058,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           </div>
         )}
         {showNext && nextLine}
+        {deadline}
       </div>
 
       {staff && !folded && (
@@ -1114,6 +1123,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                       {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
                       {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
                       {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
+                      {/* The report so far, with what is still needed, for a supplier if the officers ever use one (Woody, 23 November 2026). */}
+                      {canDecide && <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} label="Report so far" quiet />}
                     </div>
                   )}
                 </>}

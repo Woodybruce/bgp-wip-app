@@ -1472,6 +1472,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       if (atSolicitors) {
         toast({ title: "Moved to Solicitors", description: "Set up the AML for each party in the window." });
         setAmlDeal({ id: body.dealId, name: body.assetName || null, status: "SOL" });
+      } else if (body?.amlBeforeMarketing && body?.dealId) {
+        // A sale just on the market: BGP's AML policy (Issue 4) checks the seller, our client, before marketing.
+        toast({ title: "On the market", description: "Check the seller, our client, in the window." });
+        setAmlDeal({ id: body.dealId, name: body.assetName || null, status: body.status || null, reason: "marketing" });
       } else if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
         setBoardType(movedTo);
         toast({ title: `Moved to ${movedTo}`, description: "The backing transaction is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
@@ -1943,7 +1947,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     // left the list a window barely two cards tall.
     <div ref={setPageEl} className={`${present ? "p-3 space-y-2" : foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
-      <DealAmlDialog deal={amlDeal} reason="solicitors" onClose={() => setAmlDeal(null)} />
+      <DealAmlDialog deal={amlDeal} reason={amlDeal?.reason || "solicitors"} onClose={() => setAmlDeal(null)} />
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
         <SoldCompDialog

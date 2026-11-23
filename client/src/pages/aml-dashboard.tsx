@@ -74,7 +74,13 @@ interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean; inHouseE
 
 function StageChip({ row }: { row: AmlDashboardRow }) {
   const label = row.stage === "expiring" && row.expiresAt ? `Expires ${day(row.expiresAt)}` : AML_STAGE_LABEL[row.stage];
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>
+      {/* Past the point BGP's policy (Issue 4) needs the checks by, and not decided. */}
+      {row.late && <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 whitespace-nowrap dark:bg-red-950/40 dark:text-red-200" title={`Needed ${row.deadline}`} data-testid={`aml-late-${row.key}`}>Late</span>}
+    </span>
+  );
 }
 
 function Flags({ row }: { row: AmlDashboardRow }) {
@@ -192,6 +198,7 @@ export default function AmlDashboard() {
   const [bucket, setBucket] = useState<AmlBucket>(() => (isBucket(params.get("view")) ? (params.get("view") as AmlBucket) : "todo"));
   const [section, setSection] = useState<Section>(() => (isSection(params.get("section")) ? (params.get("section") as Section) : "checks"));
   const [mine, setMine] = useState(params.get("who") === "mine");
+  const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: ["/api/aml-dashboard"], enabled: section === "checks" });
@@ -206,14 +213,17 @@ export default function AmlDashboard() {
     if (shownSection !== "checks") next.set("section", shownSection);
     if (shownSection === "checks" && bucket !== "todo") next.set("view", bucket);
     if (shownSection === "checks" && mine) next.set("who", "mine");
+    if (shownSection === "checks" && lateOnly) next.set("late", "1");
     const target = `${location}${next.toString() ? `?${next}` : ""}`;
     if (`${location}${search ? `?${search}` : ""}` !== target) setLocation(target, { replace: true });
-  }, [bucket, mine, shownSection]);
+  }, [bucket, mine, lateOnly, shownSection]);
 
-  const scoped = useMemo(() => (data?.rows || []).filter(r => (!mine || r.mine) && rowMatches(r, query)), [data, mine, query]);
+  const scoped = useMemo(() => (data?.rows || []).filter(r => (!mine || r.mine) && (!lateOnly || r.late) && rowMatches(r, query)), [data, mine, lateOnly, query]);
   const counts = useMemo(() => bucketCounts(scoped), [scoped]);
+  const lateCount = useMemo(() => (data?.rows || []).filter(r => r.late && (!mine || r.mine) && rowMatches(r, query)).length, [data, mine, query]);
+  // Late first: past the point the policy needs the checks by.
   const shown = useMemo(() => scoped.filter(r => r.bucket === bucket)
-    .sort((a, b) => (b.redFlags.length - a.redFlags.length) || ((b.movedDays ?? -1) - (a.movedDays ?? -1))), [scoped, bucket]);
+    .sort((a, b) => (Number(b.late) - Number(a.late)) || (b.redFlags.length - a.redFlags.length) || ((b.movedDays ?? -1) - (a.movedDays ?? -1))), [scoped, bucket]);
 
   // The top folds once the table is scrolled, so the rows get the screen and
   // the title and pills stay (Woody, 22 November 2026: "the top of the pages
@@ -290,6 +300,7 @@ export default function AmlDashboard() {
         <div className="flex items-center gap-1.5 md:ml-auto">
           <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
+          <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, property, agent" className="h-8 pl-7 w-56 text-sm" data-testid="aml-search" />
@@ -308,7 +319,7 @@ export default function AmlDashboard() {
       ) : error ? (
         <p className="text-sm text-destructive">The AML dashboard could not be read.</p>
       ) : !shown.length ? (
-        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
+        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
       ) : isMobile ? (
         <ul className="space-y-2" data-testid="aml-cards">
           {shown.map(r => (

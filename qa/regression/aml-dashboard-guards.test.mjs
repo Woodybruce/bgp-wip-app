@@ -47,8 +47,13 @@ test('each party is read the deal card\'s way', () => {
   assert.match(read('shared/aml-dashboard.ts'), /f\.kyc\.status === "in_review" && f\.kyc4uInReview/);
   // A closed deal's undecided parties are their own pill, never To do.
   assert.match(feed, /bucket: amlBucket\(stage, due, amlDealClosed\(p\.deal\.status\)\)/);
-  // An investment deal only from Solicitors, as everywhere off the Investment Tracker.
-  assert.match(feed, /dealLeftTrackerSql\("d"\)/);
+  // Off the Investment Tracker as everywhere (from Solicitors), and earlier where Issue 4 needs checks:
+  // an investment sale from Live or Available, any investment deal from heads of terms.
+  assert.match(feed, /AND \$\{amlBoardDealSql\("d"\)\}`;/);
+  assert.match(feed, /\$\{dealLeftTrackerSql\(alias\)\} OR \(\$\{investmentDealSql\(alias\)\}/);
+  // Who BGP acts for decides when each party is due and its deadline.
+  assert.match(feed, /const due = amlDue\(p\.role, p\.deal\.status, clientRole\);/);
+  assert.match(feed, /late: amlLate\(stage, deadline\),/);
   // It reads; it never writes.
   assert.doesNotMatch(feed, /\b(INSERT INTO|UPDATE|DELETE FROM)\b/);
 });

@@ -133,10 +133,9 @@ export interface AmlNextStep {
   action: AmlBoxAction | null;
 }
 
-const DUE_WORDS: Record<string, string> = {
-  tenant: "once the landlord accepts their offer",
-  purchaser: "before an offer is accepted",
-};
+// Issue 4 of BGP's policy: a buyer, a tenant and every party BGP does not act
+// for are checked from agreed heads of terms (shared/aml-dashboard.ts amlDue).
+const DUE_WORDS = "from agreed heads of terms";
 
 export function andList(names: readonly string[]): string {
   const list = names.filter(Boolean);
@@ -268,7 +267,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, "for the documents", "joint");
   }
   if (f.due === false && !f.request) {
-    return step("wait", "nobody", "Not due yet", DUE_WORDS[f.role] || "");
+    return step("wait", "nobody", "Not due yet", DUE_WORDS);
   }
   if (!f.clientChecks) {
     return step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null);

@@ -115,3 +115,72 @@ export function amlFileStateWords(
   if (status === "in_review") return { tone: "act", words: `In review${on}: not approved yet` };
   return { tone: "act", words: `Not approved yet${on}` };
 }
+
+// ── Still needed (Woody, 23 November 2026: "a download button of the report
+// to date which we can share with suppliers ... we want to make sure the app
+// is capable of understanding what we need at each point and then make our
+// own approvals") ────────────────────────────────────────────────────────────
+
+export interface StillNeededInput {
+  // When the checks must be complete (shared/aml-dashboard.ts amlDeadline) and whether it has passed.
+  deadline: { words: string; passed: boolean } | null;
+  // Approved and in date, rejected, or marked Not required: nothing more is needed.
+  settled: "approved" | "rejected" | "not_required" | null;
+  // A private individual or a trust needs no company that signs.
+  needsCompany: boolean;
+  companySet: boolean;
+  // BGP's checks before asking: "done" within the last 30 days, "old", "running", "not_run" or "off".
+  precheck: "done" | "old" | "running" | "not_run" | "off";
+  flags: Array<{ label: string; factor?: boolean }>;
+  level: "simplified" | "standard" | "enhanced" | null;
+  sanctionsOnly: boolean;
+  // "Jane Doe: identity check and proof of address", from the people to check.
+  peopleOutstanding: string[];
+  // Client checks requests still open, and what each has not had back.
+  requests: Array<{ ref: string; to: string; missing: string[] }>;
+  anyRequest: boolean;
+  // What the joint agent's files do not cover yet.
+  jointGaps: string[];
+  trustGaps: string[];
+}
+
+/**
+ * What a party still needs, in order, and who signs it off: one line each, for
+ * the AML report. Read from what the report already holds; it decides nothing.
+ */
+export function amlStillNeeded(f: StillNeededInput): string[] {
+  if (f.settled === "approved") return ["Nothing: the checks are approved."];
+  if (f.settled === "not_required") return ["Nothing: marked Not required."];
+  if (f.settled === "rejected") return ["Nothing more: rejected. BGP does not go ahead with this party unless the Nominated Officer says otherwise."];
+  const out: string[] = [];
+  if (f.deadline) out.push(f.deadline.passed ? `Late: the checks were needed ${f.deadline.words}.` : `Needed ${f.deadline.words}.`);
+  if (f.needsCompany && !f.companySet) out.push("Set the company that signs: the checks are about that company.");
+  if (f.precheck === "not_run" || f.precheck === "off") out.push("Run BGP's checks before asking (Companies House, sanctions, public roles and adverse media).");
+  else if (f.precheck === "old") out.push("Run BGP's checks again: the last run is more than 30 days old.");
+  else if (f.precheck === "running") out.push("Wait for BGP's checks before asking to finish.");
+  for (const g of f.trustGaps) out.push(`Trust: ${g.replace(/\.$/, "")}.`);
+  const flags = f.flags.filter(x => !x.factor);
+  const factors = f.flags.filter(x => x.factor);
+  if (flags.length) out.push(`Look into ${flags.length === 1 ? "the red flag" : `${flags.length} red flags`}: ${flags.map(x => x.label).join("; ")}. Set aside with a comment only where it does not apply.`);
+  if (factors.length) out.push(`Enhanced due diligence for ${factors.length === 1 ? "a higher-risk factor" : `${factors.length} higher-risk factors`}: ${factors.map(x => x.label).join("; ")}.`);
+  if (!f.sanctionsOnly) {
+    if (!f.anyRequest && !f.jointGaps.length && !f.peopleOutstanding.length) out.push("Send the client checks.");
+    for (const r of f.requests) if (r.missing.length) out.push(`From ${r.to} (request ${r.ref}): ${r.missing.join("; ")}.`);
+    // A person's own line ("Jane Smith: identity check and proof of address"), less what a request to them already lists.
+    for (const p of f.peopleOutstanding) {
+      const at = p.indexOf(": ");
+      const name = at > 0 ? p.slice(0, at) : "";
+      const asked = new Set(f.requests.filter(r => name && r.to.toLowerCase() === name.toLowerCase()).flatMap(r => r.missing.map(m => m.toLowerCase())));
+      const items = (at > 0 ? p.slice(at + 2) : p).replace(/\.$/, "").split(/ and |; /).filter(i => !asked.has(i.toLowerCase()));
+      if (items.length) out.push(`From ${name ? `${name}: ` : ""}${items.join(" and ")}.`);
+    }
+    for (const g of f.jointGaps) out.push(`From the joint agent: ${g.replace(/\.$/, "")}.`);
+  }
+  const enhanced = f.level === "enhanced" || flags.length > 0 || factors.length > 0 || f.trustGaps.length > 0;
+  out.push(f.sanctionsOnly
+    ? "Sign-off: an agent on the transaction or an officer (a letting under £10,000 a month: sanctions checks only)."
+    : enhanced
+      ? "Sign-off: the Nominated Officer or a Deputy, with a note of what was checked and why the risk is acceptable (enhanced, approval for 1 year)."
+      : "Sign-off: an agent on the transaction or an officer, with a note if anything above is still outstanding (approval for 3 years).");
+  return out;
+}
