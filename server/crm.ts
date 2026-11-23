@@ -10613,25 +10613,7 @@ export async function computeWipHealth(): Promise<any> {
     return ["NEG", "SOL", "EXC", "COM", "INV"].includes(c as string);
   });
 
-  // Every NEW deal's parties raised with KYC4U, or flagged here (2026-10-05).
-  // Older deals are covered where the company already has a KYC4U request.
-  // With the officers doing enhanced checks in-house (22 November 2026) the
-  // list is empty: the AML board's To do list is where checks are chased.
-  const KYC4U_FROM = new Date("2026-10-05T00:00:00Z");
-  const inHouseAml = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
-  let kyc4uCovered = new Set<string>();
-  try {
-    const cov = await pool.query(
-      `SELECT company_id FROM kyc4u_requests WHERE company_id IS NOT NULL
-        UNION SELECT company_id FROM kyc4u_drafts WHERE company_id IS NOT NULL AND status <> 'cancelled'`);
-    kyc4uCovered = new Set(cov.rows.map((r: any) => r.company_id));
-  } catch { /* tables not created yet */ }
-  const noKyc4u = inHouseAml ? [] : wipDeals.filter((r: any) => {
-    if (!r.createdAt || new Date(r.createdAt) < KYC4U_FROM) return false;
-    if (["WIT", "OPP", "AVA"].includes(legacyToCode(r.status) as string)) return false; // KYC4U is raised at SOL — marketing stubs have no counterparty yet
-    const parties = [r.landlordId, r.tenantId, r.vendorId, r.purchaserId].filter(Boolean);
-    return parties.length > 0 && parties.some((id: string) => !kyc4uCovered.has(id));
-  });
+  // KYC4U is no longer used (23 November 2026): parties are chased on the AML board's To do list.
 
   const bucket = (list: any[]) => ({
     count: list.length,
@@ -10657,7 +10639,6 @@ export async function computeWipHealth(): Promise<any> {
       invNoXero: bucket(invNoXero),
       noFee: bucket(noFee),
       noPo: bucket(noPo),
-      noKyc4u: bucket(noKyc4u),
     },
     affected: { count: affectedIds.size, fee: affectedFee },
     totalWipDeals: wipDeals.length,

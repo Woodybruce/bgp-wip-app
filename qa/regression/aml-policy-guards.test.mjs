@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from 'node:fs';
 const read = (p) => readFileSync(p, 'utf8');
 
 test('the documents are kept with the app and served to BGP staff, outside the retired /api/aml/', () => {
-  for (const f of ['bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
+  // Issue 4 of the policy and Issue 3 of the risk assessment (23 November 2026, the source of truth); earlier issues kept (policy M).
+  for (const f of ['bgp-aml-policy-issue-4.docx', 'bgp-firm-wide-aml-risk-assessment-issue-3.docx', 'bgp-aml-policy-issue-3.docx', 'bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
     assert.ok(existsSync(`server/assets/aml-policy/${f}`), f);
   }
   const routes = read('server/aml-policy.ts');
@@ -88,13 +89,14 @@ test('heads of terms and marketing carry the AML notice', () => {
   assert.match(read('marketing/src/lib/particulars-pdf.ts'), /Anti-money laundering: under the Money Laundering Regulations 2017/);
 });
 
-test('KYC4U is BGP\'s outsourced KYC provider, never called its MLRO on a screen or to ChatBGP', () => {
-  for (const f of ['client/src/components/kyc-panel.tsx', 'client/src/components/account-entities-panel.tsx', 'client/src/components/deal-party-aml.tsx',
+test('KYC4U is no longer used (23 November 2026), and never called BGP\'s MLRO on a screen or to ChatBGP', () => {
+  for (const f of ['client/src/components/account-entities-panel.tsx', 'client/src/components/deal-party-aml.tsx',
     'client/src/components/deal-aml-status.tsx', 'shared/kyc-request.ts', 'server/chatbgp-app-map.ts']) {
     const userText = read(f).split('\n').filter(l => !/^\s*(\/\/|\*|\{\/\*)/.test(l)).join('\n');
     assert.doesNotMatch(userText, /KYC4U[^.\n]{0,20}BGP's MLRO|BGP's MLRO[^.\n]{0,10}KYC4U|KYC4U are BGP's MLRO/, f);
   }
-  assert.match(read('server/chatbgp.ts'), /KYC4U are BGP's outsourced KYC provider, not its MLRO/);
+  assert.match(read('server/chatbgp.ts'), /KYC4U is no longer used \(since 23 November 2026\): enhanced due diligence is done in-house by the Nominated Officer or a Deputy/);
+  assert.doesNotMatch(read('server/chatbgp.ts'), /name: "prepare_kyc4u_request"/, 'ChatBGP has no KYC4U request tool');
 });
 
 test('the client checks ask for the documents the policy lists, certified as it says', () => {

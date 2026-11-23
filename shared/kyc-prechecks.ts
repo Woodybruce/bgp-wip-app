@@ -890,9 +890,10 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     : null;
   const listingNote = ch.listing
     ? [
-        "No beneficial owners to identify: the company itself is identified and verified from the register, and simplified due diligence may apply.",
-        ch.listing.viaParent ? "KYC4U to confirm the chain." : "",
-        listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent.",
+        ch.listing.viaParent
+          ? "No individual owners to identify: the owner is the listed company. Standard due diligence (policy 4.2); the officers confirm the chain."
+          : "No beneficial owners to identify: the company itself is identified and verified from the register, and simplified due diligence may apply.",
+        listingSettled(ch.listing.market) ? "" : "The officers confirm the market's disclosure rules are equivalent.",
       ].filter(Boolean).join(" ")
     : null;
   const trading = tradingState(ch);
@@ -1032,10 +1033,10 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const where = LISTING_WORDS[input.listing.market];
     const who = input.listing.viaParent ? `Owned through one company at each level by ${input.listing.company}, which is ${where}` : `${where[0].toUpperCase()}${where.slice(1)}`;
     // The regulation names the listed company itself: a subsidiary reached
-    // through a chain, or a market abroad, is for KYC4U to confirm.
+    // through a chain, or a market abroad, is for the officers to confirm.
     const check = [
-      input.listing.viaParent ? " KYC4U to confirm the chain." : "",
-      listingSettled(input.listing.market) ? "" : " KYC4U to confirm the market's disclosure rules are equivalent.",
+      input.listing.viaParent ? " The officers confirm the chain." : "",
+      listingSettled(input.listing.market) ? "" : " The officers confirm the market's disclosure rules are equivalent.",
     ].join("");
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
@@ -1116,7 +1117,14 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
 // judged as anything else (90%). A company, and any check from before this
 // change, keeps the rule above.
 export const PROVIDER_FLAG_BARS = { pep: 0.6, other: 0.9 } as const;
-const ALWAYS_FLAG_KIND = /sanction|warning/;
+// Only a sanctions match is a red flag whatever its score. A warning list
+// (tax defaulters, disqualified directors and the like) was too, until Woody
+// saw "buffalo bill restaurant" on Ireland's Revenue Defaulters List at a 20%
+// match raised against BILLS RESTAURANTS LTD. (23 November 2026: "why is it
+// picking up adversea media on buffalow bills restruants its a waste if
+// time"): a warning list is now judged as anything else (90%), and for a
+// company one spelt differently is set aside (providerSpellingVariant).
+const ALWAYS_FLAG_KIND = /sanction/;
 
 export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "person" | "dobKnown">): boolean {
   const kind = String(m.kind || "");
@@ -1176,9 +1184,17 @@ export function nameSpeltAsTheirs(screened: string, profile: string, person: boo
 const providerLineIsPerson = (line: Pick<ProviderLine, "name" | "person">): boolean =>
   line.person === true || (line.person === undefined && !CORPORATE_NAME.test(line.name));
 
-/** An adverse media profile spelt differently from the person or company screened, with no date of birth tying it to them. */
+/**
+ * An adverse media profile spelt differently from the person or company
+ * screened, with no date of birth tying it to them; for a company, a
+ * warning-list or fitness and probity profile too (23 November 2026). A
+ * person's warning-list profile is never set aside on spelling: it is judged
+ * by the bars, or by the date of birth.
+ */
 export function providerSpellingVariant(m: ProviderMatch, line: Pick<ProviderLine, "name" | "person">): boolean {
-  if (String(m.kind || "") !== "adverse_media") return false;
+  const kind = String(m.kind || "");
+  const companyList = !providerLineIsPerson(line) && /warning|fitness/.test(kind);
+  if (kind !== "adverse_media" && !companyList) return false;
   if (m.birthYearAgrees === true) return false;
   // A profile that could not be read has no name to judge: it stays as the bars say.
   if ((m.unread ?? !m.profileId) || !m.name) return false;
@@ -1206,7 +1222,7 @@ export function splitProviderMatches(line: ProviderLine): { flagged: ProviderMat
 
 export interface PrecheckSpellingVariant { name: string; profile: string; source: string | null; score: number | null }
 
-/** The adverse media profiles a run set aside because their names are spelt differently. */
+/** The profiles a run set aside because their names are spelt differently (adverse media; a company's warning lists too). */
 export function precheckSpellingVariants(result: Pick<KycPrecheckResult, "complyAdvantage">): PrecheckSpellingVariant[] {
   return result.complyAdvantage.lines.flatMap(line => splitProviderMatches(line).variants.map(m => ({ name: line.name, profile: m.name, source: m.source, score: m.score })));
 }
@@ -1682,7 +1698,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     if (ch.listing) {
       out.push({
         key: "listing", label: ch.listing.viaParent ? `Owned by ${ch.listing.company}, ${LISTING_WORDS[ch.listing.market]}` : `Listed: ${LISTING_WORDS[ch.listing.market]}`, state: "info",
-        detail: [`No beneficial owners to ask for.`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. KYC4U to confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
+        detail: [`No beneficial owners to ask for.`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. The officers confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "The officers confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
         links: [],
       });
     } else {

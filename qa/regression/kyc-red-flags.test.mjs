@@ -55,17 +55,18 @@ test('the finished note and the admin previews carry the red flags', () => {
   const finish = portal.slice(portal.indexOf('async function finishRequest'), portal.indexOf('// ── Replies with documents'));
   assert.match(finish, /loadDealRedFlags\(row\.deal_id, \[row\.company_id\], row\.trading_entity_id \? \{ \[row\.company_id\]: row\.trading_entity_id \} : \{\}\)/);
   assert.match(finish, /redFlags,/);
-  assert.match(portal, /\{ kind: "red_flag", title: "Red flag: raise with KYC4U"/);
+  assert.match(portal, /\{ kind: "red_flag", title: "Red flag: enhanced checks by the officers"/);
   assert.match(read('client/src/components/kyc-emails-admin.tsx'), /red_flag: "red_flag"/);
 });
 
-test('the deal card shows each party its red flags beside Request KYC4U check; the Kick off step sends a flagged party to KYC4U', () => {
+test('the deal card shows each party its red flags; the Kick off step sends every party the client checks (KYC4U is no longer used)', () => {
   // One party box for every layout (20 November 2026): the red flags under Red flags, the policy's factors under Due diligence.
   assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} only="flags" \/>/g) || []).length, 1);
   assert.equal((card.match(/<PartyRedFlags dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} role=\{cp\.role\} only="factors" \/>/g) || []).length, 1);
   assert.equal((card.match(/<DealRedFlags dealId=\{dealId\} data=\{data\} \/>/g) || []).length, 1);
   assert.match(card, /Red flags could not be checked against/);
   assert.match(deals, /const flags = amlStepStatus\?\.redFlags\?\.parties\[p\.id\] \|\| \[\];/);
-  // In-house (22 November 2026) a flagged party gets the client checks too.
-  assert.match(deals, /\{clientChecks && \(!flags\.length \|\| inHouse\)\s*\? <SendClientChecksButton/);
+  // A flagged party gets the client checks too; its enhanced checks are the officers'.
+  assert.match(deals, /\{clientChecks && <SendClientChecksButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} partyName=\{p\.name\} label="Kick off AML" \/>\}/);
+  assert.doesNotMatch(deals, /Kyc4uRequestButton/);
 });

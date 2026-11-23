@@ -90,6 +90,8 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   const trust = trustRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
+    // Documents BGP uploaded on the party, read and checked (23 November 2026).
+    uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
     ...(trust !== undefined ? { trust } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });

@@ -1547,7 +1547,7 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
-- **AML / KYC**: BGP's AML policy (Issue 2, November 2026; downloads on Deals → AML) names Jack Barratt as Nominated Officer (MLRO); the Deputy is Layla O'Driscoll (the Issue 2 document still names Victoria Broadhead, but Layla is correct). The officers who decide in the app are set in the AML policy panel on Deals → AML, and since 20 November 2026 there can be more than one Deputy. KYC4U are BGP's outsourced KYC provider, not its MLRO. On each deal (Parties & AML) the app runs BGP's checks before asking (Companies House, sanctions lists, web and ComplyAdvantage screening) and the client checks; each party gets a level of due diligence: simplified (listed, FCA-authorised fund, UK public body), standard, or enhanced (a red flag or a policy factor: public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, a super-prime sale). A standard party is signed off by an agent on the deal, the Nominated Officer or the Deputy, for 3 years; an enhanced one goes to KYC4U and the Nominated Officer or the Deputy adds KYC4U's result (1 year), unless the officers have switched enhanced checks to in-house (Deals → AML, Policy and settings), when the Nominated Officer or a Deputy signs it off themselves with a note of what was checked. Lettings under £10,000 a month need sanctions checks only. The officers can mark the other side of a deal a joint agent negotiated Not required. To get a party checked by KYC4U, call prepare_kyc4u_request (same as the deal's **Request KYC4U check** → Ready for KYC4U) — it prepares, it does not submit: then tell the user to click the Send to ChatBGP bookmark on KYC4U's Raise New Service Request page and press Submit there. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
+- **AML / KYC**: BGP's AML policy (Issue 4, November 2026, with the firm-wide risk assessment, Issue 3; the copies on Transactions → AML → Policy are the source of truth) names Jack Barratt as Nominated Officer (MLRO) and Layla O'Driscoll and Woody Bruce as Deputy Nominated Officers and Deputy Compliance Officers; the officers who decide in the app are set in the AML policy panel on Transactions → AML. KYC4U is no longer used (since 23 November 2026): enhanced due diligence is done in-house by the Nominated Officer or a Deputy. KYC4U's past checks and every file copied from their site stay on record (Subscriptions & APIs → KYC4U) and still count. On each transaction (Parties & AML) the app runs BGP's checks before asking (Companies House, sanctions lists, web and ComplyAdvantage screening) and the client checks; each party gets a level of due diligence: simplified (a listed company, with no owners to verify; an FCA-authorised fund or UK public body, whose owners are still identified; never a company owned by a listed one, which is standard), standard, or enhanced (a red flag or a policy factor: public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, owners abroad; a super-prime sale is weighed with the rest, not enhanced by itself). A standard party is signed off by an agent on the transaction, the Nominated Officer or a Deputy, for 3 years; an enhanced one by the Nominated Officer or a Deputy with a note of what was checked (1 year). Since Issue 3 a company is evidenced by its Companies House record (or home register) with BGP's screening (a credit report is optional; for a company owned from overseas Issue 4 asks for a Dun & Bradstreet report, which the officers download from D&B and drop on the party's Upload documents, as the app has no D&B connection yet), a Veriff identity check with its live face match counts as meeting the person (certified copies are then not needed), and a newly formed company with no accounts gives its parent's latest accounts or how the transaction is funded. Lettings under £10,000 a month need sanctions checks only. Since Issue 4 the counterparty on a joint instruction is always checked (the joint agent's documents, or BGP's own checks): the officers mark a party Not required only when no transaction was done with it. All checks must be complete before exchange or completion of a lease; a transaction moved on with checks outstanding warns and emails the officers. To start the checks on a party, send the user to the transaction's Parties & AML (Send client checks); never offer to send anything to KYC4U. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
@@ -5613,8 +5613,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
-  // run_kyc_check retired 2026-10-05 — KYC4U is BGP's MLRO; the app runs no
-  // KYC/sanctions screening of its own. check_covenant stays.
+  // run_kyc_check retired 2026-10-05: the checks run from each transaction's
+  // Parties & AML. check_covenant stays.
 
   // The all-staff "Gossip & market intel" channel in Messages (Woody,
   // 2026-10-12).
@@ -5629,29 +5629,6 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           days: { type: "number", description: "How many days back to cover (default 7)" },
           focus: { type: "string", description: "Optional focus, e.g. 'people moves only' or 'anything about Landsec'" },
         },
-      },
-    },
-  });
-
-  // Same as the deal's "Request KYC4U check" → Ready for KYC4U (Woody,
-  // 2026-10-06: "chat needs ability to do this"). Submitting stays with the
-  // user on KYC4U's form, via the Send to ChatBGP bookmark.
-  tools.push({
-    type: "function",
-    function: {
-      name: "prepare_kyc4u_request",
-      description: "Prepare KYC4U service request(s) for a transaction's parties — exactly what the transaction's AML panel 'Request KYC4U check' → 'Ready for KYC4U' does. Fields (party type client/counterparty, legal entity, property address, instructing contact, joint agent, fee earner emails, expected completion, note with the transaction ref) are prefilled from the transaction. Use when the user asks to raise / start / request a KYC4U (AML/KYC) check on a transaction's landlord, tenant, vendor or purchaser. It does NOT submit to KYC4U: afterwards tell the user to open KYC4U's Raise New Service Request page and click the Send to ChatBGP bookmark, which fills the form for them to check and Submit. Parties that already have a queued or filled request are skipped.",
-      parameters: {
-        type: "object",
-        properties: {
-          deal_id: { type: "string", description: "The transaction's ID (UUID) or its transaction number / ref" },
-          parties: { type: "array", items: { type: "string", enum: ["landlord", "tenant", "vendor", "purchaser"] }, description: "Which parties to raise. Omit for every party set on the transaction." },
-          request_type: { type: "string", description: "KYC4U request type, if the user said (e.g. Standard, Enhanced)" },
-          met_face_to_face: { type: "string", description: "Yes / No, if known" },
-          how_long_known: { type: "string", description: "How long BGP has known the party, if known" },
-          note: { type: "string", description: "Anything extra to add to the request's note" },
-        },
-        required: ["deal_id"],
       },
     },
   });
@@ -7402,37 +7379,9 @@ export async function executeCrmToolRaw(
     return { data: await summariseGossip(Number(fnArgs.days) || 7, fnArgs.focus || null) };
   }
 
+  // KYC4U is no longer used (23 November 2026): the tool is gone; a stale call is refused.
   if (fnName === "prepare_kyc4u_request") {
-    if (await resolveCompanyScope(req).catch(() => null)) return { data: { success: false, error: "KYC4U requests are BGP staff only" } };
-    const ref = String(fnArgs.deal_id || "").replace(/^#/, "").trim();
-    const deal = (await pool.query(
-      `SELECT id, name, deal_ref, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1 OR deal_ref::text = $1 LIMIT 1`, [ref])).rows[0];
-    if (!deal) return { data: { success: false, error: `No transaction found for "${ref}"` } };
-    const wanted: string[] = Array.isArray(fnArgs.parties) && fnArgs.parties.length ? fnArgs.parties : ["landlord", "tenant", "vendor", "purchaser"];
-    const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
-    const { kyc4uPrefill, createKyc4uDraft } = await import("./kyc4u");
-    const prepared: any[] = [], skipped: any[] = [];
-    for (const role of wanted) {
-      const companyId = deal[`${role}_id`];
-      if (!companyId) { if (fnArgs.parties?.length) skipped.push({ role, reason: `no ${role} on the transaction` }); continue; }
-      const open = (await pool.query(`SELECT status FROM kyc4u_drafts WHERE deal_id = $1 AND company_id = $2 AND status IN ('queued','filled') LIMIT 1`, [deal.id, companyId])).rows[0];
-      const pre = await kyc4uPrefill(deal.id, companyId, role, userId);
-      if (open) { skipped.push({ role, party: pre.fields.partyName, reason: `already ${open.status === "queued" ? "waiting to be filled on KYC4U's form" : "filled on KYC4U's form"}` }); continue; }
-      const fields: Record<string, string> = { ...pre.fields };
-      if (fnArgs.request_type) fields.requestType = String(fnArgs.request_type);
-      if (fnArgs.met_face_to_face) fields.metFaceToFace = String(fnArgs.met_face_to_face);
-      if (fnArgs.how_long_known) fields.howLongKnown = String(fnArgs.how_long_known);
-      if (fnArgs.note) fields.note = [fields.note, String(fnArgs.note)].filter(Boolean).join("\n");
-      await createKyc4uDraft({ dealId: deal.id, companyId, role, fields, userId });
-      prepared.push({ role, party: fields.partyName, partyType: fields.partyType, stillToFillOnKyc4uForm: ["requestType", "metFaceToFace", "howLongKnown"].filter(k => !fields[k]) });
-    }
-    return {
-      data: {
-        success: prepared.length > 0, deal: { id: deal.id, ref: deal.deal_ref, name: deal.name }, prepared, skipped,
-        nextStep: prepared.length ? "Prepared, NOT submitted. Open KYC4U's Raise New Service Request page (https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx) and click the Send to ChatBGP bookmark once per request — it fills the form; check it (add any ID documents), then press Submit. The transaction then shows 'Filled on KYC4U's form'." : undefined,
-      },
-      action: prepared.length ? { type: "crm_updated", entityType: "deal", id: deal.id } : undefined,
-    };
+    return { data: { success: false, error: "KYC4U is no longer used (since 23 November 2026). Send the client checks from the transaction's Parties & AML; enhanced checks are signed off by the Nominated Officer or a Deputy." } };
   }
 
   if (fnName === "update_deal") {

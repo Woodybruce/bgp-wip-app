@@ -3145,6 +3145,26 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
     // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
     `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
+    // Documents BGP uploads on a party (Woody, 23 November 2026: "upload
+    // documents ... the app must read these and check they are acceptable"):
+    // the reading of each (server/kyc-documents.ts), whether an agent saw the
+    // original, and an officer's acceptance of one that did not pass.
+    `CREATE TABLE IF NOT EXISTS kyc_document_readings (
+      document_id varchar PRIMARY KEY,
+      deal_id varchar,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      seen_original boolean NOT NULL DEFAULT false,
+      reading jsonb,
+      uploaded_by varchar,
+      uploaded_by_name text,
+      uploaded_at timestamptz NOT NULL DEFAULT now(),
+      accepted_by varchar,
+      accepted_by_name text,
+      accepted_note text,
+      accepted_at timestamptz
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_document_readings_party_idx ON kyc_document_readings (company_id, trading_entity_id)`,
     // What BGP records against a company abroad that owns a party (Woody,
     // 21 November 2026: the free route to what KYC4U do): its register page
     // (copied to PDF), a register extract or structure chart (with the chart's
@@ -4515,6 +4535,7 @@ import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealHotsRouter from "./deal-hots";
 import dealPartyAmlRouter from "./deal-party-aml";
+import { kycDocumentsRouter } from "./kyc-documents";
 import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
@@ -5366,7 +5387,7 @@ app.use("/api/branding/assets", express.static(
     const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (clientChecksSwitchOn(process.env.KYC_CLIENT_CHECKS) && KYC_CLIENT_CHECK_ROUTES.some(r => r.test(path))) return next();
     if (RETIRED_AML.some(r => r.test(path))) {
-      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the transaction's Parties & AML: BGP's checks before asking, the client checks, and KYC4U, BGP's outsourced KYC provider (Request KYC4U check)." });
+      return res.status(410).json({ message: "This part of the old in-app AML is switched off. AML runs from the transaction's Parties & AML: BGP's checks before asking, the client checks, and the officers' sign-off." });
     }
     next();
   });
@@ -5896,6 +5917,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Heads of terms read on the transaction page (BGP staff only, 23 November 2026).
   app.use(dealHotsRouter);
   app.use(dealPartyAmlRouter);
+  app.use(kycDocumentsRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);
   // BGP stops acting on a deal for AML reasons, and is released (21 November 2026).

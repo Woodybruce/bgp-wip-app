@@ -117,14 +117,15 @@ test("the alert to the agents: what was found, what to do, nothing sent to the c
     partyName: "Example & Co Ltd", recipientName: "Jane Smith", dealName: "12 Example Street", ref: "7K2Q9M",
     dealLink: "https://chatbgp.app/deals/abc", flags, sentFrom: "kyc@chatbgp.app",
   });
-  assert.equal(email.subject, "Red flag on 12 Example Street: raise Example & Co Ltd with KYC4U (ref 7K2Q9M)");
-  assert.match(email.html, /Red flag: raise Example &amp; Co Ltd with KYC4U/);
+  // KYC4U is no longer used (23 November 2026): the officers do the enhanced checks.
+  assert.equal(email.subject, "Red flag on 12 Example Street: Example & Co Ltd needs enhanced checks (ref 7K2Q9M)");
+  assert.match(email.html, /Red flag: Example &amp; Co Ltd needs enhanced checks/);
   assert.match(email.html, /Said yes to the question about public roles: &lt;b&gt;MP&lt;\/b&gt; <span style="color:#6b6b6b">\(Client checks, ref 7K2Q9M\)<\/span>/);
   assert.doesNotMatch(email.html, /<b>MP<\/b>/);
-  assert.match(email.html, /A red flag goes to KYC4U for enhanced checks/);
-  assert.match(email.html, /Request KYC4U check/);
+  assert.match(email.html, /A red flag needs enhanced checks, and an officer signs the party off/);
+  assert.doesNotMatch(email.html, /KYC4U/);
   assert.match(email.html, /href="https:\/\/chatbgp\.app\/deals\/abc"/);
-  assert.match(email.html, /Nothing has been sent to the client or to KYC4U/);
+  assert.match(email.html, /Nothing has been sent to the client\./);
   assert.match(email.html, new RegExp(`cid:${KYC_LOGO_CID}`));
   const test = kycRedFlagEmail({ partyName: "X", recipientName: null, dealName: "Y", ref: "7K2Q9M", dealLink: "https://chatbgp.app", flags, sentFrom: "kyc@chatbgp.app", test: true });
   assert.match(test.subject, /^\[Test\] /);
@@ -139,7 +140,7 @@ test("the finished note carries the red flags when there are any", () => {
   assert.doesNotMatch(kycFinishedEmail(base).html, /Red flag/);
   assert.doesNotMatch(kycFinishedEmail({ ...base, redFlags: [] }).html, /Red flag/);
   const flagged = kycFinishedEmail({ ...base, redFlags: dealRedFlags({ aml_risk_level: "high" }) }).html;
-  assert.match(flagged, /Red flag: raise with KYC4U/);
+  assert.match(flagged, /Red flag: for the Nominated Officer/);
   assert.match(flagged, /Risk rated high/);
 });
 

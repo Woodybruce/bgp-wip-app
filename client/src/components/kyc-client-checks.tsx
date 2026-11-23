@@ -7,7 +7,6 @@
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useAmlInHouse } from "@/components/aml-policy-panel";
 import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, FileText, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,11 +18,12 @@ import { pillMetrics } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import {
-  KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycWhatsAppHref, kycWhatsAppText,
+  KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText,
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import type { PublicRecordsResult, PublicRecordsSuggestion } from "@shared/public-records";
 import type { KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
@@ -51,6 +51,8 @@ export interface ClientCheckRequest {
   notAsked: Array<{ key: KycDocKey; reason: string }>;
   // A person's own request (19 November 2026): who it is for.
   person?: { key: string; name: string; roles: KycPersonRole[] } | null;
+  // Sent through the party's own agent to pass on (23 November 2026).
+  viaAgent?: { firm: string; name: string; email: string; passedOn: Array<{ name: string; email: string; at: string }> } | null;
   ownLinksFor?: string[];
   // note: why a step is not ticked (the old owners' step's files say nobody's name).
   docs: Array<{ key: KycDocKey; title: string; done: boolean; note?: string | null }>;
@@ -59,6 +61,8 @@ export interface ClientCheckRequest {
 }
 export interface ClientChecks {
   dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[];
+  // BGP's client on the transaction (23 November 2026).
+  clientRole?: string | null; clientName?: string | null;
   // The people to check per party (null when they could not be read).
   people?: Record<string, PartyPeople | null>;
 }
@@ -129,7 +133,7 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
     <div className="rounded-md border bg-background p-2.5 text-xs space-y-1.5" data-testid={`client-check-${request.ref}`}>
       <button type="button" className="flex w-full flex-wrap items-center gap-1.5 text-left" aria-expanded={expanded} onClick={() => setExpanded(v => !v)} data-testid={`client-check-toggle-${request.ref}`}>
         <span className={`${pillMetrics} ${status.cls}`}>{status.label}</span>
-        <span className="font-medium text-sm">{request.recipientName || request.recipientEmail}</span>
+        <span className="font-medium text-sm">{request.viaAgent ? `Through ${request.viaAgent.firm}` : request.recipientName || request.recipientEmail}</span>
         <span className="text-muted-foreground">
           {request.sentAt ? `sent ${shortDate(request.sentAt)}` : "not sent"}{steps ? ` · ${stepsDone} of ${steps} done` : ""}
         </span>
@@ -137,7 +141,15 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
         <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && <>
-      <div className="text-muted-foreground truncate">{request.recipientEmail}</div>
+      {request.viaAgent ? (
+        <div className="space-y-0.5 text-muted-foreground" data-testid={`client-check-via-agent-${request.ref}`}>
+          <div className="truncate">{request.sentAt ? "Sent to" : "To"} {request.viaAgent.name} of {request.viaAgent.firm} ({request.viaAgent.email}) to pass on{request.recipientName ? `, for ${request.recipientName}` : ""}</div>
+          {request.viaAgent.passedOn.map((x, i) => <div key={`${x.email}-${i}`} className="truncate">Passed on to {x.name} ({x.email}) {shortDate(x.at)}</div>)}
+          {!request.viaAgent.passedOn.length && <div>Not passed on from the page yet: they may have forwarded the email.</div>}
+        </div>
+      ) : (
+        <div className="text-muted-foreground truncate">{request.recipientEmail}</div>
+      )}
       <div className="text-muted-foreground">
         {request.sentAt
           ? <>Sent {shortDate(request.sentAt)}{request.sentBy ? ` by ${request.sentBy}` : ""} from {request.sentFrom}{request.cc.length ? `, copied to ${request.cc.length} at BGP` : ""}{request.remindersSent ? ` · ${request.remindersSent} reminder${request.remindersSent === 1 ? "" : "s"}` : ""}</>
@@ -291,7 +303,6 @@ function Tick({ ok }: { ok: boolean }) {
 }
 
 function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }: { dealId: string; data: ClientChecks; party: Party; people: PartyPeople; sanctionsOnly: boolean; canDecide: boolean }) {
-  const inHouse = useAmlInHouse();
   if (sanctionsOnly) {
     const everyone = [...people.people.map(p => ({ name: p.name, roles: p.roles.map(r => ROLE_WORDS[r].toLowerCase()), sanctions: p.sanctions })), ...people.directors.map(d => ({ name: d.name, roles: ["director"], sanctions: d.sanctions })),
       ...(people.trustees || []).map(t => ({ name: t.name, roles: [t.chair ? "trustee, chair" : "trustee"], sanctions: t.sanctions })),
@@ -345,8 +356,8 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
         <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200" data-testid="people-owners-abroad">
           Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}.{" "}
           {people.ownersAbroad.every(o => o.answered)
-            ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks.{inHouse ? "" : " It still goes to KYC4U (Request KYC4U check)."}</>
-            : <>{inHouse ? "Find them under Owners abroad, or from a structure chart the client sends; each person found gets their own link." : "It goes to KYC4U to find them (Request KYC4U check). The app traces what it can under Owners abroad; if the client sends a structure chart naming them, each can be sent their own link."}</>}
+            ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks.</>
+            : <>Find them under Owners abroad, or from a structure chart the client sends; each person found gets their own link.</>}
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
@@ -355,6 +366,9 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
 }
 
 function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; canDecide: boolean }) {
+  // Verified from public sources is for admins who are AML officers (Woody, 23 November 2026).
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const admin = !!viewer?.isAdmin;
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
@@ -384,14 +398,14 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
         {canDecide && !pf && person.outstanding.length > 0 && (
-          <>
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying("certified")} data-testid={`person-verify-certified-${testKey}`}>
             <FileCheck className="w-3 h-3 mr-1" />Certified documents
           </Button>
+        )}
+        {canDecide && admin && !pf && person.outstanding.length > 0 && (
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying("public")} data-testid={`person-verify-public-${testKey}`}>
             <Globe className="w-3 h-3 mr-1" />Verified from public sources
           </Button>
-          </>
         )}
         {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
           <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${testKey}`}>
@@ -408,7 +422,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <Tick ok={idOk} />
           {pf ? <span>Identity: {personVerifiedWords(pf)} (above)</span> : relied ? <span>Identity: {relied.replace(/^Relying on/, "covered by")}</span> : (
           <span>
-            {ID_STATE_WORDS[person.id.state]}
+            {person.id.state === "document" && person.id.ref === "upload" ? "Identity document uploaded by BGP and checked (under Upload documents)" : ID_STATE_WORDS[person.id.state]}
             {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
             {!idOk && person.id.someoneElse ? <span className="text-amber-800"> (the check on their link was {person.id.someoneElse}'s)</span> : null}
             {!idOk && person.id.asked ? <span className="text-muted-foreground"> · asked</span> : null}
@@ -465,6 +479,20 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
     : linkList.length > PUBLIC_FIGURE_MAX_LINKS ? `Give up to ${PUBLIC_FIGURE_MAX_LINKS} links.`
     : !linkList.length && !files.length ? "Give the pages or files that show who they are."
     : null;
+  const search = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/public-figure/search`, { key: person.key })).json() as Promise<{
+      result: PublicRecordsResult; suggestion: PublicRecordsSuggestion; note: string; links: string[];
+    }>,
+    // Filled in only when the sources are enough: a search that says to ask
+    // for their ID leaves the officer's boxes as they were.
+    onSuccess: (r) => {
+      if (!r.suggestion.enough) return;
+      if (!note.trim() && r.note) setNote(r.note);
+      if (!links.trim() && r.links.length) setLinks(r.links.join("\n"));
+    },
+    onError: (e: any) => toast({ title: "Not searched", description: plain(e), variant: "destructive" }),
+  });
+  const found = search.data;
   const save = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
@@ -494,6 +522,27 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1.5" data-testid="public-figure-search">
+            <Button type="button" size="sm" variant="outline" className="h-8 text-xs" disabled={search.isPending} onClick={() => search.mutate()} data-testid="public-figure-search-run">
+              {search.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Globe className="w-3.5 h-3.5 mr-1.5" />}{found ? "Search again" : "Search public sources"}
+            </Button>
+            {found && (
+              <div className={`rounded-md border px-2.5 py-2 text-xs space-y-1 ${found.suggestion.enough ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" : "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"}`} data-testid="public-figure-suggestion">
+                <p className="font-semibold">{found.suggestion.words}</p>
+                {found.suggestion.reasons.length > 0 && <ul className="list-disc pl-4">{found.suggestion.reasons.map(r => <li key={r}>{r}</li>)}</ul>}
+                {found.result.facts.length > 0 && (
+                  <ul className="space-y-0.5 pt-1 text-foreground" data-testid="public-figure-facts">
+                    {found.result.facts.map((f, i) => (
+                      <li key={`${f.url}-${i}`} className={f.sameIdentity === "unsure" ? "text-muted-foreground" : ""}>
+                        {f.fact} <a href={f.url} target="_blank" rel="noreferrer" className="underline">{f.source || "source"}</a>{f.sameIdentity === "unsure" ? " (may be someone else)" : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {!found.suggestion.enough && <p>Send them a link for their identity check and proof of address instead.</p>}
+              </div>
+            )}
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="public-figure-note">What makes them a public figure, and what the sources show</Label>
             <Textarea id="public-figure-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
@@ -539,11 +588,10 @@ function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
     mutationFn: async () => {
       const fd = new FormData();
       fd.append("key", person.key);
-      fd.append("method", "certified");
       fd.append("note", note.trim());
       fd.append("documentIds", ticked.join(","));
       for (const f of files) fd.append("files", f);
-      const res = await fetch(`/api/deals/${dealId}/parties/${role}/public-figure`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`/api/deals/${dealId}/parties/${role}/certified-documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
       return body;
@@ -600,7 +648,7 @@ function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string;
   const { toast } = useToast();
   const pf = person.publicFigure!;
   const withdraw = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/public-figure/${pf.id}/withdraw`, {})).json(),
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/${pf.method === "certified" ? "certified-documents" : "public-figure"}/${pf.id}/withdraw`, {})).json(),
     onSuccess: () => { refreshPeople(dealId); toast({ title: "Withdrawn", description: `${person.name} needs their identity check and proof of address again.` }); },
     onError: (e: any) => toast({ title: "Not withdrawn", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -666,6 +714,15 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
     onSuccess: () => { refresh(); setAccepting(false); setNote(""); toast({ title: "Proof of address accepted" }); },
     onError: (e) => toast({ title: "Not accepted", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
   });
+  // A proof of address BGP uploaded on the party, read and checked (23 November 2026).
+  if (person.address.done && person.address.ref === "upload" && !proof?.ok) {
+    return (
+      <li className="flex items-start gap-1" data-testid={`person-address-upload-${testKey}`}>
+        <Tick ok />
+        <span>Proof of address: uploaded by BGP and checked (under Upload documents)</span>
+      </li>
+    );
+  }
   if (!proof) {
     return (
       <li className="flex items-start gap-1" data-testid={`person-address-${testKey}`}>
@@ -880,28 +937,59 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
 
 // "Send client checks" for one party: pick the person, choose what to ask
 // for, see the email, send.
-export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className, quiet }: {
+/**
+ * The party's own agent (23 November 2026: "with the agent acting for the
+ * tenant or against us we need them to pass on the standard KYC requests for
+ * their clients to complete"): offered on a party BGP does not act for. firm
+ * is "" when the transaction records no agent for the party: BGP types it.
+ */
+export interface ClientChecksAgent {
+  firm: string;
+  companyId: string | null;
+  contactId: string | null;
+  contacts: Array<{ id: string; name: string; email: string | null }>;
+  words: string;
+}
+
+export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className, quiet, agent, viaAgent }: {
   dealId: string; companyId: string; partyName: string; label?: string; size?: "sm" | "default"; className?: string; quiet?: boolean;
+  // Offer sending them through the party's own agent; viaAgent opens on it.
+  agent?: ClientChecksAgent | null; viaAgent?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button type="button" size={size} variant={quiet ? "ghost" : "outline"} className={className} onClick={() => setOpen(true)} data-testid={`button-client-checks-${companyId}`}>
-        <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />{label}
+      <Button type="button" size={size} variant={quiet ? "ghost" : "outline"} className={className} onClick={() => setOpen(true)} data-testid={viaAgent ? `button-client-checks-agent-${companyId}` : `button-client-checks-${companyId}`}>
+        {viaAgent ? <Send className="w-3.5 h-3.5 mr-1.5" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />}{label}
       </Button>
-      {open && <SendClientChecksDialog dealId={dealId} companyId={companyId} partyName={partyName} onClose={() => setOpen(false)} />}
+      {open && <SendClientChecksDialog dealId={dealId} companyId={companyId} partyName={partyName} agent={agent || null} startViaAgent={!!viaAgent && !!agent} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
 const SOMEONE_ELSE = "__other__";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dealId: string; companyId: string; partyName: string; onClose: () => void }) {
+function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaAgent, onClose }: {
+  dealId: string; companyId: string; partyName: string; agent: ClientChecksAgent | null; startViaAgent: boolean; onClose: () => void;
+}) {
   const { toast } = useToast();
   const { data, isLoading, error } = useClientChecks(dealId);
   const party = data?.parties.find(p => p.companyId === companyId) || null;
   // The request names the company that signs when the deal sets one.
   const shownName = party?.name || partyName;
+  // Through the party's own agent, to pass on to their client (23 November 2026).
+  const [via, setVia] = useState(startViaAgent);
+  const agentPeople = (agent?.contacts || []).filter(c => c.email);
+  const [agentFirm, setAgentFirm] = useState(agent?.firm || "");
+  const [agentContactId, setAgentContactId] = useState<string>(agent?.contactId && agentPeople.some(c => c.id === agent.contactId) ? agent.contactId : agentPeople[0]?.id ?? SOMEONE_ELSE);
+  const [agentName, setAgentName] = useState("");
+  const [agentEmail, setAgentEmail] = useState("");
+  const [personName, setPersonName] = useState("");
+  const agentPicked = agentFirm.trim() === agent?.firm ? agentPeople.find(c => c.id === agentContactId) || null : null;
+  const toAgentName = agentPicked ? agentPicked.name : agentName.trim();
+  const toAgentEmail = agentPicked ? agentPicked.email || "" : agentEmail.trim();
+  const agentMissing = agentFirm.trim().length < 2 ? "Name the agent's firm." : toAgentName.length < 2 ? "Who at the agent?" : !EMAIL_RE.test(toAgentEmail) ? "The agent's email address." : null;
   const [contactId, setContactId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -912,6 +1000,8 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(false);
   const [sent, setSent] = useState<null | { link: string; from: string | null; cc: string[]; error: string | null; fellBack: boolean; idCheckNote: string | null }>(null);
+  // After a send, the transaction's checks are read again as the dialog closes.
+  const close = () => { if (sent) queryClient.invalidateQueries({ queryKey: keyFor(dealId) }); onClose(); };
 
   // First fill from the party: the deal's own contact, the party's kind,
   // what is usually asked of that kind and role.
@@ -922,7 +1012,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
   const wantId = veriff && (idCheck ?? true);
   const pickedContact = party?.contacts.find(c => c.id === (contactId ?? party?.contactId ?? party?.contacts[0]?.id ?? "")) || null;
   const usingOther = contactId === SOMEONE_ELSE || (!!party && !party.contacts.length);
-  const toName = usingOther ? name.trim() : pickedContact?.name || "";
+  const toName = via ? personName.trim() : usingOther ? name.trim() : pickedContact?.name || "";
   // What is still to ask once BGP's own checks are counted (Woody,
   // 2026-11-17: "we need to do everyhting we can before we ask questions on
   // someone"): the same rule the server records the request by.
@@ -946,40 +1036,50 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
 
   const previewHtml = useMemo(() => {
     if (!preview || !party) return "";
-    const { html } = kycRequestEmail({
-      recipientName: toName || "Jane Smith", partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this transaction", ref: "SAMPLE",
+    const common = {
+      partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this transaction", ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/your-link", expiresAt: new Date(Date.now() + 14 * 86400000),
       needsIdCheck: wantId, docs: chosenDocs,
-      note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@chatbgp.app", askPep: true,
+      note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
       confirmOwners, ownerNames: chosenDocs.includes("owner_ids") ? asks?.ownerNames || [] : [],
-    });
+    };
+    const { html } = via
+      ? kycViaAgentRequestEmail({ ...common, recipientName: toAgentName || "Sam Agent", agentFirm: agentFirm.trim() || "the agent", partyRole: party.role, clientRole: data?.clientRole || null, clientName: data?.clientName || null, personName: toName || null })
+      : kycRequestEmail({ ...common, recipientName: toName || "Jane Smith" });
     return html.split(`cid:${KYC_LOGO_CID}`).join("/bgp-logo.png");
-  }, [preview, party, toName, chosenKind, veriff, wantId, chosenDocs, confirmOwners, asks, note, data]);
+  }, [preview, party, toName, chosenKind, veriff, wantId, chosenDocs, confirmOwners, asks, note, data, via, toAgentName, agentFirm]);
 
   const send = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks`, {
+      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks`, via ? {
+        companyId, contactId: null, name: toName, email: "", mobile: null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null,
+        viaAgent: {
+          firm: agentFirm.trim(), firmCompanyId: agent?.companyId && agentFirm.trim() === agent.firm ? agent.companyId : null,
+          contactId: agentPicked?.id || null, name: toAgentName, email: toAgentEmail,
+        },
+      } : {
         companyId, contactId: usingOther ? null : pickedContact?.id || null, name: toName, email: toEmail,
         mobile: toMobile || null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null,
       });
       return res.json();
     },
+    // The checks are read again when the dialog closes, not now: the button
+    // that opened it goes once a request exists, and with it this confirmation.
     onSuccess: (r: any) => {
-      queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
       setSent({ link: r.link, from: r.sent?.from || null, cc: r.cc || [], error: r.sent?.ok ? null : r.sent?.error || "The email was not sent", fellBack: !!r.sent?.fellBack, idCheckNote: r.idCheckNote || null });
     },
     onError: (e) => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
   });
 
-  const canSend = !!party && !!toName && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toEmail) && (wantId || chosenDocs.length > 0) && !send.isPending;
+  const canSend = !!party && (via ? !agentMissing : !!toName && EMAIL_RE.test(toEmail)) && (wantId || chosenDocs.length > 0) && !send.isPending;
   const copied = (data?.agents || []).map(a => a.name);
 
   return (
-    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+    <Dialog open onOpenChange={o => { if (!o) close(); }}>
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto" data-testid="client-checks-dialog">
         <DialogHeader>
-          <DialogTitle>{sent ? (sent.error ? "Not sent" : "Sent") : `Send client checks to ${shownName}`}</DialogTitle>
-          {!sent && <DialogDescription>One email with a link to their own page.</DialogDescription>}
+          <DialogTitle>{sent ? (sent.error ? "Not sent" : "Sent") : via ? `Send ${shownName}'s checks through their agent` : `Send client checks to ${shownName}`}</DialogTitle>
+          {!sent && <DialogDescription>{via ? "One email to their agent with the link, to pass on to their client." : "One email with a link to their own page."}</DialogDescription>}
         </DialogHeader>
 
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}
@@ -991,14 +1091,18 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               <p className="flex items-start gap-2 text-red-700"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />The email didn't go: {sent.error}. The request is saved: copy the link below and send it yourself, or try again later.</p>
             ) : (
               <p className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />
-                <span>Sent to <strong>{toName}</strong> ({toEmail}) from <strong>{sent.from}</strong>{sent.cc.length ? <>, copied to {sent.cc.join(", ")}</> : null}.{sent.fellBack ? " Microsoft wouldn't send from the KYC mailbox, so it went from the shared one." : ""}</span>
+                {via
+                  ? <span>Sent to <strong>{toAgentName}</strong> of {agentFirm.trim()} ({toAgentEmail}) to pass on, from <strong>{sent.from}</strong>{sent.cc.length ? <>, copied to {sent.cc.join(", ")}</> : null}.</span>
+                  : <span>Sent to <strong>{toName}</strong> ({toEmail}) from <strong>{sent.from}</strong>{sent.cc.length ? <>, copied to {sent.cc.join(", ")}</> : null}.{sent.fellBack ? " Microsoft wouldn't send from the KYC mailbox, so it went from the shared one." : ""}</span>}
               </p>
             )}
             {sent.idCheckNote && <p className="text-muted-foreground">{sent.idCheckNote}</p>}
-            <p className="text-muted-foreground">They get a reminder after three days and again after seven if anything is still missing. You'll get an email when they press Finish. Progress shows on the transaction's AML card.</p>
+            <p className="text-muted-foreground">{via
+              ? "The agent can send it on from the page, or forward the email; either of them can upload the documents. Reminders go after three and seven days. You'll get an email when it's finished."
+              : "They get a reminder after three days and again after seven if anything is still missing. You'll get an email when they press Finish. Progress shows on the transaction's AML card."}</p>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(sent.link); toast({ title: "Link copied", description: "It's personal to the client: send it only to them." }); }}><Copy className="w-3.5 h-3.5 mr-1.5" />Copy their link</Button>
-              {toMobile && (
+              <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(sent.link); toast({ title: "Link copied", description: via ? "Send it only to their agent or their client." : "It's personal to the client: send it only to them." }); }}><Copy className="w-3.5 h-3.5 mr-1.5" />{via ? "Copy the link" : "Copy their link"}</Button>
+              {!via && toMobile && (
                 <Button size="sm" variant="outline" asChild>
                   <a href={kycWhatsAppHref(toMobile, kycWhatsAppText({ recipientName: toName, dealName: data?.dealName || "the transaction", link: sent.link, expiresAt: new Date(Date.now() + 14 * 86400000) }))} target="_blank" rel="noreferrer"><MessageCircle className="w-3.5 h-3.5 mr-1.5" />Send on WhatsApp</a>
                 </Button>
@@ -1011,6 +1115,45 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               {KYC_TIMING[party.role] && <p>{KYC_TIMING[party.role]}</p>}
               <p>{KYC_LETTING_SCOPE}</p>
             </div>
+            {agent && (
+              <div className="space-y-1.5">
+                <Label>Send to</Label>
+                <div className="flex flex-wrap gap-2" data-testid="client-checks-send-to">
+                  <Button type="button" size="sm" variant={!via ? "default" : "outline"} onClick={() => setVia(false)}>{shownName}</Button>
+                  <Button type="button" size="sm" variant={via ? "default" : "outline"} onClick={() => setVia(true)} data-testid="client-checks-via-agent">Their agent, to pass on</Button>
+                </div>
+              </div>
+            )}
+            {via ? (
+              <div className="space-y-3" data-testid="client-checks-agent">
+                <div className="space-y-1.5">
+                  <Label htmlFor="client-checks-agent-firm">Their agent's firm</Label>
+                  <Input id="client-checks-agent-firm" value={agentFirm} onChange={e => setAgentFirm(e.target.value)} maxLength={160} placeholder="Savills" data-testid="input-client-checks-agent-firm" />
+                </div>
+                {agentPeople.length > 0 && agentFirm.trim() === agent?.firm && (
+                  <div className="space-y-1.5">
+                    <Label>Who at the agent</Label>
+                    <Select value={agentContactId} onValueChange={setAgentContactId}>
+                      <SelectTrigger data-testid="select-client-checks-agent-contact"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {agentPeople.map(c => <SelectItem key={c.id} value={c.id}>{c.name} · {c.email}</SelectItem>)}
+                        <SelectItem value={SOMEONE_ELSE}>Someone else…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {!agentPicked && (
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <Input placeholder="Their name" value={agentName} onChange={e => setAgentName(e.target.value)} maxLength={120} data-testid="input-client-checks-agent-name" />
+                    <Input type="email" placeholder="Their email" value={agentEmail} onChange={e => setAgentEmail(e.target.value)} maxLength={200} data-testid="input-client-checks-agent-email" />
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="client-checks-person">Who at {shownName} will complete it (if you know)</Label>
+                  <Input id="client-checks-person" value={personName} onChange={e => setPersonName(e.target.value)} maxLength={120} placeholder="Their full name" data-testid="input-client-checks-person" />
+                </div>
+              </div>
+            ) : (
             <div className="space-y-1.5">
               <Label>Who should we ask?</Label>
               {party.contacts.length > 0 && (
@@ -1033,6 +1176,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
               )}
               <Input placeholder="Their mobile (optional, so you can send the link on WhatsApp)" value={mobileValue} onChange={e => setMobile(e.target.value)} />
             </div>
+            )}
 
             <div className="space-y-1.5">
               <Label>{shownName} is</Label>
@@ -1085,9 +1229,12 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
 
             <div className="rounded-md bg-muted/60 p-3 text-xs space-y-0.5" data-testid="client-checks-summary">
               <div><span className="text-muted-foreground">From:</span> {data?.mailbox}</div>
-              <div><span className="text-muted-foreground">To:</span> {toName ? `${toName} ` : ""}{toEmail ? `<${toEmail}>` : "choose someone above"}</div>
+              <div><span className="text-muted-foreground">To:</span> {via
+                ? (toAgentEmail ? `${toAgentName ? `${toAgentName} ` : ""}<${toAgentEmail}>${agentFirm.trim() ? ` at ${agentFirm.trim()}` : ""}, to pass on` : "their agent above")
+                : <>{toName ? `${toName} ` : ""}{toEmail ? `<${toEmail}>` : "choose someone above"}</>}</div>
               <div><span className="text-muted-foreground">Copied:</span> {copied.length ? `${copied.join(", ")} (the transaction's agents) and you` : "you (the transaction has no agents set)"}</div>
             </div>
+            {via && agentMissing && <p className="text-[11px] text-muted-foreground" data-testid="client-checks-agent-missing">{agentMissing}</p>}
 
             <Button type="button" variant="ghost" size="sm" className="px-0 h-auto text-xs" onClick={() => setPreview(v => !v)}>
               <Eye className="w-3.5 h-3.5 mr-1" />{preview ? "Hide the email" : "See the email"}
@@ -1100,7 +1247,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, onClose }: { dea
 
         <DialogFooter>
           {sent ? (
-            <Button onClick={onClose}>Done</Button>
+            <Button onClick={close}>Done</Button>
           ) : (
             <>
               <Button variant="outline" onClick={onClose}>Cancel</Button>

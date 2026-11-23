@@ -53,3 +53,16 @@ test('a diary entry that only names a company needs an outside business guest, i
   assert.doesNotMatch(diaries, /matchLandlordMeeting\(/);
   assert.match(diaries, /book === 'leasing' \? LEASING_MATCHER : LANDLORD_DIARY_MATCHER/);
 });
+
+test("a brand's named agents count as contact with it (Woody: agents are integral)", () => {
+  assert.match(server, /export const brandAgentSql/);
+  assert.match(server, /r\.end_date IS NULL AND r\.primary_contact_id IS NOT NULL/);
+  assert.match(server, /q\.agent_contact_id IS NOT NULL/);
+  assert.match(server, /JOIN \(\$\{brandAgentSql\("\$1::text\[\]"\)\}\) a ON a\.contact_id = i\.contact_id/);
+});
+
+test('a personal diary entry is never filed against contacts, and one filed before is taken back', () => {
+  const sync = read('server/interactions.ts');
+  assert.match(sync, /if \(!diaryEntryIsBusiness\(event, allAddresses, contactsByEmail\)\)/);
+  assert.match(sync, /DELETE FROM crm_interactions WHERE microsoft_id = ANY\(\$1::text\[\]\) AND type = 'meeting'/);
+});

@@ -9,12 +9,14 @@ const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8')
 const file = read('server/aml-file.ts');
 
 test('only the Nominated Officer and the Deputies make it', () => {
-  for (const route of ['router.get("/api/deals/:id/aml-file"', 'router.post("/api/deals/:id/aml-file/kyc4u"']) {
+  for (const route of ['router.get("/api/deals/:id/aml-file"']) {
     const at = file.indexOf(route);
     assert.ok(at > 0, route);
     assert.match(file.slice(at, at + 300), /const me = await officer\(req\);\s*if \(!\("id" in me\)\) return res\.status\(me\.status\)\.json\(\{ message: me\.refusal \}\);/, route);
   }
   assert.match(file, /const \{ decider \} = await import\("\.\/deal-party-aml"\);\s*return decider\(req\);/);
+  // Filed for KYC4U no more: KYC4U is no longer used (23 November 2026).
+  assert.match(file, /router\.post\("\/api\/deals\/:id\/aml-file\/kyc4u", \(_req: Request, res: Response\) => \{\s*res\.status\(410\)\.json\(\{ message: KYC4U_RETIRED_WORDS \}\);/);
   assert.match(read('server/deal-party-aml.ts'), /^export async function decider\(req: Request\)/m);
   // Outside the retired /api/aml/ addresses, and mounted.
   assert.match(read('server/index.ts'), /app\.use\(amlFileRouter\);/);
@@ -27,7 +29,7 @@ test('it never carries the AML register, and each file made is recorded', () => 
   assert.doesNotMatch(file, /aml_internal_reports|aml-register/);
   assert.match(file, /INSERT INTO kyc_audit_log \(company_id, action, performed_by, notes\) VALUES \(\$1, 'aml_file', \$2, \$3\)/);
   assert.match(file, /INSERT INTO deal_audit_log \(deal_id, field, old_value, new_value, reason, changed_by, changed_by_name\) VALUES \(\$1, 'aml_file'/);
-  for (const made of ['await recordMade(data, me, "made (report)");', 'await recordMade(data, me, `made (report and', 'await recordMade(data, me, "filed on the KYC record for KYC4U");']) {
+  for (const made of ['await recordMade(data, me, "made (report)");', 'await recordMade(data, me, `made (report and']) {
     assert.ok(file.includes(made), made);
   }
 });
@@ -39,8 +41,6 @@ test('it reads the party the way the AML box does, and every document as stored'
   // Reading the file never starts a paid check.
   assert.match(file, /\{ userId: me\.id, autoStart: false \}/);
   assert.match(file, /getFile\(`chat-media\/\$\{decodeURIComponent\(media\[1\]\)\}`\)/);
-  // Filed for KYC4U, it is a document on the party's record, which Request KYC4U check offers.
-  assert.match(file, /INSERT INTO kyc_documents \(company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by\)/);
   assert.match(read('shared/aml-file.ts'), /export const AML_FILE_DOC_TYPE = "aml_file";/);
 });
 

@@ -43,8 +43,8 @@ export function trainingKindWords(raw: unknown): string {
 // The policy says "on a regular basis"; a year without any is shown as due.
 export const AML_TRAINING_DUE_MONTHS = 12;
 
-// The policy issue each person confirms they have read.
-const POLICY = AML_POLICY_DOCUMENTS.find(d => d.key.startsWith("policy")) || AML_POLICY_DOCUMENTS[0];
+// The policy issue each person confirms they have read: the latest issue.
+const POLICY = AML_POLICY_DOCUMENTS.filter(d => d.key.startsWith("policy")).sort((a, b) => b.issue - a.issue)[0] || AML_POLICY_DOCUMENTS[0];
 export const CURRENT_POLICY_KEY = POLICY.key;
 export const CURRENT_POLICY_READ_TITLE = `Read BGP's ${POLICY.title}, Issue ${POLICY.issue}`;
 

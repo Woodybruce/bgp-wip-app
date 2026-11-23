@@ -17,6 +17,7 @@ import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
 import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
 import { isPrivateEmailRecord, isPrivateMailboxAddress } from "./private-mail";
+import { isOutsideBusinessAddress } from "./landlord-meeting-matching";
 import { blockPrivateMailCopies } from "./private-mail-store";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -184,6 +185,22 @@ function matchEmailToContact(
 
   const c = contactsByEmail.get(normalized);
   return c ? { contact: c, method: "email" } : null;
+}
+
+// A diary entry is filed against contacts only when it is a meeting with
+// someone outside BGP (Woody, 2026-11-23: family and personal entries, a
+// child's rugby with a friend on iCloud, were showing as contacts' next
+// meetings). It counts when it is not marked private, personal or
+// confidential, and someone on it is at a business address outside BGP, or
+// is a contact BGP has filed under a company (a private client on Gmail).
+export function diaryEntryIsBusiness(
+  event: { sensitivity?: string | null },
+  addresses: string[],
+  contactsByEmail: Map<string, ContactMatch>,
+): boolean {
+  if (["private", "personal", "confidential"].includes(String(event.sensitivity || "").toLowerCase())) return false;
+  return addresses.some(addr => isOutsideBusinessAddress(addr)
+    || !!matchEmailToContact(addr, contactsByEmail)?.contact.companyId);
 }
 
 function matchKeywordsToContacts(
@@ -494,6 +511,29 @@ async function syncCalendarForUser(
         continue;
       }
 
+      const allAddresses: string[] = [];
+      if (event.organizer?.emailAddress?.address) {
+        allAddresses.push(event.organizer.emailAddress.address);
+      }
+      if (event.attendees) {
+        for (const a of event.attendees) {
+          if (a.emailAddress?.address) allAddresses.push(a.emailAddress.address);
+        }
+      }
+
+      // Not a meeting with anyone outside BGP: file nothing, and take back
+      // what an earlier sweep filed for it, as for a cancelled meeting.
+      if (!diaryEntryIsBusiness(event, allAddresses, contactsByEmail)) {
+        if (existingMsIds.has(msId) || existingMsIds.has(legacyMsId)) {
+          try {
+            await pool.query(`DELETE FROM crm_interactions WHERE microsoft_id = ANY($1::text[]) AND type = 'meeting'`, [[msId, legacyMsId]]);
+          } catch (e: any) { console.error("Personal-entry cleanup error:", e?.message); }
+          existingMsIds.delete(msId);
+          existingMsIds.delete(legacyMsId);
+        }
+        continue;
+      }
+
       if (existingMsIds.has(msId) || existingMsIds.has(legacyMsId)) {
         // Already filed — but a rescheduled meeting must follow its new date
         // (and flip upcoming→past once it happens) instead of freezing at
@@ -509,16 +549,6 @@ async function syncCalendarForUser(
           );
         } catch (e: any) { console.error("Reschedule-update error:", e?.message); }
         continue;
-      }
-
-      const allAddresses: string[] = [];
-      if (event.organizer?.emailAddress?.address) {
-        allAddresses.push(event.organizer.emailAddress.address);
-      }
-      if (event.attendees) {
-        for (const a of event.attendees) {
-          if (a.emailAddress?.address) allAddresses.push(a.emailAddress.address);
-        }
       }
 
       const emailMatches: { contact: ContactMatch; method: string }[] = [];

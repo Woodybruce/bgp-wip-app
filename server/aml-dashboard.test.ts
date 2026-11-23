@@ -21,8 +21,11 @@ test("a party's stage: a decision first, then the furthest step on the way", () 
   assert.equal(amlStage(facts({ precheckAt: "2026-09-01T09:00:00Z" }), now), "not_started");
   assert.equal(amlStage(facts({ precheckAt: "2026-11-10", clientSentAt: "2026-11-12" }), now), "client_sent");
   assert.equal(amlStage(facts({ clientSentAt: "2026-11-12", clientFinishedAt: "2026-11-14" }), now), "client_finished");
-  assert.equal(amlStage(facts({ clientFinishedAt: "2026-11-14", kyc4uOpen: true }), now), "with_kyc4u");
-  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null }, kyc4uInReview: true }), now), "with_kyc4u");
+  // KYC4U is no longer used (23 November 2026): a request or status of theirs holds no party.
+  assert.equal(amlStage(facts({ clientFinishedAt: "2026-11-14", kyc4uOpen: true }), now), "client_finished");
+  assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null }, kyc4uInReview: true }), now), "not_started");
+  // Read as the board stood before then, it was with KYC4U.
+  assert.equal(amlStage(facts({ clientFinishedAt: "2026-11-14", kyc4uOpen: true, inHouse: false }), now), "with_kyc4u");
   // An "in review" with nothing at KYC4U (left by the in-app AML retired in
   // October 2026) is not with KYC4U: the party falls to its furthest real step.
   assert.equal(amlStage(facts({ kyc: { status: "in_review", expiresAt: null } }), now), "not_started");
@@ -73,11 +76,11 @@ test("the pills", () => {
 test("who a party waits on", () => {
   assert.equal(amlWaitingOn("not_started", 0), "BGP: start the checks");
   assert.equal(amlWaitingOn("bgp_checked", 0), "BGP: send the client checks or sign off");
-  assert.equal(amlWaitingOn("bgp_checked", 1), "BGP: raise it with KYC4U");
+  assert.equal(amlWaitingOn("bgp_checked", 1), "BGP: send the client checks");
   assert.equal(amlWaitingOn("client_sent", 2), "The client");
   assert.equal(amlWaitingOn("client_finished", 0), "BGP: sign off");
-  assert.equal(amlWaitingOn("client_finished", 1), "BGP: raise it with KYC4U");
-  assert.equal(amlWaitingOn("with_kyc4u", 1), "KYC4U");
+  assert.equal(amlWaitingOn("client_finished", 1), "Officers: sign off");
+  assert.equal(amlWaitingOn("with_kyc4u", 1), "Officers: sign off", "KYC4U is no longer used");
   assert.equal(amlWaitingOn("approved", 0), "Nobody");
   assert.equal(amlWaitingOn("rejected", 0), "The Nominated Officer");
   assert.equal(amlWaitingOn("not_required", 0), "Nobody");
@@ -96,10 +99,7 @@ test("days since anything moved, and the search", () => {
   assert.ok(!rowMatches(row, "pret"));
 });
 
-test("the Not with KYC4U mark covers a party owned through a company abroad", async () => {
-  const { amlNeedsKyc4u } = await import("../shared/aml-dashboard");
-  assert.equal(amlNeedsKyc4u("standard", "bgp_checked"), false);
-  assert.equal(amlNeedsKyc4u("standard", "bgp_checked", true), true);
-  assert.equal(amlNeedsKyc4u("standard", "with_kyc4u", true), false);
-  assert.equal(amlNeedsKyc4u("enhanced", "client_sent"), true);
+test("no Not with KYC4U mark: KYC4U is no longer used (23 November 2026)", async () => {
+  const board = await import("../shared/aml-dashboard");
+  assert.equal((board as any).amlNeedsKyc4u, undefined);
 });

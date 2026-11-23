@@ -24,7 +24,7 @@ import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "
 import { payerRedFlags } from "@shared/deal-billing";
 import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, simplifiedBasis } from "@shared/aml-policy";
+import { dueDiligenceLevel, simplifiedBasis, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -97,8 +97,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadPartyKyc } = await import("./deal-gates");
   const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
   const { loadNotRequired } = await import("./aml-policy");
-  // The officers' in-house switch: with it on, KYC4U holds no party (shared/aml-dashboard.ts).
-  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
+  // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
+  const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
   const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
@@ -193,7 +193,13 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     })), reviewsForParty(reviews, p.brandId, p.entityId)).live;
     const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
-    const level = dueDiligenceLevel({ partyFlags: live, dealFlags: onDeal, simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }) });
+    const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });
+    const level = dueDiligenceLevel({
+      partyFlags: live, dealFlags: onDeal,
+      simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
+      standardBasis: standardBasis({ precheck: pre?.result || null }),
+      toWeigh: superPrime ? [superPrime] : [],
+    });
     const mark = notRequired.get(`${p.deal.id}:${p.role}`);
     const markHolds = !!mark && mark.companyId === p.brandId;
     const openDrafts = drafts.filter((d: any) => String(d.deal_id) === String(p.deal.id) && d.company_id === p.brandId);
@@ -238,7 +244,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       bucket: amlBucket(stage, due, amlDealClosed(p.deal.status)),
       due,
       redFlags: allFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length, partyInHouse),
+      waitingOn: amlWaitingOn(stage, allFlags.length),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

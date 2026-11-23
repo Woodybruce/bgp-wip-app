@@ -298,6 +298,9 @@ export interface KycEmailContext {
   person?: { roles: KycPersonRole[] } | null;
   // The owners the person acting is asked to pass a link of their own to.
   ownLinksFor?: string[] | null;
+  // Sent at the request of the party's own agent, who passed the checks on
+  // from their page (Woody, 23 November 2026).
+  passedOnBy?: { name: string | null; firm: string } | null;
   // A request for a trust's documents (23 November 2026), not identity checks.
   purpose?: "trust_structure" | null;
 }
@@ -489,9 +492,13 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
   const companiesHouse = ctx.kind === "company"
     ? p("We read the company's Companies House record ourselves.", `font-size:14px;color:${BODY}`)
     : "";
+  const passedOn = ctx.passedOnBy
+    ? p(`${ctx.passedOnBy.name ? `${escHtml(ctx.passedOnBy.name)} of <strong>${escHtml(ctx.passedOnBy.firm)}</strong>, your agent,` : `Your agent, <strong>${escHtml(ctx.passedOnBy.firm)}</strong>,`} asked us to send you this.`)
+    : "";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Identity checks for ${escHtml(ctx.dealName)}</h1>`,
     p(greeting(ctx.recipientName)),
+    passedOn,
     p(`${opening}${ctx.docs.includes("photo_id") ? "" : ` It should take about ${ctx.person ? "five" : "ten"} minutes.`}`),
     h2("What we need from you"),
     stepsList(steps),
@@ -603,7 +610,8 @@ export interface KycProgress {
 }
 
 // The reminder: what is done, what is still needed, the same button.
-export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress }): { subject: string; html: string } {
+/** What a request has had and what it still needs, by step title. */
+export function kycReminderLists(ctx: Pick<KycEmailContext, "needsIdCheck" | "confirmOwners" | "ownLinksFor" | "docs" | "askPep"> & { progress: KycProgress }): { done: string[]; left: string[] } {
   const done: string[] = [];
   const left: string[] = [];
   if (ctx.needsIdCheck) (ctx.progress.idDone ? done : left).push("Identity check");
@@ -611,13 +619,19 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
   if (ctx.ownLinksFor?.length) (ctx.progress.ownersLinked ? done : left).push(KYC_OWNER_LINKS_TITLE);
   for (const key of ctx.docs) (ctx.progress.docsDone.includes(key) ? done : left).push(KYC_DOCS[key].title);
   if (ctx.askPep) (ctx.progress.pepAnswered ? done : left).push(KYC_PEP_QUESTION.title);
-  const list = (items: string[], mark: string, colour: string) => items.map(item => `<tr><td style="width:24px;vertical-align:top;padding:3px 0;font-family:${FONT};font-size:15px;font-weight:bold;color:${colour}">${mark}</td><td style="padding:3px 0;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(item)}</td></tr>`).join("");
+  return { done, left };
+}
+
+const markList = (items: string[], mark: string, colour: string) => items.map(item => `<tr><td style="width:24px;vertical-align:top;padding:3px 0;font-family:${FONT};font-size:15px;font-weight:bold;color:${colour}">${mark}</td><td style="padding:3px 0;font-family:${FONT};font-size:15px;color:${INK}">${escHtml(item)}</td></tr>`).join("");
+
+export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress }): { subject: string; html: string } {
+  const { done, left } = kycReminderLists(ctx);
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${ctx.purpose === "trust_structure" ? `A reminder about the documents for ${escHtml(ctx.partyName)}` : "A reminder about your identity checks"}</h1>`,
     p(greeting(ctx.recipientName)),
     p(`We still need a few things from you before <strong>${escHtml(ctx.dealName)}</strong> can go ahead.`),
-    done.length ? h2("Done, thank you") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${list(done, "&#10003;", "#2e7d32")}</table>` : "",
-    left.length ? h2("Still needed") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${list(left, "&bull;", ACCENT)}</table>` : "",
+    done.length ? h2("Done, thank you") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${markList(done, "&#10003;", "#2e7d32")}</table>` : "",
+    left.length ? h2("Still needed") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${markList(left, "&bull;", ACCENT)}</table>` : "",
     button("Continue your checks", ctx.link),
     p(`Your link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
@@ -674,50 +688,62 @@ export interface JointAgentEmailContext {
   // agent when BGP acts for the tenant; Woody, 22 November 2026). None = joint.
   relation?: "joint" | "own" | null;
   clientRole?: string | null;          // BGP's client's role, for "We act for the tenant"
+  clientName?: string | null;          // BGP's client by name, for "We are jointly instructed by <client>"
 }
 
 const ROLE_NOUN: Record<string, string> = { tenant: "tenant", purchaser: "buyer", landlord: "landlord", vendor: "seller" };
 
-/** What the joint agent is asked for, in the order the page shows it. */
+/**
+ * What the joint agent is asked for, in the order the page shows it: every
+ * document they hold, their proof of identity first, and any further AML they
+ * did (Woody, 23 November 2026: "This should include all the docs including
+ * their proof of identity and any further AML they have done"). No reliance
+ * terms (Woody, the same day: "we cant agree reliance"); `letting` is kept
+ * for the callers and changes nothing.
+ */
 export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letting">): Array<{ title: string; detail: string }> {
   return [
-    { title: "Identity", detail: ctx.kind === "company"
-      ? "For each owner you identified and the person acting for the company: their ID document, or your electronic identity check report."
-      : "For each person: their ID document, or your electronic identity check report." },
-    { title: "Address", detail: "A proof of address for each of them, or your electronic check confirming it." },
+    { title: "Proof of identity", detail: ctx.kind === "company"
+      ? "For each owner and the person acting for the company: their passport, photocard driving licence or national identity card, or your electronic identity check report."
+      : "For each person: their passport, photocard driving licence or national identity card, or your electronic identity check report." },
+    { title: "Proof of address", detail: "For each of them: a utility bill, bank or building society statement or council tax bill from the last three months, or your electronic check confirming it." },
     ...(ctx.kind === "company" ? [{ title: "The company", detail: "Its register entry and who owns it, with a structure chart if it is owned through other companies." }] : []),
-    { title: "Screening and risk", detail: "Your sanctions, PEP and adverse media screening, and your risk assessment or CDD summary." },
-    { title: "Source of funds", detail: "If you checked it: what you hold." },
-    ...(ctx.letting ? [{ title: "The reliance terms", detail: "Confirm on the page that we may rely on your checks: one tick, your name and your supervisor." }] : []),
+    { title: "Any further AML you have done", detail: "Your sanctions, PEP and adverse media screening, your risk assessment or CDD summary, and anything you hold on where the money comes from." },
   ];
+}
+
+/**
+ * The joint agent's intro (Woody, 23 November 2026: "the intro changing to
+ * reflect the fact that we are jointly instructed by xxx client and you have
+ * undertaken the negotiations of this transaction").
+ */
+export function jointlyInstructed(ctx: Pick<JointAgentEmailContext, "clientName" | "clientRole">): string {
+  const noun = ROLE_NOUN[ctx.clientRole || ""] || null;
+  const client = ctx.clientName ? `<strong>${escHtml(ctx.clientName)}</strong>` : noun ? `the ${escHtml(noun)}` : "our client";
+  return `We are jointly instructed by ${client}`;
 }
 
 export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: string; html: string } {
   const noun = ROLE_NOUN[ctx.partyRole || ""] || "other party";
   const own = ctx.relation === "own";
-  const why = ctx.letting
-    ? `Every party to a letting of £10,000 a month or more must be checked. Rather than ask ${escHtml(ctx.partyName)} again, we'd like to rely on your checks.`
-    : own
-      ? `We check every party to a transaction. Rather than ask ${escHtml(ctx.partyName)} again, please send us your checks on them.`
-      : `HMRC asks us, as the joint agent who didn't deal with the ${noun}, to get your checks on them and record what comes back.`;
   const clientNoun = ROLE_NOUN[ctx.clientRole || ""] || null;
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Your AML checks on ${escHtml(ctx.partyName)}</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Finalising our KYC on ${escHtml(ctx.partyName)}</h1>`,
     p(greeting(ctx.recipientName)),
     p(own
-      ? `We act for ${clientNoun ? `the ${escHtml(clientNoun)}` : "the other side"} on <strong>${escHtml(ctx.dealName)}</strong>, and you act for <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`
-      : `We are joint agents with ${escHtml(ctx.firm)} on <strong>${escHtml(ctx.dealName)}</strong>, and you dealt with <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. ${why}`),
+      ? `We act for ${clientNoun ? `the ${escHtml(clientNoun)}` : "the other side"} on <strong>${escHtml(ctx.dealName)}</strong>, and you act for <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. We are finalising our KYC on them and need the documents below.`
+      : `${jointlyInstructed(ctx)} on <strong>${escHtml(ctx.dealName)}</strong>, and you have undertaken the negotiations of this transaction with <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. We are finalising our KYC on them and need the documents below.`),
     h2("Please send us"),
     stepsList(jointAgentAsks(ctx)),
-    button("Send your checks", ctx.link),
-    p(`Or reply with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    button("Upload the documents", ctx.link),
+    p(`Or reply to this email with the documents attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     noteBlock(ctx.note, ctx.agents),
     p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Your AML checks on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, own ? "the other side's agent receives" : "a joint agent receives") };
+  return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Finalising our KYC on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, own ? "the other side's agent receives" : "a joint agent receives") };
 }
 
 /**
@@ -729,23 +755,23 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
 export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: string[]; nothingYet: boolean; chase: number }): { subject: string; html: string } {
   const list = (items: string[]) => `<ul style="margin:0 0 16px;padding-left:20px;font-family:${FONT};font-size:15px;line-height:1.5;color:${BODY}">${items.map(i => `<li style="margin:4px 0">${escHtml(i)}</li>`).join("")}</ul>`;
   const why = ctx.letting
-    ? "We can't rely on your checks until these are in."
+    ? "We can't finish our KYC on them until these are in."
     : "If you can't send them, please tell us: HMRC asks us to record what was and wasn't provided.";
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${ctx.nothingYet ? `A reminder: your checks on ${escHtml(ctx.partyName)}` : `What we still need on ${escHtml(ctx.partyName)}`}</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${ctx.nothingYet ? `A reminder: the documents on ${escHtml(ctx.partyName)}` : `What we still need on ${escHtml(ctx.partyName)}`}</h1>`,
     p(greeting(ctx.recipientName)),
     ctx.nothingYet
-      ? p(`We have not had your anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong> yet. Please send:`)
+      ? p(`We have not had the documents on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong> yet. To finalise our KYC, please send:`)
       : p(`Thank you for what you have sent on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>. To finish our checks we still need:`),
     ctx.nothingYet ? stepsList(jointAgentAsks(ctx)) : list(ctx.missing),
     p(why, `font-size:14px;color:${BODY}`),
-    button(ctx.nothingYet ? "Send your checks" : "Send what's missing", ctx.link),
-    p(`Or reply with the files attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    button(ctx.nothingYet ? "Upload the documents" : "Send what's missing", ctx.link),
+    p(`Or reply to this email with the documents attached, keeping the reference in the subject. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
     p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
-  const prefix = ctx.nothingYet ? `Reminder: your AML checks on ${ctx.partyName}:` : `Still needed: your AML checks on ${ctx.partyName}:`;
+  const prefix = ctx.nothingYet ? `Reminder: finalising our KYC on ${ctx.partyName}:` : `Still needed: our KYC on ${ctx.partyName}:`;
   return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, prefix), html: frame("AML checks", inner, footerFor(ctx), ctx.test, ctx.relation === "own" ? "the other side's agent receives" : "a joint agent receives") };
 }
 
@@ -754,7 +780,7 @@ export function jointAgentChaseStoppedEmail(ctx: {
   firm: string; partyName: string; dealName: string; ref: string; dealLink: string; missing: string[]; chases: number; letting: boolean; sentFrom: string;
 }): { subject: string; html: string } {
   const next = ctx.letting
-    ? "BGP can't rely on their checks while these are missing. Chase them yourself, or send the client checks."
+    ? "BGP can't finish the checks while these are missing. Chase them yourself, or send the client checks."
     : "Chase them yourself, or an officer records on the transaction that \"they sent part of their checks\" or \"they did not provide them\".";
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Still missing after ${ctx.chases} reminders</h1>`,
@@ -766,26 +792,97 @@ export function jointAgentChaseStoppedEmail(ctx: {
   return { subject: `${ctx.firm} has not sent what is missing on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
 }
 
-/** To the deal's agents when the joint agent has sent their checks. */
+/** To the deal's agents when the joint agent has sent the documents. */
 export function jointAgentFinishedEmail(ctx: {
   firm: string; recipientName: string | null; partyName: string; dealName: string; ref: string; dealLink: string;
   files: string[]; letting: boolean; reliance: { name: string; at: string } | null; missing: string[]; sentFrom: string;
 }): { subject: string; html: string } {
+  // No reliance terms are asked for (23 November 2026): BGP checks what they sent and signs the party off.
   const next = ctx.letting
-    ? (ctx.reliance
-        ? "Next: an officer checks what they sent and records the reliance."
-        : `${escHtml(ctx.firm)} has not agreed to the reliance terms yet: ask them to, or send the client checks.`)
+    ? "Next: an officer checks what they sent and signs the party off."
     : "Next: an officer checks what they sent and records it on the transaction.";
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${escHtml(ctx.firm)} has sent their checks</h1>`,
-    p(`${escHtml(ctx.recipientName || ctx.firm)} has sent ${escHtml(ctx.firm)}'s anti-money laundering checks on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>.`),
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">${escHtml(ctx.firm)} has sent the documents</h1>`,
+    p(`${escHtml(ctx.recipientName || ctx.firm)} has sent ${escHtml(ctx.firm)}'s documents on <strong>${escHtml(ctx.partyName)}</strong> for <strong>${escHtml(ctx.dealName)}</strong>.`),
     ctx.files.length ? h2("Files") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.files.map(f => `<li style="margin:2px 0">${escHtml(f)}</li>`).join("")}</ul>` : p("No files came with it.", `color:${ACCENT}`),
-    ctx.letting ? p(ctx.reliance ? `Reliance terms agreed by ${escHtml(ctx.reliance.name)} on ${escHtml(kycLongDate(ctx.reliance.at))}.` : "The reliance terms are not agreed yet.") : "",
+    ctx.letting && ctx.reliance ? p(`Reliance terms agreed by ${escHtml(ctx.reliance.name)} on ${escHtml(kycLongDate(ctx.reliance.at))}.`) : "",
     ctx.missing.length ? h2("Not covered yet") + `<ul style="margin:0 0 14px;padding-left:20px">${ctx.missing.map(m => `<li style="margin:2px 0">${escHtml(m)}</li>`).join("")}</ul>` : "",
     p(next),
     button("Open the transaction", ctx.dealLink),
   ].join("\n");
-  return { subject: `${ctx.firm} sent their AML checks on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
+  return { subject: `${ctx.firm} sent the documents on ${ctx.partyName}: ${ctx.dealName} (ref ${ctx.ref})`, html: frame("Joint agent's checks", inner, `Bruce Gillingham Pollard. Sent from ${escHtml(ctx.sentFrom)}. Reference ${escHtml(ctx.ref)}.`, false) };
+}
+
+// ── Through the other side's agent (Woody, 23 November 2026) ───────────────
+//
+// "with the agent acting for the tenant or against us we need them to pass on
+// the standard KYC requests for their clients to complete the agent should
+// have the ability to help organise by uploading docs etc." The party's own
+// agent is sent the party's standard client checks: the same page and link,
+// to pass on to their client. Anyone with the link can upload the party's
+// documents; the identity check is the client's own. The joint agent is
+// asked for their documents instead (jointAgentRequestEmail).
+
+export interface KycViaAgentEmailContext extends KycEmailContext {
+  agentFirm: string;
+  partyRole: string | null;            // the party's role (tenant, landlord, buyer, seller)
+  clientRole: string | null;           // BGP's client's role
+  clientName?: string | null;          // BGP's client by name
+  personName?: string | null;          // who at the party will complete it, when known
+}
+
+/** "We act for <client>, the landlord," or "We act for the landlord". */
+function weActFor(ctx: Pick<KycViaAgentEmailContext, "clientName" | "clientRole">): string {
+  const noun = ROLE_NOUN[ctx.clientRole || ""] || null;
+  if (ctx.clientName) return `We act for <strong>${escHtml(ctx.clientName)}</strong>${noun ? `, the ${escHtml(noun)},` : ""}`;
+  return noun ? `We act for the ${escHtml(noun)}` : "We act for our client";
+}
+
+/** Who does the identity check, in the agent's words. */
+export function kycViaAgentIdWho(ctx: Pick<KycViaAgentEmailContext, "kind" | "partyName" | "personName">): string {
+  if (ctx.personName) return ctx.personName;
+  return ctx.kind === "company" ? `the person at ${ctx.partyName} dealing with us` : "your client";
+}
+
+const titleList = (items: string[]) => `<ul style="margin:6px 0 4px;padding-left:20px;font-family:${FONT};font-size:15px;line-height:1.5;color:${INK}">${items.map(i => `<li style="margin:4px 0">${escHtml(i)}</li>`).join("")}</ul>`;
+
+export function kycViaAgentRequestEmail(ctx: KycViaAgentEmailContext): { subject: string; html: string } {
+  const noun = ROLE_NOUN[ctx.partyRole || ""] || "other party";
+  const steps = kycSteps(ctx);
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Our checks on ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.recipientName)),
+    p(`${weActFor(ctx)} on <strong>${escHtml(ctx.dealName)}</strong>, and you act for <strong>${escHtml(ctx.partyName)}</strong>, the ${escHtml(noun)}. Before the transaction can go ahead, the law requires us to confirm who we are dealing with. Please pass our standard checks on to your client to complete.`),
+    h2(`What we need from ${ctx.partyName}`),
+    titleList(steps.map(s => s.title)),
+    button("Open the checks", ctx.link),
+    p(`To pass them on, forward this email to ${ctx.personName ? escHtml(ctx.personName) : "your client"}, or send the link to them from the page. You can upload any documents you hold for them on the same page.${ctx.needsIdCheck ? ` The identity check must be done by ${escHtml(kycViaAgentIdWho(ctx))}.` : ""}`, `font-size:14px;color:${BODY}`),
+    p(`The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    noteBlock(ctx.note, ctx.agents),
+    whyWeAsk(),
+    h2("Questions?"),
+    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    linkFallback(ctx.link),
+  ].join("\n");
+  return { subject: subjectFor(ctx, `Please pass on: our checks on ${ctx.partyName} for`), html: frame("Identity checks", inner, footerFor(ctx), ctx.test, "the other side's agent receives") };
+}
+
+/** The reminder to the agent when the checks have not been passed on from the page. */
+export function kycViaAgentReminderEmail(ctx: KycViaAgentEmailContext & { progress: KycProgress }): { subject: string; html: string } {
+  const { done, left } = kycReminderLists(ctx);
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">A reminder: our checks on ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.recipientName)),
+    p(`We still need a few things from <strong>${escHtml(ctx.partyName)}</strong> before <strong>${escHtml(ctx.dealName)}</strong> can go ahead. Please chase your client, or upload what you hold for them.`),
+    done.length ? h2("Done, thank you") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${markList(done, "&#10003;", "#2e7d32")}</table>` : "",
+    left.length ? h2("Still needed") + `<table role="presentation" cellspacing="0" cellpadding="0" border="0">${markList(left, "&bull;", ACCENT)}</table>` : "",
+    button("Open the checks", ctx.link),
+    p(`The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    h2("Questions?"),
+    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    linkFallback(ctx.link),
+  ].join("\n");
+  return { subject: subjectFor(ctx, `Reminder: our checks on ${ctx.partyName} for`), html: frame("Identity checks reminder", inner, footerFor(ctx), ctx.test, "the other side's agent receives") };
 }
 
 export interface KycFinishedFile {
@@ -852,7 +949,7 @@ export function kycFinishedEmail(ctx: {
     ctx.owners?.reply?.answer === "no"
       ? `<div style="margin:12px 0;padding:12px 16px;border-left:3px solid #b45309;background:#fff7ed;font-size:14px;color:${INK}"><strong>A difference from the register.</strong> The client says the owners Companies House lists are wrong. Find out who the owners are and report the difference to Companies House.</div>`
       : "",
-    ctx.redFlags?.length ? redFlagBox(ctx.redFlags, !!ctx.inHouse) : "",
+    ctx.redFlags?.length ? redFlagBox(ctx.redFlags, ctx.inHouse !== false) : "",
     ctx.peopleOutstanding?.length
       ? h2(`Still to come from the people to check for ${ctx.partyName}`) + `<ul style="margin:4px 0 14px 18px;padding:0;font-size:14px;color:${INK}">${ctx.peopleOutstanding.map(line => `<li style="margin:0 0 4px">${escHtml(line)}</li>`).join("")}</ul>`
       : "",
@@ -894,7 +991,7 @@ export const KYC_CLIENT_CHECK_ROUTES: readonly RegExp[] = [
 export const KYC_RED_FLAG_RULE_IN_HOUSE = "A red flag needs enhanced checks, and an officer signs the party off before the transaction goes ahead.";
 export const KYC_RED_FLAG_STEP_IN_HOUSE = "On the transaction's AML, an officer signs it off, or sets a flag aside with a comment.";
 
-function redFlagBox(flags: KycRedFlag[], inHouse = false): string {
+function redFlagBox(flags: KycRedFlag[], inHouse = true): string {
   const items = flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("");
   return `<div style="margin:16px 0;padding:12px 16px;border-left:3px solid #b91c1c;background:#fef2f2;font-size:14px;color:${INK}"><strong>${inHouse ? "Red flag: for the Nominated Officer." : "Red flag: raise with KYC4U."}</strong><ul style="margin:8px 0 8px 18px;padding:0">${items}</ul>${escHtml(inHouse ? KYC_RED_FLAG_STEP_IN_HOUSE : KYC_RED_FLAG_STEP)}</div>`;
 }
@@ -914,17 +1011,17 @@ export function kycRedFlagEmail(ctx: {
   inHouse?: boolean;
 }): { subject: string; html: string } {
   const inner = [
-    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">${ctx.inHouse ? `Red flag: ${escHtml(ctx.partyName)} needs enhanced checks` : `Red flag: raise ${escHtml(ctx.partyName)} with KYC4U`}</h1>`,
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:#b91c1c">${ctx.inHouse !== false ? `Red flag: ${escHtml(ctx.partyName)} needs enhanced checks` : `Red flag: raise ${escHtml(ctx.partyName)} with KYC4U`}</h1>`,
     p(`For <strong>${escHtml(ctx.dealName)}</strong>${ctx.recipientName && ctx.recipientName !== ctx.partyName ? `, from the checks sent to <strong>${escHtml(ctx.recipientName)}</strong>` : ""}.`),
     h2("What was found"),
     `<ul style="margin:0 0 14px 18px;padding:0">${ctx.flags.map(f => `<li style="margin:0 0 6px">${escHtml(f.label)}${f.detail ? `: ${escHtml(f.detail)}` : ""} <span style="color:${MUTED}">(${escHtml(f.source)})</span></li>`).join("")}</ul>`,
     h2("What to do"),
-    p(ctx.inHouse ? `${escHtml(KYC_RED_FLAG_RULE_IN_HOUSE)} ${escHtml(KYC_RED_FLAG_STEP_IN_HOUSE)}` : `${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
+    p(ctx.inHouse !== false ? `${escHtml(KYC_RED_FLAG_RULE_IN_HOUSE)} ${escHtml(KYC_RED_FLAG_STEP_IN_HOUSE)}` : `${escHtml(KYC_RED_FLAG_RULE)} ${escHtml(KYC_RED_FLAG_STEP)}`),
     button("Open the transaction's AML", ctx.dealLink),
-    p(ctx.inHouse ? "Nothing has been sent to the client." : "Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
+    p(ctx.inHouse !== false ? "Nothing has been sent to the client." : "Nothing has been sent to the client or to KYC4U.", `font-size:13px;color:${MUTED}`),
   ].join("\n");
   return {
-    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} (ref ${ctx.ref})`,
+    subject: `${ctx.test ? "[Test] " : ""}Red flag on ${ctx.dealName}: ${ctx.inHouse !== false ? `${ctx.partyName} needs enhanced checks` : `raise ${ctx.partyName} with KYC4U`} (ref ${ctx.ref})`,
     html: frame("Red flag", inner, `Sent from ${escHtml(ctx.sentFrom)} by ChatBGP. Reference ${escHtml(ctx.ref)}.`, ctx.test, "the transaction's agents receive"),
   };
 }
@@ -1073,6 +1170,15 @@ export interface KycPortalView {
   agents: KycAgent[];
   finishedAt: string | null;
   maxFileMb: number;
+  // Sent through the party's own agent to pass on (23 November 2026): the
+  // agent's firm, who at the firm, who it has been passed on to (names only),
+  // and whether the person who does the identity check is named yet.
+  viaAgent?: {
+    firm: string;
+    agentName: string | null;
+    passedOn: Array<{ name: string; at: string }>;
+    personNamed: boolean;
+  } | null;
   // A request for a trust's documents (23 November 2026): its own wording.
   trustDocs?: boolean;
   // Optional documents the page also takes (certified copies), and the words that introduce them.
@@ -1087,6 +1193,7 @@ export interface KycPortalView {
     // The joint agent, or the party's own agent; BGP's client's role.
     relation?: "joint" | "own";
     clientRole?: string | null;
+    clientName?: string | null;
     asks: Array<{ title: string; detail: string }>;
     terms: string[] | null;
     reliance: { name: string; position: string | null; supervisor: string; registration: string | null; agreedAt: string } | null;

@@ -17,10 +17,10 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { amlOfficerLabel } from "@shared/aml-policy";
 
 interface PolicyFeed {
-  documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean }>;
+  documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean; replaced?: boolean }>;
   officers: { nominated: { id: string | null; name: string | null } | null; deputies: Array<{ id: string | null; name: string | null }> };
   maxDeputies: number;
-  policyNames: { nominated: string; deputy: string };
+  policyNames: { nominated: string; deputies: string[] };
   canEdit: boolean;
   recheckYears: { simplified: number; standard: number; enhanced: number };
   lettingMonthlyRent: number;
@@ -31,6 +31,7 @@ interface PolicyFeed {
 }
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
+const andList = (names: readonly string[]): string => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
 function refreshOfficers() {
   queryClient.invalidateQueries({ queryKey: ["/api/aml-policy"] });
@@ -73,7 +74,7 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
       <DialogContent className="max-w-md" data-testid="aml-officers-dialog">
         <DialogHeader>
           <DialogTitle>AML officers</DialogTitle>
-          <DialogDescription>The policy (Issue 2) names {feed.policyNames.nominated} as Nominated Officer and {feed.policyNames.deputy} as Deputy. The Nominated Officer and each Deputy decide: enhanced parties, KYC4U's results, red flags set aside and parties marked Not required.</DialogDescription>
+          <DialogDescription>The policy (Issue 4) names {feed.policyNames.nominated} as Nominated Officer and {andList(feed.policyNames.deputies)} as Deputies. The Nominated Officer and each Deputy decide: enhanced parties, red flags set aside and parties marked Not required.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -116,61 +117,21 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
   );
 }
 
-// Who does enhanced due diligence (Woody, 21 November 2026: "I'm trying to set
-// this up without using kyc4u"): KYC4U, or BGP's own officers. Off by default.
-function InHouseEddLine({ feed }: { feed: PolicyFeed }) {
-  const { toast } = useToast();
-  const [asking, setAsking] = useState(false);
-  const on = !!feed.inHouseEdd?.on;
-  const save = useMutation({
-    mutationFn: async (next: boolean) => (await apiRequest("PUT", "/api/aml-policy/in-house-edd", { on: next })).json(),
-    onSuccess: (_r: any, next: boolean) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/aml-policy"] });
-      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith("/api/kyc/deal/") || String(q.queryKey[0] || "").startsWith("/api/aml-dashboard") });
-      toast({ title: next ? "BGP does enhanced due diligence" : "Enhanced due diligence goes to KYC4U", description: next ? "The officers sign off enhanced parties themselves, with a note of what was checked." : "Enhanced, trust and owned-abroad parties go to KYC4U again." });
-      setAsking(false);
-    },
-    onError: (e: any) => toast({ title: "Not changed", description: plain(e), variant: "destructive" }),
-  });
-  const when = feed.inHouseEdd?.at ? new Date(feed.inHouseEdd.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : null;
+// Enhanced due diligence is BGP's own: KYC4U is no longer used (Woody,
+// 23 November 2026). Its past checks stay on record.
+function InHouseEddLine() {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-testid="aml-in-house-edd">
       <span className="text-muted-foreground">Enhanced due diligence:</span>
-      <span className="text-foreground font-medium" data-testid="aml-in-house-edd-state">{on ? "done by BGP's officers" : "sent to KYC4U"}</span>
-      {feed.inHouseEdd?.by && <span className="text-muted-foreground">(set by {feed.inHouseEdd.by}{when ? `, ${when}` : ""})</span>}
-      {feed.isOfficer && (
-        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setAsking(true)} data-testid="aml-in-house-edd-change">
-          {on ? "Send it to KYC4U again" : "Do it in-house"}
-        </Button>
-      )}
-      {asking && (
-        <Dialog open onOpenChange={o => { if (!o) setAsking(false); }}>
-          <DialogContent className="max-w-md" data-testid="aml-in-house-edd-dialog">
-            <DialogHeader>
-              <DialogTitle>{on ? "Send enhanced due diligence to KYC4U again?" : "Do enhanced due diligence in-house?"}</DialogTitle>
-              <DialogDescription>
-                {on
-                  ? "Enhanced, trust and owned-abroad parties go back to KYC4U, and an officer adds their result."
-                  : "Enhanced parties no longer go to KYC4U. An officer signs each off with a note of what was checked; agents can't. A possible sanctions match is resolved first. KYC4U stays available."}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAsking(false)}>Cancel</Button>
-              <Button type="button" disabled={save.isPending} onClick={() => save.mutate(!on)} data-testid="aml-in-house-edd-confirm">
-                {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}{on ? "Send to KYC4U" : "Do it in-house"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      <span className="text-foreground font-medium" data-testid="aml-in-house-edd-state">done by BGP's officers</span>
+      <span className="text-muted-foreground">KYC4U is no longer used (23 November 2026); its past checks stay on record.</span>
     </div>
   );
 }
 
-/** The officers' switch for enhanced checks (in-house or KYC4U), read where words depend on it. */
+/** Enhanced checks are always the officers' (KYC4U is no longer used). */
 export function useAmlInHouse(): boolean {
-  const { data } = useQuery<{ inHouseEdd?: { on: boolean } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
-  return data ? !!data.inHouseEdd?.on : true;
+  return true;
 }
 
 /** "AML Officer (Jack)": who a red flag is raised with (Jack, 23 November 2026). */
@@ -190,14 +151,14 @@ export function AmlPolicyPanel() {
     mutationFn: async () => (await apiRequest("POST", "/api/aml-policy/officers/from-policy", {})).json(),
     onSuccess: (r: any) => {
       refreshOfficers();
-      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputies?.length ? `, Deputy ${r.deputies.join(", ")}` : ""}.${r?.deputyMissing ? " No single login matched the Deputy: choose them by hand." : ""}` });
+      toast({ title: "Officers set", description: `Nominated Officer ${r?.nominated || ""}${r?.deputies?.length ? `, ${r.deputies.length === 1 ? "Deputy" : "Deputies"} ${andList(r.deputies)}` : ""}.${r?.deputiesMissing?.length ? ` No single login matched ${andList(r.deputiesMissing)}: choose them by hand.` : ""}` });
     },
     onError: (e: any) => toast({ title: "Not set", description: plain(e), variant: "destructive" }),
   });
   if (!feed) return null;
   const { nominated } = feed.officers;
   const deputies = (feed.officers.deputies || []).map(d => d.name).filter((x): x is string => !!x);
-  const deputyLine = deputies.length < 2 ? deputies.join("") : `${deputies.slice(0, -1).join(", ")} and ${deputies[deputies.length - 1]}`;
+  const deputyLine = andList(deputies);
   return (
     <>
       <div className="max-w-3xl space-y-4 text-sm" data-testid="aml-policy-panel">
@@ -213,7 +174,7 @@ export function AmlPolicyPanel() {
               {/* First set-up only: once set, Change is the way (the server refuses it too). */}
               {!nominated && (
                 <Button type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={fromPolicy.isPending} onClick={() => fromPolicy.mutate()} data-testid="aml-officers-from-policy">
-                  {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({feed.policyNames.nominated} and {feed.policyNames.deputy})
+                  {fromPolicy.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 shrink-0 animate-spin" /> : <UserCog className="w-3.5 h-3.5 mr-1 shrink-0" />}Use the policy's officers ({andList([feed.policyNames.nominated, ...feed.policyNames.deputies])})
                 </Button>
               )}
               <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid="aml-officers-change">Change</Button>
@@ -222,31 +183,43 @@ export function AmlPolicyPanel() {
         </section>
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enhanced checks</h3>
-          <InHouseEddLine feed={feed} />
+          <InHouseEddLine />
         </section>
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</h3>
           <div className="flex flex-wrap gap-1.5">
-            {feed.documents.map(d => (
+            {feed.documents.filter(d => !d.replaced).map(d => (
               <Button key={d.key} type="button" variant="outline" size="sm" className="h-auto min-h-7 py-1 text-xs whitespace-normal text-left" disabled={!d.onFile}
-                onClick={() => download(d.url, `${d.title}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
+                onClick={() => download(d.url, `${d.title}, Issue ${d.issue}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
                 data-testid={`aml-policy-download-${d.key}`}>
                 <Download className="w-3.5 h-3.5 mr-1 shrink-0" />{d.title}, Issue {d.issue}
               </Button>
             ))}
           </div>
+          {feed.documents.some(d => d.replaced) && (
+            <p className="text-xs text-muted-foreground" data-testid="aml-policy-earlier">
+              Earlier issues, kept for five years:{" "}
+              {feed.documents.filter(d => d.replaced).map((d, i) => (
+                <span key={d.key}>{i ? ", " : ""}
+                  <button type="button" className="underline underline-offset-2 hover:text-foreground disabled:no-underline" disabled={!d.onFile}
+                    onClick={() => download(d.url, `${d.title}, Issue ${d.issue}.docx`).catch(e => toast({ title: "Not downloaded", description: plain(e), variant: "destructive" }))}
+                    data-testid={`aml-policy-download-${d.key}`}>{d.title}, Issue {d.issue}</button>
+                </span>
+              ))}
+            </p>
+          )}
         </section>
         <section className="space-y-1.5" data-testid="aml-policy-how">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">How the app applies it</h3>
           <ul className="space-y-1.5 text-xs text-muted-foreground list-disc pl-4" data-testid="aml-policy-rules">
-            <li><span className="text-foreground">Simplified</span>: a listed company, an FCA-authorised fund or a UK public body. No owners to verify.</li>
+            <li><span className="text-foreground">Simplified</span>: a listed company (no owners to verify), or an FCA-authorised fund or a UK public body (owners still identified). Never with a PEP, ownership beyond one UK company or any higher-risk factor; a company owned by a listed one is standard.</li>
             <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the transaction or an officer.</li>
-            <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. {feed.inHouseEdd?.on ? "Signed off by the Nominated Officer or a Deputy, with a note of what was checked." : "Sent to KYC4U; an officer adds KYC4U's result."}</li>
+            <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. Signed off by the Nominated Officer or a Deputy, with a note of what was checked.</li>
             <li>Approvals last {feed.recheckYears.standard} years ({feed.recheckYears.enhanced} for enhanced).</li>
             <li>Lettings under £{feed.lettingMonthlyRent.toLocaleString("en-GB")} a month: sanctions checks only.</li>
-            <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; everyone before exchange. A transaction that exchanges with checks outstanding still moves, and the officers are emailed.</li>
-            <li>The other side of a transaction a joint agent negotiated, or no transaction done: an officer can mark it Not required.</li>
-            <li>Restaurants, bars and pubs are a factor to weigh. High-risk countries follow FATF's lists of {feed.fatfAsOf}.</li>
+            <li>Landlord or seller before marketing; tenant or buyer from Heads of Terms; all checks done before exchange or completion. A transaction moved to Exchanged or Completed with checks outstanding emails the officers.</li>
+            <li>No transaction done with the other side: an officer can mark it Not required. On a joint instruction the counterparty is always checked.</li>
+            <li>Restaurants, bars and pubs, and a super-prime sale, are factors to weigh. High-risk countries follow FATF's lists of {feed.fatfAsOf}.</li>
           </ul>
         </section>
       </div>

@@ -32,7 +32,7 @@ test("reliance stands in for the client checks, not for enhanced due diligence",
   assert.ok(at("if (f.reliance)") > at("if (f.ownersAbroad)"), "owners abroad come first");
   assert.ok(at("if (f.reliance)") > at("if (f.trust)"), "a trust comes first");
   assert.match(read("shared/party-kyc.ts"), /!f\.sanctionsOnly && !f\.reliance && text\(f\.note\)/);
-  assert.match(read("shared/aml-dashboard.ts"), /stage === "relied"\);/);
+  assert.match(read("shared/aml-dashboard.ts"), /stage === "relied"/);
 });
 
 test("the reliance table is in the boot migrations, five-year deletion and company merges", () => {

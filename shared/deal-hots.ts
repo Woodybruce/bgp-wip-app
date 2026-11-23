@@ -97,6 +97,37 @@ export function legalNameKey(name: unknown): string {
   return s.replace(/\s+/g, "");
 }
 
+/** Words that say little about which company it is. */
+const GENERIC_NAME_WORDS = new Set([
+  "the", "and", "of", "for", "uk", "gb", "england", "london", "british", "group", "holdings", "holding", "company", "co",
+  "limited", "ltd", "plc", "llp", "lp", "llc", "inc", "incorporated", "services", "international", "trading",
+  "properties", "property", "estates", "estate", "investments", "investment", "developments", "development", "management",
+  "enterprises", "ventures", "partners", "partnership", "capital", "assets", "land", "homes", "retail", "restaurants",
+  "restaurant", "nominees", "nominee", "no",
+]);
+
+const nameWords = (name: unknown): string[] =>
+  squash(name).replace(/&/g, " and ").replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(w => w.length >= 2);
+
+/**
+ * The company a document's number names could be the company it names: the
+ * same legal name, or a word in common that tells companies apart ("Bill's
+ * Restaurants Limited" and BILLS RESTAURANTS LTD.). With none, the number is
+ * another company's: 06327384 given for Braeburn Estates Limited was AUSTIN
+ * BARBER DESIGN LIMITED at Companies House (live check, 23 November 2026).
+ * A name made only of common words is compared on all its words.
+ */
+export function hotsNamesClose(a: unknown, b: unknown): boolean {
+  const ka = legalNameKey(a);
+  if (ka && ka === legalNameKey(b)) return true;
+  const pick = (ws: string[]) => {
+    const kept = ws.filter(w => !GENERIC_NAME_WORDS.has(w));
+    return kept.length ? kept : ws.filter(w => !["the", "and", "of", "limited", "ltd", "plc", "llp"].includes(w));
+  };
+  const x = new Set(pick(nameWords(a)));
+  return pick(nameWords(b)).some(w => x.has(w));
+}
+
 /**
  * The document has enough text to check a reading against (not a scan). A
  * note a person typed is its own text, however short.
@@ -490,6 +521,7 @@ export function hotsTermWords(kind: HotsTermKind, value: unknown): string {
 
 export interface HotsCompany { id: string; name: string; number: string | null }
 export type HotsRegisterHit = DealNoteRegisterHit & { agrees: boolean };
+export interface HotsOtherCompany { number: string; name: string; status: string | null }
 export type HotsMatchState = "signs" | "filed" | "register" | "choose" | "not_found" | "no_company" | "no_party" | "guarantor";
 export interface HotsPartyMatch {
   read: HotsParty;
@@ -505,6 +537,8 @@ export interface HotsPartyMatch {
   /** Companies House: by the number the document gives, else by the exact name. agrees = its name is the one the document gives. */
   register: HotsRegisterHit[];
   registerNote: string | null;
+  /** The number the document gives is this other company's at Companies House: never offered, the name is looked up instead. */
+  numberIsAnother?: HotsOtherCompany | null;
   /** The CRM records of that name, when the transaction has no party there yet. */
   candidates: DealNoteCandidate[];
 }

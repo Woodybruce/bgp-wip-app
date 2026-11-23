@@ -121,7 +121,7 @@ function RecordTrainingDialog({ people, onClose }: { people: Array<{ userId: str
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5 sm:col-span-2"><Label>What it was</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. AML refresher with KYC4U" data-testid="aml-training-title" /></div>
+            <div className="space-y-1.5 sm:col-span-2"><Label>What it was</Label><Input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. AML refresher with the Nominated Officer" data-testid="aml-training-title" /></div>
             <div className="space-y-1.5">
               <Label>Kind</Label>
               <Select value={kind} onValueChange={v => setKind(v as "formal" | "informal")}>

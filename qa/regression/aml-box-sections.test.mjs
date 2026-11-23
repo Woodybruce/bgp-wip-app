@@ -31,7 +31,7 @@ test('each party is four steps, each one line that opens its detail; nothing is 
   // The detail each step opens is what the box showed before.
   for (const piece of ['<PartyCompanyFacts data={data} companyId={cp.id} />', '<PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />',
     '<PartyLevel data={data} companyId={cp.id} />', '<PartyNotRequiredBox cp={cp} />', '<PartyDecisions dealId={dealId} data={data} companyId={cp.id}',
-    '<Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />', '<DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />',
+    '<DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />',
     '<AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} />', '<PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />',
     'part="people"', 'part="requests"', '<PartyRiskAssessment dealId={dealId} role={cp.role} />', '<SecondReadPanel dealId={dealId} role={cp.role}']) {
     assert.ok(box.includes(piece), piece);

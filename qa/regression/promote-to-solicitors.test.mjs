@@ -490,8 +490,8 @@ test('after New Deal or a move to Solicitors saves, the form offers Kick off AML
   assert.match(step, /if \(!parties\.length\) return false;/);
   assert.match(page, /if \(isEdit \|\| !showAmlStep\(data\?\.id, data\?\.dealRef \?\? null\)\) onOpenChange\(false\);/);
   assert.match(page, /if \(!showAmlStep\(data\?\.id, data\?\.conversion\?\.dealRef \?\? deal\?\.dealRef \?\? null\)\) onOpenChange\(false\);/);
-  assert.match(page, /<Kyc4uRequestButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} role=\{p\.role\} partyName=\{p\.name\} label="Kick off AML" \/>/);
+  // Each party gets the client checks (KYC4U is no longer used, 23 November 2026).
+  assert.match(page, /\{clientChecks && <SendClientChecksButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} partyName=\{p\.name\} label="Kick off AML" \/>\}/);
   assert.match(page, /useEffect\(\(\) => \{ if \(!open\) setAmlStep\(null\); \}, \[open\]\);/);
-  // The KYC4U button keeps its wording everywhere else.
-  assert.match(source('client/src/components/kyc4u-panel.tsx'), /label = "Request KYC4U check"/);
+  assert.doesNotMatch(page, /Kyc4uRequestButton/);
 });

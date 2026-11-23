@@ -56,17 +56,23 @@ test("the joint agent's request is never the party's own client checks", () => {
 
 test("a reply by email is filed from the address asked, or a colleague at the same firm, never a free mail service", () => {
   const portal = read("server/aml-portal.ts");
-  assert.match(portal, /const sameFirm = isJointRequest\(row\.request\) && sameFirmDomain\(from, cleanEmail\(row\.contact_email\)\);/);
+  // Also a request sent through the party's own agent (23 November 2026).
+  assert.match(portal, /const sameFirm = \(isJointRequest\(row\.request\) \|\| !!viaAgent\) && sameFirmDomain\(from, cleanEmail\(row\.contact_email\)\);/);
   assert.match(portal, /const FREE_MAIL = new Set\(\["gmail\.com"/);
   assert.match(portal, /return !!da && da === db && !FREE_MAIL\.has\(da\);/);
 });
 
-test("Not required on a joint agent's party follows HMRC: a record on a sale, never on a letting in scope", () => {
+test("Not required takes no joint agent reason since Issue 4 of BGP's policy; marks made before it lapse", () => {
   const route = read("server/deal-party-aml.ts");
-  assert.match(route, /notRequiredInput\(req\.body, \{ rule: party\.jointRule, requests: await jointRequestsForRecord\(pool, party\.dealId, party\.brandId\)/);
-  assert.match(route, /asked_on, asked_how, asked_whom, asked_outcome, joint_ref/);
+  assert.match(route, /const said = notRequiredInput\(req\.body, \{ rule: party\.jointRule \}\);/);
+  assert.match(route, /INSERT INTO kyc_party_exemptions \(deal_id, role, company_id, trading_entity_id, reason, comment, set_by, set_by_name\)\n/);
+  assert.doesNotMatch(read("server/joint-agent-checks.ts"), /jointRequestsForRecord/);
+  // The dialog offers only "no transaction was done", and no joint agent button.
+  const dialog = read("client/src/components/deal-party-aml.tsx");
+  assert.match(dialog, /\{NOT_REQUIRED_CHOOSABLE\.map\(k => <SelectItem/);
+  assert.doesNotMatch(dialog, /JointNotRequiredButton|aml-not-required-asked-/);
+  // Older marks keep their record of asking, still read, and no longer count anywhere loadNotRequired is read.
   assert.match(read("server/index.ts"), /ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_outcome text/);
-  // A mark that no longer counts is not honoured anywhere loadNotRequired is read.
   assert.match(read("server/aml-policy.ts"), /lapsed/);
 });
 
@@ -79,8 +85,9 @@ test("the reliance is recorded by the officers, with the joint agent's agreement
 
 test("the AML box carries the Joint agent line and its Next step", () => {
   const box = read("client/src/components/deal-aml-status.tsx");
-  // Any party BGP does not act for can be asked about through its agent (22 November 2026).
-  assert.match(box, /label=\{askAgentLabel\(jointQ\.data, askParty\)\}/);
+  // Any party BGP does not act for: the joint agent, or its own agent with the client checks to pass on (23 November 2026).
+  assert.match(box, /label="Joint agent" quiet \/>/);
+  assert.match(box, /label=\{askAgentLabel\(askParty\)\}/);
   assert.match(box, /const askParty = jointAskable\(jointQ\.data, cp\.id\);/);
   assert.match(box, /joint: jointBoxFacts\(jointQ\.data, cp\.id\),/);
   assert.match(box, /case "joint": return <Button/);
@@ -113,6 +120,20 @@ test("the reliance waits for their files to cover everyone, unless an officer sa
   const route = read("server/deal-party-aml.ts");
   assert.match(route, /if \(joint\.gaps\.length\) \{/);
   assert.match(route, /if \(handNote\.length < JOINT_BY_HAND_MIN\) \{\s*return res\.status\(409\)/);
-  assert.match(route, /asked_missing, asked_note\)/);
-  assert.match(read("server/index.ts"), /ALTER TABLE kyc_party_exemptions ADD COLUMN IF NOT EXISTS asked_missing text/);
+  assert.match(route, /byHand = `Recorded with gaps in their files \(\$\{joint\.gaps\.join\("; "\)\}\); checked by hand: \$\{handNote\}`;/);
+});
+
+// Woody, 23 November 2026: "the reliance on the joint agent doesnt work we cant agree reliance. What we need is an
+// email ... saying we are finalising the KYC on this joint agent transaction and need you to upload or email back the
+// following files", and "should also be able to reply with the documents".
+test("the joint agent is asked for the documents, never to agree reliance; Joint agent under Other ways sends the email", () => {
+  assert.match(read("shared/joint-agent-checks.ts"), /export const JOINT_ASKS_RELIANCE = false;/);
+  assert.match(read("server/joint-agent-checks.ts"), /reliance: JOINT_ASKS_RELIANCE && isLettingRule\(request\.jointAgent\?\.rule\)/);
+  assert.match(read("server/aml-portal.ts"), /terms: letting && joint\?\.reliance \? jointRelianceTerms\(request\.partyName\) : null,/);
+  const box = read("client/src/components/deal-aml-status.tsx");
+  assert.doesNotMatch(box, /<RelianceButton/, "no reliance under Other ways");
+  assert.match(box, /<AskJointAgentButton dealId=\{dealId\} view=\{jointQ\.data\} party=\{askParty\} label="Joint agent" quiet \/>/);
+  const email = read("shared/kyc-request.ts");
+  assert.match(email, /Finalising our KYC on /);
+  assert.match(email, /Or reply to this email with the documents attached/);
 });

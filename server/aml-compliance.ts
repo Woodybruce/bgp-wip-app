@@ -1524,7 +1524,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
       }
       // In-house enhanced due diligence (21 November 2026): the officers' setting.
       const { readInHouseEdd } = await import("./aml-authority");
-      decisions = { ...who, parties, inHouseEdd: (await readInHouseEdd().catch(() => ({ on: false }))).on };
+      decisions = { ...who, parties, inHouseEdd: (await readInHouseEdd().catch(() => ({ on: true }))).on };
     }
 
     res.json({

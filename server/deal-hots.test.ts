@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
+  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
   readHotsByRules, readHotsNoteRules,
   type HotsParty,
 } from "@shared/deal-hots";
@@ -190,8 +190,8 @@ const fakeDb = (entities: any[], brands = [{ id: "L", name: "Canary Wharf Group"
     throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
   },
 });
-const lookups = (byNumber: Record<string, { name: string; status?: string }>, byName: Record<string, Array<{ company_number: string; title: string; company_status?: string }>> = {}): RegisterLookups => ({
-  async byNumber(n) { const h = byNumber[n]; return h ? { number: n, name: h.name, status: h.status || "active", address: null } : null; },
+const lookups = (byNumber: Record<string, { name: string; status?: string; previous?: string[] }>, byName: Record<string, Array<{ company_number: string; title: string; company_status?: string }>> = {}): RegisterLookups => ({
+  async byNumber(n) { const h = byNumber[n]; return h ? { number: n, name: h.name, status: h.status || "active", address: null, previousNames: h.previous || [] } : null; },
   async byName(name) { return byName[name] || []; },
 });
 const party = (role: HotsParty["role"], name: string, number: string | null = null): HotsParty => ({ role, name, number, quote: name, checked: true });
@@ -210,12 +210,59 @@ test("a company not filed is found at Companies House by its number, and a name 
   const [m] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")], lookups({ "06327384": { name: "BRAEBURN ESTATES LIMITED" } }));
   assert.equal(m.state, "register");
   assert.equal(m.register[0].agrees, true);
-  const [other] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")], lookups({ "06327384": { name: "SOMETHING ELSE LIMITED" } }));
-  assert.equal(other.state, "register");
-  assert.equal(other.register[0].agrees, false);
+  assert.equal(m.numberIsAnother, null);
+  // A word in common: offered, with "check it is the same company".
+  const [close] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")], lookups({ "06327384": { name: "BRAEBURN ESTATES (HOLDINGS) LIMITED" } }));
+  assert.equal(close.state, "register");
+  assert.equal(close.register[0].agrees, false);
+  assert.equal(close.numberIsAnother, null);
   const [gone] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")], lookups({ "06327384": { name: "BRAEBURN ESTATES LIMITED", status: "dissolved" } }));
   assert.equal(gone.state, "not_found");
   assert.match(String(gone.registerNote), /dissolved/);
+});
+
+test("a number that is another company's is never offered: the name is looked up instead (live check, 23 November 2026)", async () => {
+  const L = { "06327384": { name: "AUSTIN BARBER DESIGN LIMITED" } };
+  const [none] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")], lookups(L));
+  assert.equal(none.state, "not_found");
+  assert.deepEqual(none.register, []);
+  assert.deepEqual(none.numberIsAnother, { number: "06327384", name: "AUSTIN BARBER DESIGN LIMITED", status: "active" });
+  assert.match(String(none.registerNote), /no live company called Braeburn Estates Limited/);
+  // Found by its name: that company is offered, never the number's.
+  const [byName] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")],
+    lookups(L, { "Braeburn Estates Limited": [{ company_number: "11111111", title: "BRAEBURN ESTATES LIMITED" }] }));
+  assert.equal(byName.state, "register");
+  assert.deepEqual(byName.register.map(h => h.number), ["11111111"]);
+  assert.equal(byName.register[0].agrees, true);
+  assert.match(String(byName.registerNote), /Found by its name instead/);
+  // A guarantor's number is said the same way, and its company is not shown as the guarantor.
+  const [g] = await matchHotsParties(fakeDb([]), DEAL as any, [party("guarantor", "Bill's Holdings Limited", "09876543")],
+    lookups({ "09876543": { name: "SPECIALISED IN TAX ACCOUNTING LTD", status: "dissolved" } }));
+  assert.equal(g.state, "guarantor");
+  assert.equal(g.numberIsAnother?.name, "SPECIALISED IN TAX ACCOUNTING LTD");
+  assert.deepEqual(g.register, []);
+});
+
+test("a former name at Companies House is the same company", async () => {
+  const [m] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", "Braeburn Estates Limited", "06327384")],
+    lookups({ "06327384": { name: "ORCHARD HOLDINGS LIMITED", previous: ["BRAEBURN ESTATES LIMITED"] } }));
+  assert.equal(m.state, "register");
+  assert.equal(m.register[0].agrees, true);
+  assert.equal(m.numberIsAnother, null);
+  assert.match(String(m.registerNote), /former name/);
+});
+
+test("names close enough to be the company a number names", () => {
+  assert.equal(hotsNamesClose("Bill's Restaurants Limited", "BILLS RESTAURANTS LTD."), true);
+  assert.equal(hotsNamesClose("Braeburn Estates Limited", "BRAEBURN ESTATES (HOLDINGS) LIMITED"), true);
+  assert.equal(hotsNamesClose("Bill's", "BILLS RESTAURANTS LTD."), true);
+  assert.equal(hotsNamesClose("Braeburn Estates Limited", "AUSTIN BARBER DESIGN LIMITED"), false);
+  assert.equal(hotsNamesClose("Bill's Holdings Limited", "SPECIALISED IN TAX ACCOUNTING LTD"), false);
+  // Common words alone are no match: Smith Estates is not Braeburn Estates.
+  assert.equal(hotsNamesClose("Braeburn Estates Limited", "SMITH ESTATES LIMITED"), false);
+  // A name of common words only is compared on all its words.
+  assert.equal(hotsNamesClose("London Property Holdings Limited", "LONDON PROPERTY HOLDINGS (NO. 2) LIMITED"), true);
+  assert.equal(hotsNamesClose("London Property Holdings Limited", "AUSTIN BARBER DESIGN LIMITED"), false);
 });
 
 test("by name: one live company is offered, several are a choice, a brand name is no company", async () => {

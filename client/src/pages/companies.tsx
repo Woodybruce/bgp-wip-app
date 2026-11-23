@@ -660,7 +660,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
 
         {!expanded ? null : !displayNumber ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Link to Companies House, or click "Look up" to auto-match by name. AML/KYC is KYC4U's.</p>
+            <p className="text-xs text-muted-foreground">Link to Companies House, or click "Look up" to auto-match by name. AML runs from each transaction's Parties &amp; AML.</p>
             <div className="flex gap-2">
               <Button
                 variant="default"
@@ -725,7 +725,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 {!kycStatus && <ShieldCheck className="w-5 h-5 text-muted-foreground shrink-0" />}
                 <div>
                   <p className="text-sm font-semibold">
-                    {kycStatus === "approved" ? "KYC4U approved" : kycStatus === "in_review" ? "With KYC4U" : kycStatus === "rejected" ? "KYC4U rejected" : "Linked to Companies House"}
+                    {kycStatus === "approved" ? "KYC approved" : kycStatus === "in_review" ? "KYC in review" : kycStatus === "rejected" ? "KYC rejected" : "Linked to Companies House"}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}

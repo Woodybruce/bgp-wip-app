@@ -7,6 +7,14 @@
 // records here that it went (Submitted on KYC4U's portal, with KYC4U's
 // reference). Until then the party is not with KYC4U.
 
+// KYC4U is no longer used (Woody, 23 November 2026: "We are no longer using
+// KYC 4U update the app accross everyhting"; "we want to keep and record the
+// hiostoric AML checks from KYC4U though which are downloaded on the app").
+// No new request goes to them; their past results, documents and the files
+// copied from their site stay on record and still count.
+export const KYC4U_RETIRED_ON = "2026-11-23";
+export const KYC4U_RETIRED_WORDS = "KYC4U is no longer used (since 23 November 2026). Its past checks and files stay on record.";
+
 /** KYC4U's Raise New Service Request form, field by field, in its order. */
 export const KYC4U_FORM_FIELDS: ReadonlyArray<{ key: string; label: string; required?: boolean; long?: boolean; hint?: string; type?: string }> = [
   { key: "partyType", label: "Party type", required: true, hint: "As KYC4U's dropdown words it — usually Client or Counterparty" },

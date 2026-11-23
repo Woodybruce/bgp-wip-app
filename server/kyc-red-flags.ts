@@ -11,7 +11,7 @@ import {
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, type PartyDueDiligence } from "@shared/aml-policy";
+import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
 import { payerRedFlags } from "@shared/deal-billing";
 import { DEAL_PARTY_COLUMNS, dealClientRole } from "@shared/deal-parties";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
@@ -131,6 +131,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
        LEFT JOIN crm_trading_entities e ON e.id = d.invoice_payer_entity_id
       WHERE d.id = $1`, [dealId])).rows[0] || null, null as any);
   const dealSplit = applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, dealId));
+  const superPrime = deal ? superPrimeWeigh({ dealType: deal.deal_type, team: deal.team, pricing: deal.pricing, postcode: deal.postcode }) : null;
   // A third party paying BGP's invoice for the client (20 November 2026): its
   // own flags join the client's, read from BGP's checks before asking on it.
   const payer = deal?.invoice_payer_entity_id ? {
@@ -169,7 +170,8 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     levels[id] = dueDiligenceLevel({
       partyFlags: split.live, dealFlags: dealSplit.live,
       simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
-      toWeigh: policyFactorsToWeigh({ precheck: pre?.result || null, companyType: companyRow?.company_type || null }),
+      standardBasis: standardBasis({ precheck: pre?.result || null }),
+      toWeigh: [...policyFactorsToWeigh({ precheck: pre?.result || null, companyType: companyRow?.company_type || null }), ...(superPrime ? [superPrime] : [])],
     });
   }
   return { parties, deal: dealSplit.live, setAside, dealSetAside: dealSplit.setAside, unchecked, levels };
@@ -293,7 +295,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   );
   if (row.company_id && !row.is_test) {
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'red_flag_alert', 'ChatBGP', $2)`,
-      [row.company_id, `Red flag on ref ${request.ref}, the agents told to raise it with ${inHouse ? "the AML Officer" : "KYC4U"}: ${fresh.map(f => f.label).join("; ")}`]).catch(() => {});
+      [row.company_id, `Red flag on ref ${request.ref}, the agents and the AML Officer told: ${fresh.map(f => f.label).join("; ")}`]).catch(() => {});
   }
   return { sent: fresh.length };
 }

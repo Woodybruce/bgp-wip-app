@@ -192,9 +192,12 @@ const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim(
 // The addresses to try in turn: any given first (a workspace's or the KYC
 // mailbox), then the app's address, then the shared mailbox, each once. One
 // refused within the hour is left out, unless it is the last.
-export function senderOrder(first: string[] = [], now = Date.now()): string[] {
+export function senderOrder(first: string[] = [], now = Date.now(), opts: { appMailbox?: boolean } = {}): string[] {
   const order: string[] = [];
-  for (const m of [...first, APP_MAILBOX, SHARED_MAILBOX]) {
+  // AML emails never go from the app's own address (Woody, 2026-11-23: "the
+  // email should come from KYC@brucegillinghampollard.com"): after their own
+  // mailbox they fall back to BGP's shared mailbox only.
+  for (const m of [...first, ...(opts.appMailbox === false ? [] : [APP_MAILBOX]), SHARED_MAILBOX]) {
     const mailbox = String(m || "").trim();
     if (mailbox && !order.some(o => sameAddress(o, mailbox))) order.push(mailbox);
   }
@@ -217,9 +220,11 @@ export async function sendFromFirstMailbox(opts: {
   bcc?: string[];
   attachments?: EmailAttachment[];
   build: (from: string) => { subject: string; html: string };
+  /** false: never send from the app's own address (AML emails). */
+  appMailbox?: boolean;
 }): Promise<MailboxSendResult> {
   const refused: MailboxSendResult["refused"] = [];
-  for (const mailbox of senderOrder(opts.mailboxes)) {
+  for (const mailbox of senderOrder(opts.mailboxes, Date.now(), { appMailbox: opts.appMailbox })) {
     try {
       const { subject, html } = opts.build(mailbox);
       const replyTo = sameAddress(mailbox, APP_MAILBOX) && !sameAddress(APP_MAILBOX, SHARED_MAILBOX) ? SHARED_MAILBOX : undefined;

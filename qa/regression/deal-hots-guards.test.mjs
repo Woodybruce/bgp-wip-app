@@ -63,13 +63,23 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   // Type it out or drop the heads of terms (Woody, 23 November 2026).
   assert.match(amlBox, /\{staffView && slots && <DealDescribeBox dealId=\{dealId\} \/>\}/);
   assert.match(screen, /export function DealDescribeBox/);
-  assert.match(screen, /onDrop=\{e => \{ const f = e\.dataTransfer\.files\?\.\[0\]/);
+  // The box takes a dropped file itself and keeps it from the app-wide import (23 November 2026).
+  assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
   assert.match(partyBox, /if \(!o && !finding && !hotsOpen\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
   assert.doesNotMatch(screen, /from "@\/components\/deal-parties"/);
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);
+});
+
+test('a number that is another company\'s is never offered (live check, 23 November 2026)', () => {
+  const look = server.slice(server.indexOf('async function lookUpRegister'), server.indexOf('interface DealRow'));
+  assert.match(look, /hotsNamesClose\(hit\.name, read\.name\)/);
+  assert.match(look, /previousNames/);
+  assert.match(look, /other = \{ number: hit\.number, name: hit\.name/);
+  assert.match(screen, /<NumberIsAnother other=\{match\.numberIsAnother\}/);
+  assert.match(screen, /<NumberIsAnother other=\{g\.numberIsAnother\}/);
 });
 
 test('ChatBGP is told where it is', () => {

@@ -3,16 +3,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle, Pencil } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import { KycPanel } from "@/components/kyc-panel";
-import { KYC4U_FORM_URL, Kyc4uPackButton, Kyc4uRequestButton, Kyc4uSubmittedButton } from "@/components/kyc4u-panel";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
-import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
+import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
+import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
-import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
+import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
@@ -36,7 +35,7 @@ import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
-import { JointRelianceButton, RelianceButton, RelianceCard } from "@/components/aml-reliance";
+import { JointRelianceButton, RelianceCard } from "@/components/aml-reliance";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AskJointAgentButton, JointAgentPanel, JointChaseButton, askAgentLabel, currentJointRequest, jointApplies, jointAskable, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
 import { AmlStopDialog, useAmlStop } from "@/components/aml-stop";
@@ -70,10 +69,10 @@ export interface DealAmlStatus {
   allApproved: boolean;
   canInvoice: boolean;
   missing: string[];
-  // In-app AML is on: the deal offers client checks as well as KYC4U.
+  // In-app AML is on (the old in-app checks, retired in October 2026).
   inAppAml?: boolean;
   clientChecks?: boolean;
-  // What sends a party to KYC4U (BGP staff only; null for anyone else).
+  // What makes a party enhanced, the officers' to sign off (BGP staff only; null for anyone else).
   redFlags?: {
     parties: Record<string, KycRedFlag[]>; deal: KycRedFlag[]; unchecked: string[];
     // Set aside by the MLRO with a comment: listed, no longer counted.
@@ -83,7 +82,7 @@ export interface DealAmlStatus {
   } | null;
   // BGP's checks before asking, per party (BGP staff only).
   prechecks?: Record<string, PartyPrecheck> | null;
-  // BGP's sign-off and KYC4U's result (BGP staff only): whether the person
+  // BGP's sign-off (BGP staff only): whether the person
   // may decide (the Nominated Officer or the Deputy) or sign off (they, and
   // the deal's agents), and per party whether it may be signed off now.
   decisions?: {
@@ -341,8 +340,8 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
   );
 }
 
-// A red flag sends the party to KYC4U (Woody, 2026-11-17: "basically we do
-// the normal checks expected and if there is a red flag then we get KYC4U").
+// A red flag makes the party the officers' (enhanced due diligence; it went to
+// KYC4U until 23 November 2026, when Woody stopped using them).
 // Each opens what is behind it, and the MLRO (admins until one is appointed)
 // can set one aside with a comment (Woody, 2026-11-19: "We also need to see
 // the detail of the red flag and have the option to ignore with a comment as
@@ -506,8 +505,8 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         setAside={aside.filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
-        title={inHouse ? `Red flag: raise with ${officer}` : "Red flag: raise with KYC4U"}
-        step={inHouse ? `${officer} checks each one and signs the party off, or sets a flag aside with a comment.` : "Press Request KYC4U check: the red flags are already in its note."}
+        title={`Red flag: raise with ${officer}`}
+        step={`${officer} checks each one and signs the party off, or sets a flag aside with a comment.`}
         testId={`kyc-red-flags-${companyId}`}
       />}
       {only !== "flags" && <RedFlagList
@@ -519,7 +518,7 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
         title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
-        step={inHouse ? `${officer} checks these and signs the party off, or sets one aside where it does not apply.` : "Press Request KYC4U check: the factors are in its note, and the Nominated Officer or a Deputy approves the result."}
+        step={`${officer} checks these and signs the party off, or sets one aside where it does not apply.`}
         testId={`kyc-policy-factors-${companyId}`}
       />}
     </>
@@ -582,7 +581,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Red flag on the transaction record"
-        step={inHouse ? `It is not tied to one party: raise it with ${officer}.` : "It is not tied to one party: Request KYC4U check on the party it concerns carries it in the note."}
+        step={`It is not tied to one party: raise it with ${officer}.`}
         testId="kyc-red-flags-deal"
       />
       <RedFlagList
@@ -594,7 +593,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Enhanced due diligence on the transaction: a higher-risk factor in BGP's AML policy"
-        step={inHouse ? `It applies to every party: ${officer} checks it before signing them off.` : "It applies to every party: Request KYC4U check carries it in the note, and the Nominated Officer or the Deputy approves the result."}
+        step={`It applies to every party: ${officer} checks it before signing them off.`}
         testId="kyc-policy-factors-deal"
       />
       {unchecked.length > 0 && (
@@ -783,12 +782,18 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     queryKey: ["/api/kyc4u/drafts", dealId, cp.id],
     queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts?${new URLSearchParams({ dealId, companyId: cp.id })}`)).json(),
   });
-  const kyc4uCompany = useQuery<{ requests: Array<{ status: string | null }> }>({ queryKey: ["/api/kyc4u/company", cp.id], enabled: staff, staleTime: 5 * 60_000 });
   // The joint agent asked for their checks on the party (22 November 2026).
   const jointQ = useJointChecks(dealId, staff && !!data.jointRule && data.jointRule !== "letting_under" && data.jointRule !== "advisory");
   const jointParty = jointApplies(jointQ.data, cp.id);
   // Any party BGP does not act for can be asked about through an agent (22 November 2026).
   const askParty = jointAskable(jointQ.data, cp.id);
+  // The party's own agent passes the standard checks on to their client (Woody,
+  // 23 November 2026: "with the agent acting for the tenant or against us we
+  // need them to pass on the standard KYC requests for their clients").
+  const theirAgent: ClientChecksAgent | null = askParty ? {
+    firm: askParty.agent?.name || "", companyId: askParty.agent?.companyId || null, contactId: askParty.agent?.contactId || null,
+    contacts: askParty.agent?.contacts || [], words: askParty.agentWords,
+  } : null;
 
   const reveal = (k: StepKey) => {
     setFolded(false);
@@ -817,7 +822,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
   const trustQ = useTrustStructure(cp.id, staff && isTrust);
   const trustRecordedGaps = isTrust ? (trustQ.data?.gaps || []).filter(g => g.from === "recorded").map(g => g.words) : [];
-  // Owned through a company registered abroad: KYC4U find the people behind it (Woody, 21 November 2026).
+  // Owned through a company registered abroad: the officers find the people behind it.
   const ownedAbroad = pre?.company?.ownersAbroad || [];
   // What the app traced past Companies House and what BGP recorded (21 November 2026).
   const traceLines = pre?.company?.trace || pre?.trace || [];
@@ -833,8 +838,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // Only a request submitted on KYC4U's portal is with them; one prepared and
   // never submitted for 30 days is stale and offered to cancel (20 November 2026).
   const draftState = kyc4uDraftState(draft);
-  const kyc4uState: AmlBoxFacts["kyc4u"] = draftState === "prepared" ? "queued" : draftState === "submitted" ? "raised" : "none";
-  const gaps = (party?.gaps || []).filter(g => g.key !== "company")
+  // Through the party's own agent nobody at the party is needed (23 November 2026).
+  const agentRoute = !!request?.viaAgent || (!request && !!theirAgent?.firm && !party?.person);
+  const gaps = agentRoute ? [] : (party?.gaps || []).filter(g => g.key !== "company")
     .map(g => (g.key === "person" ? "Set who to ask" : `Add an email for ${party?.person?.name || "the person to ask"}`));
   const current = jointParty ? currentJointRequest(jointParty) : null;
 
@@ -842,13 +848,16 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     role: cp.role, stage, due: row ? row.due : null,
     approvedBy: cp.kyc_approved_by, expiresAt: cp.kyc_expires_at, notRequiredWords: cp.notRequired?.reasonWords || null,
     notRequiredReason: cp.notRequired?.reason || null,
-    company: isCompany, companyMissing, gaps, askName: party?.person?.name || null,
+    company: isCompany, companyMissing, gaps, askName: party?.person?.name || null, theirAgent: theirAgent?.firm || null,
     precheckRunning: pre?.state === "running",
     redFlags: flags.length, factors: factors.length + dealFactors.length,
     sanctionsOnly, clientChecks: !!data.clientChecks,
-    request: request ? { status: request.status as NonNullable<AmlBoxFacts["request"]>["status"], to: request.recipientName || request.recipientEmail } : null,
+    // Through the party's agent: the agent until they pass it on (23 November 2026).
+    request: request ? { status: request.status as NonNullable<AmlBoxFacts["request"]>["status"], to: request.viaAgent
+      ? (request.viaAgent.passedOn.length ? request.recipientName || request.viaAgent.passedOn[request.viaAgent.passedOn.length - 1].name : firmShort(request.viaAgent.firm))
+      : request.recipientName || request.recipientEmail } : null,
     people: owing.map(p => ({ name: personDisplayName(p.name), needs: [...p.outstanding], reachable: !unreachable.includes(p), linked: !!p.own })),
-    kyc4u: kyc4uState, canSignOff, canDecide,
+    canSignOff, canDecide,
     signOffBlocked: decision ? decision.blocked : data.decisions ? "This party could not be read." : null,
     needsNote: !!decision?.needsNote,
     billingDiffers: !!party?.client && party.billing?.state === "different",
@@ -857,12 +866,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
     relianceFirm: people?.reliance?.firm || null,
-    inHouseEdd: !!data.decisions?.inHouseEdd,
+    inHouseEdd: true,
     sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
     joint: jointBoxFacts(jointQ.data, cp.id),
   };
   const step = amlNextStep(facts);
-  const kyc4uNeeded = step.lead === "Not yet with KYC4U";
 
   const nextAction: ReactNode = (() => {
     const quiet = "h-7 text-xs bg-background";
@@ -870,14 +878,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       case "trust": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
       case "fill_in": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
-      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} />;
+      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
+      case "send_via_agent": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} label="Send" agent={theirAgent} viaAgent />;
       case "people": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-people-${cp.role}`}>Open</Button>;
-      case "request_kyc4u": return <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} buttonOnly />;
-      case "kyc4u_form": return <>
-        {draft?.id && <Kyc4uPackButton draftId={String(draft.id)} />}
-        <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
-      </>;
-      case "kyc4u_result": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="kyc4u_result" />;
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" />;
       case "red_flags": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("screening")}>See flags</Button>;
       case "billing": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
@@ -948,9 +951,6 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       if (letting && !current.reliance) return { state: "wait", text: `From ${firm} · terms not agreed yet` };
       return { state: "done", text: `From ${firm} · all in` };
     }
-    // In-house, a KYC4U request only shows once it was really submitted (Jack's call on a complex case).
-    if (draftState === "submitted" || stage === "with_kyc4u") return { state: "wait", text: `With KYC4U${draft?.submitted_at ? ` since ${day(draft.submitted_at)}` : ""}` };
-    if ((draftState === "prepared" || draftState === "stale") && !data.decisions?.inHouseEdd) return { state: "flag", text: "KYC4U: prepared, not submitted" };
     if (request) {
       const n = people?.people.length || 0;
       const who = request.recipientName || request.recipientEmail || "the client";
@@ -960,7 +960,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       return { state: "wait", text: `Sent to ${who}${request.sentAt ? ` ${day(request.sentAt)}` : ""}${n > 1 ? ` · ${n - owing.length} of ${n} people done` : ""}` };
     }
     if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
-    if (!data.clientChecks) return { state: "act", text: isTrust || data.decisions?.inHouseEdd ? "Client checks are off: the officers sign it off" : "Send it to KYC4U" };
+    if (!data.clientChecks) return { state: "act", text: "For the officers to sign off" };
     return { state: "act", text: "Not asked yet" };
   })();
 
@@ -983,20 +983,18 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const roleLabel = slot?.label || (cp.role.charAt(0).toUpperCase() + cp.role.slice(1));
 
   // The joint agent route: the officers' button beside the evidence.
-  const jointDecide = canDecide && current && jointQ.data ? (
-    jointQ.data.rule === "sale"
-      ? (current.sentAt || current.openedAt || current.manual
-          ? <JointNotRequiredButton dealId={dealId} role={cp.role} companyId={cp.id} partyName={partyName} jointRef={current.ref} />
-          : null)
-      : current.reliance && !people?.reliance
-        ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty?.gaps || []} joint={{
+  // A reliance agreed before 23 November 2026 can still be recorded; a sale is
+  // signed off on BGP's own check of the documents, as a letting is (policy Issue 4).
+  const jointDecide = canDecide && current && jointQ.data && current.reliance && !people?.reliance
+    ? <JointRelianceButton dealId={dealId} role={cp.role} partyName={partyName} gaps={jointParty?.gaps || []} joint={{
             ref: current.ref, firm: current.reliance.firm, supervisor: current.reliance.supervisor, registration: current.reliance.registration,
             contact: [current.reliance.name, current.reliance.position].filter(Boolean).join(", "), agreedOn: current.reliance.agreedAt.slice(0, 10),
           }} />
-        : null
-  ) : null;
-  const kyc4uActive = !!draft || stage === "with_kyc4u";
-  const clientRoute = !!request || (!current && !people?.reliance && !kyc4uActive);
+    : null;
+  // KYC4U is no longer used (Woody, 23 November 2026): a request made before
+  // then is history on the party, and holds nothing up.
+  const clientRoute = !!request || (!current && !people?.reliance);
+  // Joint agent under Other ways asks them for the documents by email; reliance is not offered (Woody, 23 November 2026: "we cant agree reliance").
 
   const statusPill = stage === "rejected" ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200">Rejected</span>
     : cp.notRequired ? <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Not required</span>
@@ -1006,7 +1004,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const showNext = !(stage === "approved" || stage === "not_required");
 
   const nextLine = (
-    <div className={`flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-2.5 py-1.5 ${NEXT_BOX[step.tone]} ${kyc4uNeeded ? "border-2 border-red-600" : ""}`} data-testid={`aml-next-${cp.role}`}>
+    <div className={`flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-2.5 py-1.5 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
       <BoxToneIcon tone={step.tone} />
       <span className="min-w-0 flex-1 basis-40 text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>
         <span className="sr-only">{AML_BOX_WHO_WORDS[step.who]}: </span>
@@ -1051,9 +1049,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setChanging(false)}>Done</Button>
           </div>
         )}
-        {showNext && (kyc4uNeeded
-          ? <div data-testid={`aml-kyc4u-needed-${cp.role}`}>{nextLine}</div>
-          : nextLine)}
+        {showNext && nextLine}
       </div>
 
       {staff && !folded && (
@@ -1094,35 +1090,30 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               : <>
                   {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
                   {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
-                  {kyc4uActive && (
-                    <div className="space-y-1.5" data-testid={`aml-kyc4u-${cp.role}`}>
-                      <SubHead>KYC4U</SubHead>
-                      <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
-                      {draftState !== "submitted" && (
-                        <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-kyc4u-portal-${cp.role}`}>
-                          {draft?.id && draftState === "prepared" && <Kyc4uPackButton draftId={String(draft.id)} />}
-                          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer">KYC4U's portal</a></Button>
-                          <Kyc4uSubmittedButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} />
-                        </div>
-                      )}
-                    </div>
+                  {draft && (
+                    <p className="text-xs text-muted-foreground" data-testid={`aml-kyc4u-${cp.role}`}>
+                      KYC4U (no longer used): a request was {draftState === "submitted"
+                        ? `submitted${draft.submitted_at ? ` on ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` (${draft.submitted_ref})` : ""}`
+                        : `prepared${draft.created_at ? ` on ${day(draft.created_at)}` : ""} and not submitted`}. It holds nothing up; anything KYC4U sent stays on the party's record.
+                    </p>
                   )}
                   {data.clientChecks && clientRoute && !people?.reliance && (
                     <div className="space-y-1.5" data-testid={`aml-client-route-${cp.role}`}>
-                      {(request || (people && people.people.length > 0)) && (current || kyc4uActive) && <SubHead>Client checks</SubHead>}
-                      {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" />}
+                      {(request || (people && people.people.length > 0)) && (current || draft) && <SubHead>Client checks</SubHead>}
+                      {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" agent={theirAgent} />}
                       <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
                       <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
-                      {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" />}
+                      {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" agent={theirAgent} viaAgent={!!request.viaAgent} />}
                     </div>
                   )}
+                  {/* Certified copies and other documents BGP holds, read and checked (23 November 2026). */}
+                  <PartyDocumentsBox dealId={dealId} role={cp.role} partyName={partyName} canDecide={canDecide} />
                   {!settled && (
                     <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
                       <span className="mr-1">Other ways:</span>
-                      {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet />}
-                      {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label={askAgentLabel(jointQ.data, askParty)} quiet />}
-                      {canDecide && !sanctionsOnly && !people?.reliance && <RelianceButton dealId={dealId} role={cp.role} partyName={partyName} label="Another firm" />}
-                      {!kyc4uActive && !isTrust && <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={partyName} label="KYC4U (complex case)" buttonOnly quiet />}
+                      {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
+                      {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
+                      {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
                     </div>
                   )}
                 </>}
@@ -1353,7 +1344,7 @@ interface DealAmlAi {
 }
 
 // Exported so the Compliance Board (and other KYC review surfaces) can drop
-// the AI augments alongside their existing per-counterparty KycPanel.
+// the AI augments alongside each party's checks.
 export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);

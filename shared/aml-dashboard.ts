@@ -67,10 +67,10 @@ export interface AmlPartyFacts {
   // When the officers recorded relying on another firm's checks for the
   // party (MLR 2017 reg 39), not withdrawn: BGP signs it off on them.
   reliedAt?: string | Date | null;
-  // BGP's officers do enhanced checks themselves (the in-house switch,
-  // server/aml-authority.ts): a KYC4U request or KYC4U's own status no longer
-  // holds a party at With KYC4U (Woody, 22 November 2026: "I dont actually
-  // think KYC4U is doing anything we cant").
+  // false only to read a party as it stood while KYC4U was used. KYC4U is no
+  // longer used (Woody, 23 November 2026: "We are no longer using KYC 4U"), so
+  // a KYC4U request or KYC4U's own status no longer holds a party at With
+  // KYC4U.
   inHouse?: boolean;
   // The joint agent asked for their checks on the party (not cancelled), and
   // when their files (or, on a letting, their agreement to the reliance
@@ -95,7 +95,7 @@ export function amlStage(f: AmlPartyFacts, now: Date = new Date()): AmlStage {
     if (until !== null && until - now.getTime() <= AML_EXPIRING_DAYS * 86400000) return "expiring";
     return "approved";
   }
-  if (!f.inHouse && (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview))) return "with_kyc4u";
+  if (f.inHouse === false && (f.kyc4uOpen || (f.kyc.status === "in_review" && f.kyc4uInReview))) return "with_kyc4u";
   if (time(f.reliedAt) !== null) return "relied";
   if (time(f.clientFinishedAt) !== null) return "client_finished";
   if (time(f.jointInAt) !== null) return "joint_in";
@@ -132,35 +132,24 @@ export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBuc
   return due ? "todo" : "not_due";
 }
 
-/** Who or what the party waits on, in a few words. inHouse: the officers do enhanced checks, not KYC4U. */
-export function amlWaitingOn(stage: AmlStage, redFlags: number, inHouse = false): string {
-  const flagged = inHouse ? "Officers: sign off" : "BGP: raise it with KYC4U";
+/** Who or what the party waits on, in a few words. The officers do enhanced checks (KYC4U is no longer used). */
+export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
+  const flagged = "Officers: sign off";
   switch (stage) {
     case "not_started": return "BGP: start the checks";
-    case "bgp_checked": return redFlags ? (inHouse ? "BGP: send the client checks" : flagged) : "BGP: send the client checks or sign off";
+    case "bgp_checked": return redFlags ? "BGP: send the client checks" : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
     case "joint_asked": return "The joint agent";
     case "joint_in": return redFlags ? flagged : "Officers: decide on the joint agent's checks";
     case "client_finished":
     case "relied": return redFlags ? flagged : "BGP: sign off";
-    case "with_kyc4u": return "KYC4U";
+    case "with_kyc4u": return "Officers: sign off";
     case "approved": return "Nobody";
     case "not_required": return "Nobody";
     case "rejected": return "The Nominated Officer";
     case "expiring":
     case "expired": return "BGP: check it again";
   }
-}
-
-/**
- * An enhanced party not yet with KYC4U (Jack, 20 November 2026: KYC4U takes
- * requests only on its own portal, so "a big red mark against it" until the
- * agent has submitted it there).
- */
-export function amlNeedsKyc4u(level: "simplified" | "standard" | "enhanced", stage: AmlStage, ownedAbroad = false): boolean {
-  // Owned through a company registered abroad goes to KYC4U too (Woody, 21 November 2026).
-  // Reliance does not cover enhanced due diligence (HMRC), so a relied-on party still goes.
-  return (level === "enhanced" || ownedAbroad) && (stage === "not_started" || stage === "bgp_checked" || stage === "client_sent" || stage === "client_finished" || stage === "joint_asked" || stage === "joint_in" || stage === "relied");
 }
 
 /** Whole days since the latest of the given moments, or null when there is none. */
@@ -183,7 +172,7 @@ export interface AmlDashboardRow {
   signsAs: string | null;              // the company that signs, when the deal names one
   // Recorded as a trust: checked by the officers, never KYC4U (23 November 2026).
   trust?: boolean;
-  // Corporate owners registered abroad ("Kirkbi A/S, Denmark"): KYC4U find the people behind them.
+  // Corporate owners registered abroad ("Kirkbi A/S, Denmark"): the officers find the people behind them.
   ownersAbroad?: string[];
   // The level of due diligence BGP's AML policy gives the party (Issue 2),
   // and why: the flags and higher-risk factors that count, or the basis.

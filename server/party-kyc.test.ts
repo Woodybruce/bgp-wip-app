@@ -72,15 +72,20 @@ const facts = (over: Partial<SignOffFacts> = {}): SignOffFacts => ({
   now: new Date("2026-11-18T12:00:00Z"), ...over,
 });
 
-test("BGP signs off a routine party only; anything else goes to KYC4U or waits", () => {
+test("BGP signs off a routine party; an enhanced one needs the officers' note (KYC4U is no longer used)", () => {
   assert.equal(signOffDenial(facts()), null);
   assert.match(signOffDenial(facts({ rejected: true }))!, /rejected by the Nominated Officer or KYC4U/);
   assert.match(signOffDenial(facts({ current: { by: "KYC4U", until: "2027-05-19T00:00:00Z" } }))!, /Already approved by KYC4U until 19 May 2027/);
   assert.match(signOffDenial(facts({ unchecked: ["the sanctions screening"] }))!, /could not be checked against the sanctions screening/);
-  assert.match(signOffDenial(facts({ withKyc4u: true }))!, /raised with KYC4U on this transaction/);
-  assert.match(signOffDenial(facts({ redFlags: 1 }))!, /needs enhanced due diligence \(a red flag or a higher-risk factor in the AML policy\): raise it with KYC4U/);
-  assert.match(signOffDenial(facts({ dealRedFlags: 2 }))!, /a red flag or a higher-risk factor on the transaction record/);
-  assert.match(signOffDenial(facts({ higherRisk: true }))!, /higher-risk file/);
+  // A KYC4U request made before 23 November 2026 holds nothing up; read as it stood before, it did.
+  assert.equal(signOffDenial(facts({ withKyc4u: true })), null);
+  assert.match(signOffDenial(facts({ withKyc4u: true, inHouseEdd: false }))!, /raised with KYC4U on this transaction/);
+  // Enhanced: the officers sign it off with a note of what was checked.
+  const enhanced = /Enhanced due diligence by BGP: say what was checked/;
+  assert.match(signOffDenial(facts({ redFlags: 1 }))!, enhanced);
+  assert.match(signOffDenial(facts({ dealRedFlags: 2 }))!, enhanced);
+  assert.match(signOffDenial(facts({ higherRisk: true }))!, enhanced);
+  assert.equal(signOffDenial(facts({ redFlags: 1, note: "Checked the adverse media: a namesake in another country, different date of birth." })), null);
   assert.match(signOffDenial(facts({ precheckRunning: true }))!, /still running/);
   assert.match(signOffDenial(facts({ precheck: null }))!, /have not run/);
   assert.match(signOffDenial(facts({ precheck: { ranAt: "2026-10-01T10:00:00Z" } }))!, /more than 30 days old/);
@@ -89,7 +94,7 @@ test("BGP signs off a routine party only; anything else goes to KYC4U or waits",
   assert.equal(signOffDenial(facts({ clientChecksFinished: false, note: "Listed plc, owners confirmed on the register" })), null);
   // A rejection is named before anything else, and a red flag before the paperwork.
   assert.match(signOffDenial(facts({ rejected: true, redFlags: 3, precheck: null }))!, /rejected/);
-  assert.match(signOffDenial(facts({ redFlags: 1, precheck: null }))!, /red flag/);
+  assert.match(signOffDenial(facts({ redFlags: 1, precheck: null }))!, /have not run/);
 });
 
 test("KYC4U's result: a known verdict and a real date, not in the future", () => {
@@ -171,8 +176,8 @@ test("the sign-off names the people still to send something (19 November 2026)",
   assert.equal(signOffDenial(facts({ clientChecksFinished: false, clientChecksOutstanding: ["Huseyn Mirhadiyev: proof of address"], note: "Owner verified by KYC4U on another deal" })), null);
 });
 
-test("BGP does not sign off a party owned through a company registered abroad: it goes to KYC4U", () => {
-  assert.match(signOffDenial(facts({ ownersAbroad: ["Example Holding A/S, Denmark"] }))!, /^Owned through a company registered abroad \(Example Holding A\/S, Denmark\): it goes to KYC4U/);
+test("a party owned through a company registered abroad is enhanced: the officers sign it off with a note", () => {
+  assert.match(signOffDenial(facts({ ownersAbroad: ["Example Holding A/S, Denmark"] }))!, /Enhanced due diligence by BGP: say what was checked/);
   assert.equal(signOffDenial(facts({ ownersAbroad: [] })), null);
   // Approved by KYC4U already: the approval is what is said.
   assert.match(signOffDenial(facts({ ownersAbroad: ["X, Denmark"], current: { by: "KYC4U", until: null } }))!, /^Already approved by KYC4U/);

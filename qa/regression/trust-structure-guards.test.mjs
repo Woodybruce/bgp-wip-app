@@ -28,10 +28,14 @@ test("a trust never goes to KYC4U: the Next line, the sign-off, the board and th
   const dash = read("server/aml-dashboard.ts");
   assert.match(dash, /const partyInHouse = inHouse \|\| isTrust;/);
   assert.match(dash, /inHouse: partyInHouse, jointAskedAt/);
-  assert.match(read("client/src/pages/aml-dashboard.tsx"), /!inHouseEdd && !row\.trust && amlNeedsKyc4u\(/);
-  assert.match(read("client/src/pages/deals.tsx"), /const inHouse = !!amlStepStatus\?\.decisions\?\.inHouseEdd \|\| flags\.some\(f => f\.kind === "policy_trust"\);/);
+  // KYC4U is no longer used for any party (23 November 2026): no red KYC4U
+  // mark on the board, and Kick off AML sends every party the client checks.
+  assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u/);
+  const deals = read("client/src/pages/deals.tsx");
+  assert.match(deals, /\{clientChecks && <SendClientChecksButton dealId=\{amlStep\.dealId\} companyId=\{p\.id\} partyName=\{p\.name\} label="Kick off AML" \/>\}/);
+  assert.doesNotMatch(deals, /Kyc4uRequestButton/);
   const box = read("client/src/components/deal-aml-status.tsx");
-  assert.match(box, /\{!kyc4uActive && !isTrust && <Kyc4uRequestButton/);
+  assert.doesNotMatch(box, /Kyc4uRequestButton/);
   assert.match(box, /<TrustStructurePanel companyId=\{cp\.id\} dealId=\{dealId\}/);
 });
 
@@ -90,7 +94,9 @@ test("Request trust structure: staff only, a client checks request marked for th
 
 test("a red flag is raised with the AML Officer by name while the officers check in-house (Jack, 23 November 2026)", () => {
   const box = read("client/src/components/deal-aml-status.tsx");
-  assert.match(box, /title=\{inHouse \? `Red flag: raise with \$\{officer\}` : "Red flag: raise with KYC4U"\}/);
+  // Always in-house since KYC4U's retirement (23 November 2026): no KYC4U branch.
+  assert.match(box, /title=\{`Red flag: raise with \$\{officer\}`\}/);
+  assert.doesNotMatch(box, /Red flag: raise with KYC4U/);
   assert.match(read("shared/aml-policy.ts"), /return first \? `AML Officer \(\$\{first\}\)` : "the AML Officer";/);
 });
 
@@ -111,7 +117,9 @@ test("certified copies are offered on every request and accepted only by the off
   assert.doesNotMatch(shared.match(/export const TRUST_REQUEST_DOCS[^\n]*/)[0], /certified_ids/);
   // Accepting is the officers' and takes only documents on that party's record.
   const route = read("server/deal-party-aml.ts");
-  assert.match(route, /router\.post\("\/api\/deals\/:id\/parties\/:role\/public-figure", deciderFirst, takeFiles/);
+  assert.match(route, /router\.post\("\/api\/deals\/:id\/parties\/:role\/certified-documents", deciderFirst, takeFiles, \(req: Request, res: Response\) => recordPersonVerified\(req, res, true\)\);/);
+  // The method comes from the route, never the request: the admin-only public route cannot record a certified one.
+  assert.doesNotMatch(route, /req\.body\?\.method/);
   assert.match(route, /FROM kyc_documents WHERE id::text = ANY\(\$1::text\[\]\) AND company_id = \$2/);
   assert.match(read("server/index.ts"), /ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text/);
   assert.doesNotMatch(read("client/src/components/kyc-client-checks.tsx").split("function CertifiedDocsDialog")[1].split("function PublicFigureLine")[0], /<form[\s>]/);

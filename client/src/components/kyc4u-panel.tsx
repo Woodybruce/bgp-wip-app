@@ -2,13 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Kyc4uArchiveCard } from "@/components/kyc4u-archive-card";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Loader2, ExternalLink, Bookmark, Upload, Plug, Unplug, RefreshCw, Copy, Download, CheckCircle2 } from "lucide-react";
+import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { KYC4U_FORM_FIELDS, KYC4U_PREPARED_STALE_DAYS, kyc4uDraftState } from "@shared/kyc4u-portal";
 
 // Runs on KYC4U's SharePoint in the user's own browser: reads the site's
 // lists through SharePoint's REST API with their guest session, then hands
@@ -124,50 +123,6 @@ export default function Kyc4uPanel() {
     queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/requests"] });
   };
 
-  // Back from Microsoft: KYC4U's admin approving the app, or a Connect sign-in.
-  useEffect(() => {
-    const note = new URLSearchParams(window.location.search).get("kyc4u");
-    if (!note) return;
-    toast(note === "connected"
-      ? { title: "KYC4U connected", description: "The first sync is running: requests and their documents appear here shortly." }
-      : /has approved/.test(note)
-        ? { title: "Approved", description: note }
-        : { title: "KYC4U sign-in didn't finish", description: note, variant: "destructive" });
-    const url = new URL(window.location.href);
-    url.searchParams.delete("kyc4u");
-    window.history.replaceState(null, "", url.pathname + url.search);
-  }, []);
-
-  // Connect (Woody, 18 November 2026): it works once KYC4U's IT admin has
-  // approved the app for their organisation, through the approval link below.
-  const connect = useMutation({
-    mutationFn: async () => (await apiRequest("GET", "/api/kyc4u/connect")).json(),
-    onSuccess: (r: any) => { if (r?.authUrl) window.location.href = r.authUrl; },
-    onError: (e: any) => toast({ title: "Couldn't start the sign-in", description: e?.message, variant: "destructive" }),
-  });
-  const sync = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/sync")).json(),
-    onSuccess: (r: any) => {
-      refresh();
-      toast({ title: "KYC4U synced", description: `${r.items} requests · ${r.matched} matched to CRM${r.documents ? ` · ${r.documents.copied} documents copied` : ""}` });
-    },
-    onError: (e: any) => { refresh(); toast({ title: "Sync failed", description: e?.message, variant: "destructive" }); },
-  });
-  const disconnect = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/kyc4u/disconnect"),
-    onSuccess: () => { refresh(); toast({ title: "KYC4U disconnected" }); },
-  });
-  const [consent, setConsent] = useState<{ url: string; permissions: string[] } | null>(null);
-  const consentLink = useMutation({
-    mutationFn: async () => (await apiRequest("GET", "/api/kyc4u/admin-consent-link")).json(),
-    onSuccess: async (r: any) => {
-      setConsent(r);
-      try { await navigator.clipboard.writeText(r.url); toast({ title: "Approval link copied", description: "Send it to KYC4U's IT admin." }); }
-      catch { toast({ title: "Approval link ready", description: "Copy it from the box below." }); }
-    },
-    onError: (e: any) => toast({ title: "No approval link", description: e?.message, variant: "destructive" }),
-  });
-
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
     return q ? requests.filter(r => [r.title, r.entityName, r.status, r.companyName].some(v => (v || "").toLowerCase().includes(q))) : requests;
@@ -184,7 +139,8 @@ export default function Kyc4uPanel() {
   return (
     <div className="p-4 lg:p-6 space-y-4 max-w-[1400px]" data-testid="kyc4u-panel">
       <section className="rounded-xl border bg-card p-4">
-        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">KYC4U requests</p>
+        <p className="text-[11px] uppercase tracking-widest text-muted-foreground">KYC4U: past checks</p>
+        <p className="text-sm mt-1" data-testid="kyc4u-retired">KYC4U is no longer used (since 23 November 2026). Enhanced checks are done by BGP's Nominated Officer and Deputies. KYC4U's past checks and every file copied from their site are kept here as records, and still count on each party.</p>
         <p className="text-sm mt-1">
           {status.lastImport ? <>Last sent {when(status.lastImport.at)} · </> : <>Nothing sent from KYC4U yet · </>}
           <span className="tabular-nums">{status.requests}</span> requests, <span className="tabular-nums">{status.matched}</span> matched to CRM
@@ -193,62 +149,9 @@ export default function Kyc4uPanel() {
       </section>
 
       {isAdmin && (
-        <section className="rounded-xl border bg-card p-4 space-y-3" data-testid="kyc4u-connect">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Automatic sync</p>
-              {status.connected ? (
-                <p className="text-sm mt-1" data-testid="kyc4u-connected">
-                  Connected as <strong>{status.username}</strong> · last sync {when(status.lastSyncAt)}
-                  {status.lastDocuments ? <> · documents: {status.lastDocuments.copied} copied, {status.lastDocuments.already} already held{status.lastDocuments.unmatched ? `, ${status.lastDocuments.unmatched} folders not matched to a company` : ""}</> : null}
-                </p>
-              ) : (
-                <p className="text-sm mt-1 text-muted-foreground" data-testid="kyc4u-not-connected">
-                  Not connected. Once connected, KYC4U's requests, their status and their documents come in every six hours, with no bookmark.
-                </p>
-              )}
-              {status.lastError && <p className="text-xs text-destructive mt-1 break-words">Last sync error: {status.lastError}</p>}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
-              {status.connected && (
-                <Button size="sm" variant="outline" className="rounded-full" onClick={() => sync.mutate()} disabled={sync.isPending} data-testid="button-kyc4u-sync">
-                  {sync.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1.5" />}Sync now
-                </Button>
-              )}
-              <Button size="sm" className="rounded-full" onClick={() => connect.mutate()} disabled={connect.isPending || status.connectable === false} data-testid="button-kyc4u-connect">
-                <Plug className="w-4 h-4 mr-1.5" />{status.connected ? "Reconnect" : "Connect KYC4U"}
-              </Button>
-              {status.connected && (
-                <Button size="sm" variant="ghost" className="rounded-full" onClick={() => disconnect.mutate()} data-testid="button-kyc4u-disconnect">
-                  <Unplug className="w-4 h-4 mr-1.5" />Disconnect
-                </Button>
-              )}
-            </div>
-          </div>
-          {!status.connected && (
-            <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-2">
-              <p>
-                Connect signs in with your BGP email, as a guest on KYC4U's site. Microsoft answers "Need admin approval" until KYC4U's IT admin approves the app once for their organisation:
-                send them the approval link. It asks only to read their site and to sign in, nothing else.
-              </p>
-              <Button size="sm" variant="outline" className="rounded-full h-7 text-xs" onClick={() => consentLink.mutate()} disabled={consentLink.isPending} data-testid="button-kyc4u-consent-link">
-                <Copy className="w-3.5 h-3.5 mr-1.5" />Copy the approval link for KYC4U's IT admin
-              </Button>
-              {consent && (
-                <div className="space-y-1" data-testid="kyc4u-consent-link">
-                  <Input readOnly value={consent.url} onFocus={e => e.currentTarget.select()} className="h-8 text-[11px] font-mono" />
-                  <p className="text-muted-foreground">It asks for: {consent.permissions.join("; ")}. Once they approve, press Connect KYC4U.</p>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-      )}
-
-      {isAdmin && (
         <section className="rounded-xl border bg-card p-4" data-testid="kyc4u-bookmark">
-          <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Send from KYC4U — no approval needed</p>
-          <p className="text-sm mt-1">Uses your own login to KYC4U's site, so their admin approval isn't needed.</p>
+          <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Copy KYC4U's records into the app</p>
+          <p className="text-sm mt-1">While BGP can still sign in to KYC4U's site, run the bookmark once more to bring across their latest statuses and any file the app does not hold yet. It uses your own login and only reads.</p>
           <ol className="text-sm mt-2 space-y-1 list-decimal pl-5">
             <li>Drag this button to your browser's bookmarks bar: <a ref={bookmarkRef} className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold cursor-grab no-underline" onClick={(e) => { e.preventDefault(); toast({ title: "Drag it to your bookmarks bar", description: "Then click it while you're on KYC4U's site." }); }} data-testid="link-kyc4u-bookmarklet"><Bookmark className="w-3 h-3" />Send to ChatBGP</a></li>
             <li>Open the <a href={status.site} target="_blank" rel="noopener" className="text-primary underline-offset-2 hover:underline">KYC4U site</a> and sign in as usual.</li>
@@ -305,10 +208,10 @@ export default function Kyc4uPanel() {
 }
 
 
-// KYC4U's own verdict, shown on the Compliance & KYC board and the deal KYC
-// panel. KYC4U runs the checks; this only reports what their grid says and
-// links to their record. Renders nothing when they hold no request for the
-// company (or for client logins — the server returns an empty list).
+// KYC4U's past verdicts on the company (KYC4U is no longer used since
+// 23 November 2026; its checks stay on record). This only reports what their
+// grid said and links to their record. Renders nothing when they held no
+// request for the company (or for client logins: the server returns none).
 interface Kyc4uCompanyRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; modifiedAt: string | null; createdAt: string | null; webUrl: string | null }
 function kyc4uTone(status: string | null): string {
   const s = (status || "").toLowerCase();
@@ -330,10 +233,10 @@ export function Kyc4uStatusStrip({ companyId }: { companyId: string }) {
   return (
     <div data-testid="kyc4u-status-strip">
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center justify-between gap-2">
-        <span>KYC4U</span>
+        <span>KYC4U's past checks</span>
         {data?.lastSyncAt && <span className="normal-case tracking-normal">synced {when(data.lastSyncAt)}</span>}
       </div>
-      {!requests.length && <p className="text-sm text-muted-foreground">No KYC4U request matched to this company yet.</p>}
+      {!requests.length && <p className="text-sm text-muted-foreground">KYC4U held no check on this company. KYC4U is no longer used.</p>}
       <ul className="space-y-1">
         {requests.slice(0, 4).map(r => (
           <li key={`${r.listId}:${r.itemId}`} className="flex items-start gap-2 text-sm">
@@ -362,18 +265,18 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
     onSuccess: () => {
       setOpen(false); setNote("");
       queryClient.invalidateQueries();
-      toast({ title: "KYC4U sign-off recorded", description: "Approved by KYC4U, BGP's outsourced KYC provider — the company's transactions update now." });
+      toast({ title: "KYC4U's past sign-off recorded", description: "Approved by KYC4U: the company's transactions update now." });
     },
     onError: (e: any) => toast({ title: "Couldn't record it", description: e?.message, variant: "destructive" }),
   });
   return (
     <>
-      <button type="button" className="mt-1 text-xs text-primary hover:underline" onClick={() => setOpen(true)} data-testid="button-kyc4u-signoff">Record KYC4U sign-off</button>
+      <button type="button" className="mt-1 text-xs text-primary hover:underline" onClick={() => setOpen(true)} data-testid="button-kyc4u-signoff">Record a past KYC4U sign-off</button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Record KYC4U sign-off</DialogTitle>
-            <DialogDescription>When KYC4U signed it off by email and it isn't on their status page yet.</DialogDescription>
+            <DialogTitle>Record a past KYC4U sign-off</DialogTitle>
+            <DialogDescription>When KYC4U signed it off by email before 23 November 2026 and it isn't on their status page.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="block text-sm">Signed off on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1" /></label>
@@ -386,217 +289,5 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
         </DialogContent>
       </Dialog>
     </>
-  );
-}
-
-// ── Request a KYC4U check (Woody, 2026-10-05) ───────────────────────────
-// Prepares KYC4U's "Raise New Service Request" form from the deal. The
-// Send to ChatBGP bookmark, clicked on that page, fills it in; the user
-// checks it and presses Submit there. KYC4U's status then shows above.
-export const KYC4U_FORM_URL = "https://kyc4ultd.sharepoint.com/sites/customers/CST1092/SitePages/Raise-New-Service-Request.aspx";
-type DraftFields = Record<string, string>;
-// KYC4U's own form, field by field (shared with the pack's request sheet).
-const DRAFT_FIELDS = KYC4U_FORM_FIELDS;
-
-// The pack for KYC4U's portal (Jack, 20 November 2026): the request sheet,
-// BGP's AML report and the documents, as one ZIP to type in and upload from.
-export async function downloadKyc4uPack(draftId: string): Promise<void> {
-  const res = await fetch(`/api/kyc4u/drafts/${draftId}/pack`, { headers: getAuthHeaders(), credentials: "include" });
-  if (!res.ok) {
-    let message = "The pack could not be made";
-    try { message = (await res.json()).message || message; } catch { /* keep the plain words */ }
-    throw new Error(message);
-  }
-  const blob = await res.blob();
-  const name = /filename\*=UTF-8''([^;]+)/.exec(res.headers.get("Content-Disposition") || "")?.[1];
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name ? decodeURIComponent(name) : "KYC4U request.zip";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
-export function Kyc4uPackButton({ draftId, className }: { draftId: string; className?: string }) {
-  const { toast } = useToast();
-  const [busy, setBusy] = useState(false);
-  return (
-    <Button type="button" size="sm" variant="outline" className={className || "h-7 text-xs bg-background"} disabled={busy} data-testid={`kyc4u-pack-${draftId}`}
-      onClick={async () => {
-        setBusy(true);
-        try { await downloadKyc4uPack(draftId); } catch (e: any) { toast({ title: "Pack not downloaded", description: e?.message, variant: "destructive" }); }
-        finally { setBusy(false); }
-      }}>
-      {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1" />}Download the pack for KYC4U
-    </Button>
-  );
-}
-
-// Submitted on KYC4U's portal: KYC4U's reference (their REQ number) and the
-// date. Clears the red mark: the party is then with KYC4U.
-export function Kyc4uSubmittedButton({ dealId, companyId, role, partyName, className }: { dealId?: string; companyId: string; role?: string; partyName: string; className?: string }) {
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  const [reference, setReference] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/submitted", { dealId, companyId, role, reference, date })).json(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
-      if (dealId) queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith(`/api/kyc/deal/${dealId}`) || String(q.queryKey[0] || "").startsWith("/api/aml-dashboard") });
-      setOpen(false);
-      toast({ title: "Recorded as with KYC4U", description: reference ? `KYC4U reference ${reference}` : undefined });
-    },
-    onError: (e: any) => toast({ title: "Not recorded", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
-  });
-  return (
-    <>
-      <Button type="button" size="sm" className={className || "h-7 text-xs"} onClick={() => setOpen(true)} data-testid={`kyc4u-submitted-${companyId}`}>
-        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />Submitted on KYC4U's portal
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Submitted on KYC4U's portal: {partyName}</DialogTitle>
-            <DialogDescription>Once it's submitted on KYC4U's portal.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium" htmlFor={`kyc4u-ref-${companyId}`}>KYC4U's reference (their REQ number, if shown)</label>
-              <Input id={`kyc4u-ref-${companyId}`} className="mt-1" value={reference} placeholder="e.g. REQ01234" onChange={e => setReference(e.target.value)} data-testid="kyc4u-submitted-ref" />
-            </div>
-            <div>
-              <label className="text-xs font-medium" htmlFor={`kyc4u-date-${companyId}`}>Submitted on</label>
-              <Input id={`kyc4u-date-${companyId}`} type="date" className="mt-1" value={date} max={new Date().toISOString().slice(0, 10)} onChange={e => setDate(e.target.value)} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => save.mutate()} disabled={save.isPending || !date} data-testid="kyc4u-submitted-save">
-              {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Record it
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-// buttonOnly: the button and its dialog, without the status line (the AML
-// box's Next line, where the KYC4U row beside it already says where it stands).
-export function Kyc4uRequestButton({ dealId, companyId, role, partyName, label = "Request KYC4U check", buttonOnly, quiet }: { dealId?: string; companyId: string; role?: string; partyName: string; label?: string; buttonOnly?: boolean; quiet?: boolean }) {
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  const [fields, setFields] = useState<DraftFields>({});
-  const [docIds, setDocIds] = useState<string[]>([]);
-  const prefill = useQuery<{ fields: DraftFields; docs: Array<{ id: string; doc_type: string; file_name: string; file_size: number | null }> }>({
-    queryKey: ["/api/kyc4u/drafts/prefill", dealId, companyId, role],
-    queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts/prefill?${new URLSearchParams({ dealId: dealId || "", companyId, role: role || "" })}`)).json(),
-    enabled: open,
-  });
-  useEffect(() => { if (open && prefill.data) { setFields(prefill.data.fields); setDocIds(prefill.data.docs.map(d => d.id)); } }, [open, prefill.data]);
-  const drafts = useQuery<any[]>({
-    queryKey: ["/api/kyc4u/drafts", dealId, companyId],
-    queryFn: async () => (await apiRequest("GET", `/api/kyc4u/drafts?${new URLSearchParams({ ...(dealId ? { dealId } : {}), companyId })}`)).json(),
-  });
-  const [savedId, setSavedId] = useState<string | null>(null);
-  useEffect(() => { if (!open) setSavedId(null); }, [open]);
-  const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/kyc4u/drafts", { dealId, companyId, role, fields, docIds })).json(),
-    // Jack, 20 November 2026: the orange button downloads the pack itself.
-    onSuccess: async (d: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] });
-      const id = d?.id ? String(d.id) : null;
-      setSavedId(id);
-      if (id) {
-        try { await downloadKyc4uPack(id); }
-        catch (e: any) { toast({ title: "The pack did not download", description: `${e?.message || e}. Press Download it again.`, variant: "destructive" }); }
-      }
-    },
-    onError: (e: any) => toast({ title: "Couldn't prepare the request", description: e?.message, variant: "destructive" }),
-  });
-  const setStatus = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: string }) => apiRequest("PATCH", `/api/kyc4u/drafts/${id}`, { status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/drafts", dealId, companyId] }),
-  });
-  const latest = (drafts.data || []).find(d => d.status !== "cancelled");
-  const latestState = kyc4uDraftState(latest);
-  const companyReqs = useQuery<{ requests: Kyc4uCompanyRequest[] }>({ queryKey: ["/api/kyc4u/company", companyId], enabled: !!companyId, staleTime: 5 * 60_000 });
-  const req = companyReqs.data?.requests?.[0];
-  const missingRequired = DRAFT_FIELDS.filter(f => f.required && f.key !== "requestType" && !(fields[f.key] || "").trim()).map(f => f.label);
-
-  return (
-    <div className="space-y-1" data-testid={`kyc4u-request-${companyId}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={quiet ? "ghost" : "outline"} className={quiet ? "h-7 px-2 text-xs" : "h-8 rounded-full"} onClick={() => setOpen(true)} data-testid="button-kyc4u-request">
-          <Upload className="w-3.5 h-3.5 mr-1.5" />{label}
-        </Button>
-        {buttonOnly ? null : <>
-        {!latest && req && <span className="text-xs text-muted-foreground">KYC4U · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(req.status)}`}>{req.status || "No status yet"}</span>{req.webUrl && <> · <a href={req.webUrl} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
-        {!latest && !req && companyReqs.isFetched && <span className="rounded-full px-2 py-0.5 text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" data-testid="flag-not-raised-kyc4u">Not raised with KYC4U</span>}
-        {latestState === "prepared" && <span className="text-xs text-muted-foreground">Prepared, not yet submitted on KYC4U's portal · <a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer" className="underline">open the portal</a> · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "cancelled" })}>cancel</button></span>}
-        {latestState === "stale" && <span className="text-xs text-muted-foreground" data-testid="kyc4u-stale">Prepared {when(latest.created_at)} and never submitted (over {KYC4U_PREPARED_STALE_DAYS} days) · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "cancelled" })}>cancel it</button></span>}
-        {latest?.status === "submitted" && <span className="text-xs text-muted-foreground">With KYC4U{latest.submitted_at ? ` since ${when(latest.submitted_at)}` : ""}{latest.submitted_ref ? ` · ref ${latest.submitted_ref}` : ""} · <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${kyc4uTone(latest.request_status)}`}>{latest.request_status || "No status yet"}</span>{latest.request_url && <> · <a href={latest.request_url} target="_blank" rel="noopener noreferrer" className="underline">open their record</a></>}</span>}
-        {latest?.status === "filled" && <span className="text-xs text-muted-foreground">Filled on KYC4U's form {when(latest.filled_at)} — once submitted there, their status shows here after the next sync · <button type="button" className="underline" onClick={() => setStatus.mutate({ id: latest.id, status: "queued" })}>fill again</button></span>}
-        </>}
-      </div>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Request a KYC4U check — {partyName}</DialogTitle>
-            <DialogDescription>{savedId ? "Prepared. KYC4U take requests only on their portal." : "KYC4U's form, filled in from the transaction. Check it, then download the pack."}</DialogDescription>
-          </DialogHeader>
-          {savedId ? (
-            <ol className="space-y-3 text-sm" data-testid="kyc4u-next-steps">
-              <li><span className="font-medium">1. The pack has downloaded.</span> Not there? Download it again.
-                <div className="mt-1.5"><Kyc4uPackButton draftId={savedId} className="h-8" /></div></li>
-              <li><span className="font-medium">2. Raise it on KYC4U's portal</span> with the sheet's answers and the documents.
-                <div className="mt-1.5"><Button size="sm" variant="outline" className="h-8" asChild><a href={KYC4U_FORM_URL} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-3.5 h-3.5 mr-1" />Open KYC4U's portal</a></Button></div></li>
-              <li><span className="font-medium">3. Record it here</span> with KYC4U's reference.
-                <div className="mt-1.5"><Kyc4uSubmittedButton dealId={dealId} companyId={companyId} role={role} partyName={partyName} className="h-8" /></div></li>
-            </ol>
-          ) : prefill.isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Filling from the transaction…</p> : <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {DRAFT_FIELDS.map(f => (
-              <div key={f.key} className={f.long || f.key === "propertyAddress" || f.key === "note" ? "sm:col-span-2" : ""}>
-                <label className="text-xs font-medium" htmlFor={`kyc4u-${f.key}`}>{f.label}{f.required ? " *" : ""}</label>
-                {f.key === "metFaceToFace" ? (
-                  <select id={`kyc4u-${f.key}`} className="mt-1 w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))}>
-                    <option value="">Choose…</option><option value="Yes">Yes</option><option value="No">No</option>
-                  </select>
-                ) : f.long ? (
-                  <textarea id={`kyc4u-${f.key}`} className="mt-1 w-full min-h-20 rounded-md border border-input bg-background p-2 text-sm" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))} />
-                ) : (
-                  <Input id={`kyc4u-${f.key}`} type={f.type || "text"} className="mt-1 min-h-11" value={fields[f.key] || ""} onChange={e => setFields(v => ({ ...v, [f.key]: e.target.value }))} />
-                )}
-                {f.hint && <p className="text-[11px] text-muted-foreground mt-0.5">{f.hint}</p>}
-              </div>
-            ))}
-            {!!prefill.data?.docs?.length && <div className="sm:col-span-2">
-              <p className="text-xs font-medium">Documents to put in the pack</p>
-              <div className="mt-1 space-y-1">
-                {prefill.data.docs.map(d => (
-                  <label key={d.id} className="flex items-center gap-2 text-sm min-h-9">
-                    <input type="checkbox" checked={docIds.includes(d.id)}
-                      onChange={e => setDocIds(ids => e.target.checked ? [...ids, d.id] : ids.filter(x => x !== d.id))} />
-                    <span className="truncate">{d.file_name}</span><span className="text-xs text-muted-foreground shrink-0">{d.doc_type}</span>
-                  </label>
-                ))}
-              </div>
-            </div>}
-          </div>}
-          {!savedId && missingRequired.length > 0 && <p className="text-xs text-muted-foreground">Still to fill: {missingRequired.join(", ")}. You can also complete these on KYC4U's form.</p>}
-          <DialogFooter>
-            {savedId ? <Button variant="outline" onClick={() => setOpen(false)}>Done</Button> : <>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => save.mutate()} disabled={save.isPending || !(fields.partyName || "").trim()} data-testid="button-kyc4u-request-save">
-              {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1.5" />}{save.isPending ? "Making the pack…" : "Download for KYC4U"}
-            </Button></>}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }

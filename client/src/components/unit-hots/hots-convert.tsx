@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { EntityCombobox } from "@/components/entity-combobox";
-import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
@@ -187,7 +187,7 @@ export function HotsConversionResult({ conversion, isStaff }: { conversion: Hots
           </p>
         )}
         {isStaff && conversion.tenantCompanyId && conversion.tenantName && (
-          <Kyc4uRequestButton dealId={conversion.dealId} companyId={conversion.tenantCompanyId} role="tenant" partyName={conversion.tenantName} />
+          <SendClientChecksButton dealId={conversion.dealId} companyId={conversion.tenantCompanyId} partyName={conversion.tenantName} label="Send the tenant the client checks" />
         )}
       </div>
     </div>

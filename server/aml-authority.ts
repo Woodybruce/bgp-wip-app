@@ -24,31 +24,18 @@ export type AmlActor = {
 
 export const DEPUTY_SETTING_KEY = "aml_deputy_officer";
 
-// In-house enhanced due diligence (Woody, 21 November 2026: "I'm trying to
-// set this up without using kyc4u"). ON unless the Nominated Officer or a
-// Deputy switch it off (PUT /api/aml-policy/in-house-edd): Jack, 23 November
-// 2026, "we are breaking away from them unless super complex situations
-// which ill make call on". While on, the
-// officers sign off an enhanced, trust or owned-abroad party themselves, with
-// a note of what was checked, instead of sending it to KYC4U.
-export const IN_HOUSE_EDD_KEY = "aml_in_house_edd";
+// Enhanced due diligence is BGP's own: KYC4U is no longer used (Woody,
+// 23 November 2026: "We are no longer using KYC 4U update the app accross
+// everyhting"). The officers sign off an enhanced, trust or owned-abroad
+// party themselves, with a note of what was checked. Until then it was a
+// switch the officers turned on (21 November 2026); the setting it was kept
+// in (system_settings.aml_in_house_edd) is no longer read. KYC4U's past
+// results, documents and copied files stay on record and still count.
+import { KYC4U_RETIRED_ON } from "@shared/kyc4u-portal";
+export { KYC4U_RETIRED_ON };
 export interface InHouseEdd { on: boolean; by: string | null; at: string | null }
-let inHouseEddCache: { at: number; value: InHouseEdd } | null = null;
 export async function readInHouseEdd(): Promise<InHouseEdd> {
-  if (inHouseEddCache && Date.now() - inHouseEddCache.at < 15_000) return inHouseEddCache.value;
-  const v = await pool.query("SELECT value FROM system_settings WHERE key = $1", [IN_HOUSE_EDD_KEY]).then(r => r.rows[0]?.value || null).catch(() => null);
-  const value: InHouseEdd = { on: v ? v.on !== false : true, by: typeof v?.byName === "string" ? v.byName : null, at: typeof v?.at === "string" ? v.at : null };
-  inHouseEddCache = { at: Date.now(), value };
-  return value;
-}
-export async function writeInHouseEdd(on: boolean, by: { id: string; name: string }): Promise<InHouseEdd> {
-  const value = { on, by: by.id, byName: by.name, at: new Date().toISOString() };
-  await pool.query(
-    `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [IN_HOUSE_EDD_KEY, JSON.stringify(value)]);
-  inHouseEddCache = null;
-  console.log(`[aml-policy] in-house enhanced due diligence switched ${on ? "on" : "off"} by ${by.name}`);
-  return { on, by: by.name, at: value.at };
+  return { on: true, by: null, at: `${KYC4U_RETIRED_ON}T00:00:00.000Z` };
 }
 
 export function requestUserId(req: Request): string | null {

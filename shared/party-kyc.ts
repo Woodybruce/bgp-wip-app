@@ -110,11 +110,11 @@ export interface SignOffFacts {
   // Another firm's checks the officers rely on (MLR 2017 reg 39), in words:
   // they stand in for the client checks, so no note is asked for.
   reliance?: string | null;
-  // In-house enhanced due diligence (Woody, 21 November 2026: "I'm trying to
-  // set this up without using kyc4u"): with the officers' setting on, the
+  // Enhanced due diligence by BGP's officers (always, since KYC4U stopped being
+  // used on 23 November 2026; false reads a file as it stood before): the
   // Nominated Officer or a Deputy signs off an enhanced party themselves, with
-  // a note of what was checked, in place of KYC4U's result. A possible
-  // sanctions match must be resolved first: no one deals with a designated person.
+  // a note of what was checked. A possible sanctions match must be resolved
+  // first: no one deals with a designated person.
   inHouseEdd?: boolean;
   sanctionsFlags?: number;
   // Recorded as a trust: checked in-house by the officers, never KYC4U, and
@@ -146,8 +146,10 @@ export function signOffDenial(input: SignOffFacts): string | null {
   // With the officers doing enhanced checks in-house, an open KYC4U request
   // no longer holds the party (Woody, 22 November 2026: "I dont actually think
   // KYC4U is doing anything we cant").
-  if (f.withKyc4u && !f.inHouseEdd) return "This party was raised with KYC4U on this transaction: add KYC4U's result when it comes back.";
-  const edd = signOffEnhanced(f) && !!f.inHouseEdd;
+  // KYC4U is no longer used (Woody, 23 November 2026): enhanced due diligence
+  // is the officers' own unless a caller reads a file as it stood before.
+  if (f.withKyc4u && f.inHouseEdd === false) return "This party was raised with KYC4U on this transaction: add KYC4U's result when it comes back.";
+  const edd = signOffEnhanced(f) && f.inHouseEdd !== false;
   if (edd && (f.sanctionsFlags || 0) > 0) return "A possible sanctions match stands: check whether it is the person or company, then set it aside with a comment if it is not, or tell the Nominated Officer (an OFSI report and legal advice follow) before going any further.";
   if (edd) {
     // Enhanced due diligence by BGP: the same freshness rules, then the officer's note.

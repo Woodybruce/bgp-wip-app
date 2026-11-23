@@ -119,11 +119,11 @@ function Facts({ rows }: { rows: Fact[] }) {
   );
 }
 
-// KYC4U's words for the brand's check (crm_companies.kyc_status); anything else is shown as stored.
+// Words for the brand's KYC check (crm_companies.kyc_status); anything else is shown as stored.
 const KYC_WORDS: Record<string, string> = { pending: "pending", in_review: "in review", approved: "approved", rejected: "rejected", expired: "expired", not_found: "no record found" };
 
 // For BGP staff (the server sends a client none of this): the company on the
-// lease, or that none is recorded, and the brand's KYC4U check. Plain text.
+// lease, or that none is recorded, and the brand's KYC check. Plain text.
 function LeaseCompanyLines({ propertyId, unit }: { propertyId: string; unit: PropertyUnit }) {
   const { tenant } = unit;
   const rowId = unit.scheduleRowId;
@@ -151,8 +151,8 @@ function LeaseCompanyLines({ propertyId, unit }: { propertyId: string; unit: Pro
       {kyc && (
         <p className={line} data-testid="property-unit-kyc">
           {kycStatus
-            ? <>KYC4U: {kycStatus}{kyc.expiresAt && <>, expires <span className={figure}>{shortDate(kyc.expiresAt, true)}</span></>} (on the brand, not the company on the lease)</>
-            : "KYC4U: not checked on the brand"}
+            ? <>KYC: {kycStatus}{kyc.expiresAt && <>, expires <span className={figure}>{shortDate(kyc.expiresAt, true)}</span></>} (on the brand, not the company on the lease)</>
+            : "KYC: not checked on the brand"}
         </p>
       )}
     </>

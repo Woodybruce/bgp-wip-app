@@ -55,11 +55,11 @@ test("the records table is in the boot migrations, five-year deletion and compan
   assert.match(read("server/brand-dedupe.ts"), /\{ table: "kyc_abroad_records",\s+column: "company_id" \}/);
 });
 
-test("a party owned from abroad still goes to KYC4U: the trace gathers, it does not decide", () => {
+test("a party owned from abroad is the officers' (KYC4U is no longer used): the trace gathers, it does not decide", () => {
   const box = read("shared/aml-box.ts");
   assert.match(box, /ownersAbroad/);
   assert.match(read("shared/party-kyc.ts"), /ownersAbroad/);
   const ui = read("client/src/components/aml-abroad.tsx");
-  // Off, the trace goes into KYC4U's note; in-house (22 November 2026), only the AML file.
-  assert.match(ui, /What is traced and recorded here goes into the AML file\{inHouse \? "" : " and KYC4U's note"\}/);
+  assert.match(ui, /What is traced and recorded here goes into the AML file\./);
+  assert.doesNotMatch(ui, /KYC4U's note/);
 });

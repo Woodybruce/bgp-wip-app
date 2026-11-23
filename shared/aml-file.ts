@@ -3,7 +3,7 @@
 // then send to HMRC if asked? Also we can send to KYC4U"). Pure: the file is
 // made by server/aml-file.ts.
 
-/** The report, filed on a party's KYC record for KYC4U. */
+/** The report, filed on a party's KYC record (for KYC4U until 23 November 2026). */
 export const AML_FILE_DOC_TYPE = "aml_file";
 
 const DOC_WORDS: Record<string, string> = {

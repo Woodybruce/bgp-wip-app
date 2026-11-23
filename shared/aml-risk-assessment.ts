@@ -102,7 +102,7 @@ const day = (v: unknown): string => {
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 const flagText = (f: KycRedFlag) => `${f.factor ? "Higher-risk factor" : "Red flag"}: ${f.label}`;
 
-/** Which of KYC4U's four risk headings a flag sits under. */
+/** Which of the four risk headings a flag sits under. */
 export function riskHeadingOf(f: Pick<KycRedFlag, "kind" | "label" | "key">): RiskHeading["factor"] {
   const words = `${f.label} ${f.key}`;
   if (f.kind === "client_pep" || f.kind === "web_pep" || f.kind === "screening") return "pep";
@@ -146,7 +146,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const risks: RiskHeading[] = [
     heading("client", "Client risk indicators", [], p.precheckRan ? "No client risk found by BGP's checks" : "BGP's checks have not run yet"),
     heading("geographic", "Geographic risk indicators",
-      abroad.map(a => `Owned through ${a.name}, registered in ${a.country}${isOffshoreCountry(a.country) ? " (a secrecy or higher-risk place)" : ""}: KYC4U to identify the owners behind it`),
+      abroad.map(a => `Owned through ${a.name}, registered in ${a.country}${isOffshoreCountry(a.country) ? " (a secrecy or higher-risk place)" : ""}: the officers identify the owners behind it`),
       c ? "UK company, owners and directors as the register gives them" : undefined),
     heading("other", "Other risk indicators", [...(p.level?.toWeigh || []).map(t => `To weigh: ${t}`)], "None found"),
     heading("pep", "PEP involved", [], screened ? "No PEP involved: none found by the sanctions, PEP and web screening" : "Not screened yet"),
@@ -159,7 +159,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const structureChart: RiskRow = p.individual ? { label: "Structure chart", value: "Not applicable: a private individual", tone: "info" }
     : c?.listing ? { label: "Structure chart", value: "Not required: listed on a regulated market (MLR 2017 reg 28(5))", tone: "ok" }
     : docsDone("ownership") || hasDoc("structure_chart") ? { label: "Structure chart", value: "Received", tone: "ok" }
-    : abroad.length ? { label: "Structure chart", value: `Needed: owned through ${abroad.map(a => `${a.name} (${a.country})`).join(" and ")}; KYC4U to identify the owners`, tone: "attention" }
+    : abroad.length ? { label: "Structure chart", value: `Needed: owned through ${abroad.map(a => `${a.name} (${a.country})`).join(" and ")}; the officers identify the owners`, tone: "attention" }
     : c?.chain?.length ? { label: "Structure chart", value: `Read from Companies House: ${[c.name, ...c.chain].join(" > ")}`, tone: "ok" }
     : c ? { label: "Structure chart", value: c.owners.length ? "Not required: a simple structure, the owners on the Companies House register" : `Not required, but the register names no owners: ${c.ownerNote || "ask who owns or controls it"}`, tone: c.owners.length ? "ok" : "attention" }
     : { label: "Structure chart", value: "Not known yet: the register has not been read", tone: "info" };
@@ -232,7 +232,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
           ...mine.filter(r => r.kind === "person" && r.personName).map(r => `Recorded behind it: ${r.personName}${r.detail ? ` (${r.detail})` : ""}, by ${r.by}, ${day(r.at)}`),
           ...mine.filter(r => r.kind === "register_page" || r.kind === "document").map(r => `${r.kind === "register_page" ? "Its register page, copied to PDF" : "A register extract"}, filed by ${r.by}, ${day(r.at)}`),
           ...mine.filter(r => r.kind === "note" && r.note).map(r => `Note by ${r.by}, ${day(r.at)}: ${r.note}`),
-          "Registered abroad: Companies House cannot show who owns it. KYC4U to identify the owners from its home register",
+          "Registered abroad: Companies House cannot show who owns it. The officers identify the owners from its home register",
         ],
       });
     }
@@ -288,7 +288,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   });
   const ownersNote = p.individual ? "A private individual: the people named on the transaction."
     : c?.listing ? "Listed on a regulated market: no beneficial owners to identify (MLR 2017 reg 28(5))."
-    : abroad.length && !ownerRows.length ? "The owners are behind a company registered abroad: KYC4U to identify them."
+    : abroad.length && !ownerRows.length ? "The owners are behind a company registered abroad: the officers identify them."
     : !ownerRows.length ? (c ? "The register names no person who owns or controls the company." : "Not known yet: the register has not been read.")
     : null;
 
@@ -311,8 +311,8 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   if (p.notRequired) conclusion.push(`No checks are needed on this party: ${p.notRequired.reasonWords}.`);
   else if (status === "rejected") conclusion.push("Rejected: BGP does not go ahead with this party unless the Nominated Officer says otherwise.");
   else if (approvedNow) conclusion.push(`Approved${p.state?.approvedBy ? ` by ${p.state.approvedBy}` : ""}${p.state?.approvedAt ? ` on ${day(p.state.approvedAt)}` : ""}${p.state?.expiresAt ? `, valid until ${day(p.state.expiresAt)}` : ""}.`);
-  else if (live.length || p.trust) conclusion.push(`Higher risk: ${live.length ? `${live.length} red flag${live.length === 1 ? "" : "s"} or higher-risk factor${live.length === 1 ? "" : "s"}` : "a trust"}. Enhanced due diligence: ${input.inHouse ? "the Nominated Officer or a Deputy reviews the checks and signs it off." : "KYC4U's checks, and the Nominated Officer or a Deputy approves the result."}`);
-  else if (abroad.length) conclusion.push(input.inHouse ? "Owned through a company registered abroad: the officers identify the people behind it, then the Nominated Officer or a Deputy signs it off." : "Owned through a company registered abroad: it goes to KYC4U to identify the owners; the Nominated Officer or a Deputy adds KYC4U's result.");
+  else if (live.length || p.trust) conclusion.push(`Higher risk: ${live.length ? `${live.length} red flag${live.length === 1 ? "" : "s"} or higher-risk factor${live.length === 1 ? "" : "s"}` : "a trust"}. Enhanced due diligence: ${(input.inHouse !== false) ? "the Nominated Officer or a Deputy reviews the checks and signs it off." : "KYC4U's checks, and the Nominated Officer or a Deputy approves the result."}`);
+  else if (abroad.length) conclusion.push((input.inHouse !== false) ? "Owned through a company registered abroad: the officers identify the people behind it, then the Nominated Officer or a Deputy signs it off." : "Owned through a company registered abroad: it goes to KYC4U to identify the owners; the Nominated Officer or a Deputy adds KYC4U's result.");
   else if (outstanding.length) conclusion.push(`Not concluded: still to come: ${outstanding.join("; ")}.`);
   else if (!p.precheckRan) conclusion.push("Not concluded: BGP's checks before asking have not run.");
   else conclusion.push("Lower risk: no higher-risk factors identified and the checks asked for are in; ready for sign-off.");
@@ -337,7 +337,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const k = p.kyc4u;
   const kyc4uApproval = k?.assessment?.approvals?.find(a => a.team === "kyc4u") || null;
   const approvals: RiskRow[] = [
-    ...(input.inHouse && !k ? [] : [{ label: "KYC4U internal approval", value: kyc4uApproval?.date ? `${kyc4uApproval.approver || "KYC4U"}, ${day(kyc4uApproval.date)}` : k?.status ? `${k.status}${k.at ? `, ${day(k.at)}` : ""}` : "Not raised with KYC4U", tone: "info" as const }]),
+    ...((input.inHouse !== false) && !k ? [] : [{ label: "KYC4U internal approval", value: kyc4uApproval?.date ? `${kyc4uApproval.approver || "KYC4U"}, ${day(kyc4uApproval.date)}` : k?.status ? `${k.status}${k.at ? `, ${day(k.at)}` : ""}` : "Not raised with KYC4U", tone: "info" as const }]),
     {
       label: "Approved on the file",
       value: !approvedNow ? (status === "rejected" ? "Rejected" : "Not approved yet")

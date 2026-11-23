@@ -116,11 +116,12 @@ test("a listed company is not asked for an owners chart or owner IDs", () => {
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
   assert.equal(asks.confirmOwners, null);
-  // Through a parent, and a market abroad: KYC4U to confirm the market.
+  // Through a parent, and a market abroad: the officers confirm the chain and the market (KYC4U is no longer used).
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
     { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
   assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
-  assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*KYC4U to confirm/);
+  assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*The officers confirm the chain\. The officers confirm the market/);
+  assert.doesNotMatch(viaParent.notAsked[0].reason, /KYC4U/);
 });
 
 test("owners on the register are confirmed, not drawn; a director is not asked for authority", () => {
@@ -365,7 +366,9 @@ const caMatch = (over: Record<string, any>) => ({ name: "Jane Doe", kind: "pep",
 
 test("which ComplyAdvantage matches are red flags: sanctions always, the rest over the bars or on an agreeing birth year", () => {
   assert.equal(providerMatchFlags(caMatch({ kind: "sanctions", score: 0.1 })), true, "sanctions, whatever the score");
-  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: null })), true, "a warning list, whatever the score");
+  // A warning list is judged as anything else since 23 November 2026 ("buffalo bill restaurant", 20%, against BILLS RESTAURANTS LTD.).
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 })), false, "a warning list at 20%: a possible namesake");
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.9 })), true, "a warning list at 90%");
   assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.59 })), false);
   assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.6 })), true, "60% for a public role");
   assert.equal(providerMatchFlags(caMatch({ kind: "adverse_media", score: 0.89 })), false);
@@ -393,9 +396,9 @@ test("a person screened with their date of birth is flagged only on a profile wh
   assert.equal(providerMatchFlags(caMatch({ kind: "pep", score: 0.7 }), undated), true);
   assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.7 }), undated), false);
   assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.9 }), undated), true);
-  // A company, and a check from before this change, keep the earlier rule.
-  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 }), { person: false, dobKnown: false }), true);
-  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 })), true);
+  // A company: a warning list over the 90% bar only (23 November 2026).
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.2 }), { person: false, dobKnown: false }), false);
+  assert.equal(providerMatchFlags(caMatch({ kind: "warning", score: 0.95 }), { person: false, dobKnown: false }), true);
   const run = result({ complyAdvantage: { ran: true, skipped: null, lines: [
     { ...caLine("BENTLEY-SMITH, Rupert", [caMatch({ name: "rupert smith", kind: "pep", score: 0.7, profileId: "p-rs" })]), ...dated },
     { ...caLine("Mr David Bruce", [caMatch({ name: "david g bruce", kind: "warning", score: 0.7, profileId: "p-db" }), caMatch({ name: "david bruce", kind: "adverse_media", score: 0.7, profileId: "p-db2", birthYearAgrees: true })]), ...dated },
@@ -750,4 +753,23 @@ test("Companies House's open-ended date, 9999-12-31, is no date (21 November 202
   assert.equal(idvState({ verifiedOn: null, statementOn: null, dueOn: null, endedOn: "9999-12-31" }).words, "no identity verification shown by Companies House", "a stored check reads the same");
   assert.equal(idvState({ verifiedOn: null, statementOn: "2025-08-04", dueOn: null, endedOn: "9999-12-31" }).state, "verified");
   assert.match(idvState({ verifiedOn: null, statementOn: "2025-08-04", dueOn: null, endedOn: "2026-01-02" }).words, /removed/);
+});
+
+// Woody, 23 November 2026, on BILLS RESTAURANTS LTD.: "why is it picking up adversea media on buffalow bills
+// restruants its a waste if time". Two warning-list profiles at 20%, neither spelt as the company.
+test("a company's warning-list profiles spelt differently are set aside; sanctions never are", () => {
+  const line = { ...caLine("BILLS RESTAURANTS LTD.", [
+    caMatch({ name: "buffalo bill restaurant", kind: "warning", source: "Ireland Revenue Defaulters List", score: 0.2, profileId: "p-bb" }),
+    caMatch({ name: "bilas tandoori spice night restaurant", kind: "warning", source: "United Kingdom Insolvency Service Disqualified Directors", score: 0.2, profileId: "p-bt" }),
+    caMatch({ name: "bills restaurants limited", kind: "warning", source: "A list", score: 0.95, profileId: "p-own" }),
+    caMatch({ name: "buffalo bill restaurant", kind: "sanctions", source: "A sanctions list", score: 0.2, profileId: "p-sx" }),
+  ]), person: false };
+  const split = splitProviderMatches(line as any);
+  assert.deepEqual(split.variants.map(m => m.profileId), ["p-bb", "p-bt"]);
+  assert.deepEqual(split.flagged.map(m => m.profileId).sort(), ["p-own", "p-sx"], "its own name at 95%, and sanctions at any score");
+  // A person's warning list is never set aside on spelling: the bars (or the date of birth) decide.
+  const person = { ...caLine("Jane Doe", [caMatch({ name: "jayne dough", kind: "warning", score: 0.2, profileId: "p-jd" })]), person: true, dobKnown: false };
+  const ps = splitProviderMatches(person as any);
+  assert.deepEqual(ps.variants, []);
+  assert.deepEqual(ps.namesakes.map(m => m.profileId), ["p-jd"]);
 });
