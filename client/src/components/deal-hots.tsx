@@ -10,6 +10,7 @@ import { Suspense, lazy, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
@@ -39,6 +40,45 @@ function refreshAll(dealId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId] });
 }
 
+// Reads the heads of terms as a file, or a note typed in the box, and holds
+// the dialog that shows what was read. onOpenChange tells a dialog underneath
+// (the party box) that this one is open over it.
+function useHotsReader(dealId: string, opts: { inEditor?: boolean; onOpenChange?: (open: boolean) => void } = {}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [reply, setReply] = useState<HotsReadReply | null>(null);
+
+  const read = async (what: { file: File } | { text: string }): Promise<boolean> => {
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      if ("file" in what) fd.append("file", what.file);
+      else fd.append("text", what.text);
+      const r = await fetch(`/api/deals/${dealId}/heads-of-terms/read`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.message || `Not read (${r.status})`);
+      setFile("file" in what ? what.file : null);
+      setReply(data as HotsReadReply);
+      opts.onOpenChange?.(true);
+      return true;
+    } catch (e) {
+      toast({ title: "file" in what ? "Couldn't read the heads of terms" : "Couldn't read that", description: plain(e), variant: "destructive" });
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dialog = reply ? (
+    <DealHotsDialog dealId={dealId} file={file} reply={reply} onReply={setReply} inEditor={!!opts.inEditor}
+      onClose={() => { setReply(null); setFile(null); opts.onOpenChange?.(false); }} />
+  ) : null;
+  return { busy, read, dialog };
+}
+
+const HOTS_ACCEPT = ".pdf,.docx,.doc,.txt,.rtf";
+
 /** The button: choose the document, read it, show the dialog. */
 // inEditor: opened from the party box, whose own dialog must not close under it
 // (onOpenChange tells it), and whose "Choose the company" is the box itself.
@@ -46,49 +86,88 @@ export function DealHotsButton({ dealId, label = "Heads of terms", className, va
   dealId: string; label?: string; className?: string; variant?: "outline" | "ghost" | "default"; testId?: string;
   inEditor?: boolean; onOpenChange?: (open: boolean) => void;
 }) {
-  const { toast } = useToast();
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [reply, setReply] = useState<HotsReadReply | null>(null);
-
-  const read = async (f: File) => {
-    setBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch(`/api/deals/${dealId}/heads-of-terms/read`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data?.message || `Not read (${r.status})`);
-      setFile(f);
-      setReply(data as HotsReadReply);
-      onOpenChange?.(true);
-    } catch (e) {
-      toast({ title: "Couldn't read the heads of terms", description: plain(e), variant: "destructive" });
-    } finally {
-      setBusy(false);
-      if (input.current) input.current.value = "";
-    }
-  };
-
+  const { busy, read, dialog } = useHotsReader(dealId, { inEditor, onOpenChange });
   return (
     <>
-      <input ref={input} type="file" accept=".pdf,.docx,.doc,.txt,.rtf" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); }} data-testid={`${testId}-input`} />
+      <input ref={input} type="file" accept={HOTS_ACCEPT} className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (input.current) input.current.value = ""; if (f) void read({ file: f }); }} data-testid={`${testId}-input`} />
       <Button type="button" size="sm" variant={variant} className={className || "h-7 px-2 text-xs"} disabled={busy}
         onClick={() => input.current?.click()} data-testid={testId}>
         {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <FileText className="mr-1 h-3.5 w-3.5" />}
         {busy ? "Reading…" : label}
       </Button>
-      {reply && file && <DealHotsDialog dealId={dealId} file={file} reply={reply} onReply={setReply} inEditor={inEditor}
-        onClose={() => { setReply(null); setFile(null); onOpenChange?.(false); }} />}
+      {dialog}
     </>
   );
 }
 
+/**
+ * The box at the top of Parties and AML (Woody, 23 November 2026: "shall we
+ * have the box that populates the deal here too? drop HOTS or type it out?
+ * Easier for people"): type the transaction out, or drop or choose the heads
+ * of terms. One line until it is used.
+ */
+export function DealDescribeBox({ dealId }: { dealId: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const { busy, read, dialog } = useHotsReader(dealId);
+  const typed = text.trim();
+  const choose = () => input.current?.click();
+  return (
+    <div
+      className={`rounded-md border px-2.5 py-2 transition-colors ${dragging ? "border-primary bg-primary/5" : "border-dashed border-border"}`}
+      onDragOver={e => { if (Array.from(e.dataTransfer.types || []).includes("Files")) { e.preventDefault(); setDragging(true); } }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={e => { const f = e.dataTransfer.files?.[0]; if (!f) return; e.preventDefault(); setDragging(false); void read({ file: f }); }}
+      data-testid="deal-describe-box"
+    >
+      <input ref={input} type="file" accept={HOTS_ACCEPT} className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (input.current) input.current.value = ""; if (f) void read({ file: f }); }} data-testid="deal-describe-file" />
+      <div className="flex items-start gap-2">
+        <Textarea
+          value={text}
+          rows={open ? 3 : 1}
+          onFocus={() => setOpen(true)}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && typed.length >= 10 && !busy) { e.preventDefault(); void read({ text: typed }); } }}
+          placeholder={dragging ? "Drop the heads of terms to read them" : "Describe the transaction, or drop the heads of terms here"}
+          className={`min-h-0 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none focus-visible:ring-0 ${open ? "" : "h-9 overflow-hidden"}`}
+          aria-label="Describe the transaction"
+          data-testid="deal-describe-text"
+        />
+        {!open && (
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 text-xs" disabled={busy} onClick={choose} data-testid="deal-describe-choose">
+            {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <FileText className="mr-1 h-3.5 w-3.5" />}
+            {busy ? "Reading…" : "Heads of terms"}
+          </Button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" className="h-7 text-xs" disabled={busy || typed.length < 10} onClick={() => void read({ text: typed })} data-testid="deal-describe-read">
+            {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}{busy ? "Reading…" : "Fill it in"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={choose}>
+            <FileText className="mr-1 h-3.5 w-3.5" />Choose the heads of terms
+          </Button>
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => { setOpen(false); setText(""); }}>
+            Cancel
+          </Button>
+          <span className="basis-full text-[11px] text-muted-foreground">e.g. "Landlord is Braeburn Estates Ltd, tenant is Bill's Restaurants Ltd, £85k pa, 10 yrs"</span>
+        </div>
+      )}
+      {dialog}
+    </div>
+  );
+}
+
 function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
-  dealId: string; file: File; reply: HotsReadReply; onReply: (r: HotsReadReply) => void; onClose: () => void; inEditor: boolean;
+  dealId: string; file: File | null; reply: HotsReadReply; onReply: (r: HotsReadReply) => void; onClose: () => void; inEditor: boolean;
 }) {
+  const fromNote = !file;
   const { toast } = useToast();
   const [editing, setEditing] = useState<DealPartyRole | null>(null);
   const [filed, setFiled] = useState(false);
@@ -142,7 +221,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     return list.length === 1 ? `${list[0].label} filled in` : `${list.length} terms filled in`;
   });
   const fileIt = () => act.mutate(async () => {
-    if (!reply.filing) throw new Error("No tracker unit to file them on.");
+    if (!reply.filing || !file) throw new Error("No tracker unit to file them on.");
     const fd = new FormData();
     fd.append("file", file);
     const r = await fetch(`/api/unit-hots/${encodeURIComponent(reply.filing.unitId)}/final`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
@@ -162,9 +241,9 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
       <Dialog open onOpenChange={o => { if (!o && !editing) onClose(); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="deal-hots-dialog">
           <DialogHeader>
-            <DialogTitle>Heads of terms</DialogTitle>
+            <DialogTitle>{fromNote ? "What you typed" : "Heads of terms"}</DialogTitle>
             <DialogDescription className="break-words">
-              {reply.fileName || file.name}. Nothing is saved until you press a button.
+              {fromNote ? "Read from your note." : `${reply.fileName || file?.name}.`} Nothing is saved until you press a button.
             </DialogDescription>
           </DialogHeader>
 
@@ -178,10 +257,10 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
           <section className="space-y-2" data-testid="deal-hots-parties">
             <h4 className="text-sm font-semibold">Parties</h4>
             {dealParties.length === 0 && guarantors.length === 0 && (
-              <p className="text-xs text-muted-foreground">No landlord, tenant, vendor or purchaser could be read. Set them in the party box.</p>
+              <p className="text-xs text-muted-foreground">No landlord, tenant, vendor or purchaser could be read{fromNote ? ': write them as "Landlord is …", "Tenant is …"' : ""}. Or set them in the party box.</p>
             )}
             {dealParties.map(p => (
-              <PartyLine key={`${p.role}-${p.read.name}`} match={p} busy={busy}
+              <PartyLine key={`${p.role}-${p.read.name}`} match={p} busy={busy} source={fromNote ? "Your note" : "The heads of terms"}
                 onUse={useCompany} onAdd={addCompany} onSetParty={setParty} onAddParty={addParty} onChoose={(role) => (inEditor ? onClose() : setEditing(role))} />
             ))}
             {guarantors.map(g => (
@@ -221,7 +300,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
             </section>
           )}
 
-          {reply.filing && fileable(file.name) && (
+          {reply.filing && file && fileable(file.name) && (
             <section className="space-y-1.5 text-xs" data-testid="deal-hots-filing">
               {reply.filing.onFile || filed
                 ? <p className="text-muted-foreground">Final agreed heads of terms on file on {reply.filing.unitName}{reply.filing.onFile ? `: ${reply.filing.onFile}` : ""}.</p>
@@ -260,8 +339,8 @@ function Quote({ text }: { text: string }) {
   return <span className="mt-0.5 block truncate text-[11px] italic text-muted-foreground" title={text}>"{text}"</span>;
 }
 
-function PartyLine({ match, busy, onUse, onAdd, onSetParty, onAddParty, onChoose }: {
-  match: HotsPartyMatch; busy: boolean;
+function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, onChoose }: {
+  match: HotsPartyMatch; busy: boolean; source: string;
   onUse: (role: DealPartyRole, companyId: string, name: string) => void;
   onAdd: (role: DealPartyRole, brandId: string, number: string, name: string) => void;
   onSetParty: (role: DealPartyRole, brandId: string, brandName: string, entityId: string | null) => void;
@@ -297,7 +376,7 @@ function PartyLine({ match, busy, onUse, onAdd, onSetParty, onAddParty, onChoose
                 </Button>
               )}
             </div>
-            {!hit!.agrees && <p className="text-amber-800 dark:text-amber-300">The heads of terms call it {read.name}: check it is the same company.</p>}
+            {!hit!.agrees && <p className="text-amber-800 dark:text-amber-300">Named as {read.name} in {source.toLowerCase()}: check it is the same company.</p>}
             {match.registerNote && <p className={closed ? "text-red-700 dark:text-red-400" : "text-muted-foreground"}>{match.registerNote}</p>}
           </div>
         );
@@ -318,7 +397,7 @@ function PartyLine({ match, busy, onUse, onAdd, onSetParty, onAddParty, onChoose
         return (
           <div className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1 text-muted-foreground">
-              {match.state === "no_company" ? `The heads of terms give no registered company for ${read.name}.` : match.registerNote || "Not found at Companies House."}
+              {match.state === "no_company" ? `No registered company is given for ${read.name}.` : match.registerNote || "Not found at Companies House."}
             </span>
             <Button type="button" size="sm" variant="outline" className={quiet} disabled={busy} onClick={() => onChoose(role)} data-testid={`deal-hots-choose-${role}`}>Choose the company</Button>
           </div>
@@ -352,7 +431,7 @@ function PartyLine({ match, busy, onUse, onAdd, onSetParty, onAddParty, onChoose
         <span className="font-semibold">{HOTS_ROLE_WORDS[role]}</span>
         {brand && <span className="text-muted-foreground"> · {brand.name}</span>}
       </div>
-      <div>The heads of terms: <span className="font-medium">{companyWords(read)}</span>{!read.checked && <span className="text-amber-800 dark:text-amber-300"> · check it by eye</span>}</div>
+      <div>{source}: <span className="font-medium">{companyWords(read)}</span>{!read.checked && <span className="text-amber-800 dark:text-amber-300"> · check it by eye</span>}</div>
       <Quote text={read.quote} />
       {body}
     </div>

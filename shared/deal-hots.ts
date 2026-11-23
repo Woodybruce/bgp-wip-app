@@ -9,7 +9,8 @@
 // provider leaves out, and how a term compares with the transaction. The
 // reading and the look-ups are server/deal-hots.ts; the screen is
 // client/src/components/deal-hots.tsx.
-import { partyNameKey, type DealNoteCandidate, type DealNoteRegisterHit } from "./deal-note";
+import { partyNameKey, readDealNoteRules, type DealNoteCandidate, type DealNoteRegisterHit } from "./deal-note";
+import { readShorthand } from "./letting-note-parse";
 import type { DealPartyRole } from "./deal-parties";
 
 export const HOTS_PARTY_ROLES = ["landlord", "tenant", "vendor", "purchaser", "guarantor"] as const;
@@ -96,8 +97,14 @@ export function legalNameKey(name: unknown): string {
   return s.replace(/\s+/g, "");
 }
 
-/** The document has enough text to check a reading against (not a scan). */
-export const documentHasText = (text: string | null | undefined): boolean => alnum(text).length >= 200;
+/**
+ * The document has enough text to check a reading against (not a scan). A
+ * note a person typed is its own text, however short.
+ */
+export const documentHasText = (text: string | null | undefined, opts: HotsTextOptions = {}): boolean =>
+  alnum(text).length >= (opts.note ? 3 : 200);
+/** note: the text is a note a person typed, not a document's extracted text. */
+export interface HotsTextOptions { note?: boolean }
 /** The quote is the document's own words (spacing and punctuation aside). */
 export function quoteInDocument(quote: string, text: string): boolean {
   const q = alnum(quote);
@@ -137,7 +144,7 @@ const NUMBER_WORDS: Record<string, number> = {
 /** The sums of money the words give, in pounds: "£85,000", "£85k", "£1.25m". */
 export function moneyIn(words: string): number[] {
   const out: number[] = [];
-  const re = /(£|gbp\s*)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k\b|m\b|mn\b|million\b|thousand\b)?/gi;
+  const re = /(£|gbp\s*)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:(k|m|mn|million|thousand)(?=pax\b|pa\b|p\.a\b|\b))?/gi;
   for (const m of squash(words).matchAll(re)) {
     let n = Number(m[2].replace(/,/g, ""));
     if (!Number.isFinite(n)) continue;
@@ -152,7 +159,8 @@ export function moneyIn(words: string): number[] {
 }
 /** The counts of a unit the words give: "10 years", "ten (10) year", "a 15 year lease", "6 months". */
 export function countsIn(words: string, unit: "years" | "months"): number[] {
-  const unitRe = unit === "years" ? "(?:years?|yrs?)" : "(?:months?|mths?|mos?)";
+  // "momnths" is months typed in a hurry: a word of m, up to three letters, then "nths".
+  const unitRe = unit === "years" ? "(?:years?|yrs?)" : "(?:months?|mths?|mos?|m[a-z]{1,3}nths?)";
   const out: number[] = [];
   const s = squash(words);
   for (const m of s.matchAll(new RegExp(`(\\d+(?:\\.\\d+)?|[a-z]+(?:-[a-z]+)?)\\s*(?:\\(\\s*\\d+\\s*\\)\\s*)?${unitRe}\\b`, "g"))) {
@@ -216,10 +224,10 @@ export const hotsRole = (raw: unknown): HotsPartyRole | null => ROLE_ALIASES[Str
  * figure is in its quote. A scanned document (no text) cannot be checked: its
  * values are kept and marked to check by eye.
  */
-export function checkHotsAnswer(raw: unknown, documentText: string): Omit<HotsReading, "usedAi" | "note"> {
+export function checkHotsAnswer(raw: unknown, documentText: string, opts: HotsTextOptions = {}): Omit<HotsReading, "usedAi" | "note"> {
   const answer = raw && typeof raw === "object" ? raw as Record<string, any> : {};
   const text = documentText || "";
-  const checkable = documentHasText(text);
+  const checkable = documentHasText(text, opts);
   const dropped: HotsDrop[] = [];
   const parties: HotsParty[] = [];
   for (const p of Array.isArray(answer.parties) ? answer.parties.slice(0, 12) : []) {
@@ -336,10 +344,10 @@ function valueAfter(lines: string[], i: number, own: string): string {
 }
 
 /** What the rules read from the document's text. They never guess: a value they cannot place is left out. */
-export function readHotsByRules(documentText: string): Pick<HotsReading, "parties" | "terms"> {
+export function readHotsByRules(documentText: string, opts: HotsTextOptions = {}): Pick<HotsReading, "parties" | "terms"> {
   const text = String(documentText || "");
   const lines = text.split(/\r?\n/);
-  const checkable = documentHasText(text);
+  const checkable = documentHasText(text, opts);
   const parties: HotsParty[] = [];
   const terms: HotsTerm[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -378,6 +386,46 @@ export function readHotsByRules(documentText: string): Pick<HotsReading, "partie
       break;
     }
   }
+  return { parties, terms };
+}
+
+// ── A note a person typed ───────────────────────────────────────────────────
+// The transaction page's box takes a note as well as a document (Woody,
+// 23 November 2026: "drop HOTS or type it out?"). A note is read by the rules
+// New Deal's box uses for its parties ("Landlord is Brucecap Ltd", "letting
+// ... to X") and by the letting note's shorthand for its terms ("300,000 pax",
+// "10 yrs", "6 MRF"), then checked as a provider's answer is.
+
+const NUMBER_IN_BRACKETS = /^\s*,?\s*\(\s*((?:SC|NI|OC|SO|NC|FC|LP|SL)\s?\d{6}|\d{7,8})\s*\)/i;
+
+/** A company number written just after a name: "(Company No. 05211343)", "company number 5211343" or "(05211343)". */
+export function numberAfterName(text: string, name: string): string | null {
+  const s = String(text || "");
+  const at = s.toLowerCase().indexOf(String(name || "").toLowerCase());
+  if (!name || at < 0) return null;
+  const after = s.slice(at + name.length, at + name.length + 80);
+  const phrase = NUMBER_PHRASE.exec(after);
+  if (phrase && phrase.index <= 30) return cleanCompanyNumber(phrase[1]);
+  const bracket = NUMBER_IN_BRACKETS.exec(after);
+  return bracket ? cleanCompanyNumber(bracket[1]) : null;
+}
+
+const NOTE_TERM_FIELDS: Array<[HotsTermKey, "rentPa" | "termYears" | "rentFreeMonths" | "breakOption" | "fittingOutContribution"]> = [
+  ["rentPa", "rentPa"], ["leaseLength", "termYears"], ["rentFree", "rentFreeMonths"], ["breakOption", "breakOption"], ["capitalContribution", "fittingOutContribution"],
+];
+
+/** What the rules read from a typed note, in the shape of the provider's answer, for checkHotsAnswer. */
+export function readHotsNoteRules(note: string, today: string): { parties: Array<{ role: string; name: string; company_number: string | null; quote: string }>; terms: Record<string, { value: unknown; quote: string }> } {
+  const parties = readDealNoteRules(note).parties.map(p => ({ role: p.role, name: p.name, company_number: numberAfterName(note, p.name), quote: p.quote }));
+  const terms: Record<string, { value: unknown; quote: string }> = {};
+  try {
+    const short = readShorthand(note, { kind: "offer", today });
+    for (const [key, field] of NOTE_TERM_FIELDS) {
+      const value = (short.fields as Record<string, unknown>)[field];
+      const quote = (short.quotes as Record<string, string | undefined>)[field];
+      if (value !== undefined && value !== null && value !== "" && quote) terms[key] = { value, quote };
+    }
+  } catch { /* a note the shorthand cannot read gives no terms */ }
   return { parties, terms };
 }
 
@@ -464,7 +512,9 @@ export interface HotsTermView extends HotsTerm { label: string; kind: HotsTermKi
 export interface HotsFiling { unitId: string; unitName: string; onFile: string | null }
 /** POST /api/deals/:id/heads-of-terms/read (and …/match, without the reading). */
 export interface HotsReadReply {
-  fileName?: string;
+  fileName?: string | null;
+  /** What was read: the heads of terms as a file, or a note typed in the box. */
+  source?: "file" | "note";
   reading?: HotsReading;
   parties: HotsPartyMatch[];
   terms: HotsTermView[];

@@ -9,7 +9,7 @@ import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks } from "@/components/kyc-client-checks";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
-import { DealHotsButton } from "@/components/deal-hots";
+import { DealDescribeBox } from "@/components/deal-hots";
 import { JointNotRequiredButton, PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
@@ -1244,11 +1244,13 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
           {stopQ.data?.stopped && <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200" data-testid="aml-stop-mark">BGP stopped acting</span>}
           <span className="ml-auto flex flex-wrap items-center gap-2">
             {actingFor}
-            {staffView && slots && <DealHotsButton dealId={dealId} />}
             {officer && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
             <AmlBoxMenu dealId={dealId} openAll={openAll.all} onToggleAll={toggleAll} officer={officer} staff={staffView} />
           </span>
         </div>
+
+        {/* Type the transaction out, or drop the heads of terms (Woody, 23 November 2026). */}
+        {staffView && slots && <DealDescribeBox dealId={dealId} />}
 
         {!slots && data.counterparties.length < 2 && (
           <p className="text-xs text-muted-foreground" data-testid="deal-aml-status-incomplete">

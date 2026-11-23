@@ -4,10 +4,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkHotsAnswer, cleanCompanyNumber, countsIn, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberInQuote, readHotsByRules,
+  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
+  readHotsByRules, readHotsNoteRules,
   type HotsParty,
 } from "@shared/deal-hots";
-import { hotsTermViews, matchHotsParties, partiesFromBody, readHotsDocument, termsFromBody, type RegisterLookups } from "./deal-hots";
+import { hotsTermViews, matchHotsParties, partiesFromBody, readHotsDocument, readHotsNote, termsFromBody, type RegisterLookups } from "./deal-hots";
 
 const HOTS = `HEADS OF TERMS
 Subject to contract
@@ -277,3 +278,60 @@ test("a reading sent back by the screen is kept only in the reader's shape", () 
   const terms = termsFromBody([{ key: "rentPa", value: "85000" }, { key: "fee", value: 1 }, { key: "rentPa", value: 1 }, { key: "leaseLength", value: "ten" }]);
   assert.deepEqual(terms.map(t => [t.key, t.value]), [["rentPa", 85000]]);
 });
+
+// ── A note typed in the box (Woody, 23 November 2026: "drop HOTS or type it out?") ──
+
+test("a typed note is checked against itself, however short", () => {
+  assert.equal(documentHasText("Landlord is Brucecap Ltd"), false);
+  assert.equal(documentHasText("Landlord is Brucecap Ltd", { note: true }), true);
+  assert.deepEqual(moneyIn("Rent £120kpax and £85k pa"), [120000, 85000]);
+  assert.deepEqual(countsIn("rent free 5 momnths", "months"), [5]);
+  assert.deepEqual(countsIn("maths", "months"), []);
+  assert.equal(numberAfterName("Tenant is Bill's Restaurants Ltd (05211343), rent", "Bill's Restaurants Ltd"), "05211343");
+  assert.equal(numberAfterName("Landlord is Braeburn Estates Ltd, company number 6327384.", "Braeburn Estates Ltd"), "06327384");
+  assert.equal(numberAfterName("Tenant is Bill's Restaurants Ltd, rent 300000 pax", "Bill's Restaurants Ltd"), null);
+});
+
+test("Woody's own note reads its parties and terms by the rules", () => {
+  const note = "lettering on 55 wells street London to Bruce gillingham pollard LTd. Landlord is Brucecap Ltd rent is 300,000 pax term 10 yrs rent free 5 momnths";
+  const checked = checkHotsAnswer(readHotsNoteRules(note, "2026-11-23"), note, { note: true });
+  assert.deepEqual(checked.parties.map(p => [p.role, p.name]), [["landlord", "Brucecap Ltd"], ["tenant", "Bruce gillingham pollard LTd"]]);
+  const terms = Object.fromEntries(checked.terms.map(t => [t.key, t.value]));
+  assert.equal(terms.rentPa, 300000);
+  assert.equal(terms.leaseLength, 10);
+  assert.equal(checked.scanned, false);
+});
+
+test("a typed note: names with their numbers, and every term the shorthand reads", async () => {
+  const note = "Landlord is Braeburn Estates Ltd (06327384). Tenant is Bill's Restaurants Limited, company number 5211343. Rent £85k pa, 10 yr lease, 6 months rent free, tenant break at year 5, £50k CC";
+  const r = await readHotsNote(note, { hasKey: () => false });
+  assert.equal(r.usedAi, false);
+  assert.match(String(r.note), /only the rules read it/);
+  assert.deepEqual(r.parties.map(p => [p.role, p.number]), [["landlord", "06327384"], ["tenant", "05211343"]]);
+  const terms = Object.fromEntries(r.terms.map(t => [t.key, t.value]));
+  assert.deepEqual(terms, { rentPa: 85000, leaseLength: 10, breakOption: "Tenant break at year 5", rentFree: 6, capitalContribution: 50000 });
+  assert.ok(r.parties.every(p => p.checked));
+});
+
+test("a typed note goes to the provider as the note alone, and its answer is checked against the note", async () => {
+  const note = "Landlord is Braeburn Estates Ltd. Tenant Bill's Restaurants Ltd taking 10 years at £85,000 pa.";
+  let sent = "";
+  const r = await readHotsNote(note, {
+    hasKey: () => true, claim: async () => true,
+    ask: async (_system, parts) => {
+      sent = JSON.stringify(parts);
+      return { model: "test", input: {
+        parties: [{ role: "tenant", name: "Bill's Restaurants Ltd", quote: "Tenant Bill's Restaurants Ltd" }, { role: "guarantor", name: "Made Up Holdings Ltd", quote: "Made Up Holdings Ltd" }],
+        terms: { rentPa: { value: 85000, quote: "£85,000 pa" }, leaseLength: { value: 10, quote: "10 years" } },
+      } };
+    },
+  });
+  assert.match(sent, /<note>/);
+  assert.ok(!/crm|companies_house/i.test(sent));
+  assert.equal(r.usedAi, true);
+  assert.ok(r.parties.some(p => p.role === "tenant" && p.name === "Bill's Restaurants Ltd"));
+  assert.ok(r.parties.some(p => p.role === "landlord" && p.name === "Braeburn Estates Ltd"));
+  assert.ok(!r.parties.some(p => p.name === "Made Up Holdings Ltd"));
+  assert.ok(r.dropped.some(d => d.value === "Made Up Holdings Ltd"));
+});
+

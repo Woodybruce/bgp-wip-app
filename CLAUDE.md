@@ -3288,13 +3288,27 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
 `server/deal-hots.test.ts` (in `npm test`),
 `qa/regression/deal-hots-guards.test.mjs`.
 
-- **Where**: **Heads of terms** in the heading of the transaction's Parties
-  and AML box (BGP staff), and **Read the heads of terms** in the party box
-  (Fill in) under Who signs while no company signs. The party box stays open
-  under the dialog (`hotsOpen`); from there, Choose the company goes back to
-  the box.
+- **Where**: the **Describe the transaction** box at the top of the
+  transaction's Parties and AML box (BGP staff; `DealDescribeBox`; Woody,
+  the same day: "shall we have the box that populates the deal here too?
+  drop HOTS or type it out? Easier for people"): one line until it is used;
+  type the transaction out and press **Fill it in**, or drop or choose the
+  heads of terms. Both read into the same dialog. And **Read the heads of
+  terms** in the party box (Fill in) under Who signs while no company
+  signs. The party box stays open under the dialog (`hotsOpen`); from
+  there, Choose the company goes back to the box.
+- **A typed note** (`readHotsNote`; the route takes `text` in place of a
+  file, up to 20,000 characters): the label rules, New Deal's party rules
+  (`readDealNoteRules`: "Landlord is …", "letting … to …") with a company
+  number written after a name (`numberAfterName`), and the letting note's
+  shorthand for the terms (`readShorthand`: "300,000 pax", "10 yrs",
+  "6 MRF", "£50k CC"), all through `readHotsNoteRules` and the same
+  `checkHotsAnswer` as a document (`{ note: true }`: a note is checked
+  against itself however short). The provider is sent the note alone.
+  Nothing is filed from a note.
 - **The read** (`POST /api/deals/:id/heads-of-terms/read`, BGP staff signed
-  in as themselves, checked before the file is taken; 25MB; PDF, Word, text):
+  in as themselves, checked before the file is taken; 25MB; PDF, Word, text,
+  or a typed note):
   each party the document names (landlord, tenant, guarantor; vendor and
   purchaser on a sale) with its registered company and Companies House number,
   and the terms the transaction holds (rent a year, lease in years, break, rent

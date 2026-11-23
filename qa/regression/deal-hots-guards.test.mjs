@@ -34,7 +34,9 @@ test('the reader is Anthropic called directly, one forced tool, capped a day', (
   assert.match(server, /HOTS_READER_DAILY_CAP/);
   assert.doesNotMatch(server, /callClaude\(/);
   // Every value the provider gives is checked against the document's text.
-  assert.match(server, /checkHotsAnswer\(reply\.input, text\)/);
+  assert.match(server, /checkHotsAnswer\(reply\.input, text, opts\)/);
+  // A typed note goes to the provider as the note alone.
+  assert.match(server, /parts: \[\{ type: "text", text: `<note>/);
 });
 
 test('reading and matching save nothing', () => {
@@ -57,8 +59,12 @@ test('the screen saves only through the routes that already exist', () => {
   assert.match(screen, /\/api\/unit-hots\/\$\{encodeURIComponent\(reply\.filing\.unitId\)\}\/final/);
 });
 
-test('the button is on the AML box for BGP staff and in the party box, which stays open under it', () => {
-  assert.match(amlBox, /\{staffView && slots && <DealHotsButton dealId=\{dealId\} \/>\}/);
+test('the box is on the AML box for BGP staff and the button in the party box, which stays open under it', () => {
+  // Type it out or drop the heads of terms (Woody, 23 November 2026).
+  assert.match(amlBox, /\{staffView && slots && <DealDescribeBox dealId=\{dealId\} \/>\}/);
+  assert.match(screen, /export function DealDescribeBox/);
+  assert.match(screen, /onDrop=\{e => \{ const f = e\.dataTransfer\.files\?\.\[0\]/);
+  assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
   assert.match(partyBox, /if \(!o && !finding && !hotsOpen\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
@@ -67,5 +73,5 @@ test('the button is on the AML box for BGP staff and in the party box, which sta
 });
 
 test('ChatBGP is told where it is', () => {
-  assert.match(appMap, /\*\*Heads of terms\*\* \(since 2026-11-23\)/);
+  assert.match(appMap, /\*\*Describe the transaction\*\* \(since 2026-11-23\)/);
 });
