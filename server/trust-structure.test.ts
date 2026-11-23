@@ -1,5 +1,6 @@
 // A trust checked by BGP, never KYC4U (Jack, 23 November 2026: "Remove KYC4u
 // on trusts. We need you to build the trust structuring").
+import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -109,4 +110,67 @@ test("the Next line for a trust: the structure first, never KYC4U", () => {
   assert.equal(amlNextStep(box).action, "trust");
   assert.equal(amlNextStep({ ...box, trustGaps: [] }).action, "sign_off");
   assert.notEqual(amlNextStep({ ...box, trustGaps: [], kyc4u: "queued" }).action, "kyc4u_form");
+});
+
+// ── Reading the trust deed into the structure (23 November 2026) ─────────────
+import { checkTrustDeedRead, mergeDeedReading } from "../shared/trust-deed-read";
+
+const DEED = "THIS SETTLEMENT is made on 12 March 2004 BETWEEN Margaret Ellis (the Settlor) and David Ellis and Ellis Trustees Limited (the Original Trustees). " +
+  "The Trustees shall hold the Trust Fund for such of the Beneficiaries as the Trustees in their absolute discretion think fit. " +
+  "The Beneficiaries means the children and remoter issue of the Settlor. This Settlement shall be governed by the law of England and Wales.";
+
+test("the deed reading keeps only what the deed's own words say", () => {
+  const r = checkTrustDeedRead({
+    kind: "discretionary", kindQuote: "as the Trustees in their absolute discretion think fit",
+    established: "12 March 2004", establishedQuote: "made on 12 March 2004",
+    governingLaw: "England and Wales", governingLawQuote: "governed by the law of England and Wales",
+    beneficiaryClass: "The children and remoter issue of the Settlor", beneficiaryClassQuote: "the children and remoter issue of the Settlor",
+    people: [
+      { name: "Margaret Ellis", roles: ["settlor"], quote: "Margaret Ellis (the Settlor)" },
+      { name: "David Ellis", roles: ["trustee"], quote: "David Ellis and Ellis Trustees Limited (the Original Trustees)" },
+      { name: "Ellis Trustees Limited", roles: ["trustee"], corporate: true, quote: "Ellis Trustees Limited (the Original Trustees)" },
+      { name: "Peter Ellis", roles: ["protector"], quote: "Peter Ellis shall be the Protector" },
+      { name: "Sarah Ellis", roles: ["beneficiary"], quote: "Margaret Ellis (the Settlor)" },
+    ],
+  }, DEED);
+  assert.equal(r.read, true);
+  assert.equal(r.fields.kind, "discretionary");
+  assert.equal(r.fields.established, "12 March 2004");
+  assert.deepEqual(r.people.map(p => p.name), ["Margaret Ellis", "David Ellis", "Ellis Trustees Limited"]);
+  assert.deepEqual(r.dropped.map(d => d.why), ["its words are not in the deed", "the deed's words given do not say it"]);
+  // A scan: nothing to check against, so kept to check by eye.
+  const scan = checkTrustDeedRead({ kind: "fixed", kindQuote: "in equal shares absolutely", people: [] }, null);
+  assert.equal(scan.scanned, true);
+  assert.equal(scan.lines[0].checked, null);
+  assert.equal(checkTrustDeedRead({ kind: "fixed", kindQuote: "not in it at all", people: [] }, DEED).read, false);
+});
+
+test("the deed fills what is blank and adds people, never overwriting what a person recorded", () => {
+  const read = checkTrustDeedRead({
+    kind: "discretionary", kindQuote: "in their absolute discretion think fit",
+    governingLaw: "England and Wales", governingLawQuote: "governed by the law of England and Wales",
+    people: [
+      { name: "Margaret Ellis", roles: ["settlor", "beneficiary"], quote: "Margaret Ellis (the Settlor)" },
+      { name: "David Ellis", roles: ["trustee"], quote: "David Ellis and Ellis Trustees Limited" },
+    ],
+  }, DEED);
+  const merged = mergeDeedReading(structure({ kind: "fixed", governingLaw: null, people: [{ name: "ELLIS, Margaret", roles: ["settlor"], dob: { month: 4, year: 1951 } }] }), read);
+  assert.equal(merged.kind, "fixed");
+  assert.equal(merged.governingLaw, "England and Wales");
+  assert.equal(merged.trsStatus, "registered");
+  assert.deepEqual(merged.people.map(p => [p.name, p.roles]), [["ELLIS, Margaret", ["settlor", "beneficiary"]], ["David Ellis", ["trustee"]]]);
+  assert.equal(merged.people[0].dob?.year, 1951);
+});
+
+test("readTrustDeed sends the deed alone and checks the answer against its text", async () => {
+  const { readTrustDeed } = await import("./trust-structure");
+  let sent = "";
+  const r = await readTrustDeed({ data: Buffer.from(DEED), name: "deed.txt", mime: "text/plain" }, "The Ellis Settlement", {
+    hasKey: () => true, claim: async () => true,
+    ask: async (_system, parts) => { sent = JSON.stringify(parts); return { input: { kind: "discretionary", kindQuote: "absolute discretion think fit", people: [] }, model: "test" }; },
+  });
+  assert.equal(r.read, true);
+  assert.match(sent, /THIS SETTLEMENT/);
+  assert.equal((await readTrustDeed({ data: Buffer.from(DEED), name: "deed.txt", mime: "text/plain" }, "X", { hasKey: () => true, claim: async () => false })).read, false);
+  assert.match((await readTrustDeed({ data: Buffer.from(DEED), name: "deed.txt", mime: "text/plain" }, "X", { hasKey: () => false })).why || "", /not switched on/);
 });

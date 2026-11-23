@@ -5187,10 +5187,26 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   trust: discretionary, 4 people · 1 to do"), the second read's record
   (`partyRecordText`), the AML file's report ("Trust structure (recorded by
   BGP)") and the risk assessment's in-house wording.
-- Not built: reading the deed with AI to fill the structure; the client
-  naming the trust's people on their page; Scotland's and Northern Ireland's
-  registers. Not run against live data: checked by tests only, not in a
-  browser.
+- **Read the trust deed** (Jack, the same day: "Yes build"; rules
+  `shared/trust-deed-read.ts`, reader `readTrustDeed` in
+  `server/trust-structure.ts`): the panel's button reads the deed on file,
+  or one chosen then (filed on the trust's KYC record as `trust_deed`), via
+  `POST /api/trust-structure/:companyId/read-deed` (BGP staff, checked
+  before the file is taken; 20MB; PDF, pictures, Word, text). Anthropic,
+  called directly, one forced-tool call (`read_trust_deed`), capped a day
+  (`TRUST_DEED_READER_DAILY_CAP`, default 40, 0 = off), sent the deed alone.
+  It proposes the kind, when settled, governing law, class of beneficiaries
+  and the people with their roles, each with the deed's words;
+  `checkTrustDeedRead` drops any value whose quote is not in the deed's text
+  or whose name is not in its quote (a scan is kept "check by eye").
+  `mergeDeedReading` fills only what is blank and adds people or roles,
+  never overwriting what a person recorded; registration and the settlor's
+  wealth are never read from a deed. The form opens on the proposal with the
+  read-back (`DeedReadBack`); its Save is the only save. A
+  `trust_deed_read` line goes on the KYC history.
+- Not built: the client naming the trust's people on their page; Scotland's
+  and Northern Ireland's registers. Not run against live data or Anthropic:
+  checked by tests only, not in a browser.
 
 ## Trusts to KYC4U in full, and the officers' second read (Jack, 2026-11-20; trusts superseded 2026-11-23, see above)
 

@@ -56,3 +56,13 @@ test("the second read and the AML file carry the structure", () => {
   assert.match(file, /trustStructure,\n\s*\}\);/);
   assert.match(file, /inHouse: !!data\.inHouse \|\| p\.trust,/);
 });
+
+test("reading the deed is BGP staff's, checked before the file is taken, and saves no structure", () => {
+  const s = read("server/trust-structure.ts");
+  assert.match(s, /router\.post\("\/api\/trust-structure\/:companyId\/read-deed", async \(req: Request, res: Response, next\) => \{\s*if \(!\(await staffMe\(req\)\.catch\(\(\) => null\)\)\) return res\.status\(403\)[\s\S]{0,40}next\(\);\s*\}, deedUpload\.single\("file"\)/);
+  assert.match(s, /claimDailyRead\(DEED_USAGE_KEY, trustDeedReaderDailyCap\(\)\)/);
+  assert.match(s, /return checkTrustDeedRead\(reply\.input, text\);/);
+  const route = s.slice(s.indexOf('"/api/trust-structure/:companyId/read-deed"'));
+  assert.doesNotMatch(route.slice(0, route.indexOf("\nrouter.", 10)), /INSERT INTO kyc_trust_structures|UPDATE kyc_trust_structures/);
+  assert.match(read("client/src/components/trust-structure.tsx"), /<DeedReadBack reading=\{reading\} \/>/);
+});

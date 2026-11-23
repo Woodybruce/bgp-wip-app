@@ -6,7 +6,7 @@
 // shared/trust-structure.ts. No form element here: the dialog opens over the deal form.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Loader2, Pencil, Plus, Upload, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSearch, Loader2, Pencil, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,7 @@ import {
   TRS_STATUSES, TRUST_KINDS, TRUST_ROLES, trustPersonOwesChecks, trustRoleWords,
   type TrsStatus, type TrustGap, type TrustKind, type TrustRole, type TrustStructure, type TrustStructureRecord,
 } from "@shared/trust-structure";
+import type { TrustDeedReading } from "@shared/trust-deed-read";
 
 export interface TrustStructureView {
   companyId: string; name: string; trust: boolean;
@@ -85,9 +86,52 @@ function DocUpload({ companyId, dealId, docType, label }: { companyId: string; d
   );
 }
 
+// Read the trust deed into the form (23 November 2026): the deed on file, or
+// one chosen now (filed on the trust's KYC record as its deed). The form opens
+// on what was read, each value with the deed's words; nothing saves until Save.
+function ReadDeedButton({ companyId, dealId, onFile, onRead }: {
+  companyId: string; dealId?: string | null; onFile: boolean;
+  onRead: (r: { reading: TrustDeedReading; proposal: TrustStructure | null }) => void;
+}) {
+  const { toast } = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const read = async (file: File | null) => {
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file);
+      if (dealId) fd.append("dealId", dealId);
+      const res = await fetch(`/api/trust-structure/${companyId}/read-deed`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(plain(await res.text()));
+      const out = await res.json() as { reading: TrustDeedReading; proposal: TrustStructure | null; filed: boolean };
+      if (out.filed) refreshAfter(companyId, dealId);
+      if (!out.reading.read) toast({ title: "The deed could not be read", description: out.reading.why || undefined, variant: "destructive" });
+      else onRead(out);
+    } catch (e) {
+      toast({ title: "Not read", description: plain(e), variant: "destructive" });
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  };
+  return (
+    <>
+      <input ref={input} type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.doc,.docx,.txt" onChange={e => { const f = e.target.files?.[0]; if (f) void read(f); }} />
+      <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => (onFile ? void read(null) : input.current?.click())} data-testid={`trust-read-deed-${companyId}`}>
+        {busy ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <FileSearch className="mr-1 h-3 w-3" />}{busy ? "Reading the deed…" : "Read the trust deed"}
+      </Button>
+      {onFile && !busy && (
+        <button type="button" className="text-[11px] text-muted-foreground underline-offset-2 hover:underline" onClick={() => input.current?.click()}>or another file</button>
+      )}
+    </>
+  );
+}
+
 export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: { companyId: string; dealId?: string | null; partyName: string; onPeople?: () => void }) {
   const q = useTrustStructure(companyId);
   const [editing, setEditing] = useState(false);
+  const [deedRead, setDeedRead] = useState<{ reading: TrustDeedReading; proposal: TrustStructure | null } | null>(null);
   if (q.isLoading) return <p className="text-xs text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Reading the trust's structure…</p>;
   if (q.isError || !q.data) return <p className="text-xs text-red-700 dark:text-red-400">The trust's structure could not be read: {plain(q.error)}</p>;
   const view = q.data;
@@ -98,7 +142,9 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-semibold">Trust structure</span>
         {view.record && <span className="text-muted-foreground">recorded by {view.record.updatedBy || "BGP"} · {new Date(view.record.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>}
-        <Button type="button" size="sm" variant={s ? "outline" : "default"} className="ml-auto h-7 text-xs" onClick={() => setEditing(true)} data-testid={`trust-structure-edit-${companyId}`}>
+        <span className="ml-auto" />
+        <ReadDeedButton companyId={companyId} dealId={dealId} onFile={view.documents.deed} onRead={r => { setDeedRead(r); setEditing(true); }} />
+        <Button type="button" size="sm" variant={s ? "outline" : "default"} className="h-7 text-xs" onClick={() => { setDeedRead(null); setEditing(true); }} data-testid={`trust-structure-edit-${companyId}`}>
           {s ? <><Pencil className="mr-1 h-3 w-3" />Change</> : <><Plus className="mr-1 h-3 w-3" />Record it</>}
         </Button>
       </div>
@@ -145,7 +191,7 @@ export function TrustStructurePanel({ companyId, dealId, partyName, onPeople }: 
       {s && s.people.some(p => trustPersonOwesChecks(p, s.kind)) && onPeople && (
         <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={onPeople}>Send each person their own link, under People to check</button>
       )}
-      {editing && <TrustStructureDialog companyId={companyId} dealId={dealId} partyName={partyName} initial={s} onClose={() => setEditing(false)} />}
+      {editing && <TrustStructureDialog companyId={companyId} dealId={dealId} partyName={partyName} initial={deedRead?.proposal || s} reading={deedRead?.reading || null} onClose={() => { setEditing(false); setDeedRead(null); }} />}
     </div>
   );
 }
@@ -159,8 +205,8 @@ const blankPerson = (roles: TrustRole[] = []): PersonDraft => ({ id: nextId++, n
 
 const selectClass = "h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
 
-export function TrustStructureDialog({ companyId, dealId, partyName, initial, onClose }: {
-  companyId: string; dealId?: string | null; partyName: string; initial: TrustStructure | null; onClose: () => void;
+export function TrustStructureDialog({ companyId, dealId, partyName, initial, reading, onClose }: {
+  companyId: string; dealId?: string | null; partyName: string; initial: TrustStructure | null; reading?: TrustDeedReading | null; onClose: () => void;
 }) {
   const { toast } = useToast();
   const [kind, setKind] = useState<TrustKind>(initial?.kind || "unknown");
@@ -208,6 +254,7 @@ export function TrustStructureDialog({ companyId, dealId, partyName, initial, on
           <DialogDescription>From the trust deed. The settlor, the trustees, any protector and anyone else with control each do their own identity check and proof of address; beneficiaries too unless the trust is discretionary. Everyone named is screened.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
+          {reading?.read && <DeedReadBack reading={reading} />}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label>Kind of trust</Label>
               <select className={selectClass} value={kind} onChange={e => setKind(e.target.value as TrustKind)} data-testid="trust-kind">
@@ -274,5 +321,30 @@ export function TrustStructureDialog({ companyId, dealId, partyName, initial, on
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// What the deed reading filled, each with the deed's own words, and what it left out.
+function DeedReadBack({ reading }: { reading: TrustDeedReading }) {
+  return (
+    <div className="space-y-1.5 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs" data-testid="trust-deed-readback">
+      <p className="font-medium">Read from the trust deed: check each line, then Save. What you had recorded is kept; the deed only fills what was blank and adds people.</p>
+      {reading.scanned && <p className="text-amber-800 dark:text-amber-300">A scanned deed: its words could not be checked by the app, so check each line against the deed by eye.</p>}
+      <ul className="space-y-1">
+        {reading.lines.map((l, i) => (
+          <li key={i}>
+            <span className="font-medium">{l.field}:</span> {l.value}
+            {l.quote && <span className="block border-l-2 border-border pl-2 italic text-muted-foreground">“{l.quote}”{l.checked === null ? <span className="not-italic"> (check by eye)</span> : null}</span>}
+          </li>
+        ))}
+      </ul>
+      {reading.dropped.length > 0 && (
+        <details className="text-muted-foreground">
+          <summary className="cursor-pointer">{reading.dropped.length} left out</summary>
+          <ul className="mt-1 list-disc pl-4">{reading.dropped.map((d, i) => <li key={i}>{d.what}: {d.why}</li>)}</ul>
+        </details>
+      )}
+      <p className="text-muted-foreground">The deed does not say whether HMRC holds the trust or where the settlor's money came from: record those yourself.</p>
+    </div>
   );
 }
