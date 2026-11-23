@@ -124,3 +124,16 @@ test("certified copies are offered on every request and accepted only by the off
   assert.match(read("server/index.ts"), /ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text/);
   assert.doesNotMatch(read("client/src/components/kyc-client-checks.tsx").split("function CertifiedDocsDialog")[1].split("function PublicFigureLine")[0], /<form[\s>]/);
 });
+
+test("a certified copy a client sends is read and checked by the app, never taken on trust (Jack, 23 November 2026)", () => {
+  const portal = read("server/aml-portal.ts");
+  const block = portal.slice(portal.indexOf('if (docKey === "certified_ids" && row.company_id)'), portal.indexOf('if (isTrustDocsRequest(request) || docKey === "trust_deed")'));
+  // Filed for the reader, never as seen in the original, and never marked accepted.
+  assert.match(block, /INSERT INTO kyc_document_readings \(document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by_name\)\s*VALUES \(\$1, \$2, \$3, \$4, false, \$5\)/);
+  assert.match(block, /m\.readUpload\(pool, documentId\)/);
+  assert.doesNotMatch(block, /accepted_/);
+  // An identity copy counts only with the certifier's name, profession or firm, and date.
+  const rule = read("shared/kyc-documents.ts");
+  assert.match(rule, /if \(!reading\.certified\) reasons\.push\("Not a certified copy, and no agent saw the original"\);/);
+  assert.match(rule, /return check\.ok \|\| upload\.accepted \? check\.use : null;/);
+});

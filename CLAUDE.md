@@ -5734,8 +5734,18 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   that party's KYC record). It counts for that person's identity check and
   proof of address exactly as Verified from public sources does, can be
   withdrawn, and their own request then reads as done (`accepted` in
-  `progressOf`), so they are not chased. Nothing reads the documents: the
-  officer checks them by eye.
+  `progressOf`), so they are not chased. **The app reads each one** (Jack,
+  the same day: "As long as the documents are certified then yes they can
+  accept. But how can the app Audit that?"): a `certified_ids` upload is
+  queued and read exactly as a document BGP uploads is
+  (`kyc_document_readings`, `readUpload`, `checkKycDocument`; see "Upload
+  documents on a party"), never as seen in the original. One that names a
+  person to check, is in date and carries the certifier's name, profession
+  or firm and date counts for that person by itself, with the reading kept
+  as the record; anything else shows its reasons in the party's Upload
+  documents box and waits for an officer (Accept it there with a note, or
+  Certified documents on the person's row). Nobody accepts a certified copy
+  on trust.
 - **A trust stays a trust when a company signs for it** (found on Fortis
   Green the same day: URC Thames North Trust has its company, 00075432, set
   as the company that signs, and the people reader, the sign-off, the AML

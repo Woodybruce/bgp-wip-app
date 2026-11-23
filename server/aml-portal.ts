@@ -1086,6 +1086,21 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
     return documentId;
   }
 
+  if (docKey === "certified_ids" && row.company_id) {
+    // Certified copies a client sends (23 November 2026) are read and checked
+    // as a document BGP uploads is (server/kyc-documents.ts): whose it is, in
+    // date, and who certified it and when. One that passes counts for that
+    // person; one that does not waits for an officer. Never seen in the original.
+    const documentId = String(doc.rows[0].id);
+    await pool.query(
+      `INSERT INTO kyc_document_readings (document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by_name)
+       VALUES ($1, $2, $3, $4, false, $5) ON CONFLICT (document_id) DO NOTHING`,
+      [documentId, row.deal_id, row.company_id, row.trading_entity_id || null, `${sender} (client checks, ref ${request.ref})`.slice(0, 300)])
+      .catch((e: any) => console.warn(`[kyc] certified copy not queued for reading: ${e?.message}`));
+    // Read after the reply; one not read here is read when BGP opens the party's documents.
+    void import("./kyc-documents").then(m => m.readUpload(pool, documentId)).catch((e: any) => console.warn(`[kyc] certified copy not read: ${e?.message}`));
+  }
+
   if (isTrustDocsRequest(request) || docKey === "trust_deed") {
     // A trust's documents (23 November 2026): the deed is read into a draft
     // structure, and once everything asked for is in, the request finishes
