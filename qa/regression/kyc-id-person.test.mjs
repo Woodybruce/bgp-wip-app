@@ -16,7 +16,7 @@ const read = (p) => readFileSync(p, 'utf8');
 test("someone else's identity check does not count as the client's, on the page, the card or the Finished note", () => {
   const portal = read('server/aml-portal.ts');
   assert.match(portal, /return \{ verifiedName, isThePerson: idCheckIsThePerson\(row\.contact_name, verifiedName\) \};/);
-  assert.match(portal, /const idDone = \(idState === "approved" \|\| idState === "submitted"\) && idPerson\?\.isThePerson !== false;/);
+  assert.match(portal, /const idDone = accepted \|\| \(\(idState === "approved" \|\| idState === "submitted"\) && idPerson\?\.isThePerson !== false\);/);
   assert.match(portal, /idVerifiedName: progress\.idPerson\?\.verifiedName \?\? null, idOtherPerson: progress\.idPerson\?\.isThePerson === false,/);
   assert.match(portal, /idState: progress\.idState, idPerson: progress\.idPerson,/);
   // The right person can still start their own on the same link.

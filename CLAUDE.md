@@ -5325,6 +5325,36 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   the gap reads "Add the trust's information: what kind of trust, who set
   it up, the trustees and who benefits". Code names (`trust-structure`,
   `TrustStructure`) are unchanged. No screen says "trust structure".
+- **Certified copies on every request** (Jack, 23 November 2026: "I would
+  also like them to have the ability to upload certified documents (ID and
+  proof of address)", then "these need to be sent on all AML request emails.
+  As long as we have a way to accept the documents sent in"). Every client
+  check email and page (not the joint agent's) has **Or send certified
+  copies** (a trust request: **What happens next**, which also says each
+  trustee and the settlor get their own link) with Jack's lists
+  (`CERTIFIED_LIST_A`: passport, photocard driving licence, Home Office
+  residence permit, certified by a solicitor; `CERTIFIED_LIST_B`: a utility
+  or council tax bill under 3 months old; `certifiedWords` says who for) and
+  an optional upload card, doc key `certified_ids` (filed as
+  `certified_id`). It is never one of a request's own documents
+  (`TRUST_OPTIONAL_DOCS`, sent as `optionalDocs`), so it never holds a
+  request open or shows in a reminder. **Accepting them** is the officers':
+  **Certified documents** on a person's row in People to check
+  (`CertifiedDocsDialog`: tick the person's files, or add them, and say who
+  certified them) posts to the public-figure route with `method: certified`
+  (`kyc_public_figure_checks.method`, a boot column; document ids must be on
+  that party's KYC record). It counts for that person's identity check and
+  proof of address exactly as Verified from public sources does, can be
+  withdrawn, and their own request then reads as done (`accepted` in
+  `progressOf`), so they are not chased. Nothing reads the documents: the
+  officer checks them by eye.
+- **A trust stays a trust when a company signs for it** (found on Fortis
+  Green the same day: URC Thames North Trust has its company, 00075432, set
+  as the company that signs, and the people reader, the sign-off, the AML
+  board and the client checks each read `!entityId`, so the trust's people
+  would not have been listed). Those four and the screening of the
+  structure's people now read the record alone; BGP's checks still run on
+  the company that signs.
 - Not built: the client naming the trust's people on their page; Scotland's
   and Northern Ireland's registers. Not run against live data or Anthropic:
   checked by tests only, not in a browser.

@@ -39,7 +39,7 @@ import { partySubjectKind } from "@shared/deal-parties";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { jointAgentAsks, jointAgentFinishedEmail } from "@shared/kyc-request";
+import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords } from "@shared/kyc-request";
 import { agentWords, jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 export const KYC_MAILBOX = (process.env.KYC_MAILBOX || process.env.BGP_AML_MAILBOX || "kyc@chatbgp.app").trim();
@@ -324,11 +324,11 @@ async function startIdSession(row: TokenRow, request: KycRequestDetails): Promis
 
 // ── What the client has done ────────────────────────────────────────────────
 
-interface UploadedFile { name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }
+interface UploadedFile { name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null; documentId: string | null }
 
 async function uploadedFiles(token: string): Promise<UploadedFile[]> {
   const r = await pool.query(
-    `SELECT f.original_filename, f.doc_type, f.uploaded_at, d.file_url
+    `SELECT f.original_filename, f.doc_type, f.uploaded_at, d.file_url, f.kyc_document_id
        FROM kyc_upload_files f LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id
       WHERE f.token = $1 ORDER BY f.uploaded_at`,
     [token],
@@ -338,6 +338,7 @@ async function uploadedFiles(token: string): Promise<UploadedFile[]> {
     docKey: isKycDocKey(f.doc_type) ? f.doc_type : null,
     uploadedAt: new Date(f.uploaded_at).toISOString(),
     url: f.file_url || null,
+    documentId: f.kyc_document_id ? String(f.kyc_document_id) : null,
   }));
 }
 
@@ -370,7 +371,12 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
   const pepAnswered = !request.askPep || !!request.answers?.pep;
   const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
   // Someone else's identity check is not the client's.
-  const idDone = (idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false;
+  // An officer accepted their certified documents (or verified them from
+  // public sources): nothing more is owed on the identity check or address.
+  const accepted = !!row.company_id && !!row.contact_name && !isTrustDocsRequest(request) && !isJointRequest(request)
+    && await import("./kyc-people").then(async m => (await m.publicFiguresFor(row.company_id!, row.trading_entity_id || null)).some(f => personNamesMatch(f.name, row.contact_name!))).catch(() => false);
+  if (accepted) for (const k of ["photo_id", "proof_of_address"] as KycDocKey[]) if (request.docs.includes(k) && !docsDone.includes(k)) docsDone.push(k);
+  const idDone = accepted || ((idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false);
   const ownersLinked = !request.ownLinksFor?.length
     || await linkedPeople(row).then(keys => request.ownLinksFor!.every(o => keys.has(o.key))).catch(() => false);
   return { idDone, docsDone, pepAnswered, ownersAnswered, ownersLinked, idState, idPerson, files: list };
@@ -446,7 +452,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames, request.ownersAbroad),
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
-    otherFiles: progress.files.filter(f => !f.docKey || !requested.has(f.docKey)).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+    otherFiles: progress.files.filter(f => !f.docKey || !(requested.has(f.docKey) || (!isJointRequest(request) && TRUST_OPTIONAL_DOCS.includes(f.docKey)))).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     person: request.person ? { roles: request.person.roles, words: kycPersonRoleWords(request.person.roles, request.partyName) } : null,
     people,
     note: request.note,
@@ -454,6 +460,14 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     finishedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
     maxFileMb: KYC_MAX_FILE_MB,
     ...(isTrustDocsRequest(request) ? { trustDocs: true } : {}),
+    // Certified copies in place of the online check, on every request but the joint agent's (23 November 2026).
+    ...(isJointRequest(request) ? {} : {
+      certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose }),
+      optionalDocs: TRUST_OPTIONAL_DOCS.filter(k => !request.docs.includes(k)).map(key => ({
+        key, title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail,
+        files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
+      })),
+    }),
   };
 }
 
@@ -513,7 +527,7 @@ async function dealParties(dealId: string) {
       kind: partySubjectKind(c.aml_subject_type, entity ? { kind: entity.entity_kind } : null),
       contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
       entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
-      trust: !entity && String(c.aml_subject_type || "").trim().toLowerCase() === "trust",
+      trust: String(c.aml_subject_type || "").trim().toLowerCase() === "trust",
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
     });
   }

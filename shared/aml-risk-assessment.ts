@@ -263,7 +263,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const ownerRows = people.filter(x => p.individual || x.roles.includes("owner"));
   const owners: RiskOwner[] = ownerRows.map(x => {
     const reg = c?.ownerDetails?.find(o => personNamesMatch(o.name, x.name)) || null;
-    const idMethod = x.publicFigure ? `Public figure: verified from public sources by ${x.publicFigure.by}, ${day(x.publicFigure.at)}`
+    const idMethod = x.publicFigure ? x.publicFigure.method === "certified" ? `Certified documents: accepted by ${x.publicFigure.by}, ${day(x.publicFigure.at)}` : `Public figure: verified from public sources by ${x.publicFigure.by}, ${day(x.publicFigure.at)}`
       : x.reliedOn ? `Checked by ${relied?.firm || "another firm"}, relied on under MLR 2017 reg 39`
       : x.id.state === "passed" ? "Online identity check (Veriff)"
       : x.id.state === "waiting" ? "Online identity check done, waiting for Veriff's result"
@@ -279,7 +279,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
       evidence: [
         x.ownerDetail ? cap(x.ownerDetail) : "",
         x.born ? `Born ${x.born}` : "",
-        x.publicFigure ? `Public sources: ${x.publicFigure.note}` : "",
+        x.publicFigure ? `${x.publicFigure.method === "certified" ? "Certified documents" : "Public sources"}: ${x.publicFigure.note}` : "",
         x.address.done ? `Proof of address: ${x.address.proof?.summary || "received"}` : x.publicFigure || x.reliedOn ? "" : "Proof of address not received yet",
         `Sanctions: ${x.sanctions === "clear" ? "no match" : x.sanctions === "discounted" ? "a namesake, set aside on the date of birth" : x.sanctions === "possible" ? "possible match: see the red flags" : "not screened yet"}`,
         reg && reg.name !== x.name ? `On the register as ${reg.name}` : "",
@@ -301,7 +301,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const mitigating = [
     ...p.aside.map(a => `${a.flag.label}: set aside by ${a.review.by || "an officer"}${a.review.at ? ` on ${day(a.review.at)}` : ""}: "${a.review.comment}"`),
     ...(c?.listing ? ["Listed on a regulated market: simplified due diligence may apply (MLR 2017 reg 37)"] : []),
-    ...people.filter(x => x.publicFigure).map(x => `${x.name} verified from public sources by ${x.publicFigure!.by}`),
+    ...people.filter(x => x.publicFigure).map(x => `${x.name} ${x.publicFigure!.method === "certified" ? "verified from certified documents" : "verified from public sources"} by ${x.publicFigure!.by}`),
     ...(relied ? [`${relied.words}: the firm's checks are relied on under MLR 2017 reg 39`] : []),
     ...(p.kyc4u?.assessment?.levelOfRisk ? [`KYC4U rated the party ${p.kyc4u.assessment.levelOfRisk.toLowerCase()} risk${p.kyc4u.assessment.jobId ? ` (${p.kyc4u.assessment.jobId})` : ""}`] : []),
   ];

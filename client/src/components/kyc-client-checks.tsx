@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAmlInHouse } from "@/components/aml-policy-panel";
-import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileText, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, FileText, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ import {
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
-import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
 import type { KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
@@ -54,7 +54,7 @@ export interface ClientCheckRequest {
   ownLinksFor?: string[];
   // note: why a step is not ticked (the old owners' step's files say nobody's name).
   docs: Array<{ key: KycDocKey; title: string; done: boolean; note?: string | null }>;
-  files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null }>;
+  files: Array<{ name: string; docKey: KycDocKey | null; uploadedAt: string; url: string | null; documentId?: string | null }>;
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
 }
 export interface ClientChecks {
@@ -359,7 +359,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
   const [details, setDetails] = useState(false);
   const [sending, setSending] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [verifying, setVerifying] = useState(false);
+  const [verifying, setVerifying] = useState<false | "public" | "certified">(false);
   const ownRequest = person.own && !person.own.isMain ? data.requests.find(r => r.token === person.own!.token) || null : null;
   // Verified from public sources by the officers (21 November 2026): counts for the identity check and the proof of address.
   const pf = person.publicFigure || null;
@@ -378,15 +378,20 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           <span className={`inline-flex items-center gap-0.5 ${proofToCheck ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}`}>
             {proofToCheck ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Tick ok={!!pf || !!relied || person.address.done} />}{proofToCheck ? "Address to check" : "Address"}
           </span>
-          {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>Public figure</span>}
+          {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>{pf.method === "certified" ? "Certified documents" : "Public figure"}</span>}
           {relied && <span className={`${pillMetrics} bg-violet-50 text-violet-800 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900`} data-testid={`person-relied-${testKey}`}>Covered by reliance</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
         {canDecide && !pf && person.outstanding.length > 0 && (
-          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying(true)} data-testid={`person-verify-public-${testKey}`}>
+          <>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying("certified")} data-testid={`person-verify-certified-${testKey}`}>
+            <FileCheck className="w-3 h-3 mr-1" />Certified documents
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setVerifying("public")} data-testid={`person-verify-public-${testKey}`}>
             <Globe className="w-3 h-3 mr-1" />Verified from public sources
           </Button>
+          </>
         )}
         {(person.canSend || (ownRequest && !ownRequest.sentAt && ownRequest.status !== "finished")) && (
           <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setSending(true)} data-testid={`person-send-${testKey}`}>
@@ -401,7 +406,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       <ul className="space-y-0.5">
         <li className="flex items-start gap-1" data-testid={`person-id-${person.key.replace(/\s+/g, "-")}`}>
           <Tick ok={idOk} />
-          {pf ? <span>Identity: verified from public sources (above)</span> : relied ? <span>Identity: {relied.replace(/^Relying on/, "covered by")}</span> : (
+          {pf ? <span>Identity: {personVerifiedWords(pf)} (above)</span> : relied ? <span>Identity: {relied.replace(/^Relying on/, "covered by")}</span> : (
           <span>
             {ID_STATE_WORDS[person.id.state]}
             {person.id.elsewhere ? <span className="text-muted-foreground"> {person.id.elsewhere}</span> : null}
@@ -411,7 +416,7 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           )}
         </li>
         {pf
-          ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the verification from public sources</span></li>
+          ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the {pf.method === "certified" ? "certified documents" : "verification from public sources"}</span></li>
           : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
@@ -432,7 +437,8 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
       {open && ownRequest && <ClientCheckRow dealId={dealId} request={ownRequest} startOpen />}
       </>}
       {sending && <PersonLinkDialog dealId={dealId} data={data} party={party} person={person} onClose={() => setSending(false)} />}
-      {verifying && <PublicFigureDialog dealId={dealId} role={party.role} person={person} onClose={() => setVerifying(false)} />}
+      {verifying === "public" && <PublicFigureDialog dealId={dealId} role={party.role} person={person} onClose={() => setVerifying(false)} />}
+      {verifying === "certified" && <CertifiedDocsDialog dealId={dealId} role={party.role} person={person} held={data.requests.filter(r => r.companyId === party.companyId).flatMap(r => r.files).filter(f => f.docKey === "certified_ids" && f.documentId)} onClose={() => setVerifying(false)} />}
     </div>
   );
 }
@@ -515,6 +521,81 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
   );
 }
 
+// Certified copies in place of the online check (Jack, 23 November 2026): the
+// Nominated Officer or a Deputy ticks the person's certified ID and proof of
+// address (sent on the client's page, or added here) and says who certified
+// them. It counts for their identity check and proof of address.
+function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
+  dealId: string; role: string; person: KycPartyPerson; held: Array<{ name: string; url: string | null; documentId?: string | null }>; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [note, setNote] = useState("");
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const missing = !ticked.length && !files.length ? "Tick their certified documents, or add them."
+    : note.trim().length < PUBLIC_FIGURE_NOTE_MIN ? "Say which documents you checked and who certified them."
+    : null;
+  const save = useMutation({
+    mutationFn: async () => {
+      const fd = new FormData();
+      fd.append("key", person.key);
+      fd.append("method", "certified");
+      fd.append("note", note.trim());
+      fd.append("documentIds", ticked.join(","));
+      for (const f of files) fd.append("files", f);
+      const res = await fetch(`/api/deals/${dealId}/parties/${role}/public-figure`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
+      return body;
+    },
+    onSuccess: () => { refreshPeople(dealId); toast({ title: `${person.name}: verified from certified documents` }); onClose(); },
+    onError: (e: any) => toast({ title: "Not recorded", description: String(e?.message || e), variant: "destructive" }),
+  });
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md" data-testid="certified-docs-dialog">
+        <DialogHeader>
+          <DialogTitle>{person.name}: certified documents</DialogTitle>
+          <DialogDescription>
+            One List A document certified by a solicitor (passport, photocard driving licence or Home Office residence permit) and one List B (a utility or council tax bill under 3 months old). It counts for their ID and address.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {held.length > 0 && (
+            <div className="space-y-1.5">
+              <Label className="block">Certified documents sent to us: tick this person's</Label>
+              <ul className="space-y-1">
+                {held.map(f => (
+                  <li key={f.documentId!} className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={ticked.includes(f.documentId!)} onChange={e => setTicked(t => e.target.checked ? [...t, f.documentId!] : t.filter(x => x !== f.documentId))} data-testid={`certified-doc-${f.documentId}`} />
+                    {f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="underline truncate">{f.name}</a> : <span className="truncate">{f.name}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="block">{held.length ? "Or add files" : "Their certified documents"}</Label>
+            <input type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx" onChange={e => setFiles(Array.from(e.target.files || []).slice(0, 10))} data-testid="certified-docs-files" className="text-xs" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="certified-docs-note">What you checked</Label>
+            <Textarea id="certified-docs-note" value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
+              placeholder="For example: passport certified by J Smith, solicitor, Smith & Co, 20 Nov 2026; council tax bill dated Oct 2026 at the same address" data-testid="certified-docs-note" />
+          </div>
+          {missing && <p className="text-[11px] text-muted-foreground">{missing}</p>}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={!!missing || save.isPending} onClick={() => save.mutate()} data-testid="certified-docs-save">
+            {save.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}Accept them
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string; role: string; person: KycPartyPerson; canDecide: boolean }) {
   const { toast } = useToast();
   const pf = person.publicFigure!;
@@ -525,7 +606,7 @@ function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string;
   });
   return (
     <div className="rounded border border-emerald-200 bg-emerald-50/60 px-2 py-1 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200" data-testid={`public-figure-line-${person.key.replace(/\s+/g, "-")}`}>
-      <p><span className="font-medium">Verified from public sources</span> by {pf.by} on {new Date(pf.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}: {pf.note}</p>
+      <p><span className="font-medium">{pf.method === "certified" ? "Verified from certified documents" : "Verified from public sources"}</span> by {pf.by} on {new Date(pf.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}: {pf.note}</p>
       {pf.links.length > 0 && (
         <ul className="mt-0.5 space-y-0.5">{pf.links.map(l => <li key={l} className="truncate"><a href={l} target="_blank" rel="noreferrer" className="underline">{l}</a></li>)}</ul>
       )}

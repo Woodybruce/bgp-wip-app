@@ -38,7 +38,7 @@ test("a trust never goes to KYC4U: the Next line, the sign-off, the board and th
 test("the trust's people are the ones to check and to screen, read from its structure", () => {
   assert.match(read("server/kyc-people.ts"), /m\.trustStructureFor\(party\.companyId\)/);
   const pre = read("server/kyc-prechecks.ts");
-  assert.match(pre, /if \(isTrust\) \{\s*const \{ trustStructureFor \} = await import\("\.\/trust-structure"\);/);
+  assert.match(pre, /=== "trust"\) \{\s*const \{ trustStructureFor \} = await import\("\.\/trust-structure"\);/);
   assert.match(pre, /trustPerson: true/);
   const portal = read("server/aml-portal.ts");
   assert.match(portal, /trust: trustAsk \}\);/);
@@ -92,4 +92,27 @@ test("a red flag is raised with the AML Officer by name while the officers check
   const box = read("client/src/components/deal-aml-status.tsx");
   assert.match(box, /title=\{inHouse \? `Red flag: raise with \$\{officer\}` : "Red flag: raise with KYC4U"\}/);
   assert.match(read("shared/aml-policy.ts"), /return first \? `AML Officer \(\$\{first\}\)` : "the AML Officer";/);
+});
+
+test("a trust stays a trust when a company signs for it (Fortis Green, 23 November 2026)", () => {
+  const people = read("server/kyc-people.ts");
+  assert.match(people, /const ownRecord = trustRecord && !party\.entityId;/);
+  assert.match(people, /const trust = trustRecord \? /);
+  assert.match(read("server/deal-party-aml.ts"), /const trust = String\(held\?\.aml_subject_type \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "trust";/);
+  assert.match(read("server/aml-dashboard.ts"), /const isTrust = String\(companyRow\?\.aml_subject_type \|\| ""\)\.toLowerCase\(\) === "trust";/);
+});
+
+test("certified copies are offered on every request and accepted only by the officers (Jack, 23 November 2026)", () => {
+  const portal = read("server/aml-portal.ts");
+  // Optional: never one of the request's own documents, so it never holds a request open.
+  assert.match(portal, /\.\.\.\(isJointRequest\(request\) \? \{\} : \{\s*certifiedWords:/);
+  assert.match(portal, /optionalDocs: TRUST_OPTIONAL_DOCS\.filter\(k => !request\.docs\.includes\(k\)\)/);
+  const shared = read("shared/kyc-request.ts");
+  assert.doesNotMatch(shared.match(/export const TRUST_REQUEST_DOCS[^\n]*/)[0], /certified_ids/);
+  // Accepting is the officers' and takes only documents on that party's record.
+  const route = read("server/deal-party-aml.ts");
+  assert.match(route, /router\.post\("\/api\/deals\/:id\/parties\/:role\/public-figure", deciderFirst, takeFiles/);
+  assert.match(route, /FROM kyc_documents WHERE id::text = ANY\(\$1::text\[\]\) AND company_id = \$2/);
+  assert.match(read("server/index.ts"), /ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text/);
+  assert.doesNotMatch(read("client/src/components/kyc-client-checks.tsx").split("function CertifiedDocsDialog")[1].split("function PublicFigureLine")[0], /<form[\s>]/);
 });

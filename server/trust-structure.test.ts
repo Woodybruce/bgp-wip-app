@@ -219,3 +219,36 @@ test("the request asks for the trust's documents in plain words, and the ready n
   assert.match(ready.html, /read into a draft structure: 4 people named/);
   assert.match(ready.html, /HMRC&#39;s proof of registration|HMRC's proof of registration/);
 });
+
+test("every request email offers certified copies with both lists (Jack, 23 November 2026)", () => {
+  const base = {
+    recipientName: "Adam Harvey", partyName: "Acme Ltd", dealName: "1 High Street", ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/x",
+    expiresAt: new Date("2026-12-07"), needsIdCheck: true, docs: ["proof_of_address"] as any, agents: [], sentFrom: "kyc@chatbgp.app", askPep: true,
+  };
+  const company = kycRequestEmail({ ...base, kind: "company" as any }).html;
+  assert.match(company, /Or send certified copies/);
+  assert.match(company, /anyone who owns more than 25% of the company/);
+  assert.match(company, /List A<\/strong> \(one, certified by a solicitor\)/);
+  assert.match(company, /residence permit issued by the Home Office/);
+  assert.match(company, /council tax bill less than 3 months old/);
+  const person = kycRequestEmail({ ...base, kind: "individual" as any }).html;
+  assert.match(person, /upload certified copies instead/);
+  assert.doesNotMatch(person, /25%/);
+  const trust = kycRequestEmail({ ...base, kind: "company" as any, needsIdCheck: false, askPep: false, docs: [...TRUST_REQUEST_DOCS], purpose: "trust_structure" }).html;
+  assert.match(trust, /What happens next/);
+  assert.match(trust, /gets an email from us with their own secure link/);
+  assert.match(trust, /List B<\/strong> \(one\)/);
+  // Optional: not one of the trust request's own documents.
+  assert.equal(TRUST_REQUEST_DOCS.includes("certified_ids" as any), false);
+});
+
+test("an officer's acceptance of certified documents clears what a person owes", () => {
+  const people = partyPeople({
+    companyId: "c1", kind: "individual", precheck: null,
+    requests: [{ token: "t", ref: "R1", companyId: "c1", recipientName: "Jane Doe", person: null, cancelled: false, expired: false, finished: false, sentAt: null, needsIdCheck: true, docs: ["proof_of_address"], ownerNames: [], idChecks: [], files: [] }],
+    publicFigures: [{ id: "1", name: "Jane Doe", note: "passport certified by a solicitor", by: "Jack Barratt", at: "2026-11-23T10:00:00Z", links: [], documents: 2, method: "certified" }],
+  } as any);
+  const jane = people.people.find(p => /jane/i.test(p.name))!;
+  assert.deepEqual(jane.outstanding, []);
+  assert.equal(jane.publicFigure?.method, "certified");
+});

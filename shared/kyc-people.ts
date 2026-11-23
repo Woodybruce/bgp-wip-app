@@ -102,7 +102,12 @@ export interface PeopleRequest {
  * public-figure status"). It counts for their identity check and their proof
  * of address.
  */
-export interface PublicFigureCheck { id: string; name: string; note: string; by: string; at: string; links: string[]; documents: number }
+// method "certified" (Jack, 23 November 2026): certified copies of their ID
+// and proof of address, accepted by an officer in place of the online check.
+export type PersonVerifyMethod = "public" | "certified";
+export interface PublicFigureCheck { id: string; name: string; note: string; by: string; at: string; links: string[]; documents: number; method?: PersonVerifyMethod }
+export const personVerifiedWords = (c: Pick<PublicFigureCheck, "method"> | null | undefined): string =>
+  c?.method === "certified" ? "verified from certified documents" : "verified from public sources";
 export const PUBLIC_FIGURE_NOTE_MIN = 10;
 export const PUBLIC_FIGURE_MAX_LINKS = 6;
 

@@ -170,7 +170,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     // No company that signs: no checks before asking to read (the deal card's rule).
     const needsCompany = !p.entityId && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     // A trust is checked by the officers, never KYC4U (Jack, 23 November 2026).
-    const isTrust = !p.entityId && String(companyRow?.aml_subject_type || "").toLowerCase() === "trust";
+    const isTrust = String(companyRow?.aml_subject_type || "").toLowerCase() === "trust";
     const partyInHouse = inHouse || isTrust;
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     const allTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);

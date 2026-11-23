@@ -9,7 +9,7 @@ import type { KycRedFlag } from "./kyc-red-flags";
 
 export type KycDocKey = "photo_id" | "proof_of_address" | "source_of_funds" | "ownership" | "owner_ids" | "authority" | "company_documents"
   // A trust's own documents (Jack, 23 November 2026: trusts checked by BGP, not KYC4U).
-  | "trust_deed" | "trust_people" | "trs_excerpt" | "trust_authority" | "trust_wealth" | "other";
+  | "trust_deed" | "trust_people" | "trs_excerpt" | "trust_authority" | "trust_wealth" | "certified_ids" | "other";
 export type KycPartyKind = "individual" | "company";
 
 // A request of a person's own (Woody, 19 November 2026, agreeing "a list of
@@ -41,7 +41,20 @@ export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): s
     : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
-export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "trust_deed", "trust_people", "trs_excerpt", "trust_authority", "trust_wealth", "other"];
+// Jack's lists for certified copies (23 November 2026).
+export const CERTIFIED_LIST_A = [
+  "a current, valid and signed full passport",
+  "a valid photocard driving licence (not an old-style paper licence)",
+  "a residence permit issued by the Home Office",
+];
+export const CERTIFIED_LIST_B = [
+  "a utility bill less than 3 months old showing their current address",
+  "a council tax bill less than 3 months old showing their current address",
+];
+// Optional documents every request also takes (the joint agent's aside).
+export const TRUST_OPTIONAL_DOCS: KycDocKey[] = ["certified_ids"];
+
+export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "source_of_funds", "ownership", "owner_ids", "authority", "company_documents", "trust_deed", "trust_people", "trs_excerpt", "trust_authority", "trust_wealth", "certified_ids", "other"];
 
 // docType is what the file is filed as on the client's KYC record, the
 // types the KYC pack intake already uses (a driving licence files as
@@ -119,6 +132,14 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     title: "Where the trust's money came from",
     detail: "How the settlor came to have the money or property put into the trust (savings, the sale of a business or property, an inheritance), with something showing it: a letter from the trust's accountant or solicitor, a completion statement or a will.",
     docType: "source_of_wealth",
+  },
+  // Certified copies in place of the online check (Jack, 23 November 2026):
+  // optional on a trust's documents request, never one of its required
+  // documents; an officer accepts them against each person.
+  certified_ids: {
+    title: "Certified ID and proof of address (optional)",
+    detail: "Upload each person's certified List A document and their List B document here. Name each file after the person if you can.",
+    docType: "certified_id",
   },
   other: {
     title: "Anything else",
@@ -477,6 +498,9 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     companiesHouse,
     button("Start your checks", ctx.link),
     p(`Your personal link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>, on your phone or computer.`, `font-size:13px;color:${MUTED}`),
+    h2("Or send certified copies"),
+    p(escHtml(certifiedWords(ctx)), `font-size:14px;color:${BODY}`),
+    certifiedLists(),
     noteBlock(ctx.note, ctx.agents),
     whyWeAsk(),
     h2("Questions?"),
@@ -489,6 +513,30 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
 // A trust's documents (23 November 2026): who stands behind the trust, sent
 // by its trustees, solicitor or accountant. Its people each get a link of
 // their own for their identity check afterwards.
+// What follows a trust's documents (Jack, 23 November 2026): each person's
+// own link, or certified copies sent now. The email and the page say both.
+export const TRUST_NEXT_WORDS = {
+  links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check and a proof of address from the last three months, and takes about ten minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
+  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified by a solicitor, and one from List B.",
+};
+// Certified copies in place of the online check, on every request (Jack, 23
+// November 2026: "these need to be sent on all AML request emails"). Who
+// they are for depends on who is asked.
+export function certifiedWords(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): string {
+  if (ctx.purpose === "trust_structure") return TRUST_NEXT_WORDS.certified;
+  if (ctx.person || ctx.kind === "individual") return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified by a solicitor, and one from List B.";
+  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified by a solicitor, and one from List B.";
+}
+const bullets = (items: string[]): string =>
+  `<ul style="margin:0 0 6px 18px;padding:0;font-family:${FONT};font-size:14px;line-height:1.5;color:${BODY}">${items.map(i => `<li>${escHtml(i[0].toUpperCase() + i.slice(1))}</li>`).join("")}</ul>`;
+
+const certifiedLists = (): string => [
+  p(`<strong>List A</strong> (one, certified by a solicitor)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  bullets(CERTIFIED_LIST_A),
+  p(`<strong>List B</strong> (one)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  bullets(CERTIFIED_LIST_B),
+].join("\n");
+
 function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {
   const inner = [
     `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:22px;line-height:1.3;color:${ACCENT}">Documents about ${escHtml(ctx.partyName)}</h1>`,
@@ -498,7 +546,11 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     stepsList(kycSteps(ctx)),
     p("Upload them on your secure page, or reply to this email with them attached.", `font-size:14px;color:${BODY}`),
     button("Upload the documents", ctx.link),
-    p(`Your link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>. Once we have the documents, we'll send each trustee and the settlor a short identity check of their own.`, `font-size:13px;color:${MUTED}`),
+    p(`Your link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
+    h2("What happens next"),
+    p(escHtml(TRUST_NEXT_WORDS.links), `font-size:14px;color:${BODY}`),
+    p(escHtml(TRUST_NEXT_WORDS.certified), `font-size:14px;color:${BODY}`),
+    certifiedLists(),
     noteBlock(ctx.note, ctx.agents),
     whyWeAsk(),
     h2("Questions?"),
@@ -1023,6 +1075,9 @@ export interface KycPortalView {
   maxFileMb: number;
   // A request for a trust's documents (23 November 2026): its own wording.
   trustDocs?: boolean;
+  // Optional documents the page also takes (certified copies), and the words that introduce them.
+  certifiedWords?: string;
+  optionalDocs?: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   // The joint agent's request (22 November 2026): its own page, with the
   // reliance terms to agree on a letting at £10,000 a month or more.
   joint?: {

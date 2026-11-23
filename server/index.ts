@@ -3143,6 +3143,8 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       withdrawn_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
+    // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
+    `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
     // What BGP records against a company abroad that owns a party (Woody,
     // 21 November 2026: the free route to what KYC4U do): its register page
     // (copied to PDF), a register extract or structure chart (with the chart's

@@ -73,8 +73,11 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   let precheck: Parameters<typeof partyPeople>[0]["precheck"] = null;
   // A trust or foundation is checked on its own record, with no company that
   // signs (21 November 2026): its checks are read too.
-  const ownRecord = party.kind === "company" && !party.entityId
+  // A trust's structure applies whether or not a company signs for it (a
+  // corporate trustee set as the company that signs: Fortis Green, 23 November 2026).
+  const trustRecord = party.kind === "company"
     && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  const ownRecord = trustRecord && !party.entityId;
   // A private individual's own record is checked too: its sanctions lines name
   // the people on that side (22 November 2026: People read "not screened").
   if (party.kind === "individual" || (party.kind === "company" && (party.entityId || ownRecord))) {
@@ -84,7 +87,7 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   const { abroadPeopleFor } = await import("./kyc-abroad");
   const abroadPeople = party.kind === "company" ? await abroadPeopleFor(party.companyId, party.entityId).catch(() => []) : [];
   // A trust's structure as BGP recorded it (23 November 2026): its people are the ones to check.
-  const trust = ownRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
+  const trust = trustRecord ? (await import("./trust-structure").then(m => m.trustStructureFor(party.companyId)).catch(() => null))?.structure || null : undefined;
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
     ...(trust !== undefined ? { trust } : {}),
@@ -115,7 +118,7 @@ export async function relianceFor(dealId: string, companyId: string, entityId: s
 /** The people verified from public sources for a party (the brand and the company that signs), not withdrawn. */
 export async function publicFiguresFor(companyId: string, entityId: string | null, db: Db = pool): Promise<PublicFigureCheck[]> {
   const rows = (await db.query(
-    `SELECT id, person_name, note, links, document_ids, verified_by_name, verified_at FROM kyc_public_figure_checks
+    `SELECT * FROM kyc_public_figure_checks
       WHERE company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2::varchar AND withdrawn_at IS NULL ORDER BY verified_at DESC`,
     [companyId, entityId]).catch(() => ({ rows: [] as any[] }))).rows;
   return rows.map((r: any) => ({
@@ -123,5 +126,6 @@ export async function publicFiguresFor(companyId: string, entityId: string | nul
     at: new Date(r.verified_at).toISOString(),
     links: Array.isArray(r.links) ? r.links.filter((l: unknown) => typeof l === "string") : [],
     documents: Array.isArray(r.document_ids) ? r.document_ids.length : 0,
+    method: r.method === "certified" ? "certified" as const : "public" as const,
   }));
 }
