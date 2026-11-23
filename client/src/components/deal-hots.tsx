@@ -218,7 +218,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
       if (!p.role || !p.brand || p.signing) return false;
       if (p.state === "filed") return !!p.filed && hotsNamesClose(p.filed.name, p.read.name);
       const hit = p.register[0];
-      return p.state === "register" && !!hit && hit.agrees && !!p.read.number && !p.numberIsAnother
+      return p.state === "register" && !!hit && hit.agrees && !!p.read.number && !p.numberIsAnother && !p.byName
         && !CLOSED.includes(String(hit.status || "").toLowerCase());
     });
     if (!sure.length) return;

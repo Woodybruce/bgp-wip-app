@@ -212,6 +212,14 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   if (f.precheckRunning) {
     return step("wait", "bgp", "Screening", "running now");
   }
+  // A letting under £10,000 a month: the sanctions checks only, kept simple (Woody,
+  // 23 November 2026). Only a possible sanctions match holds it up; an agent signs off.
+  if (f.sanctionsOnly && !f.trust) {
+    if ((f.sanctionsFlags || 0) > 0) return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
+    if (f.billingDiffers) return BILLING_STEP;
+    if (f.canSignOff && f.signOffBlocked === null) return step("act", "bgp", "Ready to sign off", "sanctions only, all clear", "sign_off");
+    return f.signOffBlocked ? step("wait", "bgp", "Not ready to sign off", shortReason(f.signOffBlocked)) : step("wait", "bgp", "Sanctions clear", "an agent on the transaction signs off");
+  }
   // Higher risk is the officers' enhanced due diligence: KYC4U is no longer
   // used (Woody, 23 November 2026), and a KYC4U request made before then
   // holds nothing up.

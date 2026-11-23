@@ -76,3 +76,30 @@ test('a person and a request each open on one line', () => {
   assert.match(checks, /const warning = request\.idOtherPerson \?/);
   assert.match(checks, /\{person\.sanctions === "possible" && <span/);
 });
+
+// The simple sanctions-only view (Woody, 23 November 2026: "we have a sanctions only
+// version for AML'S which is much simpler so not to confuse everyone").
+test('a letting under £10,000 a month shows three steps, Who signs, Sanctions and Sign-off, with the full checks behind a link', () => {
+  const box = read('client/src/components/deal-aml-status.tsx');
+  assert.match(box, /const simple = sanctionsOnly && !isTrust && !fullView;/);
+  assert.match(box, /\{simple \? \(/);
+  assert.match(box, /testId=\{`aml-step-\$\{cp\.role\}-sanctions`\} n=\{2\} label="Sanctions"/);
+  assert.match(box, /n=\{3\} label="Sign-off"/);
+  assert.match(box, /only=\{\["sanctions"\]\}/);
+  assert.match(box, /\{fullView \? "Show the simple view" : "Show the full checks"\}/);
+  const board = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(board, /if \(row\.sanctionsOnly\) return \([\s\S]{0,300}>Sanctions only<\/span>[\s\S]{0,120}Letting under £10k a month/);
+});
+
+// The board's red flags as a count with a pop-up (Woody, 23 November 2026).
+test('the board shows the red flags as a count that opens their explanations', () => {
+  const board = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(board, /const flagCount = \(n: number\) => `\$\{n\} red flag\$\{n === 1 \? "" : "s"\}`;/);
+  assert.match(board, /<PopoverTrigger asChild>\s*<button type="button" onClick=\{e => e\.stopPropagation\(\)\}/);
+  assert.match(board, /<PopoverContent[^>]*onClick=\{e => e\.stopPropagation\(\)\}/);
+  assert.match(board, /Open the checks<\/button>/);
+  assert.match(board, /href=\{`\/deals\/\$\{row\.dealId\}\?section=parties`\}/);
+  assert.doesNotMatch(board, /row\.redFlags\.length === 1 \? row\.redFlags\[0\]/, 'the flag itself is no longer written in the table');
+  const server = read('server/aml-dashboard.ts');
+  assert.match(server, /flagDetails: shownFlags,/);
+});

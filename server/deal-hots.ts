@@ -32,6 +32,18 @@ import {
   type HotsFiling, type HotsOtherCompany, type HotsTextOptions, type HotsParty, type HotsPartyMatch, type HotsPartyRole, type HotsReading, type HotsRegisterHit, type HotsTerm, type HotsTermKey, type HotsTermView,
 } from "@shared/deal-hots";
 import { namesALegalCompany } from "@shared/deal-note";
+import { isOverseasEntityNumber, looksOverseasName, overseasNameKey } from "@shared/kyc-prechecks";
+
+// A company registered abroad (its name ends in a foreign legal form, "B.V.",
+// "GmbH", "S.A.") gives its home registry's number in heads of terms, never a
+// Companies House one, unless it is an overseas entity's OE number. Woody, 23
+// November 2026, on 65A Granville Arcade: "AG Hondo Brixton Village B.V.
+// Company Registration Number: 71168974" read as "Companies House has no
+// company numbered 71168974", and nothing could be confirmed. It is now
+// looked up by its name, which finds AG HONDO BRIXTON VILLAGE BV (OE002654)
+// on the Register of Overseas Entities.
+const numberIsFromAbroad = (read: { name: string; number: string | null }): boolean =>
+  !!read.number && looksOverseasName(read.name) && !isOverseasEntityNumber(read.number);
 import { dealClientRole, sameCompaniesHouseNumber, type DealPartyRole } from "@shared/deal-parties";
 import { fileHotsContact } from "./deal-hots-contact";
 
@@ -277,11 +289,12 @@ const CLOSED = new Set(["dissolved", "converted-closed", "removed", "closed", "l
  * (no word in common, and not a former name) is another company's: it is
  * never offered, and the name is looked up instead.
  */
-async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null): Promise<{ register: HotsRegisterHit[]; note: string | null; numberIsAnother: HotsOtherCompany | null }> {
+async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null): Promise<{ register: HotsRegisterHit[]; note: string | null; numberIsAnother: HotsOtherCompany | null; byName?: boolean }> {
   if (!lookups) return { register: [], note: "Companies House is not set up on this server.", numberIsAnother: null };
   try {
     let other: HotsOtherCompany | null = null;
-    if (read.number) {
+    const abroad = numberIsFromAbroad(read);
+    if (read.number && !abroad) {
       const hit = await lookups.byNumber(read.number);
       if (hit) {
         const key = legalNameKey(read.name);
@@ -297,21 +310,28 @@ async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null):
           };
         }
         other = { number: hit.number, name: hit.name, status: hit.status ?? null };
-      } else if (!namesALegalCompany(read.name)) {
+      } else if (!namesALegalCompany(read.name) && !looksOverseasName(read.name)) {
         return { register: [], note: `Companies House has no company numbered ${read.number}.`, numberIsAnother: null };
       }
     }
     // Exactly the name the document gives (a bracketed word is another company), not closed, best first.
+    // A company abroad is matched with its legal form left out ("B.V." and "BV" alike).
     const key = legalNameKey(read.name);
+    const abroadKey = looksOverseasName(read.name) ? overseasNameKey(read.name) : "";
+    const sameName = (title: string) => legalNameKey(title) === key || (!!abroadKey && overseasNameKey(title) === abroadKey);
     const hits = (await lookups.byName(read.name))
-      .filter(i => i?.company_number && i?.title && legalNameKey(i.title) === key && !CLOSED.has(String(i.company_status || "").toLowerCase()))
+      .filter(i => i?.company_number && i?.title && sameName(String(i.title)) && !CLOSED.has(String(i.company_status || "").toLowerCase()))
       .filter(i => !other || String(i.company_number) !== other.number)
       .slice(0, 3)
       .map(i => ({ number: String(i.company_number), name: String(i.title), status: i.company_status ?? null, address: i.address_snippet ?? null, agrees: true }));
-    const note = hits.length
-      ? (other ? "Found by its name instead." : read.number ? `Companies House has no company numbered ${read.number}; found by its name instead.` : null)
-      : `Companies House has no live company called ${read.name}.`;
-    return { register: hits, note, numberIsAnother: other };
+    const note = abroad
+      ? (hits.length
+        ? `${read.number} is its number where it is registered abroad; found at Companies House by its name.`
+        : `${read.number} is its number where it is registered abroad. Companies House has no live company called ${read.name}, on the Register of Overseas Entities or otherwise.`)
+      : hits.length
+        ? (other ? "Found by its name instead." : read.number ? `Companies House has no company numbered ${read.number}; found by its name instead.` : null)
+        : `Companies House has no live company called ${read.name}.`;
+    return { register: hits, note, numberIsAnother: other, byName: hits.length > 0 };
   } catch (e) {
     return { register: [], note: registerProblem(e), numberIsAnother: null };
   }
@@ -410,15 +430,17 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
     }
 
     // The company filed under the party that the document names: its number first, then its name.
+    const abroadNumber = numberIsFromAbroad(read);
     const filed = (read.number && filedUnder.find((e: any) => sameCompaniesHouseNumber(e.companies_house_number, read.number)))
-      || filedUnder.find((e: any) => legalNameKey(e.name) === legalNameKey(read.name) && (!read.number || !e.companies_house_number));
+      || filedUnder.find((e: any) => (legalNameKey(e.name) === legalNameKey(read.name) || (looksOverseasName(read.name) && overseasNameKey(String(e.name)) === overseasNameKey(read.name)))
+        && (!read.number || !e.companies_house_number || abroadNumber));
     if (filed) {
       base.filed = { id: String(filed.id), name: String(filed.name), number: filed.companies_house_number || null };
       base.state = base.signing?.id === base.filed.id ? "signs" : "filed";
       out.push(base);
       continue;
     }
-    if (!read.number && !namesALegalCompany(read.name)) {
+    if (!read.number && !namesALegalCompany(read.name) && !looksOverseasName(read.name)) {
       base.state = "no_company";
       out.push(base);
       continue;
@@ -427,6 +449,7 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
     base.register = r.register;
     base.registerNote = r.note;
     base.numberIsAnother = r.numberIsAnother;
+    if (r.byName) base.byName = true;
     const live = r.register.filter(h => !CLOSED.has(String(h.status || "").toLowerCase()));
     base.state = live.length === 1 ? "register" : live.length > 1 ? "choose" : "not_found";
     out.push(base);

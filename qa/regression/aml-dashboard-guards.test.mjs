@@ -84,7 +84,7 @@ test('the table shows the transaction status, the red flags under due diligence 
   assert.match(page, /<th className="text-left font-medium px-3 py-2">Due diligence and red flags<\/th>/);
   assert.doesNotMatch(page, />Red flags<\/th>/, 'the red flags sit under due diligence, not in a column of their own');
   assert.match(page, /<td className="px-3 py-2"><DealStatusChip row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 max-w-\[240px\]"><DiligenceCell row=\{r\} \/><\/td>/);
+  assert.match(page, /<td className="px-3 py-2 max-w-\[240px\]"><DiligenceCell row=\{r\} onOpen=\{setOpen\} \/><\/td>/);
   // Every agent on a line of their own, never cut off.
   assert.match(page, /\{row\.agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
   // The party, transaction and waiting-on columns give way below 1536px so the agents fit a laptop screen.

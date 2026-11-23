@@ -3389,6 +3389,25 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   /api/deals/:id/parties/:role`, `signsFound`), then the reading is matched
   again. **Back to the party box** (or **Open the party box** from the
   Describe box) is a quiet link. Guard: `qa/regression/deal-hots-guards.test.mjs`.
+- **A company registered abroad is found by its name** (Woody, the same
+  evening, on 65A Granville Arcade: "bug not allowing me to confirm the
+  Landlord having loaded up the HOTs"). The heads of terms gave "AG Hondo
+  Brixton Village B.V. Company Registration Number: 71168974", its Dutch
+  number, and the reader looked only for a UK company numbered 71168974. A
+  name with a foreign legal form (`looksOverseasName`) and a number that is
+  not an OE number is now never looked up by that number at Companies
+  House: it is searched by its name with the legal form left out
+  (`overseasNameKey`), which finds the overseas entity (AG HONDO BRIXTON
+  VILLAGE BV, OE002654), and a company filed under the party matches by
+  name despite the home number (`numberIsFromAbroad` in
+  `server/deal-hots.ts`). A company found by its name, not by the number the
+  document gives, is offered with a press and never set by itself
+  (`byName`). Test in `server/deal-hots.test.ts`.
+- **The heads of terms stay open after setting the company** (found in the
+  same check): opened from the party box, the dialog lived inside a section
+  shown only while no company signs, so setting the company from it removed
+  the dialog and left the party box closable only with Done. The section now
+  stays while the dialog is open (`hotsOpen`).
 - **A typed note** (`readHotsNote`; the route takes `text` in place of a
   file, up to 20,000 characters): the label rules, New Deal's party rules
   (`readDealNoteRules`: "Landlord is …", "letting … to …") with a company
@@ -3868,6 +3887,34 @@ check?" Do not re-litigate.
   board, the red flags), so no re-run is needed. A UK company's PSC register
   is not read this way (it is often filled in wrongly: Scp Aaa Invest,
   Monaco).
+- **A simple sanctions-only version** (Woody, the same evening: "we have a
+  sanctions only version for AML'S which is much simpler so not to confuse
+  everyone"). On a letting under £10,000 a month (`amlRegime`
+  `sanctions_only`), a party that is not a trust gets three steps in the AML
+  box: **Who signs**, **Sanctions** (the sanctions line alone, with Run
+  again: `PartyPrechecks only`; a possible match with its set-aside, and
+  nothing else) and **Sign-off**; **Show the full checks** under the card
+  opens the four steps (`fullView`, per page view). Only a possible
+  sanctions match holds it up: `signOffDenial` has a sanctions-only branch
+  (a sanctions match, checks running, not run, or more than 30 days old,
+  a guarantor's checks), `signOffEnhanced` is false for it, so an agent on
+  the transaction signs it off with no note, for 3 years, and its line on
+  the history says "sanctions checks only" with no level. The Next line
+  (`amlNextStep`) follows. Adverse media, public roles, owners abroad and
+  other findings are information there, under the full checks. The AML
+  board shows the party as **Sanctions only** (`sanctionsOnly` on the row)
+  and lists only possible sanctions matches, with "Letting under £10k a
+  month" under it. The sanctions line names who was screened.
+- **The board's red flags are a count** (Woody, the same evening: "lets not
+  show the actual problem in the table just 2 flags but click and it shows
+  the explanations as pop up and can take to the AML board"). The Due
+  diligence and red flags column reads "⚑ 2 red flags"; pressing it opens a
+  pop-up (`Flags` in `client/src/pages/aml-dashboard.tsx`, a Popover that
+  stops the row opening under it) listing each flag with its detail and
+  source (`flagDetails` on the row), **Open the checks** (the party's trail
+  on the board) and **Go to the transaction** (its Parties & AML pill). On a
+  phone the card shows the count only and opens the checks itself. Tests in `server/aml-box.test.ts`, `server/party-kyc.test.ts`,
+  `qa/regression/aml-box-sections.test.mjs`.
 - **Sanctions-only parties ask for nothing** (a letting under £10,000 a
   month): the party lines read "Who to ask · Not needed: sanctions checks
   only" (also once signed off or not required), and Owners abroad shows what

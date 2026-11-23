@@ -215,6 +215,8 @@ export interface AmlDashboardRow {
   signsAs: string | null;              // the company that signs, when the deal names one
   // Recorded as a trust: checked by the officers, never KYC4U (23 November 2026).
   trust?: boolean;
+  // A letting under £10,000 a month: sanctions checks only, and only possible sanctions matches listed (23 November 2026).
+  sanctionsOnly?: boolean;
   // Corporate owners registered abroad ("Kirkbi A/S, Denmark"): the officers find the people behind them.
   ownersAbroad?: string[];
   // The level of due diligence BGP's AML policy gives the party (Issue 2),
@@ -229,6 +231,9 @@ export interface AmlDashboardRow {
   deadline: string;
   late: boolean;
   redFlags: string[];                  // the labels, the deal card's rule
+  // Each flag with its detail and source, for the board's pop-up (Woody, 23 November 2026:
+  // "lets not show the actual problem in the table just 2 flags but click and it shows the explanations").
+  flagDetails?: Array<{ label: string; detail: string | null; source: string | null }>;
   waitingOn: string;
   movedDays: number | null;
   approvedBy: string | null;

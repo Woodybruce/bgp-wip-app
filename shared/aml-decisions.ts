@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A simple sanctions-only version for small lettings",
+    text: "On a letting under £10,000 a month each party shows three steps: who signs, the sanctions check and the sign-off. Only a possible sanctions match holds it up, and an agent on the transaction signs it off. Other findings stay under Show the full checks. A trust keeps its own rules." },
   { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Our client's solicitors are checked at the SRA too",
     text: "Both sides' solicitors on a transaction are checked against the SRA's register and the web for regulatory action or misconduct: our client's as well as the other side's. Saving our client's solicitors from the heads of terms checks them in the same press." },
   { date: "2026-11-23", who: ["Woody"], topic: "Officers and sign-off", title: "A sanctions-only sign-off covers small lettings only",

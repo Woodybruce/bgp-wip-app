@@ -206,3 +206,24 @@ test("a sign-off for sanctions checks only does not clear a transaction that nee
   // A full approval is untouched.
   assert.equal(kycVerdict(applyCheckScope(partyKycState({ brand: brand(), company: null }), true)).approved, true);
 });
+
+// The simple sanctions-only view's sign-off rule (Woody, 23 November 2026).
+test("a sanctions-only party is signed off on the sanctions checks: other flags inform, a sanctions match holds", async () => {
+  const { signOffDenial, signOffEnhanced } = await import("../shared/party-kyc");
+  const now = new Date("2026-11-23T18:00:00Z");
+  const base = {
+    rejected: false, current: null, withKyc4u: false, redFlags: 1, dealRedFlags: 0, unchecked: [], higherRisk: true,
+    precheck: { ranAt: "2026-11-23T16:36:00Z" }, precheckRunning: false, clientChecksFinished: false, clientChecksOutstanding: [],
+    sanctionsOnly: true, ownersAbroad: ["Tpg Inc., Delaware"], inHouseEdd: true, sanctionsFlags: 0, note: "", now,
+  } as any;
+  assert.equal(signOffEnhanced(base), false, "not the officers' alone");
+  assert.equal(signOffDenial(base), null, "adverse media and owners abroad do not hold a sanctions-only party");
+  assert.match(signOffDenial({ ...base, sanctionsFlags: 1 }) || "", /possible sanctions match/i);
+  assert.match(signOffDenial({ ...base, precheck: null }) || "", /sanctions checks have not run/);
+  assert.match(signOffDenial({ ...base, precheck: { ranAt: "2026-09-01T00:00:00Z" } }) || "", /more than 30 days old/);
+  // A full-checks transaction keeps the old rule.
+  assert.equal(signOffEnhanced({ ...base, sanctionsOnly: false }), true);
+  assert.notEqual(signOffDenial({ ...base, sanctionsOnly: false, note: "x" }), null);
+  // A trust keeps its own rules.
+  assert.equal(signOffEnhanced({ ...base, trust: true }), true);
+});

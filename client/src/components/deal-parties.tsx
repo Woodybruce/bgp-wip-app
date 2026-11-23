@@ -919,7 +919,9 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                   <PublicBodyLine dealId={dealId} party={party} />
                   <TrustLine dealId={dealId} party={party} />
                   {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
-                  {!party.company && (
+                  {/* Kept while its dialog is open: setting the company from the heads of terms
+                      must not close them (23 November 2026). */}
+                  {(!party.company || hotsOpen) && (
                     <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border px-2.5 py-2 text-xs" data-testid="deal-party-hots">
                       <span className="min-w-0 flex-1 text-muted-foreground">The heads of terms name it.</span>
                       <DealHotsButton dealId={dealId} label="Read the heads of terms" testId="deal-party-hots-button" inEditor onOpenChange={setHotsOpen} />

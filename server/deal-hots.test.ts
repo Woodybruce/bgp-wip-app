@@ -561,3 +561,31 @@ test("a party named as a person is offered as the person who signs; a company ne
     "Kirkbi A/S", "Ugly Duck Cafe", "", "One Two Three Four Five",
   ]) assert.equal(hotsPersonName(company), null, company);
 });
+
+// Woody, 23 November 2026, on 65A Granville Arcade: "bug not allowing me to confirm the
+// Landlord having loaded up the HOTs". The heads of terms gave "AG Hondo Brixton Village
+// B.V. Company Registration Number: 71168974", a Dutch number, and the reader looked only
+// for a UK company numbered 71168974. A company abroad is now looked up by its name, which
+// finds it on the Register of Overseas Entities; found by name, it is offered, never set by itself.
+test("a company abroad named with its home registry's number is found by its name", async () => {
+  const name = "AG Hondo Brixton Village B.V.";
+  let askedNumber = false;
+  const look: RegisterLookups = {
+    async byNumber() { askedNumber = true; return null; },
+    async byName(n) { return n === name ? [{ company_number: "OE002654", title: "AG HONDO BRIXTON VILLAGE BV", company_status: "registered" }, { company_number: "OE002653", title: "AG HONDO MARKET ROW BV", company_status: "registered" }] : []; },
+  };
+  const [m] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", name, "71168974")], look);
+  assert.equal(askedNumber, false, "a Dutch number is never looked up at Companies House");
+  assert.equal(m.state, "register");
+  assert.deepEqual(m.register.map(h => h.number), ["OE002654"]);
+  assert.equal(m.byName, true);
+  assert.match(String(m.registerNote), /71168974 is its number where it is registered abroad; found at Companies House by its name/);
+  // Filed under the party already, with its OE number: the Dutch number does not stop the match.
+  const [filed] = await matchHotsParties(fakeDb([{ id: "e9", name: "AG HONDO BRIXTON VILLAGE BV", companies_house_number: "OE002654", parent_company_id: "L" }]), DEAL as any, [party("landlord", name, "71168974")], look);
+  assert.equal(filed.state, "filed");
+  assert.equal(filed.filed?.id, "e9");
+  // An OE number is a Companies House number, looked up as one.
+  const [oe] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", name, "OE002654")], lookups({ OE002654: { name: "AG HONDO BRIXTON VILLAGE BV", status: "registered" } }));
+  assert.equal(oe.state, "register");
+  assert.equal(oe.byName, undefined);
+});

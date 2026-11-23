@@ -382,7 +382,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     const years = RECHECK_YEARS[level];
 
     const relied = [
-      DUE_DILIGENCE_LABEL[level].toLowerCase(),
+      party.regime === "sanctions_only" && !facts.trust ? null : DUE_DILIGENCE_LABEL[level].toLowerCase(),
       level === "simplified" && facts.level?.why[0] ? `why: ${facts.level.why[0]}` : null,
       level === "simplified" && sddNote && typed ? `SDD note saved by ${sddNote.by || "BGP"} on ${sddNote.at.slice(0, 10)}` : null,
       edd ? "done by BGP's officers" : null,

@@ -23,7 +23,7 @@ import { pool } from "./db";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, investmentDealSql, statusSpellingsFor } from "@shared/deal-status";
 import { amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
-import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
+import { applyFlagReviews, dealRedFlags, isSanctionsFlag, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
 import { payerRedFlags } from "@shared/deal-billing";
 import { guarantorRedFlags } from "@shared/deal-guarantor";
 import { dealClientRole } from "@shared/deal-parties";
@@ -185,7 +185,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
-  const dealFlags = new Map<string, Array<{ label: string; factor?: boolean }>>();
+  const dealFlags = new Map<string, KycRedFlag[]>();
   for (const deal of deals) dealFlags.set(String(deal.id), applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, String(deal.id))).live);
 
   const rows: AmlDashboardRow[] = [];
@@ -221,7 +221,6 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
     })), guarantors), reviewsForParty(reviews, p.brandId, p.entityId)).live;
-    const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
     const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });
     const sdd = simplifiedCase({ precheck: pre?.result || null, partyName: companyRow?.name || null, subjectType: companyRow?.aml_subject_type });
@@ -253,7 +252,14 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const clientRole = dealClientRole({ dealType: p.deal.deal_type, bgpActingFor: p.deal.bgp_acting_for, team: p.deal.team });
     const due = amlDue(p.role, p.deal.status, clientRole);
     const deadline = amlDeadline(p.role, p.deal.status, clientRole);
-    const allFlags = [...flags, ...onDeal.map(f => `Transaction: ${f.label}`)];
+    // A letting under £10,000 a month needs the sanctions checks only (Woody, 23 November 2026):
+    // the row says so and lists only possible sanctions matches.
+    const sanctionsOnly = !isTrust && amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "sanctions_only";
+    const shownFlags = [
+      ...live.filter(f => !sanctionsOnly || isSanctionsFlag(f)).map(f => ({ label: f.label, detail: f.detail || null, source: f.source || null })),
+      ...onDeal.filter(f => !sanctionsOnly || isSanctionsFlag(f)).map(f => ({ label: `Transaction: ${f.label}`, detail: f.detail || null, source: f.source || null })),
+    ];
+    const allFlags = shownFlags.map(f => f.label);
     const agentIds: string[] = Array.isArray(p.deal.internal_agent_ids) ? p.deal.internal_agent_ids.filter(Boolean) : [];
     const agentNames: string[] = Array.isArray(p.deal.internal_agent) ? p.deal.internal_agent.map(text).filter(Boolean) : [];
     const agents = [...new Set([...agentNames, ...agentIds.map(id => text(agentUsers.find((u: any) => String(u.id) === String(id))?.name)).filter(Boolean)])];
@@ -270,6 +276,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       brandName: state.brandName,
       signsAs: state.source === "company" || state.source === "same_company" ? state.name : null,
       ...(isTrust ? { trust: true } : {}),
+      ...(sanctionsOnly ? { sanctionsOnly: true } : {}),
       ownersAbroad: ownersAbroadOf((pre?.result as any)?.companiesHouse).map(a => `${a.name}, ${a.country}`),
       level: level.level,
       levelWhy: markHolds ? [`Not required: ${mark!.reasonWords}${mark!.by ? ` (${mark!.by})` : ""}`]
@@ -280,6 +287,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       deadline: deadline.words,
       late: amlLate(stage, deadline),
       redFlags: allFlags,
+      flagDetails: shownFlags,
       waitingOn: amlWaitingOn(stage, allFlags.length),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),

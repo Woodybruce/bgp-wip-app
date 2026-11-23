@@ -561,6 +561,8 @@ export interface HotsPartyMatch {
   registerNote: string | null;
   /** The number the document gives is this other company's at Companies House: never offered, the name is looked up instead. */
   numberIsAnother?: HotsOtherCompany | null;
+  /** Found at Companies House by its name, not the number the document gives: offered, never set by itself (23 November 2026). */
+  byName?: boolean;
   /** The CRM records of that name, when the transaction has no party there yet. */
   candidates: DealNoteCandidate[];
   /**

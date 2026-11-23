@@ -1899,7 +1899,8 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     out.push({
       key: "sanctions", label: `Sanctions: ${result.sanctions.lines.length} names screened, ${possible.length ? `${possible.length} possible match${possible.length === 1 ? "" : "es"}` : "no match"}`,
       state: possible.length ? "attention" : "ok", ...(ukMissing ? { failed: true } : {}),
-      detail: [ukMissing ? "The UK Sanctions List could not be downloaded: run the checks again" : "", `Screened against ${result.sanctions.lists.join(" and ")}`, possible.map(l => `${l.name} ↔ ${l.matches[0]?.name}: ${String(l.matches[0]?.why || "").replace(/\.\s*$/, "")}`).join("; "), discounted.length ? `Set aside on date of birth: ${discounted.map(l => `${l.name} ↔ ${l.matches[0]?.name}`).join("; ")}` : ""].filter(Boolean).join(". ") + ".",
+      detail: [ukMissing ? "The UK Sanctions List could not be downloaded: run the checks again" : "", `Screened against ${result.sanctions.lists.join(" and ")}`,
+        result.sanctions.lines.length ? `Names: ${list(result.sanctions.lines.map(l => l.name), 8)}` : "", possible.map(l => `${l.name} ↔ ${l.matches[0]?.name}: ${String(l.matches[0]?.why || "").replace(/\.\s*$/, "")}`).join("; "), discounted.length ? `Set aside on date of birth: ${discounted.map(l => `${l.name} ↔ ${l.matches[0]?.name}`).join("; ")}` : ""].filter(Boolean).join(". ") + ".",
       links: [],
     });
   } else {

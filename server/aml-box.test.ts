@@ -196,3 +196,19 @@ test("a party owned through a company registered abroad is the officers' (KYC4U 
   assert.equal(done.action, "sign_off");
   assert.equal(done.who, "officers");
 });
+
+// Woody, 23 November 2026: "we have a sanctions only version for AML'S which is much
+// simpler so not to confuse everyone". On a letting under £10,000 a month only a
+// possible sanctions match holds the party up; other findings do not make it the
+// officers' to sign off, and an agent on the transaction signs it off.
+test("a sanctions-only party: other red flags do not hold it, a possible sanctions match does", () => {
+  const flagged = next({ sanctionsOnly: true, redFlags: 1, factors: 1, ownersAbroad: "Tpg Inc., Delaware", signOffBlocked: null, canSignOff: true, canDecide: false });
+  assert.equal(flagged.action, "sign_off");
+  assert.equal(flagged.who, "bgp");
+  assert.equal(line(flagged), "Ready to sign off · sanctions only, all clear");
+  const match = next({ sanctionsOnly: true, redFlags: 1, sanctionsFlags: 1, signOffBlocked: "A possible sanctions match stands" });
+  assert.equal(match.lead, "Possible sanctions match");
+  assert.equal(match.who, "officers");
+  // A trust keeps its own rules.
+  assert.notEqual(next({ sanctionsOnly: true, trust: true, trustGaps: ["Add the trust's information"], signOffBlocked: null }).action, "sign_off");
+});

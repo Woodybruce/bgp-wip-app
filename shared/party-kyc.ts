@@ -175,8 +175,12 @@ export interface SignOffFacts {
 }
 
 /** Enhanced due diligence applies: a red flag or factor (the party's or the deal's), a higher-risk file, or owners abroad. */
-export const signOffEnhanced = (f: Pick<SignOffFacts, "redFlags" | "dealRedFlags" | "higherRisk" | "ownersAbroad"> & { trust?: boolean }): boolean =>
-  f.redFlags > 0 || f.dealRedFlags > 0 || f.higherRisk || !!f.ownersAbroad?.length || !!f.trust;
+// A letting under £10,000 a month needs the sanctions checks only, so its party is
+// never an enhanced sign-off unless it is a trust (Woody, 23 November 2026).
+export const signOffEnhanced = (f: Pick<SignOffFacts, "redFlags" | "dealRedFlags" | "higherRisk" | "ownersAbroad"> & { trust?: boolean; sanctionsOnly?: boolean }): boolean =>
+  !(f.sanctionsOnly && !f.trust) && (f.redFlags > 0 || f.dealRedFlags > 0 || f.higherRisk || !!f.ownersAbroad?.length || !!f.trust);
+
+const SANCTIONS_MATCH_DENIAL = "A possible sanctions match stands: check whether it is the person or company, then set it aside with a comment if it is not, or tell the Nominated Officer (an OFSI report and legal advice follow) before going any further.";
 
 /** Done by the officers in-house: their switch is on, or the party is a trust (never KYC4U since 23 November 2026). */
 export const signOffInHouse = (f: Pick<SignOffFacts, "inHouseEdd" | "trust">): boolean => !!f.inHouseEdd || !!f.trust;
@@ -191,6 +195,18 @@ export function signOffDenial(input: SignOffFacts): string | null {
     return `Already approved${f.current.by ? ` by ${f.current.by}` : ""}${until && !isNaN(until.getTime()) ? ` until ${until.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}` : ""}.`;
   }
   if (f.unchecked.length) return `Red flags could not be checked against ${f.unchecked.join(", ")}. Try again in a moment.`;
+  // A letting under £10,000 a month (Woody, 23 November 2026: "we have a sanctions
+  // only version for AML'S which is much simpler so not to confuse everyone"): the
+  // sanctions checks are all it needs, so only a possible sanctions match holds the
+  // sign-off and an agent on the transaction signs it off. Other findings are for
+  // information. A trust keeps its own rules.
+  if (f.sanctionsOnly && !f.trust) {
+    if ((f.sanctionsFlags || 0) > 0) return SANCTIONS_MATCH_DENIAL;
+    if (f.precheckRunning) return "The sanctions checks are still running. Sign off once they finish.";
+    if (!f.precheck) return "The sanctions checks have not run for this party. Press Run again first.";
+    if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `The sanctions checks are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again first.`;
+    return guarantorChecksDenial(f.guarantorChecks);
+  }
   // With the officers doing enhanced checks in-house, an open KYC4U request
   // no longer holds the party (Woody, 22 November 2026: "I dont actually think
   // KYC4U is doing anything we cant").
@@ -198,7 +214,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
   // is the officers' own unless a caller reads a file as it stood before.
   if (f.withKyc4u && f.inHouseEdd === false) return "This party was raised with KYC4U on this transaction: add KYC4U's result when it comes back.";
   const edd = signOffEnhanced(f) && f.inHouseEdd !== false;
-  if (edd && (f.sanctionsFlags || 0) > 0) return "A possible sanctions match stands: check whether it is the person or company, then set it aside with a comment if it is not, or tell the Nominated Officer (an OFSI report and legal advice follow) before going any further.";
+  if (edd && (f.sanctionsFlags || 0) > 0) return SANCTIONS_MATCH_DENIAL;
   if (edd) {
     // Enhanced due diligence by BGP: the same freshness rules, then the officer's note.
     if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";

@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
@@ -44,6 +45,13 @@ const LEVEL_TONE: Record<AmlDashboardRow["level"], string> = {
 function LevelCell({ row }: { row: AmlDashboardRow }) {
   // Marked Not required: no checks are needed, so no level applies.
   if (row.stage === "not_required") return <span className="text-muted-foreground" title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>—</span>;
+  // A letting under £10,000 a month: sanctions checks only, no level of due diligence (23 November 2026).
+  if (row.sanctionsOnly) return (
+    <span className="flex flex-col text-muted-foreground" title="A letting under £10,000 a month: sanctions checks only" data-testid={`aml-level-${row.key}`}>
+      <span className="whitespace-nowrap text-foreground">Sanctions only</span>
+      <span className="text-[11px] leading-tight">Letting under £10k a month</span>
+    </span>
+  );
   return <span className={`whitespace-nowrap ${LEVEL_TONE[row.level]}`} title={row.levelWhy.join("\n")} data-testid={`aml-level-${row.key}`}>{LEVEL_WORDS[row.level]}</span>;
 }
 
@@ -87,23 +95,53 @@ function StageChip({ row }: { row: AmlDashboardRow }) {
   );
 }
 
-function Flags({ row }: { row: AmlDashboardRow }) {
+const flagCount = (n: number) => `${n} red flag${n === 1 ? "" : "s"}`;
+
+// The red flags as a count; pressing it shows what each one is, with the way to
+// the party's checks or the transaction (Woody, 23 November 2026: "lets not show
+// the actual problem in the table just 2 flags but click and it shows the
+// explanations as pop up and can take to the AML board"). On a phone the card
+// itself opens the checks, so the count is plain text there.
+function Flags({ row, onOpen }: { row: AmlDashboardRow; onOpen?: (row: AmlDashboardRow) => void }) {
   if (!row.redFlags.length) return <span className="text-muted-foreground">—</span>;
+  const count = <><Flag className="w-3.5 h-3.5 shrink-0" />{flagCount(row.redFlags.length)}</>;
+  if (!onOpen) return <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300" data-testid={`aml-flags-${row.key}`}>{count}</span>;
+  const details = row.flagDetails?.length ? row.flagDetails : row.redFlags.map(label => ({ label, detail: null, source: null }));
   return (
-    <span className="inline-flex items-start gap-1 text-red-700 dark:text-red-300" title={row.redFlags.join("\n")} data-testid={`aml-flags-${row.key}`}>
-      <Flag className="w-3.5 h-3.5 shrink-0 mt-0.5" />{row.redFlags.length === 1 ? row.redFlags[0] : `${row.redFlags.length} red flags`}
-    </span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" onClick={e => e.stopPropagation()} className="inline-flex items-center gap-1 rounded text-red-700 underline-offset-2 hover:underline dark:text-red-300" data-testid={`aml-flags-${row.key}`}>
+          {count}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(26rem,calc(100vw-2rem))] p-0 text-xs" onClick={e => e.stopPropagation()} data-testid={`aml-flags-pop-${row.key}`}>
+        <div className="border-b px-3 py-2 font-semibold">{flagCount(details.length)} · {row.brandName}</div>
+        <ul className="max-h-72 space-y-2 overflow-y-auto px-3 py-2">
+          {details.map((f, i) => (
+            <li key={`${f.label}-${i}`} className="space-y-0.5">
+              <p className="flex items-start gap-1.5 font-medium text-red-700 dark:text-red-300"><Flag className="mt-0.5 h-3 w-3 shrink-0" />{f.label}</p>
+              {f.detail && <p className="pl-[1.125rem] text-muted-foreground">{f.detail}</p>}
+              {f.source && <p className="pl-[1.125rem] text-[11px] text-muted-foreground">From {f.source}</p>}
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2">
+          <button type="button" className="rounded-md border bg-background px-2 py-1 font-medium hover:bg-muted" onClick={() => onOpen(row)} data-testid={`aml-flags-open-${row.key}`}>Open the checks</button>
+          <Link href={`/deals/${row.dealId}?section=parties`} className="inline-flex items-center gap-1 text-primary hover:underline" data-testid={`aml-flags-deal-${row.key}`}>Go to the transaction <ExternalLink className="h-3 w-3" /></Link>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
 // The level of due diligence with the party's red flags under it, as Late
 // sits under the AML stage (Woody, 23 November 2026: "combined due diligence
 // and red flags same as stage to sit under each").
-function DiligenceCell({ row }: { row: AmlDashboardRow }) {
+function DiligenceCell({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDashboardRow) => void }) {
   return (
     <div className="flex flex-col items-start gap-1">
       <LevelCell row={row} />
-      {row.redFlags.length > 0 && <Flags row={row} />}
+      {row.redFlags.length > 0 && <Flags row={row} onOpen={onOpen} />}
     </div>
   );
 }
@@ -389,7 +427,7 @@ export default function AmlDashboard() {
                   <td className="px-3 py-2 max-w-[190px] 2xl:max-w-[260px]"><DealCell row={r} /></td>
                   <td className="px-3 py-2"><DealStatusChip row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
-                  <td className="px-3 py-2 max-w-[240px]"><DiligenceCell row={r} /></td>
+                  <td className="px-3 py-2 max-w-[240px]"><DiligenceCell row={r} onOpen={setOpen} /></td>
                   <td className="px-3 py-2 min-w-[120px] max-w-[200px]">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>
                   <td className="px-3 py-2 text-muted-foreground"><AgentsCell row={r} /></td>

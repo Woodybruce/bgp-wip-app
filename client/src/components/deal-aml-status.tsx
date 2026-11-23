@@ -279,7 +279,8 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
 // What BGP checked before anyone was asked anything (Woody, 2026-11-17: "we
 // need to do everyhting we can before we ask questions on someone"). It
 // starts by itself when the card opens; Run again starts it afresh.
-function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: DealAmlStatus; companyId: string }) {
+// only: the lines to show (the simple sanctions-only view shows the sanctions line alone).
+function PartyPrechecks({ dealId, data, companyId, only, intro }: { dealId: string; data: DealAmlStatus; companyId: string; only?: string[]; intro?: string }) {
   const { toast } = useToast();
   const view = data.prechecks?.[companyId];
   const again = useMutation({
@@ -304,7 +305,7 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
   return (
     <div className="text-xs space-y-1.5" data-testid={`kyc-prechecks-${companyId}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground">What BGP checked before asking anyone anything.</span>
+        <span className="text-muted-foreground">{intro || "What BGP checked before asking anyone anything."}</span>
         <Button type="button" variant="outline" size="sm" className="ml-auto h-7 px-2 text-xs" disabled={running} onClick={() => again.mutate()} data-testid={`kyc-prechecks-again-${companyId}`}>
           Run again
         </Button>
@@ -324,7 +325,7 @@ function PartyPrechecks({ dealId, data, companyId }: { dealId: string; data: Dea
       {!running && !view.lines.length && view.state === "none" && <p className="text-muted-foreground">Not run yet.</p>}
       {!running && view.lines.length > 0 && (
         <ul className="space-y-1.5" data-testid={`kyc-prechecks-lines-${companyId}`}>
-          {[...view.lines].sort((a, b) => rank(a) - rank(b)).map(l => (
+          {view.lines.filter(l => !only || only.includes(l.key)).sort((a, b) => rank(a) - rank(b)).map(l => (
             <li key={l.key} className="flex items-start gap-1.5">
               {icon(l)}
               <div className="min-w-0">
@@ -494,9 +495,10 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
 
 // only: the box draws the red flags under Red flags and the policy's
 // higher-risk factors under Due diligence (20 November 2026).
-function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string; data: DealAmlStatus; companyId: string; role: string; only?: "flags" | "factors" }) {
-  const flags = data.redFlags?.parties[companyId] || [];
-  const aside = data.redFlags?.setAside?.[companyId] || [];
+// sanctionsOnly: the simple view of a letting under £10,000 a month lists possible sanctions matches only.
+function PartyRedFlags({ dealId, data, companyId, role, only, sanctionsOnly }: { dealId: string; data: DealAmlStatus; companyId: string; role: string; only?: "flags" | "factors"; sanctionsOnly?: boolean }) {
+  const flags = (data.redFlags?.parties[companyId] || []).filter(f => !sanctionsOnly || isSanctionsFlag(f));
+  const aside = (data.redFlags?.setAside?.[companyId] || []).filter(a => !sanctionsOnly || isSanctionsFlag(a.flag));
   const who = data.decisions?.officerWords;
   // Raised with the AML Officer, not KYC4U (Jack, 23 November 2026), while
   // the officers do enhanced checks in-house.
@@ -825,6 +827,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const sanctionsOnly = data.regime?.regime === "sanctions_only";
   const isCompany = party ? party.brand.kind === "company" : true;
   const isTrust = !!party?.brand.recordTrust;
+  // A letting under £10,000 a month needs the sanctions checks only: a simple view of
+  // three steps, Who signs, Sanctions and Sign-off (Woody, 23 November 2026: "we have a
+  // sanctions only version for AML'S which is much simpler so not to confuse everyone").
+  // "Show the full checks" opens the four steps. A trust keeps its own.
+  const [fullView, setFullView] = useState(false);
+  const simple = sanctionsOnly && !isTrust && !fullView;
+  const officer = useAmlOfficerLabel();
   // A UK public body: simplified due diligence, no company that signs (23 November 2026).
   const isPublicBody = !!party?.brand.recordPublicBody && !party?.company;
   // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
@@ -905,8 +914,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const reg = pre?.company || null;
   const charity = pre?.charity?.state === "found" ? pre.charity : null;
   const regWarning = reg?.warnings[0] || charity?.warnings[0] || null;
-  const askMissing = !!party && !party.person;
-  const askNoEmail = !!party?.person && !party.person.email;
+  // Nobody is asked anything on a sanctions-only letting.
+  const askMissing = !!party && !party.person && !sanctionsOnly;
+  const askNoEmail = !!party?.person && !party.person.email && !sanctionsOnly;
   // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
   const guarantors = party?.guarantors || [];
   const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
@@ -978,13 +988,28 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     return { state: "act", text: "Not asked yet" };
   })();
 
+  // The simple view's second step: the sanctions screen alone.
+  const sanctionsFlagCount = [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length;
+  const sanctionsLine = pre?.lines.find(l => l.key === "sanctions") || null;
+  const sanctionsStep: { state: StepState; text: ReactNode } = (() => {
+    if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
+    if (!pre || pre.state === "off") return { state: "wait", text: "Not run" };
+    if (pre.state === "running") return { state: "wait", text: "Running now" };
+    if (pre.state === "cap") return { state: "wait", text: "Runs tomorrow: today's limit is used" };
+    if (pre.state === "none") return { state: "wait", text: "Not run yet" };
+    if (sanctionsFlagCount) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">Possible match: raise with {officer}</span> };
+    if (!sanctionsLine || sanctionsLine.failed) return { state: "act", text: "Sanctions lists not read: run again" };
+    return { state: "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}` };
+  })();
+  const gateStep = simple ? sanctionsStep : screening;
+
   const decisionStep: { state: StepState; text: ReactNode } = stage === "rejected" ? { state: "flag", text: "Rejected" }
     : cp.notRequired ? { state: "done", text: `Not required${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""] ? `: ${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""]}` : ""}` }
     : approved ? { state: "done", text: `Cleared${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     : cp.isExpired ? { state: "flag", text: `Expired${cp.kyc_expires_at ? ` ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
     // The steps before it come first: their own lines say what is still to do.
     : companyMissing ? { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> }
-    : screening && (screening.state === "todo" || screening.state === "wait") ? { state: "todo", text: <span className="text-muted-foreground">After screening</span> }
+    : gateStep && (gateStep.state === "todo" || gateStep.state === "wait") ? { state: "todo", text: <span className="text-muted-foreground">{simple ? "After the sanctions checks" : "After screening"}</span> }
     : documents.state !== "done" || !decision ? { state: "todo", text: <span className="text-muted-foreground">After the documents</span> }
     : decision.blocked !== null ? { state: "todo", text: <span className="text-muted-foreground">{shortReason(decision.blocked)}</span> }
     : decision.edd ? (canDecide ? { state: "act", text: "Ready: an officer signs off, with a note" } : { state: "wait", text: "Ready: for an officer" })
@@ -1106,70 +1131,97 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               : pre?.charity ? <PartyCharityFacts data={data} companyId={cp.id} /> : null}
             {!reg && pre?.gleif && <p className="text-xs text-muted-foreground">{pre.gleif}</p>}
           </StepRow>
-          {screening && (
-            <StepRow id={sid("screening")} testId={tid("screening")} n={2} label="Screening" state={screening.state} summary={screening.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
-              {(flags.length > 0 || flagAside > 0) && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />}
-              {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Not read: {unchecked.join(", ")}.</p>}
-              {level && !cp.notRequired && (
-                <div className="space-y-1.5">
-                  <PartyLevel data={data} companyId={cp.id} />
-                  <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />
+          {simple ? (
+            <>
+              <StepRow id={sid("screening")} testId={`aml-step-${cp.role}-sanctions`} n={2} label="Sanctions" state={sanctionsStep.state} summary={sanctionsStep.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
+                {sanctionsFlagCount > 0 && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" sanctionsOnly />}
+                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} only={["sanctions"]} intro="Each name on this party, checked against the sanctions lists. A letting under £10,000 a month needs nothing more." />
+              </StepRow>
+              <StepRow id={sid("decision")} testId={tid("decision")} n={3} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
+                <PartyNotRequiredBox cp={cp} />
+                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
+                {canDecide && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
+                    <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
+                  </div>
+                )}
+              </StepRow>
+            </>
+          ) : (
+            <>
+            {screening && (
+              <StepRow id={sid("screening")} testId={tid("screening")} n={2} label="Screening" state={screening.state} summary={screening.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
+                {(flags.length > 0 || flagAside > 0) && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />}
+                {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Not read: {unchecked.join(", ")}.</p>}
+                {level && !cp.notRequired && (
+                  <div className="space-y-1.5">
+                    <PartyLevel data={data} companyId={cp.id} />
+                    <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />
+                  </div>
+                )}
+                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
+              </StepRow>
+            )}
+            <StepRow id={sid("documents")} testId={tid("documents")} n={3} label="Documents" state={documents.state} summary={documents.text} open={open.has("documents")} onToggle={() => toggle("documents")}>
+              {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
+              <PartyFiles dealId={dealId} role={cp.role} />
+              {companyMissing && !current
+                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
+                : <>
+                    {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
+                    {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
+                    {draft && (
+                      <p className="text-xs text-muted-foreground" data-testid={`aml-kyc4u-${cp.role}`}>
+                        KYC4U (no longer used): a request was {draftState === "submitted"
+                          ? `submitted${draft.submitted_at ? ` on ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` (${draft.submitted_ref})` : ""}`
+                          : `prepared${draft.created_at ? ` on ${day(draft.created_at)}` : ""} and not submitted`}. It holds nothing up; anything KYC4U sent stays on the party's record.
+                      </p>
+                    )}
+                    {data.clientChecks && clientRoute && !people?.reliance && (
+                      <div className="space-y-1.5" data-testid={`aml-client-route-${cp.role}`}>
+                        {(request || (people && people.people.length > 0)) && (current || draft) && <SubHead>Client checks</SubHead>}
+                        {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" agent={theirAgent} />}
+                        <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
+                        <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
+                        {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" agent={theirAgent} viaAgent={!!request.viaAgent} />}
+                      </div>
+                    )}
+                    {/* Certified copies and other documents BGP holds, read and checked (23 November 2026). */}
+                    <PartyDocumentsBox dealId={dealId} role={cp.role} partyName={partyName} canDecide={canDecide} />
+                    {!settled && (
+                      <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
+                        <span className="mr-1">Other ways:</span>
+                        {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
+                        {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
+                        {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
+                        {/* The report so far, with what is still needed, for a supplier if the officers ever use one (Woody, 23 November 2026). */}
+                        {canDecide && <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} label="Report so far" quiet />}
+                      </div>
+                    )}
+                  </>}
+            </StepRow>
+            <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
+              <PartyNotRequiredBox cp={cp} />
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
+              {canDecide && !cp.notRequired && (
+                <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
+              )}
+              {canDecide && level?.level === "enhanced" && !cp.notRequired && <SecondReadPanel dealId={dealId} role={cp.role} partyName={partyName} trust={isTrust} />}
+              {canDecide && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
+                  <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
                 </div>
               )}
-              <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
             </StepRow>
+            </>
           )}
-          <StepRow id={sid("documents")} testId={tid("documents")} n={3} label="Documents" state={documents.state} summary={documents.text} open={open.has("documents")} onToggle={() => toggle("documents")}>
-            {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
-            <PartyFiles dealId={dealId} role={cp.role} />
-            {companyMissing && !current
-              ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
-              : <>
-                  {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
-                  {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
-                  {draft && (
-                    <p className="text-xs text-muted-foreground" data-testid={`aml-kyc4u-${cp.role}`}>
-                      KYC4U (no longer used): a request was {draftState === "submitted"
-                        ? `submitted${draft.submitted_at ? ` on ${day(draft.submitted_at)}` : ""}${draft.submitted_ref ? ` (${draft.submitted_ref})` : ""}`
-                        : `prepared${draft.created_at ? ` on ${day(draft.created_at)}` : ""} and not submitted`}. It holds nothing up; anything KYC4U sent stays on the party's record.
-                    </p>
-                  )}
-                  {data.clientChecks && clientRoute && !people?.reliance && (
-                    <div className="space-y-1.5" data-testid={`aml-client-route-${cp.role}`}>
-                      {(request || (people && people.people.length > 0)) && (current || draft) && <SubHead>Client checks</SubHead>}
-                      {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" agent={theirAgent} />}
-                      <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
-                      <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
-                      {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" agent={theirAgent} viaAgent={!!request.viaAgent} />}
-                    </div>
-                  )}
-                  {/* Certified copies and other documents BGP holds, read and checked (23 November 2026). */}
-                  <PartyDocumentsBox dealId={dealId} role={cp.role} partyName={partyName} canDecide={canDecide} />
-                  {!settled && (
-                    <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
-                      <span className="mr-1">Other ways:</span>
-                      {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
-                      {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
-                      {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
-                      {/* The report so far, with what is still needed, for a supplier if the officers ever use one (Woody, 23 November 2026). */}
-                      {canDecide && <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} label="Report so far" quiet />}
-                    </div>
-                  )}
-                </>}
-          </StepRow>
-          <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
-            <PartyNotRequiredBox cp={cp} />
-            <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} />
-            {canDecide && !cp.notRequired && (
-              <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
-            )}
-            {canDecide && level?.level === "enhanced" && !cp.notRequired && <SecondReadPanel dealId={dealId} role={cp.role} partyName={partyName} trust={isTrust} />}
-            {canDecide && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
-                <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
-              </div>
-            )}
-          </StepRow>
+          {sanctionsOnly && !isTrust && (
+            <div className="border-t border-border/60 px-3 py-1.5 text-[11px]">
+              <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setFullView(v => !v)} data-testid={`aml-full-view-${cp.role}`}>
+                {fullView ? "Show the simple view" : "Show the full checks"}
+              </button>
+            </div>
+          )}
         </div>
       )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}

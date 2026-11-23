@@ -132,3 +132,14 @@ test('a party not found or named with no company: every button saves the one who
   assert.match(finder, /onSavedWithoutXero=\{company => signsFound\(finding\.role, company\)\}/);
   assert.match(screen, /const signsFound = \(role: DealPartyRole, company: SavedCompany\) => \{[\s\S]{0,200}apiRequest\("PUT", `\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}`, \{ companyId: company\.id \}\)/);
 });
+
+// A company abroad named with its home number is found by its name (Woody, 23 November
+// 2026, AG Hondo Brixton Village B.V., Dutch number 71168974), and the heads of terms
+// stay open in the party box once the company is set.
+test('a company abroad is looked up by its name, and offered rather than set by itself', () => {
+  assert.match(server, /const numberIsFromAbroad = \(read: \{ name: string; number: string \| null \}\): boolean =>\s*!!read\.number && looksOverseasName\(read\.name\) && !isOverseasEntityNumber\(read\.number\);/);
+  assert.match(server, /if \(read\.number && !abroad\) \{/);
+  assert.match(server, /if \(r\.byName\) base\.byName = true;/);
+  assert.match(screen, /!p\.numberIsAnother && !p\.byName/);
+  assert.match(partyBox, /\{\(!party\.company \|\| hotsOpen\) && \(/);
+});
