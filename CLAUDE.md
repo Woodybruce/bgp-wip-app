@@ -7299,7 +7299,12 @@ separately and send to" the leasing address. Do not re-litigate.
   BGP, not Gmail and the like, not a booking or no-reply sender). A contact's
   own address and the firm's domain still count on their own. Every diary
   read goes through `bookMatcher`; interview transcripts, which have no guest
-  list, keep `matchLandlordMeeting`'s plain name test. Tests in
+  list, keep `matchLandlordMeeting`'s plain name test.
+  **A BGP address is never a company's contact for matching** (found on live
+  the same day: Jack Barratt was filed as a contact of barrette estates under
+  his BGP address, so 161 of his diary entries, the dentist and his
+  children's clubs included, read as barrette estates meetings): the matcher
+  skips any contact email on BGP's own domains (`INTERNAL_DOMAIN_RE`). Tests in
   `server/landlord-meetings.test.ts`.
 - **Feeds**, BGP staff only: `GET /api/crm/landlords/meetings/calendar` and
   `GET /api/crm/leasing-meetings/calendar` (each the whole digest, 30 days

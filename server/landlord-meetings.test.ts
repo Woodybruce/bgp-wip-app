@@ -63,6 +63,9 @@ test('a diary entry that only names a company needs an outside business guest', 
   assert.equal(leasing('Lunch', [person('ops@flatironsteak.co.uk')])[0]?.company.id, 'fi');
   assert.equal(isOutsideBusinessAddress('bookings@thewolseley.com'), false);
   assert.equal(isOutsideBusinessAddress('jo@cbre.com'), true);
+  // A BGP address filed as a company's contact is BGP, never the company.
+  const barrette: LandlordCatalogueEntry = { id:'be', name:'barrette estates', company_type:'Landlord', domain:null, domain_url:null, contacts:[{ id:'c2', name:'Jack', email:'jack@brucegillinghampollard.com' }] };
+  assert.equal(createLandlordMatcher([barrette], LANDLORD_DIARY_MATCHER)('Investment catch up', [person('jack@brucegillinghampollard.com')]).length, 0);
   // Interview transcripts carry no guest list and keep the plain name test.
   assert.equal(matchLandlordMeeting('AEW / BGP catch up',[],[aew])[0]?.company.id,'aew');
 });

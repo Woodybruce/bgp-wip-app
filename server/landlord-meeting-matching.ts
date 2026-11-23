@@ -1,5 +1,5 @@
 import type { LandlordMeetingPerson } from "../shared/landlord-meetings";
-import { GENERIC_EMAIL_DOMAINS, isExternalDomain, normaliseCompanyDomain } from "./tracker-correspondence";
+import { GENERIC_EMAIL_DOMAINS, INTERNAL_DOMAIN_RE, isExternalDomain, normaliseCompanyDomain } from "./tracker-correspondence";
 
 export interface LandlordCatalogueEntry {
   id: string;
@@ -100,7 +100,10 @@ export function createLandlordMatcher(catalogue: LandlordCatalogueEntry[], optio
   for (const company of companies) {
     for (const contact of company.contacts) {
       const email = contact.email?.trim().toLowerCase();
-      if (!email) continue;
+      // A BGP address filed as a company's contact (Jack Barratt under
+      // barrette estates, found on live 23 Nov 2026) is BGP, not the company:
+      // every meeting that person was on read as one with the company.
+      if (!email || INTERNAL_DOMAIN_RE.test(email.split('@')[1] || '')) continue;
       const list = byEmail.get(email) || [];
       if (!list.includes(company)) list.push(company);
       byEmail.set(email, list);
