@@ -8664,3 +8664,64 @@ and database) takes the request's own token.
 | Migrations | `migrations/` |
 | Build script | `script/build.ts` |
 | Project runbook | `replit.md` |
+
+## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
+
+Layla, on transaction #3965 (The Crown Estate, BGP's client and the
+landlord): "we need it to state that its a simplified due diligance check",
+"We need the app to highlight when a company only needs a simplified (SDD)
+check so that employees dont go down a rabbit hole. we will need the
+reasoning of the SDD saved against this deal", "is there a way of the app
+flagging and drafting this wording for SDD checks?", and of the party box
+asking for a company at Companies House: "this is too intense for the crown
+estate". Rules and the draft: `shared/aml-sdd.ts`; box:
+`client/src/components/aml-sdd.tsx`. Tests: `server/aml-sdd.test.ts` (in
+`npm test`).
+
+- **A UK public body is recorded on the party** (`crm_companies.aml_subject_type
+  = 'public_body'`, `PUT /api/deals/:id/parties/:role/public-body
+  { publicBody }`, BGP staff as themselves, in `server/deal-parties.ts`),
+  as a trust or a private individual is. A name that reads like one
+  (`publicBodyMarkInName`: The Crown Estate by its exact name,
+  `knownPublicBody`; a council, a government department, TfL; never a name
+  with Limited, LLP, LP or Partnership in it) is a suggestion a person
+  presses (`PublicBodyLine` in the party box), never applied by itself: a
+  joint venture or company the body has an interest in is not the body and
+  needs standard checks. A record with a Companies House number, or one
+  already a trust or an individual, is refused. The record is shared, so
+  every transaction with it follows.
+- **Recorded, it signs itself** (`SIGNS_ITSELF_SUBJECTS`: every list that
+  read `('individual', 'trust')` now takes `public_body`): no company that
+  signs, no "Set the company that signs" gap. BGP's checks before asking
+  look nothing up by its name (no Companies House, overseas entities, GLEIF
+  or charity look-up: `isPublicBody` in `runPrecheck`) and screen it by
+  name. People to check reads `public_body`: nobody owes an identity check
+  or a proof of address (`publicBody` on `partyPeople`). The client checks
+  ask only for authority to act (`defaultKycDocs`, `precheckAsks` with
+  `publicBody`), with the identity check unticked.
+- **The level carries its case** (`simplifiedCase` in `shared/aml-policy.ts`,
+  `sdd` on `PartyDueDiligence`): a public body (recorded: confirmed; by its
+  name alone: to confirm), a listed company, a market abroad, an FCA fund.
+  Each has its basis, what the file should hold and when it does not carry
+  across. A red flag or factor still makes the party enhanced.
+- **The box** (`SddBox`, under the party's Next line on Parties & AML, BGP
+  staff): green, "Simplified due diligence (SDD)", the basis, the file
+  list, the caveat, and **Draft the SDD note**: `sddNoteDraft` writes the
+  note from the rules (who, the statutory basis, why SDD, no beneficial
+  owner, authority, the joint venture check), with [square brackets] for
+  what a person fills in; it cannot be saved with one left (`sddNoteProblem`).
+  The chip reads **Simplified (SDD)**. No AI.
+- **Saved on the transaction**: `POST /api/deals/:id/parties/:role/sdd-note`
+  (an agent on the transaction, the Nominated Officer or a Deputy; only
+  while the party reads simplified) writes a `deal_audit_log` line (field
+  `aml_sdd_note`, the role in `old_value`, the note in `new_value`) and a
+  KYC history line (`sdd_note`); `GET /api/deals/:id/sdd-notes` (BGP staff)
+  reads the latest per party. The AML file's history and the AML page's
+  trail list it. A simplified party's sign-off line carries the basis, and
+  the saved note stands as its note.
+- Not built: the SDD note as its own page of the AML file; ChatBGP drafting
+  it; other public bodies' statutes (only The Crown Estate's is known).
+  Checked in a browser on a local copy on 23 November 2026 (a landlord
+  named The Crown Estate: the suggestion, recording it, the draft, saving
+  it). Not run on live: #3965's landlord still has to be recorded as a
+  public body by a person.

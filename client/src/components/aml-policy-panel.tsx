@@ -212,7 +212,7 @@ export function AmlPolicyPanel() {
         <section className="space-y-1.5" data-testid="aml-policy-how">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">How the app applies it</h3>
           <ul className="space-y-1.5 text-xs text-muted-foreground list-disc pl-4" data-testid="aml-policy-rules">
-            <li><span className="text-foreground">Simplified</span>: a listed company (no owners to verify), or an FCA-authorised fund or a UK public body (owners still identified). Never with a PEP, ownership beyond one UK company or any higher-risk factor; a company owned by a listed one is standard.</li>
+            <li><span className="text-foreground">Simplified</span>: a listed company (no owners to verify), an FCA-authorised fund (owners still identified), or a UK public body recorded on the party (no owners to verify). The party's box says so in green and drafts the note of reasons to save on the transaction. Never with a PEP, ownership beyond one UK company or any higher-risk factor; a company owned by a listed one is standard.</li>
             <li><span className="text-foreground">Standard</span>: no higher-risk factor. Owners identified and verified. Signed off by an agent on the transaction or an officer.</li>
             <li><span className="text-foreground">Enhanced</span>: a red flag or a higher-risk factor. Signed off by the Nominated Officer or a Deputy, with a note of what was checked.</li>
             <li>Approvals last {feed.recheckYears.standard} years ({feed.recheckYears.enhanced} for enhanced).</li>

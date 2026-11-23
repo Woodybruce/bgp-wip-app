@@ -11,7 +11,7 @@ import {
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
+import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedCase, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
 import { payerRedFlags } from "@shared/deal-billing";
 import { DEAL_PARTY_COLUMNS, dealClientRole } from "@shared/deal-parties";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
@@ -147,7 +147,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     const own = (r: any) => r.crm_company_id === id && (r.trading_entity_id || null) === (signs[id] || null);
     const latest = investigations.find(own) || null;
     const companyRow = companies.find((c: any) => c.id === id) || null;
-    const needsCompany = !signs[id] && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
+    const needsCompany = !signs[id] && !["individual", "trust", "public_body"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     const pre = needsCompany ? null : prechecks.find((p: any) => own(p) && isPrecheckResult(p.result)) || null;
     const all = partyRedFlags({
       company: companyRow,
@@ -167,9 +167,10 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     const split = applyFlagReviews(all, reviewsForParty(reviews, id, signs[id] || null));
     parties[id] = split.live;
     setAside[id] = split.setAside;
+    const sdd = simplifiedCase({ precheck: pre?.result || null, partyName: companyRow?.name || null, subjectType: companyRow?.aml_subject_type });
     levels[id] = dueDiligenceLevel({
       partyFlags: split.live, dealFlags: dealSplit.live,
-      simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
+      simplifiedBasis: sdd?.basis || null, sdd,
       standardBasis: standardBasis({ precheck: pre?.result || null }),
       toWeigh: [...policyFactorsToWeigh({ precheck: pre?.result || null, companyType: companyRow?.company_type || null }), ...(superPrime ? [superPrime] : [])],
     });

@@ -575,6 +575,7 @@ async function dealParties(dealId: string) {
     entityId: string | null; entityNumber: string | null; personField: string;
     // Recorded as a trust or foundation: checked on its own record, so no company that signs is needed (21 November 2026).
     trust: boolean;
+    publicBody?: boolean;
     contacts: Array<{ id: string; name: string; email: string | null; mobile: string | null }> }> = [];
   for (const col of PARTY_COLUMNS) {
     const companyId = d[col.company];
@@ -597,6 +598,7 @@ async function dealParties(dealId: string) {
       contactId: person && contacts.some((x: any) => x.id === person) ? person : null,
       entityId: entity ? String(entity.id) : null, entityNumber: entity?.companies_house_number || null, personField: col.contact,
       trust: String(c.aml_subject_type || "").trim().toLowerCase() === "trust",
+      publicBody: !entity && String(c.aml_subject_type || "").trim().toLowerCase() === "public_body",
       contacts: contacts.map((x: any) => ({ id: x.id, name: x.name, email: x.email, mobile: x.mobile || null })),
     });
   }
@@ -658,7 +660,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
   // asked; this records why the rest was not, and the owners to confirm).
   const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
   const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
-  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk });
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party.publicBody && input.kind === "company" });
   const confirmOwners = !trustDocs && input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
   // The owners other than the person asked, who each get a link of their own
   // (19 November 2026): the person asked can pass them on from their page.
@@ -1422,7 +1424,7 @@ kycRequestRouter.get("/api/aml/deal/:id/client-checks", signedIn, async (req: Re
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
         const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
-        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff, contactName: contact?.name || null, trust: trustAsk });
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody });
         return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, trustAsk };
       })),
       requests: await clientChecksForDeal(dealId),

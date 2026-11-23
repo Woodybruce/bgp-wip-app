@@ -77,7 +77,10 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   // corporate trustee set as the company that signs: Fortis Green, 23 November 2026).
   const trustRecord = party.kind === "company"
     && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'trust'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
-  const ownRecord = trustRecord && !party.entityId;
+  // A UK public body (Layla, 23 November 2026): no owners to verify and nobody owes an ID.
+  const publicBody = party.kind === "company" && !party.entityId
+    && (await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 AND lower(COALESCE(aml_subject_type, '')) = 'public_body'`, [party.companyId]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  const ownRecord = (trustRecord || publicBody) && !party.entityId;
   // A private individual's own record is checked too: its sanctions lines name
   // the people on that side (22 November 2026: People read "not screened").
   if (party.kind === "individual" || (party.kind === "company" && (party.entityId || ownRecord))) {
@@ -93,6 +96,7 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
     // Documents BGP uploaded on the party, read and checked (23 November 2026).
     uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
     ...(trust !== undefined ? { trust } : {}),
+    ...(publicBody ? { publicBody: true } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });
 }

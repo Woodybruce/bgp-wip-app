@@ -82,7 +82,7 @@ test('the checks before asking read the company that signs, never writing to the
   assert.match(prechecks, /AND trading_entity_id IS NOT DISTINCT FROM \$2/);
   assert.match(prechecks, /const partyKey = \(companyId: string, entityId\?: string \| null\)/);
   // The brand-page lookup (which writes the brand's number) is never run for the company that signs.
-  assert.match(prechecks, /if \(!number && !entity && subjectKind === "company" && process\.env\.COMPANIES_HOUSE_API_KEY\)/);
+  assert.match(prechecks, /if \(!number && !entity && !isPublicBody && subjectKind === "company" && process\.env\.COMPANIES_HOUSE_API_KEY\)/);
   assert.match(prechecks, /WHERE id = \$1 AND parent_company_id = \$2/);
   // Its run and its documents say which company they are about.
   assert.match(prechecks, /INSERT INTO kyc_investigations \(subject_type, subject_name, company_number, crm_company_id, trading_entity_id,/);

@@ -24,7 +24,7 @@ import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "
 import { payerRedFlags } from "@shared/deal-billing";
 import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
-import { dueDiligenceLevel, simplifiedBasis, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
+import { dueDiligenceLevel, simplifiedCase, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -168,7 +168,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const latest = investigations.find(own) || null;
     const companyRow = companies.find((c: any) => c.id === p.brandId) || null;
     // No company that signs: no checks before asking to read (the deal card's rule).
-    const needsCompany = !p.entityId && !["individual", "trust"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
+    const needsCompany = !p.entityId && !["individual", "trust", "public_body"].includes(String(companyRow?.aml_subject_type || "").toLowerCase());
     // A trust is checked by the officers, never KYC4U (Jack, 23 November 2026).
     const isTrust = String(companyRow?.aml_subject_type || "").toLowerCase() === "trust";
     const partyInHouse = inHouse || isTrust;
@@ -194,9 +194,10 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
     const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });
+    const sdd = simplifiedCase({ precheck: pre?.result || null, partyName: companyRow?.name || null, subjectType: companyRow?.aml_subject_type });
     const level = dueDiligenceLevel({
       partyFlags: live, dealFlags: onDeal,
-      simplifiedBasis: simplifiedBasis({ precheck: pre?.result || null, partyName: companyRow?.name || null }),
+      simplifiedBasis: sdd?.basis || null, sdd,
       standardBasis: standardBasis({ precheck: pre?.result || null }),
       toWeigh: superPrime ? [superPrime] : [],
     });
@@ -298,7 +299,7 @@ router.get("/api/aml-dashboard/party", async (req: Request, res: Response) => {
           ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 60`, [deal.brand_id, entityId || ""]),
       pool.query(
         `SELECT field, new_value, reason, changed_by_name, created_at FROM deal_audit_log
-          WHERE deal_id = $1 AND field IN ('aml_sign_off', 'kyc4u_result', '${col.company}', '${col.person}')
+          WHERE deal_id = $1 AND field IN ('aml_sign_off', 'aml_sdd_note', 'kyc4u_result', '${col.company}', '${col.person}')
           ORDER BY created_at DESC NULLS LAST LIMIT 40`, [dealId]),
     ]);
     res.json({

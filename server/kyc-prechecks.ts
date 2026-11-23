@@ -700,6 +700,10 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // is a charity (Woody, 21 November 2026: "We need screening on GLEIF and
   // foundations in the uk").
   const isTrust = !entity && String(company.aml_subject_type || "").trim().toLowerCase() === "trust";
+  // A UK public body recorded by a person (Layla, 23 November 2026, The Crown
+  // Estate): it has no company record, so nothing is looked up by its name
+  // (a look-up could read a stranger's company). It is screened by name.
+  const isPublicBody = !entity && String(company.aml_subject_type || "").trim().toLowerCase() === "public_body";
   const crmCountry = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
   const partyNames = [...new Set((entity ? [clean(entity.name, 160)] : [clean(company.uk_entity_name, 160), clean(company.name, 160)]).filter(Boolean))];
   let notAtCompaniesHouse: string | null = subjectKind === "individual" ? "A private individual: there is no company record to read." : null;
@@ -708,7 +712,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // then the exact name), at most once a week. Never for the company that
   // signs: that lookup writes to the brand.
   const { withChPatience } = await import("./companies-house-gate");
-  if (!number && !entity && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
+  if (!number && !entity && !isPublicBody && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
     const lastLooked = company.kyc_checked_at ? Date.parse(company.kyc_checked_at) : 0;
     if (!lastLooked || lastLooked < Date.now() - 7 * 86400000) {
       try {
@@ -722,7 +726,9 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     }
   }
   if (!number && subjectKind === "company") {
-    notAtCompaniesHouse = isTrust
+    notAtCompaniesHouse = isPublicBody
+      ? "Recorded as a UK public body: it has no Companies House record and no beneficial owners to verify. Its identity rests on its statutory basis, and it is screened against the sanctions lists by name."
+      : isTrust
       ? "Recorded as a trust or foundation, with no Companies House record. A registered charity's entry on the Charity Commission's register is read instead; for any other trust BGP records its structure (the settlor, the trustees, any protector and the beneficiaries) from the trust deed the client sends, and screens each person on it."
       : notAtCompaniesHouse || (entity
         ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
@@ -733,7 +739,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // name (the company that signs: its own name only). Exactly one entity of
   // that name is read below as the company.
   let overseasEntity: PrecheckOverseasEntity | null = null;
-  if (!number && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
+  if (!number && !isPublicBody && subjectKind === "company" && process.env.COMPANIES_HOUSE_API_KEY) {
     const names = [...new Set((entity ? [clean(entity.name, 160)] : [clean(company.uk_entity_name, 160), clean(company.name, 160)]).filter(Boolean))];
     overseasEntity = { searched: true, number: null, name: null, status: null, candidates: 0, looksOverseas: names.some(looksOverseasName), error: null };
     try {
@@ -761,7 +767,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   let partyGleif: PrecheckGleif | null = null;
   let gleifCharityNumber: string | null = null;
   let numberFromGleif = false;
-  if (!number && subjectKind === "company") {
+  if (!number && !isPublicBody && subjectKind === "company") {
     try {
       const { traceGleif } = await import("./gleif");
       for (const name of partyNames) {
@@ -844,7 +850,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // with no UK record whose name reads as a charity.
   let charity: PrecheckCharity | null = null;
   const ukCompany = !!companiesHouse && !isOverseasEntityNumber(companiesHouse.number);
-  if (subjectKind === "company" && (isTrust || !!gleifCharityNumber
+  if (subjectKind === "company" && !isPublicBody && (isTrust || !!gleifCharityNumber
     || (ukCompany && (chTypeMayBeCharity(companiesHouse!.type) || /\btrustees?\b/i.test(companiesHouse!.name)))
     || (!companiesHouse && !abroad?.party && partyNames.some(readsLikeCharity)))) {
     try {
@@ -1158,7 +1164,7 @@ router.post("/api/kyc/deal/:id/prechecks", async (req: Request, res: Response) =
     if (wanted.some(id => !parties.includes(id))) return res.status(400).json({ message: "That company is not a party to this transaction" });
     const signs = await (await import("./deal-parties")).dealPartyCompanies(pool, d.id);
     // A private individual, or a trust or foundation (21 November 2026), is checked on its own record.
-    const signsItself = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust')`, [wanted])).rows.map((r: any) => String(r.id)));
+    const signsItself = new Set((await pool.query(`SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [wanted])).rows.map((r: any) => String(r.id)));
     const started: Record<string, PrecheckStart> = {};
     // A company party with no company that signs is not checked: set it first.
     for (const id of wanted) started[id] = !signs[id] && !signsItself.has(id) ? "needs_company" : await startPrecheck(id, { dealId: d.id, userId, force: true, entityId: signs[id] || null });

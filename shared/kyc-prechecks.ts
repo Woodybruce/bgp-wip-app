@@ -1006,9 +1006,15 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
   // A trust (23 November 2026): what its file already holds, and its trustees as its structure records them.
   trust?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
+  // Recorded as a UK public body: simplified due diligence (23 November 2026).
+  publicBody?: boolean;
 }): PrecheckAsks {
-  const docs = defaultKycDocs(ctx.kind, ctx.role, ctx.idCheck, !!ctx.trust);
+  const docs = defaultKycDocs(ctx.kind, ctx.role, ctx.idCheck, !!ctx.trust, !!ctx.publicBody);
   const notAsked: PrecheckAsks["notAsked"] = [];
+  if (ctx.publicBody && ctx.kind === "company") {
+    const reason = "A UK public body: simplified due diligence, with no beneficial owners to verify.";
+    return { docs, notAsked: (["ownership", "owner_ids", "proof_of_address"] as KycDocKey[]).map(key => ({ key, reason })), confirmOwners: null, ownerNames: [] };
+  }
   const drop = (key: KycDocKey, reason: string) => {
     const at = docs.indexOf(key);
     if (at < 0) return;

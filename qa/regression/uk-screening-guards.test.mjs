@@ -35,9 +35,9 @@ test("the Charity Commission's register is read from its public download, at mos
 });
 
 test("a trust or foundation is checked on its own record: no company that signs is asked for", () => {
-  assert.match(read("server/aml-compliance.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust'\)/);
-  assert.match(read("server/aml-file.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust'\)/);
-  assert.match(read("server/kyc-prechecks.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust'\)/);
+  assert.match(read("server/aml-compliance.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
+  assert.match(read("server/aml-file.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
+  assert.match(read("server/kyc-prechecks.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
   const portal = read("server/aml-portal.ts");
   assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust\)/);
   assert.match(portal, /if \(party\.kind === "company" && !party\.entityId && !party\.trust\)/);

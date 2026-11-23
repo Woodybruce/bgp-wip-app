@@ -165,7 +165,10 @@ export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value 
 // individual for one proof of identity and one of address). Where the money
 // comes from is asked of whoever pays: a buyer, and a tenant (HMRC's letting
 // guidance, AMLG2300 section 21: "all customers making a payment").
-export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean, trust = false): KycDocKey[] {
+export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean, trust = false, publicBody = false): KycDocKey[] {
+  // A UK public body (Layla, 23 November 2026, The Crown Estate): simplified
+  // due diligence. Only proof that the person instructing us can act for it.
+  if (kind === "company" && publicBody) return ["authority"];
   const docs: KycDocKey[] = [];
   if (!idCheck) docs.push("photo_id");
   // A trust (23 November 2026): its deed, HMRC's registration, the trustees'

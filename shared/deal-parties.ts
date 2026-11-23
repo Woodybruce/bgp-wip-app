@@ -164,6 +164,9 @@ export interface DealPartyView {
     // trustHint: its name, or the company that signs, reads like a trust (Jack,
     // 20 November 2026) or a foundation (foundationHint, 21 November 2026).
     recordTrust?: boolean; trustHint?: boolean; foundationHint?: boolean;
+    // A UK public body (shared/aml-sdd.ts): recorded by a person; a name that
+    // reads like one is a suggestion. publicBodyKnown: its legal name, when known.
+    recordPublicBody?: boolean; publicBodyHint?: boolean; publicBodyKnown?: string | null;
     // charityHint: a UK party with no company record whose name reads like a
     // charity or foundation: recorded, its register entry is read (21 November 2026).
     charityHint?: boolean };

@@ -691,7 +691,7 @@ export async function kyc4uPrefill(dealId: string, companyId: string, role: stri
   if (deal && partyRole && !entity) {
     const kind = (await pool.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
     // A trust needs no company that signs: its trustees sign (Jack, 20 November 2026).
-    if (!["individual", "trust"].includes(String(kind?.aml_subject_type || "").toLowerCase())) {
+    if (!["individual", "trust", "public_body"].includes(String(kind?.aml_subject_type || "").toLowerCase())) {
       const what = partyRole === "tenant" ? "the company taking the lease" : partyRole === "landlord" ? "the company that owns the property" : partyRole === "vendor" ? "the company selling" : "the company buying";
       throw Object.assign(new Error(`Set ${what} on the transaction first: KYC4U checks that company, not ${company.name}.`), { status: 409 });
     }

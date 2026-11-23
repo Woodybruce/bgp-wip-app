@@ -43,7 +43,7 @@ test('no check runs on a company party until the deal names the company that sig
   const status = read('server/aml-compliance.ts');
   // A private individual, and since 21 November 2026 a trust or foundation, is checked on its own record.
   assert.match(status, /needsCompany: !signs\[c\.id\] && !signsItself\.has\(String\(c\.id\)\)/);
-  assert.match(status, /aml_subject_type, ''\)\) IN \('individual', 'trust'\)/);
+  assert.match(status, /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
   const checks = read('server/kyc-prechecks.ts');
   assert.match(checks, /if \(needsCompany && !entityId\) \{\s*out\[companyId\] = \{ state: "needs_company"/);
   assert.match(checks, /!signs\[id\] && !signsItself\.has\(id\) \? "needs_company"/, 'Run again waits for the company too');
