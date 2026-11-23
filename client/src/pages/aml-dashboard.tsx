@@ -396,12 +396,13 @@ export default function AmlDashboard() {
             <tbody className="divide-y">
               {shown.map(r => (
                 <tr key={r.key} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-muted/40" data-testid={`aml-row-${r.key}`}>
-                  <td className="px-3 py-2 max-w-[230px]"><PartyCell row={r} /></td>
-                  <td className="px-3 py-2 max-w-[260px]"><DealCell row={r} /></td>
+                  {/* Narrower below 1536px so every column, the agents included, fits a laptop screen from 1280px (Woody, 23 November 2026). */}
+                  <td className="px-3 py-2 max-w-[170px] 2xl:max-w-[230px]"><PartyCell row={r} /></td>
+                  <td className="px-3 py-2 max-w-[190px] 2xl:max-w-[260px]"><DealCell row={r} /></td>
                   <td className="px-3 py-2"><DealStatusChip row={r} /></td>
                   <td className="px-3 py-2"><StageChip row={r} /></td>
                   <td className="px-3 py-2 max-w-[240px]"><DiligenceCell row={r} /></td>
-                  <td className="px-3 py-2 min-w-[150px] max-w-[220px]">{r.waitingOn}</td>
+                  <td className="px-3 py-2 min-w-[120px] max-w-[200px]">{r.waitingOn}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>
                   <td className="px-3 py-2 text-muted-foreground"><AgentsCell row={r} /></td>
                 </tr>

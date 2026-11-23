@@ -4629,7 +4629,9 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   letting's AVA reads Marketing; the search matches it), **AML stage** (Late
   stacked under it), **Due diligence and red flags** (the level with the red
   flags stacked under it, a long flag wrapping in its column), Waiting on,
-  Last moved and **Agents** (every agent, one to a line, never cut off). The
+  Last moved and **Agents** (every agent, one to a line, never cut off; below
+  1536px the Party, Transaction and Waiting on columns narrow so the whole
+  table fits from a 1440px screen, measured on live data). The
   phone card shows the status beside the transaction.
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
   is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
