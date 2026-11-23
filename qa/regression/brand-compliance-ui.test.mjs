@@ -49,7 +49,9 @@ test('combined landlord checks keep legal identity editing, downloads and KYC wh
   assert.doesNotMatch(text(tree), /Covenant grade/);
   assert.ok(nodes(tree).find(node => node.props.href === '/api/brand/brand/latest-accounts.pdf'));
   assert.ok(nodes(tree).find(node => node.props.title === 'Edit the trading entity manually'));
-  assert.ok(nodes(tree).find(node => node.type === 'Kyc4uStatusStrip'));
+  // The landlord card draws KYC4U's past checks at its own foot, after the group entities and billing (23 November 2026).
+  assert.ok(!nodes(tree).find(node => node.type === 'Kyc4uStatusStrip'));
+  assert.ok(nodes(render(complete, false, { embedded: true })).find(node => node.type === 'Kyc4uStatusStrip'));
   assert.match(text(render(complete)), /UK trading entity.*Downstream checks.*Covenant grade/s);
 });
 

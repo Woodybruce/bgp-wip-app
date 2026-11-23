@@ -6,6 +6,7 @@ import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 import { runAllAmlChecks } from "./kyc-orchestrator";
 import { pool } from "./db";
 import { ChBusyError, chGate, chMaxWait } from "./companies-house-gate";
+import { looksLikeSiteMenu } from "@shared/brand-compliance-status";
 
 const router = Router();
 
@@ -2621,6 +2622,8 @@ export async function scrapeUkEntityFromWebsite(
         if (name.length < 6 || name.length > 80) continue;
         if (/[\[\]<>{}|]/.test(name) || !balancedParens(name)) continue;
         if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
+        // A run of the site's menu before "LP" ("Platforms Wealth Solutions News & Insights About LP") is no company.
+        if (looksLikeSiteMenu(name)) continue;
         const win = text.slice(Math.max(0, m.index - 200), m.index + name.length + 200);
         let score = (scores.get(name) ?? 0) + 1;
         if (/\b(?:England|Wales|Companies\s*House|company\s+(?:registration\s+)?(?:number|no\.?)|org\.\s*no|registered\s+office|registered\s+in\s+(?:England|Scotland))\b/i.test(win)) score += 3;
@@ -2646,6 +2649,7 @@ export async function scrapeUkEntityFromWebsite(
     }
     // Strip page text caught before the name ("Copyright 2026 …", "of …").
     if (entityName) entityName = tidyScrapedEntityName(entityName);
+    if (entityName && looksLikeSiteMenu(entityName)) entityName = null;
     if (entityName || chNumber) return { entityName, chNumber, sourceUrl };
     return null;
   }
@@ -2690,7 +2694,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       const match = txt.match(/\{[\s\S]*?\}/);
       if (!match) return null;
       const parsed = JSON.parse(match[0]);
-      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() && balancedParens(parsed.entityName) ? parsed.entityName.trim() : null;
+      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() && balancedParens(parsed.entityName) && !looksLikeSiteMenu(parsed.entityName) ? parsed.entityName.trim() : null;
       let chNumber: string | null = parsed?.chNumber || null;
       if (chNumber) {
         chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();

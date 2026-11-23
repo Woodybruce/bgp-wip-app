@@ -45,6 +45,18 @@ export interface GroupEntity {
   kyc: GroupEntityKyc | null;
   groupRollupBlocks: boolean;              // true when the entity is not approved-and-current
   tradingAs?: string;                      // brand name when the row is the brand's own legal entity
+  /** The company's name at Companies House, when it is held (the account's own row reads "ANGELO, GORDON EUROPE LLP", not the CRM name). */
+  registeredName?: string | null;
+  /**
+   * The transactions whose AML checks this entity (Woody, 23 November 2026: "can we add some
+   * links to these ie in review takes to that AML"): a trading entity where it is the
+   * company that signs, a company where it is the party with no company that signs set.
+   */
+  transactions?: GroupEntityTransaction[];
+}
+
+export interface GroupEntityTransaction {
+  id: string; name: string; ref: number | null; status: string | null; role: string;
 }
 
 export type EntityBucket = "current" | "expired" | "inReview" | "rejected" | "unchecked";
@@ -229,7 +241,8 @@ export async function getAccountEntities(
   // OWN kyc_* (fallback display for company rows only — never projected).
   const { rows: companyRows } = companyIds.length
     ? await q.query(
-        `SELECT id, trading_entities, kyc_status, kyc_checked_at, kyc_approved_by, kyc_expires_at
+        `SELECT id, trading_entities, kyc_status, kyc_checked_at, kyc_approved_by, kyc_expires_at,
+                companies_house_data->'profile'->>'companyName' AS registered_name
            FROM crm_companies WHERE id = ANY($1::text[])`,
         [companyIds],
       )
@@ -310,6 +323,36 @@ export async function getAccountEntities(
     }
     entity.kyc = kyc;
     entity.groupRollupBlocks = entityBucket(kyc, now) !== "current";
+    if (entity.entityKind === "company" && entity.entityId) {
+      const registered = String(companyById.get(entity.entityId)?.registered_name || "").trim();
+      if (registered) entity.registeredName = registered;
+    }
+  }
+
+  // 4. Where each entity is checked: the transactions it is a party to (not
+  // withdrawn or archived), live ones first. A read that fails leaves them out.
+  const { statusSpellingsFor, TERMINAL_STATUSES } = await import("@shared/deal-status");
+  const { rows: dealRows } = (companyIds.length || tradingIds.length) ? await q.query(
+    `SELECT d.id, d.name, d.deal_ref, d.status, r.role, r.brand_id, r.entity_id
+       FROM crm_deals d
+       CROSS JOIN LATERAL (VALUES ('landlord', d.landlord_id, d.landlord_trading_entity_id),
+                                  ('tenant', d.tenant_id, d.tenant_trading_entity_id),
+                                  ('vendor', d.vendor_id, d.vendor_trading_entity_id),
+                                  ('purchaser', d.purchaser_id, d.purchaser_trading_entity_id)) AS r(role, brand_id, entity_id)
+      WHERE ((r.brand_id = ANY($1::text[]) AND r.entity_id IS NULL) OR r.entity_id = ANY($2::text[]))
+        AND COALESCE(d.status, '') <> ALL($3::text[])
+      ORDER BY d.updated_at DESC NULLS LAST
+      LIMIT 300`,
+    [companyIds, tradingIds, statusSpellingsFor(TERMINAL_STATUSES)],
+  ).catch(() => ({ rows: [] as any[] })) : { rows: [] as any[] };
+  for (const entity of entities) {
+    if (!entity.entityId) continue;
+    const mine = dealRows.filter((d: any) => entity.entityKind === "trading_entity"
+      ? String(d.entity_id || "") === entity.entityId
+      : !d.entity_id && String(d.brand_id || "") === entity.entityId);
+    if (mine.length) entity.transactions = mine.slice(0, 8).map((d: any) => ({
+      id: String(d.id), name: String(d.name || "Untitled transaction"), ref: d.deal_ref ?? null, status: d.status ?? null, role: String(d.role),
+    }));
   }
 
   return {

@@ -5969,6 +5969,61 @@ EU parts of `shared/kyc-prechecks.ts`. Tests: `server/aml-records.test.ts` (in
   KYC4U; the FCA register for simplified due diligence; trusts' own TRS
   check.
 
+## Company checks joined to the AML, and asset managers on a property (Woody, 2026-11-23)
+
+Woody, on TPG Angelo Gordon's People & checks: "can we add some links to
+these ie in review takes to that AML.. Are these all linked to the AML? ...
+im not sure what this Platforms wealth thing is? and the Review account
+entity? ... why hasnt it picked up Anegleo Gordon europe LLP? ... a biut
+messy and different fonts"; then on Millennium Bridge House: "beltane is the
+assset manager and TPG are the actual owners / freeholders".
+
+- **Group entities link to the AML.** `getAccountEntities`
+  (`server/account-entities.ts`) gives each entity `registeredName` (a
+  company's Companies House name) and `transactions`: the transactions it is
+  checked on (a trading entity where it is the company that signs, a company
+  where it is the party with no company that signs set; not withdrawn or
+  archived; at most 8; a failed read leaves them out). The panel
+  (`client/src/components/account-entities-panel.tsx`) shows **AML on …**
+  under each row (`EntityTransactions`, each opening the transaction's
+  Parties & AML) and the window lists them with **Open its AML**, with "In
+  review since …" or "Not checked yet". The account's own row reads its
+  Companies House name with "this account" (it read "Review account entity").
+  The statuses were always the same records the transaction's AML box writes;
+  the panel's own Approve and Reject only show while the retired in-app AML
+  is on.
+- **A registered entity read from a website menu.** The scraper
+  (`scrapeUkEntityFromWebsite` in `server/companies-house.ts`) took tpg.com's
+  menu ("Platforms Wealth Solutions News & Insights About LP") as a company,
+  and the boot backfill in `server/index.ts` copies every brand's
+  `uk_entity_name` into its trading entities. `looksLikeSiteMenu` in
+  `shared/brand-compliance-status.ts` (three or more menu words, at least
+  half the name) now refuses such a name in the scraper's patterns, its
+  fallback and its AI read. `brandComplianceStatus` says the name was read
+  from a website menu and gives `useRegistered`: the Legal entity needs
+  review note offers **Use <Companies House name>** (the entity save). A
+  trading entity with no number whose name reads as a menu says so in Group
+  entities and has **Remove** (`DELETE /api/crm/trading-entities/:id`, which
+  refuses while anything points at it). Fixing TPG Angelo Gordon on live is
+  those two presses: changing live records directly from a build machine was
+  refused.
+- **The card's order and headings.** On the landlord card, Show more is:
+  registered entity, company records, the review note, covenant, Group
+  entities, Billing, then KYC4U's past checks at the foot (the separate
+  link at its top is gone; `BrandComplianceCard` leaves the strip to the
+  landlord card). Billing takes the other sections' heading style.
+- **Asset manager on a property.** The property's ownership pills had an
+  Asset manager role (`crm_properties.asset_manager_id`) behind "+ Owner or
+  lender"; the button now reads **Owner, lender or asset manager** while that
+  role is empty, and a role pointing at a company since deleted reads as
+  empty (Millennium Bridge House showed "Freeholder + Add" for one). On live,
+  Millennium Bridge House was set as Woody asked: Owner and Freeholder TPG
+  Angelo Gordon, Asset manager Beltane Asset Management.
+- Tests: `qa/regression/brand-compliance-status.test.mjs`,
+  `landlord-company-checks.test.mjs`, `brand-compliance-ui.test.mjs`,
+  `server/account-entities.test.ts`. Checked in a browser against a local copy
+  shaped like TPG Angelo Gordon on 23 November 2026.
+
 ## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
 
 Jack, on the trust request to Adam Harvey, which read "A note from Charlotte"

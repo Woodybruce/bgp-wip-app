@@ -33,6 +33,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Building2, AlertTriangle, CheckCircle2, AlertCircle, XCircle, ShieldCheck, Clock, ChevronRight, ExternalLink, FileText } from "lucide-react";
 import { approverWords } from "@shared/party-kyc";
+import { looksLikeSiteMenu } from "@shared/brand-compliance-status";
 
 interface GroupEntityKyc {
   status: string;
@@ -57,6 +58,25 @@ interface GroupEntity {
   kyc: GroupEntityKyc | null;
   groupRollupBlocks: boolean;
   tradingAs?: string;
+  registeredName?: string | null;
+  // The transactions whose AML checks this entity (23 November 2026).
+  transactions?: { id: string; name: string; ref: number | null; status: string | null; role: string }[];
+}
+
+// Where each entity is checked: its transactions' Parties & AML (Woody, 23
+// November 2026: "can we add some links to these ie in review takes to that AML").
+function EntityTransactions({ e, max = 2 }: { e: GroupEntity; max?: number }) {
+  const list = e.transactions || [];
+  if (!list.length) return <span className="text-[11px] text-muted-foreground">Not on a transaction</span>;
+  return (
+    <span className="text-[11px] text-muted-foreground" data-testid={`entity-transactions-${e.entityId}`}>
+      AML on{" "}
+      {list.slice(0, max).map((t, i) => (
+        <span key={t.id}>{i > 0 && ", "}<Link href={`/deals/${t.id}?section=parties`} className="text-primary hover:underline">{t.name}{t.ref != null ? ` #${t.ref}` : ""}</Link></span>
+      ))}
+      {list.length > max && ` and ${list.length - max} more`}
+    </span>
+  );
 }
 
 interface AccountEntitiesReport {
@@ -186,6 +206,13 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
     onSuccess: (_r, { e }) => { invalidate(); setReview(null); toast({ title: "KYC rejected", description: e.name }); },
     onError: (err: any) => toast({ title: "Reject failed", description: err?.message, variant: "destructive" }),
   });
+  // A "company" read from a website's menu (TPG's "Platforms Wealth Solutions News &
+  // Insights About LP"): removed with a press; the server refuses if anything points at it.
+  const remove = useMutation({
+    mutationFn: async (e: GroupEntity) => apiRequest("DELETE", `/api/crm/trading-entities/${e.entityId}`),
+    onSuccess: (_r, e) => { invalidate(); toast({ title: "Removed", description: e.name }); },
+    onError: (err: any) => toast({ title: "Not removed", description: err?.message, variant: "destructive" }),
+  });
 
   // Staff-only / any error → render nothing (same convention as the other
   // account workspace cards).
@@ -232,8 +259,10 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
             const actionable = isMlro && e.entityId;
             const primaryShown = embedded && e.relation === "self" && !!primaryCompanyNumber?.trim()
               && e.companiesHouseNumber?.trim().toUpperCase() === primaryCompanyNumber.trim().toUpperCase();
+            const menuRead = e.entityKind === "trading_entity" && !e.companiesHouseNumber && looksLikeSiteMenu(e.name);
             return (
               <div key={key} className="flex items-start gap-1.5 py-1.5" data-testid={`entity-row-${e.entityId ?? key}`}>
+                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                 <button
                   type="button"
                   onClick={() => setReview({ key, rejecting: false })}
@@ -244,8 +273,10 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
                   <span className="flex items-start gap-1.5 min-w-0 [@container(min-width:560px)]:flex-1">
                     <Building2 className="w-3.5 h-3.5 mt-px text-muted-foreground shrink-0" />
                     <span className="min-w-0 flex flex-col leading-tight">
-                      <span className="text-xs font-medium line-clamp-2 break-words">{primaryShown ? "Review account entity" : e.name}</span>
+                      {/* The account's own company by its Companies House name (it read "Review account entity"). */}
+                      <span className="text-xs font-medium line-clamp-2 break-words">{e.relation === "self" ? (e.registeredName || e.name) : e.name}{primaryShown && <span className="ml-1.5 font-normal text-muted-foreground">this account</span>}</span>
                       {!primaryShown && e.tradingAs && <span className="text-[11px] text-muted-foreground line-clamp-1 break-words">trading as {e.tradingAs}</span>}
+                      {menuRead && <span className="text-[11px] text-amber-700 dark:text-amber-300">Read from a website menu, not a company</span>}
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-1 pl-5 [@container(min-width:560px)]:pl-0 [@container(min-width:560px)]:shrink-0 [@container(min-width:560px)]:justify-end">
@@ -271,7 +302,17 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
                     <KycChip bucket={bucket} expiresAt={e.kyc?.expiresAt} />
                   </span>
                 </button>
+                {e.entityId && !menuRead && <span className="pl-5"><EntityTransactions e={e} /></span>}
+                </div>
                 <span className="flex items-center gap-0.5 shrink-0 pt-px">
+                  {menuRead && e.entityId && !(e.transactions || []).length && (
+                    <Button
+                      size="sm" variant="ghost" className="h-6 text-[11px] px-1.5"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(e)}
+                      data-testid={`entity-remove-${e.entityId}`}
+                    >Remove</Button>
+                  )}
                   {actionable && bucket !== "current" && (
                     <Button
                       size="sm" variant="ghost" className="h-6 text-[11px] px-1.5"
@@ -592,14 +633,29 @@ function EntityReview({
     </div>
   );
 
-  // In-app approve / reject retired 2026-10-05 — KYC4U is BGP's MLRO.
+  // The checks run on each transaction's Parties & AML: the window says where
+  // (Woody, 23 November 2026: "Are these all linked to the AML?").
+  const txns = entity?.transactions || [];
   const actions = (
-    <div className="shrink-0 border-t border-border pt-3 space-y-2">
+    <div className="shrink-0 border-t border-border pt-3 space-y-2" data-testid="entity-review-aml">
       <p className="text-[11px] text-muted-foreground">
         {bucket === "current"
-          ? `Approved${kyc?.approvedBy ? ` by ${approverWords(kyc.approvedBy)}` : ""}${kyc?.nextReviewAt ? ` — re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
-          : "KYC runs from the transaction's Parties & AML: BGP's checks, the client checks, and the officers' sign-off."}
+          ? `Approved${kyc?.approvedBy ? ` by ${approverWords(kyc.approvedBy)}` : ""}${kyc?.nextReviewAt ? `, re-check due ${fmtDate(kyc.nextReviewAt)}` : ""}.`
+          : bucket === "inReview" && kyc?.lastCheckedAt
+            ? `In review since ${fmtDate(kyc.lastCheckedAt)}.`
+            : "Not checked yet."}
+        {" "}The checks run on a transaction's Parties &amp; AML.
       </p>
+      {txns.length > 0 ? (
+        <ul className="space-y-1">
+          {txns.map(t => (
+            <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
+              <span className="min-w-0 truncate">{t.name}{t.ref != null ? <span className="text-muted-foreground"> #{t.ref}</span> : null}<span className="text-[11px] text-muted-foreground"> · the {t.role}</span></span>
+              <Link href={`/deals/${t.id}?section=parties`} className="shrink-0 text-xs text-primary hover:underline" data-testid={`entity-review-aml-${t.id}`}>Open its AML</Link>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="text-[11px] text-muted-foreground">It is not a party to any transaction yet.</p>}
     </div>
   );
 

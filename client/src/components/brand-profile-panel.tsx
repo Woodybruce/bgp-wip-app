@@ -5381,7 +5381,6 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
         <More className={`${brandPage ? "min-w-0 empty:hidden" : "border-t border-border pt-2 mt-auto"}`} data-testid={brandPage ? "brand-checks-more" : "landlord-checks-details"} onToggle={brandPage ? undefined : (event: any) => setDetailsOpen(event.currentTarget.open)}>
           {!brandPage && <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>}
           {(!brandPage || detailsOpen) && <div className="pt-2 space-y-3">
-            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U is no longer used; its past checks are kept as records">KYC4U's past checks</Link>}
             {/* A brand's page with an entity: the checks run are on the card at rest; this is the staff's entity edit. */}
             {!(brandPage && !noEntity && isClientViewer) && <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} part={brandPage && !noEntity ? "entity" : undefined} />}
             {facts && <CompanyFactsRows company={company} report={covenant.data} headingClass={subHeading} />}
@@ -5410,9 +5409,10 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
               <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
             </div>}
             {!isClientViewer && landlord && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
-              <h3 className="text-xs font-semibold">Billing</h3>
+              <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">Billing</h3>
               <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
             </section>}
+            {!isClientViewer && landlord && <section className="border-t border-border pt-3" aria-label="KYC4U's past checks"><Kyc4uStatusStrip companyId={companyId} /></section>}
             {/* A brand's page: BGP's company and group summary (once there is an entity to assess), then KYC4U's past checks last. */}
             {!isClientViewer && brandPage && !noEntity && <div className="border-t border-border pt-3" data-testid="brand-covenant-summary"><LandlordCovenantSummary dense companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} /></div>}
             {!isClientViewer && brandPage && (
@@ -5561,7 +5561,6 @@ export function BrandComplianceCard({
   const inner = (
     <div className={`space-y-2.5 ${part === "entity" ? "border-t border-border pt-3" : ""}`}>
       {prefix}
-      {!bcIsClient && !brandPage && <Kyc4uStatusStrip companyId={companyId} />}
       {part !== "records" && <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
           {landlord ? "Registered entity" : "UK trading entity"}
@@ -5751,9 +5750,18 @@ export function BrandComplianceCard({
           <div className={brandPage ? "mt-2 text-xs space-y-1" : "mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2"} data-testid="brand-compliance-review-status" role="status">
             <p className="font-semibold">{complianceStatus.label}</p>
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
+            {/* One press takes the Companies House name (Woody, 23 November 2026: "why hasnt it picked up Angelo Gordon europe LLP?"). */}
+            {!bcIsClient && complianceStatus.useRegistered && (
+              <button type="button" onClick={() => save.mutate(complianceStatus.useRegistered!)} disabled={save.isPending}
+                className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50" data-testid="brand-compliance-use-registered">
+                {save.isPending ? "Saving…" : `Use ${complianceStatus.useRegistered}`}
+              </button>
+            )}
           </div>
           )}
         </div>}
+      {/* KYC4U is no longer used: its past checks sit at the foot, quietly (23 November 2026). */}
+      {!bcIsClient && !brandPage && !landlord && <Kyc4uStatusStrip companyId={companyId} />}
     </div>
   );
 

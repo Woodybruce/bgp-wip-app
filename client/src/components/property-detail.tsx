@@ -979,8 +979,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 { label: "Junior lender", field: "juniorLenderId", id: (property as any).juniorLenderId },
                 { label: "Asset manager", field: "assetManagerId", id: (property as any).assetManagerId },
               ];
-              const filledOwners = owners.filter(o => !!o.id);
-              const emptyOwners = owners.filter(o => !o.id);
+              // A role pointing at a company since deleted reads as empty (Millennium Bridge
+              // House's freeholder showed "Freeholder + Add" beside "+ Owner or lender").
+              const held = (o: { id: string | null | undefined }) => !!o.id && (!companiesLoaded || allCompanies.some(c => c.id === o.id));
+              const filledOwners = owners.filter(held);
+              const emptyOwners = owners.filter(o => !held(o));
               return (
                 <div className="flex flex-wrap items-center gap-1.5" data-testid="property-facts" data-compact-taps>
                   <span className={factPill} data-testid="property-field-status"><span className={factLabel}>Status</span><InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" /></span>
@@ -992,7 +995,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   ))}
                   {emptyOwners.length > 0 && (addingOwner
                     ? emptyOwners.map(o => <span key={o.field} className={factPill}><span className={factLabel}>{o.label}</span><span className="min-w-0 max-w-[16rem]"><InlineOwnerLink propertyId={id} companyId={o.id} fieldName={o.field} label={o.label} allCompanies={allCompanies} /></span></span>)
-                    : <button type="button" className={`${factPill} text-muted-foreground hover:text-foreground`} onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role"><Plus className="w-3 h-3" />Owner or lender</button>)}
+                    : <button type="button" className={`${factPill} text-muted-foreground hover:text-foreground`} onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role"><Plus className="w-3 h-3" />{emptyOwners.some(o => o.field === "assetManagerId") ? "Owner, lender or asset manager" : "Owner or lender"}</button>)}
                   <span className={factPill} data-testid="property-field-area"><span className={factLabel}>Area</span><InlineNumber value={property.sqft} onSave={(val) => inlineUpdateAsync("sqft", val)} label="Area (sq ft)" suffix=" sq ft" className="font-mono tabular-nums" /></span>
                   <span className={factPill} data-testid="property-field-website"><span className={factLabel}>Website</span><InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="truncate max-w-[14rem] block" />
                     {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}

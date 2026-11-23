@@ -58,7 +58,15 @@ test('brand card keeps the covenant summary and compliance checks but drops the 
   assert.equal(all.find(node => node.type === 'BrandComplianceCard').props.embedded, true);
   assert.equal(all.some(node => node.type === 'AccountEntitiesPanel'), false);
   assert.equal(all.some(node => node.type === 'CompanyInvoicingControls'), false);
-  assert.equal(all.some(node => node.props.href === '/kyc-clouseau'), true);
+  // KYC4U is no longer used: its past checks sit at the foot of the checks (BrandComplianceCard's own strip), not as a link at the top (23 November 2026).
+  assert.equal(all.some(node => node.props.href === '/kyc-clouseau'), false);
+});
+
+test('landlord card ends with KYC4U past checks, after the group entities and billing', () => {
+  const render = component(panel, 'LandlordCompanyChecksCard', { useCovenantReport: () => ({ data: null }), useMutation: () => ({}) });
+  const all = nodes(render({ companyId: 'landlord', company: { companies_house_number: '12345678' }, isClientViewer: false, landlord: true }));
+  const order = all.filter(node => ['AccountEntitiesPanel', 'CompanyInvoicingControls', 'Kyc4uStatusStrip'].includes(node.type)).map(node => node.type);
+  assert.deepEqual(order, ['AccountEntitiesPanel', 'CompanyInvoicingControls', 'Kyc4uStatusStrip']);
 });
 
 test('client view does not gain group-entity data or staff check actions', () => {
@@ -168,8 +176,10 @@ test('embedded entities avoid repeating the account identity while keeping revie
   });
   const combined = render({ companyId: 'landlord', embedded: true, primaryCompanyNumber: '12345678' });
   assert.equal(combined.type, 'section');
-  assert.match(text(combined), /Review account entity/);
-  assert.doesNotMatch(text(combined), /Example Estates Ltd|12345678/);
+  // The account's own company by its name, marked "this account" (it read "Review account entity", 23 November 2026).
+  assert.doesNotMatch(text(combined), /Review account entity/);
+  assert.match(text(combined), /Example Estates Ltd.*this account/s);
+  assert.doesNotMatch(text(combined), /12345678/);
   assert.match(text(combined), /Example Property SPV Ltd.*87654321/s);
   const reviewButton = nodes(combined).find(node => node.props['data-testid'] === 'entity-open-landlord');
   assert.equal(reviewButton.props['aria-label'], 'Review Example Estates Ltd');
