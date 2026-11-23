@@ -180,6 +180,8 @@ async function runBilling(o = {}) {
     './db': { pool },
     './companies-house': { chFetch: async path => { chCalls.push(path); if (o.chError) throw new Error(o.chError); return o.profile || CH_PROFILE; } },
     './tenancy-tenant': { insertTradingEntity },
+    // A company registered abroad (23 November 2026) is its own branch, not run here.
+    '@shared/foreign-company': { abroadCompanyInput: () => ({ problem: 'not exercised here' }) },
     './xero-system-session': { withSystemXero: async work => (o.notConnected ? null : work({ xeroTokens: { tenantId: 'firm-tenant' } })) },
     './xero': {
       pickBillingAddress,

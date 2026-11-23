@@ -260,8 +260,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       riskAssessment: null,
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
       joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
-      trustStructure,
       registerExtract,
+      trustStructure,
     });
   }
   const data: AmlFileData = {
@@ -610,6 +610,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
     if (c.business?.length) w.kv("Business", c.business.join("; "));
     if (c.listing) w.kv("Listed", `${c.listing}. ${c.listingNote || ""}`);
     if (c.overseasEntity) w.kv("Overseas entities register", c.overseasEntity);
+    if (c.home) w.kv("Home register", c.home);
     if (c.directors?.length) w.kv("Directors", c.directors.join(", "));
     if (c.owners?.length) w.kv("Owners (PSC register)", c.owners.map((o: any) => `${o.name} (${o.control})`).join("; "));
     if (c.ownerNote) w.kv("Owners", c.ownerNote);

@@ -87,3 +87,22 @@ test("the client checks ask for a register extract in any language, and the app 
   assert.doesNotMatch(map, /drops? the D&B report|Dun & Bradstreet report on the party/i);
   assert.match(map, /Registered abroad/);
 });
+
+test("a foreign company on Companies House: its home register is read, and its extract is checked against that number, never the OE or FC number", () => {
+  const pre = read("server/kyc-prechecks.ts");
+  assert.match(pre, /home: homeRegisterFrom\(profile\.foreign_company_details\),/);
+  assert.match(pre, /traceGleif\(\{ name: companiesHouse\.name, country: home\.country, registrationNumber: home\.registrationNumber \}\)/);
+  const docs = read("server/kyc-documents.ts");
+  assert.match(docs, /if \(!foreignOnCompaniesHouse\(chNumber\)\) return undefined;/);
+  assert.match(docs, /homeAbroad: !!home/);
+  // A number abroad is never taken from GLEIF without the name agreeing (German HRB numbers repeat).
+  assert.match(read("shared/foreign-owners.ts"), /const sure = query\.authorities\?\.length \? byNumber : byNumber\.filter\(r => gleifNamesAgree\(r\.name, query\.name\)\);/);
+});
+
+test("policy Issue 5 is in the app and nothing sends anyone to Dun & Bradstreet", () => {
+  assert.match(read("shared/aml-policy.ts"), /\{ key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5,/);
+  assert.match(read("shared/aml-policy.ts"), /export const POLICY_SOURCE = "BGP's AML policy \(Issue 5\) and risk assessment \(Issue 4\)";/);
+  for (const f of ["server/chatbgp.ts", "client/src/pages/subscriptions.tsx", "client/src/components/aml-policy-panel.tsx", "shared/aml-rules.ts", "shared/kyc-request.ts"]) {
+    assert.doesNotMatch(read(f).replace(/\/\/[^\n]*/g, ""), /download from D&B|D&B Direct|name: "Dun & Bradstreet"|asks for a Dun & Bradstreet report/, f);
+  }
+});

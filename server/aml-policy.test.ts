@@ -223,17 +223,22 @@ test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is 
 });
 
 test("the documents are listed by issue, the trust checklist among them; earlier issues are kept behind the current ones", () => {
-  assert.equal(AML_POLICY_DOCUMENTS.length, 6);
+  assert.equal(AML_POLICY_DOCUMENTS.length, 8);
   assert.equal(amlPolicyDocument("checklist-trusts")?.file, "bgp-aml-checklist-trusts.docx");
+  assert.equal(amlPolicyDocument("policy-issue-5")?.file, "bgp-aml-policy-issue-5.docx");
   assert.equal(amlPolicyDocument("policy-issue-4")?.file, "bgp-aml-policy-issue-4.docx");
   assert.equal(amlPolicyDocument("policy-issue-3")?.file, "bgp-aml-policy-issue-3.docx");
   assert.equal(amlPolicyDocument("policy-issue-2")?.file, "bgp-aml-policy-issue-2.docx");
+  assert.equal(amlPolicyDocument("risk-assessment-issue-4")?.file, "bgp-firm-wide-aml-risk-assessment-issue-4.docx");
   assert.equal(amlPolicyDocument("risk-assessment-issue-3")?.file, "bgp-firm-wide-aml-risk-assessment-issue-3.docx");
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-4")!), false, "Issue 4 is the current policy");
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), true, "Issue 4 replaced it");
+  // Issue 5 (Jack signed off, 23 November 2026): no Dun & Bradstreet.
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-5")!), false, "Issue 5 is the current policy");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-4")!), true, "Issue 5 replaced it");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-2")!), true);
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-3")!), false, "Issue 3 is the current risk assessment");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-4")!), false, "Issue 4 is the current risk assessment");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-3")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), true);
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
-  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 4) and risk assessment (Issue 3)");
+  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 5) and risk assessment (Issue 4)");
 });

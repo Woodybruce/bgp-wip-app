@@ -140,3 +140,68 @@ test("a translation is made safe and labelled as not certified", async () => {
   const done = await translateFile(file, { hasKey: () => true, claim: async () => true, ask: async () => ({ input: { language: "German", english: false, translation: "Extract from the commercial register" }, model: "x", cut: false }) });
   assert.equal(done.translation, "Extract from the commercial register");
 });
+
+// Foreign companies that Companies House holds (Woody, 23 November 2026: "a lot
+// of companies that own property in the uk are on companies house but are also
+// foreign?"): overseas entities and UK establishments of overseas companies.
+import { askInputFrom, countryInSentence, foreignOnCompaniesHouse, homeRegisterFrom, homeRegisterWords } from "../shared/kyc-prechecks";
+import { gleifNamesAgree, pickGleifRecord, type GleifEntity } from "../shared/foreign-owners";
+import { gleifTraceWords } from "../shared/foreign-owner-words";
+
+test("a company incorporated abroad on Companies House still needs its home register's extract", () => {
+  for (const n of ["OE002654", "FC025497", "SF000123", "NF000456", " oe002654 "]) assert.equal(foreignOnCompaniesHouse(n), true, n);
+  for (const n of ["12345678", "SC123456", "NI012345", "OC301234", "", null]) assert.equal(foreignOnCompaniesHouse(n), false, String(n));
+  assert.equal(needsRegisterExtract({ kind: "company", ukNumber: "FC025497" }), true);
+  assert.equal(needsRegisterExtract({ kind: "company", ukNumber: "12345678", homeAbroad: true }), true);
+  assert.equal(needsRegisterExtract({ kind: "company", ukNumber: "FC025497", sanctionsOnly: true }), false);
+});
+
+test("Companies House's details in the place of incorporation become the home register", () => {
+  // As Companies House shows AG HONDO BRIXTON VILLAGE BV (OE002654).
+  const h = homeRegisterFrom({ originating_registry: { country: "NETHERLANDS", name: "Netherlands Chamber Of Commerce" }, registration_number: "71168974", legal_form: "Private Limited Liability Company", governed_by: "Netherlands" });
+  assert.deepEqual(h, { country: "Netherlands", register: "Netherlands Chamber Of Commerce", registrationNumber: "71168974", legalForm: "Private Limited Liability Company", governedBy: "Netherlands" });
+  assert.equal(homeRegisterWords(h), "Registered in the Netherlands (Netherlands Chamber Of Commerce, number 71168974), a private limited liability company.");
+  // A UK establishment's details name the legal form as company_type.
+  assert.equal(homeRegisterFrom({ originating_registry: { country: "UNITED STATES", name: "Delaware Division of Corporations" }, registration_number: "123", company_type: "Corporation" })?.legalForm, "Corporation");
+  assert.equal(homeRegisterFrom(null), null);
+  assert.equal(homeRegisterFrom({}), null);
+  assert.equal(homeRegisterFrom([1]), null);
+  assert.equal(countryInSentence("United States"), "the United States");
+  assert.equal(countryInSentence("Cayman Islands"), "the Cayman Islands");
+  assert.equal(homeRegisterFrom({ originating_registry: { country: "ISLE OF MAN" } })?.country, "Isle of Man");
+  assert.equal(countryInSentence("Germany"), "Germany");
+});
+
+test("the extract is checked against the home number, and the hold names the home register", () => {
+  // The extract from the Dutch register gives the Dutch number, never OE002654.
+  const dutch = reading({ language: "Dutch", company: { name: "AG Hondo Brixton Village B.V.", registrationNumber: "71168974", legalForm: "B.V.", country: "Netherlands", register: "KvK", address: null, status: "active", incorporated: null, extractDate: "2026-11-10" } });
+  assert.equal(checkRegisterExtract(dutch, { name: "AG HONDO BRIXTON VILLAGE BV", registrationNumber: "71168974" }, { uploadedAt: "2026-11-20T10:00:00Z" }).ok, true);
+  assert.equal(checkRegisterExtract(dutch, { name: "AG HONDO BRIXTON VILLAGE BV", registrationNumber: null }, { uploadedAt: "2026-11-20T10:00:00Z" }).ok, true);
+  assert.equal(checkRegisterExtract(dutch, { name: "AG HONDO BRIXTON VILLAGE BV", registrationNumber: "OE002654" }, { uploadedAt: "2026-11-20T10:00:00Z" }).ok, false, "why the OE number is never the subject's");
+  assert.equal(registerExtractDenial({ needed: true, held: false, company: "AG HONDO BRIXTON VILLAGE BV", reasons: [], home: { country: "Netherlands", register: "Netherlands Chamber Of Commerce", registrationNumber: "71168974" } }),
+    "AG HONDO BRIXTON VILLAGE BV is registered in the Netherlands, so an extract from Netherlands Chamber Of Commerce (number 71168974) is needed first. Ask the client for it, or upload it on Documents: the app reads it in any language.");
+});
+
+test("the client checks ask a UK establishment for its home register's extract", () => {
+  const base = { party: { companyId: "b1", name: "Acme", subjectKind: "company", contactName: null }, companiesHouse: { number: "FC025497", name: "ACME INC", listing: null, owners: [], peopleUpChain: [], officers: [], documents: [], ownersAbroad: [], lastAccountsMadeUpTo: null, lastAccountsType: null } } as any;
+  assert.equal(askInputFrom(base)?.ukRegistered, false);
+  assert.equal(askInputFrom({ ...base, companiesHouse: { ...base.companiesHouse, number: "12345678" } })?.ukRegistered, true);
+  assert.equal(askInputFrom({ ...base, companiesHouse: { ...base.companiesHouse, number: "12345678", home: { country: "France" } } })?.ukRegistered, false);
+});
+
+test("GLEIF by number abroad: the name must agree, as German HRB numbers repeat between local courts", () => {
+  const ent = (o: Partial<GleifEntity>): GleifEntity => ({ lei: "L".repeat(20), name: "X", jurisdiction: "DE", country: "DE", registeredAs: null, registeredAt: null, status: "ACTIVE", leiStatus: "ISSUED", lastUpdate: null, ...o } as GleifEntity);
+  const hvp = ent({ lei: "529900EF09UQVAJ2DI58", name: "HVP Hanse Vertriebspartner AG", registeredAs: "HRB 123456", registeredAt: "RA000259" });
+  const ramen = ent({ lei: "R".repeat(20), name: "Ramen Immobilien GmbH", registeredAs: "HRB 123456", registeredAt: "RA000300" });
+  const wrong = pickGleifRecord({ name: "Ramen Immobilien GmbH", country: "Germany", registrationNumber: "HRB 123456" }, [hvp]);
+  assert.equal(wrong.pick, null);
+  assert.equal(wrong.numberOther, "HVP Hanse Vertriebspartner AG");
+  assert.equal(pickGleifRecord({ name: "Ramen Immobilien GmbH", country: "Germany", registrationNumber: "HRB 123456" }, [hvp, ramen]).pick?.lei, ramen.lei);
+  assert.equal(gleifNamesAgree("Ramen Immobilien", "RAMEN IMMOBILIEN GMBH"), true);
+  assert.equal(gleifNamesAgree("Ramen", "Ramen Immobilien GmbH"), false, "one word is not enough");
+  // On a UK register named by the caller the number alone is enough, as before.
+  const uk = ent({ name: "SOMETHING ELSE LIMITED", country: "GB", jurisdiction: "GB", registeredAs: "02711000", registeredAt: "RA000585" });
+  assert.equal(pickGleifRecord({ name: "THE WELLCOME TRUST LIMITED", country: "GB", registrationNumber: "02711000", authorities: ["RA000585"] }, [uk]).pick?.lei, uk.lei);
+  assert.match(gleifTraceWords({ name: "Ramen Immobilien GmbH", country: "Germany", gleif: { status: "not_found", entity: null, parents: [], top: null, candidates: 0, error: null, numberOther: "HVP Hanse Vertriebspartner AG" } }),
+    /not in GLEIF under its name; its number there is HVP Hanse Vertriebspartner AG's, another company/);
+});

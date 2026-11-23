@@ -3742,6 +3742,11 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
 
 ## AML policy Issue 4 is the source of truth (Woody, 2026-11-23)
 
+**Issue 5 of the policy and Issue 4 of the risk assessment replaced these the
+same day** (Jack signed off; see "Companies registered abroad, all in the
+app"). They change only companies registered or owned overseas (no Dun &
+Bradstreet) and translations; everything below stands in Issue 5.
+
 Woody sent Jack's "BGP AML Policy: Recommended Amendments for Issue 4" ("this
 is jacks updated BGP policies? Can you check?"), then: "Can you clean it up
 and amend our Company policy on the app we will use that as the source of
@@ -3844,7 +3849,8 @@ call for action countries only).
     **Upload documents**. **Superseded the same day** (Woody: Creditsafe said
     no and BGP has no D&B either, "all happen in the app including
     translation"): see "Companies registered abroad, all in the app" below.
-    Issue 4's D&B lines are replaced in a draft Issue 5 for Jack.
+    Issue 4's D&B lines are replaced in Issue 5, which Jack signed off the
+    same day.
   - Also in Issue 4: the letting threshold is £10,000 a month or more;
     records kept five years from the end of the relationship; discrepancies
     reported to Companies House; when enhanced due diligence must be applied
@@ -6223,19 +6229,54 @@ certified translations when inspecting your CDD records". Rules:
   certified translation, HMRC can ask for one (MLR 2017 reg 66). The AML file
   puts it beside the original ("(English translation).txt"). Five-year
   deletion and company merges cover the table.
-- **The policy**: Issue 4 says a Dun & Bradstreet report is required for a
-  company owned from overseas (section D, and the limited company evidence).
-  `docs/aml-drafts/bgp-aml-policy-issue-5-draft.docx` and
-  `docs/aml-drafts/bgp-firm-wide-aml-risk-assessment-issue-4-draft.docx`
-  replace it with the register extracts read and translated in the app, and
-  say a translation made in the app is not certified. They are drafts for Jack:
-  not in the app until he approves (then move them to
-  `server/assets/aml-policy/`, add them to `AML_POLICY_DOCUMENTS`, and take
-  "(draft)" and "(to approve)" off their footers).
-- Not built: country registers read by API; OpenCorporates (paid);
-  ordering a certified translation. Not run against Anthropic from a build
-  machine: checked in a browser on a local copy with readings written in the
-  reader's shape.
+- **The policy: Issue 5, and risk assessment Issue 4** (Woody, the same day:
+  "Ok crack on and change the d and b policy on the app jack has signed off";
+  and again "No d and b"). Issue 4 said a Dun & Bradstreet report is required
+  for a company owned from overseas (section D, and the limited company
+  evidence). Issue 5 of the policy (`bgp-aml-policy-issue-5.docx`, key
+  `policy-issue-5`) and Issue 4 of the risk assessment
+  (`bgp-firm-wide-aml-risk-assessment-issue-4.docx`) replace it with the
+  register extracts read and translated in the app, and say a translation made
+  in the app is not certified. Both are in `server/assets/aml-policy/` and
+  `AML_POLICY_DOCUMENTS`, with "Approved by: Jack Barratt" in the footer;
+  `POLICY_SOURCE` names them; everyone confirms Issue 5 afresh on My BGP → AML
+  training (`CURRENT_POLICY_READ_TITLE` takes the latest issue); the Rules page
+  has a line for a company registered abroad; the Dun & Bradstreet card is off
+  Subscriptions & APIs (BGP has none). Never bring D&B back into the words.
+- **Foreign companies on Companies House** (Woody, the same day: "I think a
+  lot of companies that own property in the uk are on companies house but are
+  also foreign?"). Three kinds: an overseas entity on the Register of Overseas
+  Entities (an OE number: every overseas company that owns UK land must
+  register), the UK establishment of an overseas company (an FC, SF or NF
+  number), and a UK company owned from abroad (an ordinary number, traced
+  through GLEIF and the accounts as before). For the first two
+  (`foreignOnCompaniesHouse` in `shared/kyc-prechecks.ts`), BGP's checks read
+  Companies House's "company details in the place of incorporation"
+  (`foreign_company_details`: country, register, number, legal form,
+  governing law) into `companiesHouse.home` (`homeRegisterFrom`; Home register
+  in the AML box and the AML file), look the company up in GLEIF by its home
+  number in that country (`by: "home_number"`), and need the home register's
+  extract before sign-off (`needsRegisterExtract` with `homeAbroad`). The
+  extract is checked against the home number (`extractSubjectFor`), never the
+  OE or FC number, and the hold names the register ("an extract from
+  Netherlands Chamber Of Commerce (number 71168974)"). A check made before
+  this has no home details until Run again.
+- **GLEIF by number abroad needs the name too** (found in the browser check on
+  23 November 2026: HRB 123456 in Germany was HVP Hanse Vertriebspartner AG,
+  not the company asked about; German HRB numbers repeat between local
+  courts). `pickGleifRecord` takes a number match with no register named only
+  when the names agree (`gleifNamesAgree`); otherwise the trace says the
+  number is another company's (`numberOther`). A Companies House number (the
+  UK look-up names its registers) is still taken by number.
+- **OpenCorporates** (Woody asked the same day: "Would open corporates help
+  here or not really?"): not really. It is an aggregator's copy of selected
+  fields from about 140 registers, not the register's own excerpt HMRC asks
+  for, it rarely has owners, and commercial use of its API needs a paid
+  licence. Companies House (with the Register of Overseas Entities), GLEIF and
+  the extract read in the app cover the same ground. Not built.
+- Not built: country registers read by API; ordering a certified
+  translation. Not run against Anthropic from a build machine: checked in a
+  browser on a local copy with readings written in the reader's shape.
 
 ## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
 

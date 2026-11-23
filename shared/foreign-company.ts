@@ -8,7 +8,9 @@
 // (server/kyc-documents.ts) and checked here: it is about this company, it is
 // recent, and the register does not show the company closed. Pure rules.
 import type { KycDocumentReading } from "./kyc-documents";
-import { overseasNameKey, ownerRegister } from "./kyc-prechecks";
+import { foreignOnCompaniesHouse, overseasNameKey, ownerRegister } from "./kyc-prechecks";
+
+export { foreignOnCompaniesHouse };
 
 // How old an extract may be when it is uploaded (three months, the age a proof
 // of address may be).
@@ -140,15 +142,21 @@ export function needsRegisterExtract(input: {
   kind: "company" | "individual" | "trust" | "public_body";
   // The country the company that signs was recorded with, when typed.
   country?: string | null;
-  // The UK record BGP's checks read: a Companies House number or an
-  // overseas entity number (OE...), and whether BGP's checks read it as a
-  // company abroad with no UK record.
+  // The UK record BGP's checks read: a Companies House number, an overseas
+  // entity number (OE...) or a UK establishment's (FC..., SF..., NF...), and
+  // whether BGP's checks read it as a company abroad with no UK record.
   ukNumber?: string | null;
   abroadParty?: boolean;
+  // Companies House holds its home register (a company incorporated abroad).
+  homeAbroad?: boolean;
   sanctionsOnly?: boolean;
 }): boolean {
   if (input.kind !== "company" || input.sanctionsOnly) return false;
-  if (input.ukNumber && /^OE\d{6}$/i.test(input.ukNumber)) return true;
+  // On Companies House but incorporated abroad (Woody, 23 November 2026: "a
+  // lot of companies that own property in the uk are on companies house but
+  // are also foreign"): still its home register's extract.
+  if (input.ukNumber && foreignOnCompaniesHouse(input.ukNumber)) return true;
+  if (input.homeAbroad) return true;
   if (input.country && ownerRegister(input.country) === "abroad") return true;
   return !input.ukNumber && !!input.abroadParty;
 }

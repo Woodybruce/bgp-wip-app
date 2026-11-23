@@ -32,7 +32,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, chooseScreened, gleifOwnerAbroad, gleifPartyLine, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
+  askInputFrom, checkWebAnswer, chooseScreened, foreignOnCompaniesHouse, gleifOwnerAbroad, gleifPartyLine, homeRegisterFrom, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
   dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, normaliseStoredPrecheck, withRoeListing, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
@@ -508,6 +508,9 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
       lastAccountsType: accountsType || clean(profile.accounts?.last_accounts?.type, 40) || null,
       hasInsolvencyHistory: !!profile.has_insolvency_history, insolvencyCases,
       officers, owners, statements, listing, chain, peopleUpChain, offshoreOwners, ownersAbroad, disqualified, covenant, documents,
+      // A company incorporated abroad (an overseas entity or a UK
+      // establishment): where it is registered at home (23 November 2026).
+      home: homeRegisterFrom(profile.foreign_company_details),
     }),
     raw: { profile, officers: rawOfficers, pscs: rawPscs },
   };
@@ -823,7 +826,19 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     // The UK company in GLEIF by its Companies House number (21 November
     // 2026): its LEI and its parents, each screened. Its top parent abroad
     // joins the owners abroad when the register names no person who owns it.
-    if (!isOverseasEntityNumber(companiesHouse.number) && partyGleif?.trace.status !== "found") {
+    // A company incorporated abroad that Companies House holds (an overseas
+    // entity or a UK establishment): in GLEIF by the number on its home
+    // register, in that country, the name agreeing (23 November 2026).
+    const home = companiesHouse.home || null;
+    if (foreignOnCompaniesHouse(companiesHouse.number) && home && (home.registrationNumber || home.country) && partyGleif?.trace.status !== "found") {
+      try {
+        const { traceGleif } = await import("./gleif");
+        const trace = await withTimeout(traceGleif({ name: companiesHouse.name, country: home.country, registrationNumber: home.registrationNumber }), 60_000, "Looking the company up in GLEIF");
+        partyGleif = { by: home.registrationNumber ? "home_number" : "name", name: companiesHouse.name, trace, checkedAt: new Date().toISOString() };
+      } catch (e: any) {
+        errors.push(`GLEIF: ${words(e)}`);
+      }
+    } else if (!isOverseasEntityNumber(companiesHouse.number) && partyGleif?.trace.status !== "found") {
       try {
         const { traceGleif } = await import("./gleif");
         const trace = await withTimeout(traceGleif({ name: companiesHouse.name, country: "GB", registrationNumber: companiesHouse.number, authorities: COMPANIES_HOUSE_AUTHORITIES }), 60_000, "Looking the company up in GLEIF");

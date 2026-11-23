@@ -419,9 +419,12 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
   if (people.basis === "not_read") {
     return (
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="deal-party-people-unread">
-        <span>The owners of {party.company.name} are read from Companies House by BGP's checks before asking.</span>
+        {/* A company registered abroad has no Companies House record (23 November 2026). */}
+        <span>{party.company.abroad
+          ? `${party.company.name} is registered abroad: its owners come from its own register's extract, read when it is uploaded.`
+          : `The owners of ${party.company.name} are read from Companies House by BGP's checks before asking.`}</span>
         <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={read.isPending || reading} onClick={() => read.mutate()} data-testid="deal-party-people-read">
-          {read.isPending || reading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{reading ? "Reading Companies House…" : "Read them now"}
+          {read.isPending || reading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{reading ? (party.company.abroad ? "Running BGP's checks…" : "Reading Companies House…") : (party.company.abroad ? "Run BGP's checks" : "Read them now")}
         </Button>
       </div>
     );

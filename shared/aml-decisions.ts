@@ -40,12 +40,17 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "Foreign companies on Companies House still need their home register's extract",
+    text: "An overseas entity (an OE number) or the UK branch of an overseas company (an FC number) is on Companies House but registered abroad. The app reads its home register and number from Companies House, checks the extract against that number, and holds the sign-off until the extract is in. A GLEIF match by number abroad must also match the name." },
+  { date: "2026-11-23", who: ["Jack", "Woody"], topic: "Policy", title: "Jack approved policy Issue 5 and risk assessment Issue 4",
+    text: "Jack signed off Issue 5 of the AML policy and Issue 4 of the risk assessment on 23 November 2026. BGP uses no Dun & Bradstreet: a company registered or owned overseas is checked from its own register's extract, read and translated in the app. Everyone confirms they have read Issue 5 on My BGP, AML training." },
   { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "Companies registered abroad: everything in the app",
     text: "Creditsafe declined and BGP has no Dun & Bradstreet, so companies abroad are checked in the app alone. A company registered abroad can be the company that signs. Its own register's extract, issued in the last three months, is read in any language and checked, and its directors are screened. It is not signed off until the extract passes or an officer accepts it." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "Documents in other languages are translated in the app",
     text: "A document not in English is translated into English in the app, and the translation is kept with it and in the AML file. It is not a certified translation: HMRC can ask for one when it inspects our records, and the Nominated Officer gets one when HMRC asks or is not satisfied with the app's translation." },
   { date: "2026-11-23", who: ["Woody"], topic: "Policy", title: "Policy Issue 5 and risk assessment Issue 4 drafted for Jack",
-    text: "Issue 4 of the policy says a Dun & Bradstreet report is required for a company owned from overseas. Drafts of Issue 5 of the policy and Issue 4 of the risk assessment replace it with register extracts read and translated in the app. They take effect when Jack approves them." },
+    text: "Issue 4 of the policy says a Dun & Bradstreet report is required for a company owned from overseas. Drafts of Issue 5 of the policy and Issue 4 of the risk assessment replace it with register extracts read and translated in the app. They take effect when Jack approves them.",
+    changed: "23 November 2026: Jack approved them (see Jack approved policy Issue 5 and risk assessment Issue 4)." },
   { date: "2026-11-23", who: ["Woody"], topic: "Officers and sign-off", title: "The full checks can be done on a small letting",
     text: "A company signed off on a letting under £10,000 a month is cleared for the sanctions checks only, and Group entities says so. Start full KYC opens that letting's full checks: client checks, owners and a full sign-off. The full sign-off then covers a sale or a bigger letting with the same company for three years." },
   { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A building's owner from Land Registry starts its KYC, when we choose",

@@ -32,6 +32,7 @@ export function gleifTraceWords(t: Pick<AbroadTrace, "name" | "country" | "gleif
   if (g.status === "skipped") return `${t.name} (${t.country}): not looked up in GLEIF`;
   if (g.status === "error") return `${t.name} (${t.country}): GLEIF could not be read${g.error ? ` (${g.error})` : ""}`;
   if (g.status === "ambiguous") return `${t.name} (${t.country}): GLEIF has ${g.candidates} entities of that name, so none is taken`;
+  if ((g.status === "not_found" || !g.entity) && g.numberOther) return `${t.name} (${t.country}): not in GLEIF under its name; its number there is ${g.numberOther}'s, another company`;
   if (g.status === "not_found" || !g.entity) return `${t.name} (${t.country}): not in GLEIF (no LEI under that name or number)`;
   const chain = g.parents.length ? `; owned by ${g.parents.map(p => `${p.name}${p.jurisdiction ? ` (${p.jurisdiction})` : ""}`).join(", then ")}` : "";
   const lapsed = g.entity.leiStatus && g.entity.leiStatus !== "ISSUED" ? ` (LEI ${g.entity.leiStatus.toLowerCase()}${g.entity.lastUpdate ? `, last updated ${g.entity.lastUpdate}` : ""})` : "";
@@ -61,10 +62,11 @@ export const gleifUkRegister = (e: Pick<GleifEntity, "registeredAt"> | null | un
 /** The party itself in GLEIF, in one line (21 November 2026: UK parties too). */
 export function gleifPartyWords(g: PrecheckGleif): string {
   const t = g.trace;
-  const as = g.by === "number" ? "its Companies House number" : `the name ${g.name}`;
+  const as = g.by === "number" ? "its Companies House number" : g.by === "home_number" ? "its number on its home register" : `the name ${g.name}`;
   if (t.status === "skipped") return `GLEIF: not looked up${t.error ? ` (${t.error})` : ""}`;
   if (t.status === "error") return `GLEIF could not be read${t.error ? ` (${t.error})` : ""}`;
   if (t.status === "ambiguous") return `GLEIF has ${t.candidates} entities named ${g.name}, so none is taken`;
+  if ((t.status === "not_found" || !t.entity) && t.numberOther) return `Not in GLEIF under ${as}; the number there is ${t.numberOther}'s, another company`;
   if (t.status === "not_found" || !t.entity) return `Not in GLEIF (no LEI under ${as})`;
   const reg = gleifUkRegister(t.entity);
   const where = reg ? `on ${reg.words}${t.entity.registeredAs ? ` as ${t.entity.registeredAs}` : ""}` : `registered in ${t.entity.jurisdiction || t.entity.country || "a country GLEIF does not give"}`;

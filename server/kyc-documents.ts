@@ -27,7 +27,7 @@ import {
   KYC_DOCUMENT_ACCEPT_NOTE_MIN, KYC_DOCUMENT_DOC_TYPE, KYC_DOCUMENT_KINDS, checkKycDocument, cleanKycDocumentReading, unreadableKycDocument,
   type KycDocumentReading, type KycUploadEvidence,
 } from "@shared/kyc-documents";
-import type { ExtractSubject } from "@shared/foreign-company";
+import { foreignOnCompaniesHouse, type ExtractSubject } from "@shared/foreign-company";
 import type { RegisterExtractFact } from "@shared/party-kyc";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
@@ -200,12 +200,29 @@ export async function uploadsFor(companyId: string, entityId: string | null, db:
  * and the country typed), else the brand.
  */
 export async function extractSubjectFor(companyId: string, entityId: string | null, db: Db = pool): Promise<ExtractSubject | null> {
+  // A company incorporated abroad that Companies House holds (OE…, FC…): its
+  // extract shows the number on its home register, never the Companies House
+  // one, so the home number BGP's checks read from Companies House is used,
+  // else the name alone (23 November 2026).
+  const home = async (chNumber: unknown) => {
+    if (!foreignOnCompaniesHouse(chNumber)) return undefined;
+    const { latestPrecheck } = await import("./kyc-prechecks");
+    return (await latestPrecheck(companyId, entityId).catch(() => null))?.result?.companiesHouse?.home || null;
+  };
   if (entityId) {
     const e = (await db.query(`SELECT name, companies_house_number, registration_number, country FROM crm_trading_entities WHERE id = $1`, [entityId]).catch(() => ({ rows: [] as any[] }))).rows[0];
-    if (e) return { name: String(e.name || ""), registrationNumber: e.registration_number || e.companies_house_number || null, country: e.country || null };
+    if (e) {
+      if (e.registration_number) return { name: String(e.name || ""), registrationNumber: e.registration_number, country: e.country || null };
+      const h = await home(e.companies_house_number);
+      if (h !== undefined) return { name: String(e.name || ""), registrationNumber: h?.registrationNumber || null, country: h?.country || e.country || null };
+      return { name: String(e.name || ""), registrationNumber: e.companies_house_number || null, country: e.country || null };
+    }
   }
   const c = (await db.query(`SELECT name, uk_entity_name, companies_house_number FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0];
-  return c ? { name: String(c.uk_entity_name || c.name || ""), registrationNumber: c.companies_house_number || null, country: null } : null;
+  if (!c) return null;
+  const h = await home(c.companies_house_number);
+  if (h !== undefined) return { name: String(c.uk_entity_name || c.name || ""), registrationNumber: h?.registrationNumber || null, country: h?.country || null };
+  return { name: String(c.uk_entity_name || c.name || ""), registrationNumber: c.companies_house_number || null, country: null };
 }
 
 /**
@@ -217,15 +234,19 @@ export async function registerExtractFact(companyId: string, entityId: string | 
   const { needsRegisterExtract } = await import("@shared/foreign-company");
   const subject = await extractSubjectFor(companyId, entityId, db);
   if (!subject) return null;
-  const entity = entityId ? (await db.query(`SELECT companies_house_number, country FROM crm_trading_entities WHERE id = $1`, [entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] : null;
+  const entity = entityId ? (await db.query(`SELECT companies_house_number, country, registration_number FROM crm_trading_entities WHERE id = $1`, [entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] : null;
   const { latestPrecheck } = await import("./kyc-prechecks");
   const pre = (await latestPrecheck(companyId, entityId).catch(() => null))?.result || null;
   const ukNumber = pre?.companiesHouse?.number || entity?.companies_house_number
     || (!entityId ? (await db.query(`SELECT companies_house_number FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.companies_house_number : null) || null;
-  const needed = needsRegisterExtract({ kind: "company", country: entity?.country || null, ukNumber, abroadParty: !!pre?.abroad?.party });
+  const home = pre?.companiesHouse?.home || null;
+  const needed = needsRegisterExtract({ kind: "company", country: entity?.country || null, ukNumber, abroadParty: !!pre?.abroad?.party, homeAbroad: !!home });
   if (!needed) return { needed: false, held: false, company: subject.name, reasons: [] };
   const held = await partyRegisterExtract(companyId, entityId, db);
-  return { needed: true, held: held.held, company: subject.name, reasons: held.reasons };
+  // Where it is registered: Companies House's record of it, else the country typed for it.
+  return { needed: true, held: held.held, company: subject.name, reasons: held.reasons,
+    home: home ? { country: home.country, register: home.register, registrationNumber: home.registrationNumber }
+      : entity?.country ? { country: String(entity.country), register: null, registrationNumber: entity.registration_number || null } : null };
 }
 
 /** The directors and owners the party's own register extract lists (the latest about the company itself). */

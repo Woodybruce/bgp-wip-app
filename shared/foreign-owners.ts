@@ -304,11 +304,15 @@ export interface GleifTrace {
   top: GleifTop | null;
   candidates: number;
   error: string | null;
+  // The number asked about is another company's in GLEIF (23 November 2026).
+  numberOther?: string | null;
 }
 
 /** The party itself in GLEIF: a UK company by its Companies House number, else any company by its name (21 November 2026). */
 export interface PrecheckGleif {
-  by: "number" | "name";
+  // home_number: a company incorporated abroad that Companies House holds, by
+  // the number on its home register (23 November 2026).
+  by: "number" | "name" | "home_number";
   name: string;
   trace: GleifTrace;
   checkedAt: string;
@@ -365,22 +369,41 @@ const sameCountry = (code: string | null, e: GleifEntity) => !code || (e.jurisdi
  * country, else by exactly its name there. Two records of that name are
  * "ambiguous" and none is picked.
  */
-export function pickGleifRecord(query: { name: string; country: string | null; registrationNumber: string | null; authorities?: string[] | null }, records: GleifEntity[]): { pick: GleifEntity | null; status: "found" | "not_found" | "ambiguous"; candidates: number } {
+// Two company names that are the same company's: the same words once the
+// legal form is left out, or every word of the shorter (two at least) in the
+// longer ("Ramen Immobilien" and "Ramen Immobilien GmbH").
+export function gleifNamesAgree(a: string, b: string): boolean {
+  const x = nameTokens(a, true), y = nameTokens(b, true);
+  if (!x.length || !y.length) return false;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  const set = new Set(long);
+  return short.every(w => set.has(w)) && (short.length >= 2 || short.length === long.length);
+}
+
+export function pickGleifRecord(query: { name: string; country: string | null; registrationNumber: string | null; authorities?: string[] | null }, records: GleifEntity[]): { pick: GleifEntity | null; status: "found" | "not_found" | "ambiguous"; candidates: number; numberOther?: string } {
   const code = countryCode(query.country);
   const reg = regKey(query.registrationNumber);
   // With `authorities` the record must be on one of those registers: a UK
   // company number is not the same number on the charity register.
   const onRegister = (r: GleifEntity) => !query.authorities?.length || (!!r.registeredAt && query.authorities.includes(r.registeredAt));
+  let numberOther: string | null = null;
   if (reg) {
     const byNumber = records.filter(r => regKey(r.registeredAs) === reg && sameCountry(code, r) && onRegister(r));
-    if (byNumber.length === 1) return { pick: byNumber[0], status: "found", candidates: 1 };
+    // A number is unique on its own register only. Abroad, with no register
+    // named, the name must agree too: German HRB numbers repeat between local
+    // courts (23 November 2026: HRB 123456 in Germany was HVP Hanse
+    // Vertriebspartner AG, not the company asked about).
+    const sure = query.authorities?.length ? byNumber : byNumber.filter(r => gleifNamesAgree(r.name, query.name));
+    if (sure.length === 1) return { pick: sure[0], status: "found", candidates: 1 };
+    if (!sure.length && byNumber.length) numberOther = byNumber[0].name;
   }
+  const other = numberOther ? { numberOther } : {};
   const key = nameKey(query.name);
-  if (!key) return { pick: null, status: "not_found", candidates: 0 };
+  if (!key) return { pick: null, status: "not_found", candidates: 0, ...other };
   const byName = records.filter(r => nameKey(r.name) === key && sameCountry(code, r) && onRegister(r));
   // Of several, one still active with a live LEI is not enough to choose: the same name twice is two companies.
   if (byName.length === 1) return { pick: byName[0], status: "found", candidates: 1 };
-  return { pick: null, status: byName.length > 1 ? "ambiguous" : "not_found", candidates: byName.length };
+  return { pick: null, status: byName.length > 1 ? "ambiguous" : "not_found", candidates: byName.length, ...other };
 }
 
 const EXCEPTION_WORDS: Record<string, { kind: GleifTopKind; words: string }> = {

@@ -46,17 +46,8 @@ interface Subscription {
   apiNote?: string;
 }
 
+// BGP has no Dun & Bradstreet subscription (Woody, 23 November 2026: "No d and b").
 const subscriptions: Subscription[] = [
-  {
-    name: "Dun & Bradstreet",
-    category: "Business Intelligence",
-    description: "Company credit reports, financial data, and business intelligence for tenant and counterparty due diligence.",
-    url: "https://www.dnb.co.uk",
-    icon: ShieldCheck,
-    color: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-    hasApi: true,
-    apiNote: "D&B Direct API available for company lookups and credit checks",
-  },
   {
     name: "Edozo / GOAD",
     category: "Property Data",

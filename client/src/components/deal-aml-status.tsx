@@ -150,7 +150,8 @@ function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId
         {c.registeredOffice && <div><dt className="inline text-muted-foreground">Registered office: </dt><dd className="inline">{c.registeredOffice}</dd></div>}
         {c.business.length > 0 && <div><dt className="inline text-muted-foreground">Business: </dt><dd className="inline">{c.business.join("; ")}</dd></div>}
         {c.listing && <div data-testid={`kyc-company-listing-${companyId}`}><dt className="inline text-muted-foreground">Listed: </dt><dd className="inline">{c.listing}. {c.listingNote}</dd></div>}
-        {c.overseasEntity && <div data-testid={`kyc-company-overseas-${companyId}`}><dt className="inline text-muted-foreground">Register of Overseas Entities: </dt><dd className="inline">{c.overseasEntity}</dd></div>}
+        {c.overseasEntity && <div data-testid={`kyc-company-overseas-${companyId}`}><dt className="inline text-muted-foreground">{/^An overseas entity/.test(c.overseasEntity) ? "Register of Overseas Entities" : "Incorporated abroad"}: </dt><dd className="inline">{c.overseasEntity}</dd></div>}
+        {c.home && <div data-testid={`kyc-company-home-${companyId}`}><dt className="inline text-muted-foreground">Home register: </dt><dd className="inline">{c.home}</dd></div>}
         {directors.length > 0 && (
           <div><dt className="inline text-muted-foreground">Directors: </dt><dd className="inline">{directors.join(", ")}
             {c.directors.length > 4 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}

@@ -727,6 +727,9 @@ export interface KycPrecheckResult {
     disqualified: Array<{ officer: string; match: string; dobMatches: boolean | null; url: string | null }>;
     covenant: { grade: string | null; score: number | null; flags: Array<{ level: string; label: string; detail?: string | null }>; gazette: Array<{ title: string; published: string; link: string }> } | null;
     documents: PrecheckDocument[];
+    // A company incorporated abroad (an overseas entity or a UK establishment):
+    // its home register, as Companies House holds it (since 23 November 2026).
+    home?: PrecheckHomeRegister | null;
   };
   // Why there is no Companies House record to read.
   notAtCompaniesHouse: string | null;
@@ -774,6 +777,60 @@ export interface PrecheckOverseasEntity {
 }
 
 export const isOverseasEntityNumber = (n: unknown): boolean => /^OE\d{6}$/i.test(String(n || "").trim());
+
+/**
+ * A company incorporated abroad that Companies House holds (Woody, 23
+ * November 2026: "a lot of companies that own property in the uk are on
+ * companies house but are also foreign"): an overseas entity (OE…, the
+ * Register of Overseas Entities, which every overseas company owning UK
+ * property must join) or the UK establishment of an overseas company (FC…,
+ * SF… in Scotland, NF… in Northern Ireland). Its own register is still
+ * abroad, so HMRC's excerpt of that register is still asked for.
+ */
+export const foreignOnCompaniesHouse = (n: unknown): boolean => /^(OE|FC|SF|NF)\d{6}$/i.test(String(n || "").trim());
+
+/** Companies House's "company details in the place of incorporation" for such a company. */
+export interface PrecheckHomeRegister {
+  country: string | null;
+  register: string | null;
+  registrationNumber: string | null;
+  legalForm: string | null;
+  governedBy: string | null;
+}
+
+const titleWords = (s: string): string => s.toLowerCase().replace(/\b\p{L}/gu, c => c.toUpperCase()).replace(/(?!^)\b(Of|And|The)\b/g, w => w.toLowerCase());
+
+/** "the Netherlands", "the United States", "Germany". */
+export const countryInSentence = (c: string): string => {
+  const t = c.trim();
+  return /^(netherlands|united\b.*|philippines|bahamas|maldives|gambia|seychelles|czech republic|dominican republic|central african republic|isle of man|.*\bislands)$/i.test(t) ? `the ${t}` : t;
+};
+
+/** The home register from Companies House's foreign_company_details, or null. */
+export function homeRegisterFrom(details: unknown): PrecheckHomeRegister | null {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  const d = details as Record<string, any>;
+  const reg = d.originating_registry && typeof d.originating_registry === "object" ? d.originating_registry : {};
+  const text = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+  const country = text(reg.country, 60);
+  const h: PrecheckHomeRegister = {
+    country: country ? titleWords(country) : null,
+    register: text(reg.name, 120) || null,
+    registrationNumber: text(d.registration_number, 60) || null,
+    legalForm: text(d.legal_form || d.company_type, 120) || null,
+    governedBy: text(d.governed_by, 120) || null,
+  };
+  return h.country || h.register || h.registrationNumber ? h : null;
+}
+
+/** "Registered in the Netherlands (Netherlands Chamber Of Commerce, number 71168974), a private limited liability company." */
+export function homeRegisterWords(h: PrecheckHomeRegister | null | undefined): string | null {
+  if (!h) return null;
+  const where = h.country ? `Registered in ${countryInSentence(h.country)}` : "Registered abroad";
+  const on = [h.register, h.registrationNumber ? `number ${h.registrationNumber}` : null].filter(Boolean).join(", ");
+  const form = h.legalForm ? `, ${/^[aeiou]/i.test(h.legalForm) ? "an" : "a"} ${h.legalForm.toLowerCase()}` : "";
+  return `${where}${on ? ` (${on})` : ""}${form}.`;
+}
 /**
  * Live on its register: a UK company reads "active", an overseas entity
  * "registered" (its normal status on the Register of Overseas Entities, read
@@ -913,6 +970,8 @@ export interface PrecheckCompany {
   registerUrl: string;
   // On the Register of Overseas Entities (an OE number), in words.
   overseasEntity?: string | null;
+  // Where it is registered at home, for a company incorporated abroad.
+  home?: string | null;
   // Corporate owners registered abroad, on the register or up the chain: the
   // party goes to KYC4U (Woody, 21 November 2026).
   ownersAbroad?: Array<{ name: string; country: string; foundAt: string | null; via?: OwnerAbroad["via"] }>;
@@ -985,7 +1044,10 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     ],
     overseasEntity: isOverseasEntityNumber(ch.number)
       ? `An overseas entity on the Register of Overseas Entities${result?.overseasEntity?.number ? ", found by its name: check it is the same company" : ""}. Its home register's extract is still asked for.`
-      : null,
+      : foreignOnCompaniesHouse(ch.number)
+        ? "A company incorporated abroad, with a UK establishment registered at Companies House. Its home register's extract is still asked for."
+        : null,
+    home: homeRegisterWords(ch.home || null),
   };
 }
 
@@ -1030,9 +1092,10 @@ export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput
   const ch = result.companiesHouse;
   return {
     subjectKind: result.party.subjectKind,
-    // An overseas entity on the Register of Overseas Entities is still
-    // registered abroad: its home register's extract is asked for.
-    ukRegistered: !!ch && !isOverseasEntityNumber(ch.number),
+    // An overseas entity on the Register of Overseas Entities, or the UK
+    // establishment of an overseas company, is still registered abroad: its
+    // home register's extract is asked for.
+    ukRegistered: !!ch && !foreignOnCompaniesHouse(ch.number) && !ch.home,
     listing: ch?.listing || null,
     owners: ch?.owners || [],
     peopleUpChain: ch?.peopleUpChain || [],
