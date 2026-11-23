@@ -1852,7 +1852,7 @@ export function setupCrmRoutes(app: Express) {
       const [companyRows, contactEmailRows, contactNameRows, propertyRows] = await Promise.all([
         pool.query(`
           SELECT lower(trim(name)) AS key, array_agg(id) AS ids, count(*)::int AS count
-          FROM crm_companies WHERE name IS NOT NULL AND trim(name) != ''
+          FROM crm_companies WHERE name IS NOT NULL AND trim(name) != '' AND merged_into_id IS NULL
           GROUP BY lower(trim(name)) HAVING count(*) > 1
         `),
         pool.query(`
@@ -1875,7 +1875,8 @@ export function setupCrmRoutes(app: Express) {
       const companyDupes = companyRows.rows.map((r: any) => ({ name: r.key, ids: r.ids, count: r.count }));
       const contactEmailDupes = contactEmailRows.rows.map((r: any) => ({ email: r.key, ids: r.ids, names: r.names, count: r.count }));
       const contactNameDupesList = contactNameRows.rows.map((r: any) => ({ name: r.key, ids: r.ids, companies: r.companies, count: r.count }));
-      const propertyDupes = propertyRows.rows.map((r: any) => ({ name: r.key, ids: r.ids, count: r.count }));
+      const { describePropertyDuplicates } = await import("./property-duplicates");
+      const propertyDupes = await describePropertyDuplicates(pool, propertyRows.rows.map((r: any) => ({ name: r.key, ids: r.ids })));
 
       res.json({
         companies: { duplicates: companyDupes, count: companyDupes.length },
@@ -1896,30 +1897,43 @@ export function setupCrmRoutes(app: Express) {
 
   app.post("/api/crm/duplicates/merge", async (req, res) => {
     try {
-      const { entity, keepId, deleteIds } = req.body;
-      if (!entity || !keepId || !deleteIds?.length) {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { entity, keepId } = req.body || {};
+      const deleteIds: string[] = Array.isArray(req.body?.deleteIds) ? req.body.deleteIds.map(String).filter((id: string) => id && id !== keepId) : [];
+      if (!entity || !keepId || !deleteIds.length) {
         return res.status(400).json({ error: "entity, keepId, and deleteIds required" });
+      }
+
+      // Properties and companies go through the app's full merges, which move
+      // every reference (found from the schema), fill the keeper's gaps and
+      // keep conversations and undo records. The older hand-written list here
+      // moved a handful of links and failed on the rest (Woody, 2026-11-23).
+      if (entity === "property") {
+        const { mergeProperties } = await import("./property-merge");
+        for (const deleteId of deleteIds) await mergeProperties(String(keepId), deleteId);
+        return res.json({ merged: deleteIds.length, keepId });
+      }
+      if (entity === "company") {
+        const { mergeCompanyInto } = await import("./brand-dedupe");
+        const by = (await storage.getUser(String((req.session as any)?.userId || (req as any).tokenUserId || "")).catch(() => null))?.username || "Data Health";
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          for (const deleteId of deleteIds) await mergeCompanyInto(client, String(keepId), deleteId, by, "Merged from Settings → Data Health");
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw e;
+        } finally {
+          client.release();
+        }
+        return res.json({ merged: deleteIds.length, keepId });
       }
 
       const merged = await db.transaction(async (tx) => {
         let count = 0;
         for (const deleteId of deleteIds) {
-          if (deleteId === keepId) continue;
-
-          if (entity === "company") {
-            await tx.update(crmContacts).set({ companyId: keepId }).where(eq(crmContacts.companyId, deleteId));
-            await tx.update(crmDeals).set({ landlordId: keepId }).where(eq(crmDeals.landlordId, deleteId));
-            await tx.update(crmDeals).set({ tenantId: keepId }).where(eq(crmDeals.tenantId, deleteId));
-            await tx.update(crmProperties).set({ landlordId: keepId }).where(eq(crmProperties.landlordId, deleteId));
-            await tx.execute(sql`UPDATE crm_company_deals SET company_id = ${keepId} WHERE company_id = ${deleteId} AND deal_id NOT IN (SELECT deal_id FROM crm_company_deals WHERE company_id = ${keepId})`);
-            await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, deleteId));
-            // Re-point imagery so galleries don't dangle on the deleted row. (Landsec audit.)
-            await tx.execute(sql`UPDATE image_studio_images SET company_id = ${keepId} WHERE company_id = ${deleteId}`);
-            await tx.execute(sql`UPDATE crm_company_properties SET company_id = ${keepId} WHERE company_id = ${deleteId} AND property_id NOT IN (SELECT property_id FROM crm_company_properties WHERE company_id = ${keepId})`);
-            await tx.execute(sql`DELETE FROM crm_company_properties WHERE company_id = ${deleteId}`);
-            await tx.delete(crmCompanies).where(eq(crmCompanies.id, deleteId));
-            count++;
-          } else if (entity === "contact") {
+          if (entity === "contact") {
             await tx.update(crmRequirementsLeasing).set({ agentContactId: keepId }).where(eq(crmRequirementsLeasing.agentContactId, deleteId));
             await tx.update(crmRequirementsLeasing).set({ principalContactId: keepId }).where(eq(crmRequirementsLeasing.principalContactId, deleteId));
             await tx.update(crmDeals).set({ clientContactId: keepId }).where(eq(crmDeals.clientContactId, deleteId));
@@ -1934,23 +1948,6 @@ export function setupCrmRoutes(app: Express) {
             await tx.execute(sql`UPDATE crm_contact_properties SET contact_id = ${keepId} WHERE contact_id = ${deleteId} AND property_id NOT IN (SELECT property_id FROM crm_contact_properties WHERE contact_id = ${keepId})`);
             await tx.delete(crmContactProperties).where(eq(crmContactProperties.contactId, deleteId));
             await tx.delete(crmContacts).where(eq(crmContacts.id, deleteId));
-            count++;
-          } else if (entity === "property") {
-            await tx.update(crmDeals).set({ propertyId: keepId }).where(eq(crmDeals.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_property_agents SET property_id = ${keepId} WHERE property_id = ${deleteId} AND agent_id NOT IN (SELECT agent_id FROM crm_property_agents WHERE property_id = ${keepId})`);
-            await tx.delete(crmPropertyAgents).where(eq(crmPropertyAgents.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_property_tenants SET property_id = ${keepId} WHERE property_id = ${deleteId} AND tenant_id NOT IN (SELECT tenant_id FROM crm_property_tenants WHERE property_id = ${keepId})`);
-            await tx.delete(crmPropertyTenants).where(eq(crmPropertyTenants.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_property_clients SET property_id = ${keepId} WHERE property_id = ${deleteId} AND contact_id NOT IN (SELECT contact_id FROM crm_property_clients WHERE property_id = ${keepId})`);
-            await tx.delete(crmPropertyClients).where(eq(crmPropertyClients.propertyId, deleteId));
-            await tx.execute(sql`UPDATE crm_contact_properties SET property_id = ${keepId} WHERE property_id = ${deleteId} AND contact_id NOT IN (SELECT contact_id FROM crm_contact_properties WHERE property_id = ${keepId})`);
-            await tx.delete(crmContactProperties).where(eq(crmContactProperties.propertyId, deleteId));
-            // Re-point imagery + schedules so they survive the merge. (Landsec audit.)
-            await tx.execute(sql`UPDATE image_studio_images SET property_id = ${keepId} WHERE property_id = ${deleteId}`);
-            await tx.execute(sql`UPDATE property_imagery_assets SET property_id = ${keepId} WHERE property_id = ${deleteId}`);
-            await tx.execute(sql`UPDATE crm_company_properties SET property_id = ${keepId} WHERE property_id = ${deleteId} AND company_id NOT IN (SELECT company_id FROM crm_company_properties WHERE property_id = ${keepId})`);
-            await tx.execute(sql`DELETE FROM crm_company_properties WHERE property_id = ${deleteId}`);
-            await tx.delete(crmProperties).where(eq(crmProperties.id, deleteId));
             count++;
           }
         }

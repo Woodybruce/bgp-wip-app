@@ -43,3 +43,13 @@ test("the screens offer it: the unit panel and the schedule's tracker row", () =
   assert.doesNotMatch(sched, /LETTING_REPAIR_TOOLS_ENABLED/);
   assert.match(read("client/src/pages/settings.tsx"), /<TrackerScheduleGapsPanel \/>/);
 });
+
+test("Data Health's merge uses the full property and company merges and Merge All skips different places", () => {
+  const crm = read("server/crm.ts");
+  const route = crm.slice(crm.indexOf('app.post("/api/crm/duplicates/merge"'), crm.indexOf('app.get("/api/crm/search"'));
+  assert.match(route, /mergeProperties\(String\(keepId\), deleteId\)/);
+  assert.match(route, /mergeCompanyInto\(client, String\(keepId\), deleteId/);
+  assert.match(route, /isClientRequestUser\(req\)\) return res\.status\(403\)/);
+  assert.doesNotMatch(route, /agent_id|tenant_id NOT IN/);
+  assert.match(read("client/src/pages/settings.tsx"), /duplicates\.filter\(g => g\.samePlace !== false\)/);
+});
