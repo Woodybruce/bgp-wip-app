@@ -7,7 +7,7 @@
 // shared/deal-parties.ts. Every change saves straight away.
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, CheckCircle2, Loader2, Plus, Receipt, ShieldCheck, UserRound, AlertTriangle } from "lucide-react";
+import { Building2, CheckCircle2, Globe2, Loader2, Plus, Receipt, ShieldCheck, UserRound, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,7 @@ import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billi
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 import { AddPersonButton, useClientChecks } from "@/components/kyc-client-checks";
 import { DealHotsButton } from "@/components/deal-hots";
-import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, companyRegisterWords, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { GUARANTOR_CHECKS_WORDS, isGuaranteedRole, type DealGuarantorView } from "@shared/deal-guarantor";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -669,7 +669,7 @@ export function PayerDialog({ dealId, party, onClose }: { dealId: string; party:
                   <li key={c.id}>
                     <label className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 text-xs">
                       <input type="radio" name="payer-company" checked={companyId === c.id} onChange={() => setCompanyId(c.id)} />
-                      <span className="min-w-0 flex-1"><span className="font-medium">{c.name}</span><span className="ml-1.5 text-muted-foreground">{c.companiesHouseNumber || "no Companies House number"}</span></span>
+                      <span className="min-w-0 flex-1"><span className="font-medium">{c.name}</span><span className="ml-1.5 text-muted-foreground">{companyRegisterWords(c)}</span></span>
                     </label>
                   </li>
                 ))}
@@ -846,7 +846,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   useWorkOutSigningCompanies(dealId, data);
   const party = data?.parties.find(p => p.role === role) || null;
   // "person": the dialog opens on a person who signs (2026-11-20).
-  const [finding, setFinding] = useState<boolean | "person">(false);
+  const [finding, setFinding] = useState<boolean | "person" | "abroad">(false);
   // Finding a guarantor at Companies House, or adding a person who guarantees (23 November 2026).
   const [guarantorFinding, setGuarantorFinding] = useState<false | "company" | "person">(false);
   const guarantor = useGuarantorActions(dealId);
@@ -972,7 +972,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                           <li key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs" data-testid={`deal-party-company-option-${c.id}`}>
                             <span className="min-w-0 flex-1">
                               <span className="font-medium">{c.name}</span>
-                              <span className="ml-1.5 text-muted-foreground">{c.kind === "individual" ? "a person" : c.companiesHouseNumber || "no Companies House number"}</span>
+                              <span className="ml-1.5 text-muted-foreground">{companyRegisterWords(c)}</span>
                               {c.isDefault && <Badge variant="outline" className="ml-1.5 text-[10px]">Main</Badge>}
                             </span>
                             {chosen
@@ -998,6 +998,10 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                   <div className="flex flex-wrap items-center gap-2">
                     <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding(true)} data-testid="deal-party-find-company">
                       <Plus className="w-3.5 h-3.5 mr-1" />Find it at Companies House
+                    </Button>
+                    {/* A company registered outside the UK (23 November 2026): Companies House has no record of it. */}
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding("abroad")} data-testid="deal-party-add-abroad">
+                      <Globe2 className="w-3.5 h-3.5 mr-1" />Registered abroad
                     </Button>
                     {/* A person who signs in their own name, checked as a private individual (2026-11-20). */}
                     <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setFinding("person")} data-testid="deal-party-add-person-signs">
@@ -1118,7 +1122,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
             brand={{ id: party.brand.id, name: party.brand.name }}
             initialQuery={party.brand.name}
             xero={!!party.client}
-            startAsPerson={finding === "person"}
+            startAs={finding === "person" ? "person" : finding === "abroad" ? "abroad" : "company"}
             onCreated={(contact, company) => { if (company) pickCompany(company, contact); setFinding(false); }}
             onSavedWithoutXero={company => { pickCompany(company); setFinding(false); }}
             testIdPrefix={`deal-party-${role}-find`}

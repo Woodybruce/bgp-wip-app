@@ -11,6 +11,7 @@
 // Pure rules.
 import { personDisplayName } from "./kyc-prechecks";
 import { ADDRESS_PROOF_KINDS, addressNameMatches, addressProofDateWords, checkAddressProof, type AddressProofReading } from "./kyc-address-proof";
+import { checkRegisterExtract, type ExtractSubject } from "./foreign-company";
 
 export const IDENTITY_DOC_KINDS = ["passport", "driving_licence", "national_id", "firearms_certificate", "residence_permit"] as const;
 export const COMPANY_DOC_KINDS = ["certificate_of_incorporation", "register_extract", "structure_chart", "accounts", "authority_letter", "source_of_funds"] as const;
@@ -80,7 +81,33 @@ export interface KycDocumentReading {
     phone?: string | null;
     signed?: boolean | null;
   } | null;
+  // Since 23 November 2026 (Woody: everything in the app, translation
+  // included). Absent on a reading made before then: read it again.
+  // The language it is written in, in English ("German"), and whether that is English.
+  language?: string | null;
+  english?: boolean | null;
+  // A company document (a register extract above all): the company as it shows
+  // it. Names and numbers as printed; the status and legal form in English.
+  company?: KycDocumentCompany | null;
+  // The board or management (directors, managers, members of the board) and
+  // the shareholders or owners it lists.
+  directors?: KycDocumentDirector[];
+  owners?: KycDocumentOwner[];
 }
+
+export interface KycDocumentCompany {
+  name: string | null;
+  registrationNumber: string | null;
+  legalForm: string | null;
+  country: string | null;
+  register: string | null;            // the register's own name: "Handelsregister, Amtsgericht München"
+  address: string | null;             // its registered address
+  status: string | null;              // in English: "active", "in liquidation", "dissolved"
+  incorporated: string | null;        // yyyy-mm-dd
+  extractDate: string | null;         // the date the extract or certificate was issued (yyyy-mm-dd)
+}
+export interface KycDocumentDirector { name: string; role: string | null; born: string | null }   // born: yyyy-mm or yyyy-mm-dd
+export interface KycDocumentOwner { name: string; person: boolean; share: string | null; country: string | null }
 
 export const KYC_DOCUMENT_ACCEPT_NOTE_MIN = 10;
 
@@ -101,6 +128,14 @@ export function cleanKycDocumentReading(raw: unknown, readAt: string): KycDocume
   const names = Array.isArray(r.names) ? r.names.map(n => str(n, 120)).filter((n): n is string => !!n).slice(0, 4) : [];
   const c = (r.certification && typeof r.certification === "object" ? r.certification : null) as Record<string, unknown> | null;
   const certified = r.certified === true;
+  const co = (r.company && typeof r.company === "object" && !Array.isArray(r.company) ? r.company : null) as Record<string, unknown> | null;
+  const born = (v: unknown): string | null => typeof v === "string" && /^\d{4}-\d{2}(-\d{2})?$/.test(v.trim()) && Number(v.trim().slice(5, 7)) >= 1 && Number(v.trim().slice(5, 7)) <= 12 ? v.trim() : null;
+  const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.filter(x => x && typeof x === "object" && !Array.isArray(x)) as Record<string, unknown>[] : [];
+  const language = str(r.language, 40);
+  const company: KycDocumentCompany | null = co ? {
+    name: str(co.name, 160), registrationNumber: str(co.registrationNumber, 60), legalForm: str(co.legalForm, 80), country: str(co.country, 60),
+    register: str(co.register, 160), address: str(co.address, 300), status: str(co.status, 80), incorporated: day(co.incorporated), extractDate: day(co.extractDate),
+  } : null;
   return {
     readAt, read: true, unreadable: null,
     kind, kindWords: str(r.kindWords, 120), issuer: str(r.issuer, 120), names,
@@ -111,6 +146,11 @@ export function cleanKycDocumentReading(raw: unknown, readAt: string): KycDocume
       words: str(c.words, 400), name: str(c.name, 120), profession: str(c.profession, 120), firm: str(c.firm, 160), date: day(c.date),
       address: str(c.address, 300), phone: str(c.phone, 40), signed: typeof c.signed === "boolean" ? c.signed : null,
     } : null,
+    language,
+    english: typeof r.english === "boolean" ? r.english : language ? /^english\b/i.test(language) : null,
+    company: company && (company.name || company.registrationNumber) ? company : null,
+    directors: list(r.directors).map(d => ({ name: str(d.name, 120) || "", role: str(d.role, 80), born: born(d.born) })).filter(d => d.name).slice(0, 20),
+    owners: list(r.owners).map(o => ({ name: str(o.name, 160) || "", person: o.person === true, share: str(o.share, 60), country: str(o.country, 60) })).filter(o => o.name).slice(0, 20),
   };
 }
 
@@ -207,7 +247,9 @@ export function certifierRefusal(c: KycDocumentReading["certification"]): string
  */
 export function checkKycDocument(
   reading: KycDocumentReading | null, people: KycDocumentPerson[],
-  opts: { uploadedAt: string; seenOriginal: boolean; today: Date },
+  // company: the company a register extract should be about (the company that
+  // signs, or the company abroad it was uploaded for).
+  opts: { uploadedAt: string; seenOriginal: boolean; today: Date; company?: ExtractSubject | null },
 ): KycDocumentCheck {
   if (!reading) return { use: "other", person: null, ok: false, reasons: ["Not read yet"], summary: "Not read yet" };
   if (!reading.read) {
@@ -258,8 +300,12 @@ export function checkKycDocument(
     return { use: "identity", person: person ? person.name : null, ok: !reasons.length && !!person, reasons, summary };
   }
 
+  if (kind === "register_extract" && opts.company) {
+    const check = checkRegisterExtract(reading, opts.company, { uploadedAt: opts.uploadedAt });
+    return { use: "company", person: null, ok: check.ok, reasons: check.reasons, summary: check.summary };
+  }
   if ((COMPANY_DOC_KINDS as readonly string[]).includes(kind)) {
-    const summary = [what, names[0] || null, dayWords(reading.date)].filter(Boolean).join(", ");
+    const summary = [what, reading.company?.name || names[0] || null, dayWords(reading.company?.extractDate || reading.date)].filter(Boolean).join(", ");
     return { use: "company", person: null, ok: true, reasons: [], summary };
   }
   return { use: "other", person: null, ok: false, reasons: [], summary: [what, names[0] || null].filter(Boolean).join(", ") };
@@ -274,6 +320,8 @@ export interface KycUploadEvidence {
   reading: KycDocumentReading | null;
   // The Nominated Officer or a Deputy accepted it although the reading did not pass.
   accepted: { by: string; at: string; note: string } | null;
+  // A register extract uploaded for a company abroad in the ownership, not the party itself.
+  about?: ExtractSubject | null;
 }
 
 /** What an upload counts for, for one person: their identity, their address, or nothing. */

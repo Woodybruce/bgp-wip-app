@@ -147,6 +147,8 @@ export interface StillNeededInput {
   trustGaps: string[];
   // A tenant's or buyer's guarantors and where BGP's checks on each stand (23 November 2026).
   guarantors?: Array<{ name: string; state: GuarantorChecksState }>;
+  // A company registered abroad: its own register's extract (23 November 2026).
+  registerExtract?: { needed: boolean; held: boolean; company: string; reasons: string[] } | null;
 }
 
 /**
@@ -169,6 +171,11 @@ export function amlStillNeeded(f: StillNeededInput): string[] {
     else if (g.state === "running") out.push(`Wait for BGP's checks on the guarantor, ${g.name}, to finish.`);
   }
   for (const g of f.trustGaps) out.push(`Trust: ${g.replace(/\.$/, "")}.`);
+  if (f.registerExtract?.needed && !f.registerExtract.held && !f.sanctionsOnly) {
+    out.push(f.registerExtract.reasons.length
+      ? `The register extract for ${f.registerExtract.company} did not pass its check: ${f.registerExtract.reasons.map(r => r.replace(/\.$/, "")).join("; ")}.`
+      : `An extract from ${f.registerExtract.company}'s own register (it is registered outside the UK), dated in the last three months.`);
+  }
   const flags = f.flags.filter(x => !x.factor);
   const factors = f.flags.filter(x => x.factor);
   if (flags.length) out.push(`Look into ${flags.length === 1 ? "the red flag" : `${flags.length} red flags`}: ${flags.map(x => x.label).join("; ")}. Set aside with a comment only where it does not apply.`);

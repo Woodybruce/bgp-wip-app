@@ -188,7 +188,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     db.query(`SELECT id, name, companies_house_number, aml_subject_type, company_type, head_office_address->>'country' AS ho_country,
                      COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
                 FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds]),
-    db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default, xero_contact_id, xero_contact_name, entity_kind, contact_id FROM crm_trading_entities
+    db.query(`SELECT id, parent_company_id, name, companies_house_number, is_default, xero_contact_id, xero_contact_name, entity_kind, contact_id, country, registration_number, register_url FROM crm_trading_entities
                WHERE parent_company_id = ANY($1::varchar[]) ORDER BY is_default DESC, lower(name)`, [brandIds]),
     db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM (
                 SELECT c.*, row_number() OVER (PARTITION BY c.company_id ORDER BY (COALESCE(c.email, '') = ''), lower(c.name)) AS n
@@ -223,6 +223,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       id: String(c.id), name: text(c.name), companiesHouseNumber: text(c.companies_house_number) || null, isDefault: !!c.is_default,
       xeroContactId: text(c.xero_contact_id) || null, xeroContactName: text(c.xero_contact_name) || null,
       kind: signerKindOf(c.entity_kind), contactId: text(c.contact_id) || null,
+      ...(text(c.country) ? { abroad: { country: text(c.country), registrationNumber: text(c.registration_number) || null, registerUrl: text(c.register_url) || null } } : {}),
     }));
     const company = filed.find(c => c.id === deal[col.company]) || null;
     const setPerson = named.find((p: any) => p.id === deal[col.person]);

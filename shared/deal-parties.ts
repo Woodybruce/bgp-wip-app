@@ -48,7 +48,16 @@ export const DEAL_PARTY_COMPANY_FIELDS = DEAL_PARTY_ROLES.map(r => DEAL_PARTY_FI
 // in their own name (Woody, 20 November 2026: "need ability to create billing
 // entity or contracting entity as a person we will then KYC them");
 // contactId: the CRM contact who is that person.
-export interface DealPartyCompany { id: string; name: string; companiesHouseNumber: string | null; isDefault: boolean; xeroContactId?: string | null; xeroContactName?: string | null; kind?: "company" | "individual"; contactId?: string | null }
+export interface DealPartyCompany { id: string; name: string; companiesHouseNumber: string | null; isDefault: boolean; xeroContactId?: string | null; xeroContactName?: string | null; kind?: "company" | "individual"; contactId?: string | null;
+  // A company registered abroad (23 November 2026): its country, its number on its own register and a link to its entry.
+  abroad?: { country: string; registrationNumber: string | null; registerUrl: string | null } }
+
+/** How a filed company reads beside its name: its Companies House number, or where it is registered abroad. */
+export function companyRegisterWords(c: Pick<DealPartyCompany, "companiesHouseNumber" | "abroad" | "kind">): string {
+  if (c.kind === "individual") return "a person";
+  if (c.abroad) return `registered in ${c.abroad.country}${c.abroad.registrationNumber ? ` · ${c.abroad.registrationNumber}` : ""}`;
+  return c.companiesHouseNumber || "no Companies House number";
+}
 
 /** crm_trading_entities.entity_kind as the screens read it: "individual" for a person, else a company. */
 export const signerKindOf = (entityKind: unknown): "company" | "individual" =>

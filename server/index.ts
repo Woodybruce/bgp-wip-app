@@ -3181,6 +3181,29 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       accepted_at timestamptz
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_document_readings_party_idx ON kyc_document_readings (company_id, trading_entity_id)`,
+    // Companies registered abroad, checked in the app (Woody, 23 November
+    // 2026: "No external ... to all happen in the app including translation").
+    // A company that signs registered abroad: its country, its number on its
+    // own register and a link to its entry (server/billing-entity.ts). about:
+    // the company abroad a register extract was uploaded for, when it is not
+    // the party itself (server/kyc-abroad.ts). Translations of KYC documents
+    // into English, made in the app (server/kyc-translation.ts). Additive.
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS country TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS registration_number TEXT`,
+    `ALTER TABLE crm_trading_entities ADD COLUMN IF NOT EXISTS register_url TEXT`,
+    `ALTER TABLE kyc_document_readings ADD COLUMN IF NOT EXISTS about JSONB`,
+    `CREATE TABLE IF NOT EXISTS kyc_document_translations (
+      document_id varchar PRIMARY KEY,
+      company_id varchar,
+      language text,
+      english boolean,
+      translation text,
+      cut boolean NOT NULL DEFAULT false,
+      error text,
+      made_by_name text,
+      made_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_document_translations_company_idx ON kyc_document_translations (company_id)`,
     // What BGP records against a company abroad that owns a party (Woody,
     // 21 November 2026: the free route to what KYC4U do): its register page
     // (copied to PDF), a register extract or structure chart (with the chart's
@@ -4552,6 +4575,7 @@ import dealPartiesRouter from "./deal-parties";
 import dealHotsRouter from "./deal-hots";
 import dealPartyAmlRouter from "./deal-party-aml";
 import { kycDocumentsRouter } from "./kyc-documents";
+import { kycTranslationRouter } from "./kyc-translation";
 import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
@@ -5939,6 +5963,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealHotsRouter);
   app.use(dealPartyAmlRouter);
   app.use(kycDocumentsRouter);
+  app.use(kycTranslationRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);
   // BGP stops acting on a deal for AML reasons, and is released (21 November 2026).

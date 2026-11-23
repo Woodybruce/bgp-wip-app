@@ -3841,7 +3841,10 @@ call for action countries only).
     keys from D&B (Railway `DNB_API_KEY` / `DNB_API_SECRET`, not set);
     BGP's D&B Finance Analytics web login has no API the app can use. Until
     then an officer downloads the D&B report and drops it on the party's
-    **Upload documents**.
+    **Upload documents**. **Superseded the same day** (Woody: Creditsafe said
+    no and BGP has no D&B either, "all happen in the app including
+    translation"): see "Companies registered abroad, all in the app" below.
+    Issue 4's D&B lines are replaced in a draft Issue 5 for Jack.
   - Also in Issue 4: the letting threshold is £10,000 a month or more;
     records kept five years from the end of the relationship; discrepancies
     reported to Companies House; when enhanced due diligence must be applied
@@ -6157,6 +6160,82 @@ plans". Rules: `shared/property-setup.ts`; folder tree route:
 - Not built: templates under the current team names (they are the old
   ones: London F&B, London Retail, National Leasing and others); a client
   login's own set-up.
+
+## Companies registered abroad, all in the app (Woody, 2026-11-23)
+
+Woody, asked how overseas companies are checked: "Credit safe said no so we are
+on our own! Need to do everything in the app?", then of Dun & Bradstreet "No
+don't have that either" and "No external [providers] to all happen in the app
+including translation". Do not re-litigate. HMRC (AMLG11400 14.6, read on
+23 November 2026): "For a non-UK based company, you must obtain an excerpt of
+the register kept under the law to which that business is subject", and "if
+you, or your relevant employees do not understand the language the document is
+in, a certified translation should be obtained. HMRC can require ...
+certified translations when inspecting your CDD records". Rules:
+`shared/foreign-company.ts`; translation: `server/kyc-translation.ts`. Tests:
+`server/foreign-company.test.ts` (in `npm test`),
+`qa/regression/foreign-company-guards.test.mjs`.
+
+- **A company registered abroad as the company that signs.** Until now the
+  party box offered only Find it at Companies House or A person signs, so BGP's
+  checks never started for a company with no UK record. **Registered abroad**
+  (the party box, and a third tab of the Who signs / billing entity dialog):
+  its name as its register shows it, the country, its registration number and
+  a link to its entry. `POST /api/billing-entities { brandId, abroad }`
+  (`abroadCompanyInput`, `saveAbroadEntity`; a UK country is refused, a name
+  already filed with a Companies House number is a UK company) files it under
+  the party in `crm_trading_entities` with `country`, `registration_number`
+  and `register_url` (boot migrations). BGP's checks then look it up in GLEIF
+  by its number and country and follow it as a company abroad. The party box
+  shows "registered in <country> · <number>" (`companyRegisterWords`).
+- **Its register extract is read in the app, in any language.** The Upload
+  documents reader (`read_kyc_document`) now records the language, and for a
+  company document the company (name, number, legal form, country, register,
+  address, status in English, incorporated, the date issued), its board and its
+  owners. Extracts reach it from Upload documents, from the client checks
+  (`company_documents`, now worded "an extract from its official company
+  register, issued in the last three months, showing its registration number,
+  its directors and its shareholders. It can be in any language: we translate
+  it"), and from Owners abroad's Add a register extract (`about` on
+  `kyc_document_readings`: the company abroad it was uploaded for).
+  `checkRegisterExtract`: the same company by its name with the legal form
+  aside (`overseasNameKey`) or its number (`registrationNumberKey`; a
+  different number is never the same company), issued within 92 days of being
+  uploaded, and not shown as dissolved, in liquidation or the like. The board
+  is screened against the sanctions lists and person owners in full
+  (`partyExtractPeople` in BGP's checks); each owner who is a person has **Add
+  as owner** (Owners abroad's own person route), and then does their own check.
+- **No sign-off without it** (`registerExtractFact`, `registerExtractDenial`
+  in `shared/party-kyc.ts`): a company registered abroad (typed with a country
+  abroad, an overseas entity number, or read by BGP's checks as a company
+  abroad with no UK record) is not signed off on the full checks until an
+  extract about it passes, or the Nominated Officer or a Deputy accepts one on
+  Documents. Not for a sanctions-only letting, a person, a trust or a public
+  body. The Next line reads "Not ready to sign off" with the reason, and the
+  AML file lists it under Still needed.
+- **Translation in the app** (`translateKycDocument`, table
+  `kyc_document_translations`, boot migration): a document read as not in
+  English is translated once in the background; any document on a party can be
+  translated on a press (the English button in the file pop-out, on Files on
+  record and on each upload). Anthropic, called directly, one forced-tool call
+  a document, capped a day (`KYC_TRANSLATION_DAILY_CAP`, default 60, 0 = off).
+  Every translation shows `TRANSLATION_NOTE`: translated in ChatBGP, not a
+  certified translation, HMRC can ask for one (MLR 2017 reg 66). The AML file
+  puts it beside the original ("(English translation).txt"). Five-year
+  deletion and company merges cover the table.
+- **The policy**: Issue 4 says a Dun & Bradstreet report is required for a
+  company owned from overseas (section D, and the limited company evidence).
+  `docs/aml-drafts/bgp-aml-policy-issue-5-draft.docx` and
+  `docs/aml-drafts/bgp-firm-wide-aml-risk-assessment-issue-4-draft.docx`
+  replace it with the register extracts read and translated in the app, and
+  say a translation made in the app is not certified. They are drafts for Jack:
+  not in the app until he approves (then move them to
+  `server/assets/aml-policy/`, add them to `AML_POLICY_DOCUMENTS`, and take
+  "(draft)" and "(to approve)" off their footers).
+- Not built: country registers read by API; OpenCorporates (paid);
+  ordering a certified translation. Not run against Anthropic from a build
+  machine: checked in a browser on a local copy with readings written in the
+  reader's shape.
 
 ## AML emails: the AML Officer is the contact, the note is the sender's (Jack, 2026-11-23)
 

@@ -435,6 +435,16 @@ router.post("/api/deals/:id/parties/:role/abroad/document", staffFirst, takeFile
     const id = await insertRecord(ctx, me, owner, { kind, document_id: String(doc.id) });
     await audit(ctx, me, kind === "chart" ? "abroad_chart" : "abroad_document", `${owner.name}: ${kind === "chart" ? "structure chart" : "register extract"} ${name} filed`);
     if (kind === "chart") void import("./kyc-structure-chart").then(m => m.readRecordChart(id)).catch((e: any) => console.warn(`[kyc-abroad] chart not read: ${e?.message}`));
+    else {
+      // A register extract for the company abroad is read and checked against
+      // that company, in any language, and translated (23 November 2026).
+      await pool.query(
+        `INSERT INTO kyc_document_readings (document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by, uploaded_by_name, about)
+         VALUES ($1, $2, $3, $4, false, $5, $6, $7::jsonb) ON CONFLICT (document_id) DO NOTHING`,
+        [String(doc.id), ctx.party.dealId, ctx.party.brandId, ctx.party.entityId, me.id, me.name, JSON.stringify({ name: owner.name, country: owner.country || null })])
+        .catch((e: any) => console.warn(`[kyc-abroad] extract not queued for reading: ${e?.message}`));
+      void import("./kyc-documents").then(m => m.readUpload(pool, String(doc.id))).catch((e: any) => console.warn(`[kyc-abroad] extract not read: ${e?.message}`));
+    }
     res.json({ ok: true, id, documentId: String(doc.id) });
   } catch (err: any) {
     console.error("[kyc-abroad] document failed:", err?.message);

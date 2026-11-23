@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Loader2, Maximize2, RotateCw, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Languages, Loader2, Maximize2, RotateCw, ZoomIn, ZoomOut } from "lucide-react";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { fileBadge, filePreviewKind, inAppFileUrl, type FilePreviewKind } from "@shared/file-preview";
 
@@ -25,6 +25,9 @@ export interface PreviewFile {
   caption?: string | null;
   // A longer line for the viewer only.
   note?: string | null;
+  // A KYC document on a transaction's party: it can be translated into English
+  // in the app (23 November 2026; server/kyc-translation.ts).
+  translate?: { dealId: string; role: string; documentId: string } | null;
 }
 
 // ── Fetching, with the person's own sign-in ─────────────────────────────────
@@ -217,6 +220,7 @@ function FileView({ file, position, count, onPrev, onNext }: { file: PreviewFile
   const [loading, setLoading] = useState(false);
   const [zoom, setZoom] = useState(0);
   const [turn, setTurn] = useState(0);
+  const [english, setEnglish] = useState(false);
 
   useEffect(() => {
     if (!inApp) return;
@@ -264,6 +268,11 @@ function FileView({ file, position, count, onPrev, onNext }: { file: PreviewFile
               <Button type="button" size="icon" variant="outline" className="h-8 w-8" onClick={() => setTurn(t => (t + 90) % 360)} aria-label="Turn a quarter" data-testid="file-popout-rotate"><RotateCw className="h-4 w-4" /></Button>
             </>
           )}
+          {file.translate && (
+            <Button type="button" size="sm" variant={english ? "default" : "outline"} className="h-8" onClick={() => setEnglish(v => !v)} data-testid="file-popout-english">
+              <Languages className="mr-1 h-3.5 w-3.5" />English
+            </Button>
+          )}
           {inApp && blobUrl && (
             <Button asChild size="icon" variant="outline" className="h-8 w-8">
               <a href={blobUrl} download={file.name} aria-label="Download" data-testid="file-popout-download"><Download className="h-4 w-4" /></a>
@@ -277,6 +286,7 @@ function FileView({ file, position, count, onPrev, onNext }: { file: PreviewFile
         </div>
       </div>
       {file.note && <p className="border-b bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">{file.note}</p>}
+      {english && file.translate && <TranslationPanel t={file.translate} />}
       <div className="relative min-h-0 flex-1 bg-muted/30" data-testid="file-popout-body">
         {!file.url ? (
           <Plain>This file is listed without a stored copy.</Plain>
@@ -453,6 +463,60 @@ function TextView({ blob }: { blob: Blob }) {
   return (
     <div className="absolute inset-0 overflow-auto p-3">
       <pre className="whitespace-pre-wrap break-words rounded bg-background p-3 text-xs">{text}{blob.size > TEXT_LIMIT ? "\n\n(The rest of the file is not shown. Download it to read it all.)" : ""}</pre>
+    </div>
+  );
+}
+
+// The document in English, made in the app on a press (23 November 2026). Not a
+// certified translation; HMRC can ask for one (MLR 2017 reg 66).
+function TranslationPanel({ t }: { t: { dealId: string; role: string; documentId: string } }) {
+  const base = `/api/deals/${t.dealId}/parties/${t.role}/documents/${t.documentId}`;
+  const [state, setState] = useState<{ loading: boolean; text: string | null; language: string | null; english: boolean | null; error: string | null; note: string | null; cut: boolean }>(
+    { loading: true, text: null, language: null, english: null, error: null, note: null, cut: false });
+  const [working, setWorking] = useState(false);
+  const show = (body: any) => {
+    const tr = body?.translation || null;
+    setState({ loading: false, text: tr?.translation || null, language: tr?.language || null, english: tr?.english ?? null, error: tr?.error || null, note: body?.note || null, cut: !!tr?.cut });
+  };
+  useEffect(() => {
+    let live = true;
+    fetch(`${base}/translation`, { credentials: "include", headers: getAuthHeaders() })
+      .then(r => r.json().then(b => (r.ok ? b : Promise.reject(new Error(b?.message || "The translation could not be read.")))))
+      .then(b => { if (live) show(b); })
+      .catch(e => { if (live) setState(s => ({ ...s, loading: false, error: e?.message || "The translation could not be read." })); });
+    return () => { live = false; };
+  }, [base]);
+  const translate = async () => {
+    setWorking(true);
+    try {
+      const r = await fetch(`${base}/translate`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders(), "Content-Type": "application/json" }, body: "{}" });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b?.message || "It could not be translated.");
+      show(b);
+    } catch (e: any) {
+      setState(s => ({ ...s, error: e?.message || "It could not be translated." }));
+    } finally {
+      setWorking(false);
+    }
+  };
+  return (
+    <div className="max-h-[40vh] overflow-y-auto border-b bg-background px-3 py-2 text-xs" data-testid="file-popout-translation">
+      {state.loading ? <p className="text-muted-foreground">Reading…</p>
+        : state.english ? <p className="text-muted-foreground">It is already in English.</p>
+        : state.text ? (
+          <>
+            <p className="mb-1.5 text-muted-foreground">{state.language ? `From ${state.language}. ` : ""}{state.note}</p>
+            {state.cut && <p className="mb-1.5 text-amber-700 dark:text-amber-300">Cut short: the document is long. Read the original for the rest.</p>}
+            <pre className="whitespace-pre-wrap break-words font-sans leading-relaxed">{state.text}</pre>
+          </>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {state.error && <span className="text-amber-700 dark:text-amber-300">Not translated: {state.error}</span>}
+            <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={working} onClick={() => void translate()} data-testid="file-popout-translate">
+              {working ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}{working ? "Translating…" : "Translate into English"}
+            </Button>
+          </div>
+        )}
     </div>
   );
 }

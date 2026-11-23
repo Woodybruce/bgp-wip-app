@@ -31,7 +31,7 @@ const shortDay = (iso: string | null) => {
 };
 
 /** A party's files in the viewer's shape: the type and date under each, the note in the viewer. */
-export function partyFilesForPreview(documents: PartyTrailDocument[]): PreviewFile[] {
+export function partyFilesForPreview(documents: PartyTrailDocument[], translateFor?: { dealId: string; role: string }): PreviewFile[] {
   return documents.map(d => ({
     key: d.id,
     name: d.name || amlFileDocWords(d.type),
@@ -39,6 +39,8 @@ export function partyFilesForPreview(documents: PartyTrailDocument[]): PreviewFi
     mime: d.mime || null,
     caption: [amlFileDocWords(d.type), shortDay(d.at)].filter(Boolean).join(" · "),
     note: [d.onCompany ? "On the company that signs" : null, d.note].filter(Boolean).join(" · ") || null,
+    // Each file on a party can be read in English (23 November 2026).
+    translate: translateFor ? { ...translateFor, documentId: d.id } : null,
   }));
 }
 
@@ -48,7 +50,7 @@ export function PartyFiles({ dealId, role }: { dealId: string; role: string }) {
     queryKey: partyTrailKey(dealId, role),
     queryFn: () => fetchPartyTrail(dealId, role),
   });
-  const files = data?.documents?.length ? partyFilesForPreview(data.documents) : [];
+  const files = data?.documents?.length ? partyFilesForPreview(data.documents, { dealId, role }) : [];
   if (!files.length) return null;
   return (
     <div className="space-y-1.5" data-testid={`aml-files-${role}`}>

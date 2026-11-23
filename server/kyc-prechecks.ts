@@ -693,7 +693,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // The company that signs for the party, when the deal names one: always
   // one filed under the brand.
   const entity = opts.entityId ? (await pool.query(
-    `SELECT id, name, companies_house_number, entity_kind FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [opts.entityId, companyId])).rows[0] || null : null;
+    `SELECT id, name, companies_house_number, entity_kind, country, registration_number FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [opts.entityId, companyId])).rows[0] || null : null;
   if (opts.entityId && !entity) return null;
   const entityId: string | null = entity ? String(entity.id) : null;
   const errors: string[] = [];
@@ -711,7 +711,10 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // Estate): it has no company record, so nothing is looked up by its name
   // (a look-up could read a stranger's company). It is screened by name.
   const isPublicBody = !entity && String(company.aml_subject_type || "").trim().toLowerCase() === "public_body";
-  const crmCountry = entity ? null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
+  // A company that signs registered abroad carries its own country and its
+  // number on its own register (23 November 2026, Registered abroad).
+  const crmCountry = entity ? clean(entity.country, 60) || null : clean((await pool.query(`SELECT head_office_address->>'country' AS country FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.country, 60) || null;
+  const abroadNumber = entity ? clean(entity.registration_number, 60) || null : null;
   const partyNames = [...new Set((entity ? [clean(entity.name, 160)] : [clean(company.uk_entity_name, 160), clean(company.name, 160)]).filter(Boolean))];
   let notAtCompaniesHouse: string | null = subjectKind === "individual" ? "A private individual: there is no company record to read." : null;
 
@@ -737,7 +740,9 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       ? "Recorded as a UK public body: it has no Companies House record and no beneficial owners to verify. Its identity rests on its statutory basis, and it is screened against the sanctions lists by name."
       : isTrust
       ? "Recorded as a trust or foundation, with no Companies House record. A registered charity's entry on the Charity Commission's register is read instead; for any other trust BGP records its structure (the settlor, the trustees, any protector and the beneficiaries) from the trust deed the client sends, and screens each person on it."
-      : notAtCompaniesHouse || (entity
+      : notAtCompaniesHouse || (entity && crmCountry && ownerRegister(crmCountry) === "abroad"
+        ? `Registered in ${crmCountry}${abroadNumber ? ` (number ${abroadNumber})` : ""}, so Companies House has no record of it. Its own register's extract is read in the app when the client sends it.`
+        : entity
         ? `No Companies House number on ${clean(entity.name, 160)}. If it is registered outside the UK, the client is asked for an extract from its own register.`
         : "No Companies House number on the record and none found for the name. If it is registered outside the UK, the client is asked for an extract from its own register.");
   }
@@ -778,7 +783,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     try {
       const { traceGleif } = await import("./gleif");
       for (const name of partyNames) {
-        const trace = await withTimeout(traceGleif({ name, country: crmCountry, registrationNumber: null }), 60_000, "Looking the party up in GLEIF");
+        const trace = await withTimeout(traceGleif({ name, country: crmCountry, registrationNumber: abroadNumber }), 60_000, "Looking the party up in GLEIF");
         partyGleif = { by: "name", name, trace, checkedAt: new Date().toISOString() };
         if (trace.status !== "not_found") break;
       }
@@ -846,7 +851,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (name && (looksOverseasName(name) || ownerRegister(crmCountry) === "abroad")) {
       const trace = partyGleif?.trace || { status: "skipped" as const, entity: null, parents: [], top: null, candidates: 0, error: "GLEIF was not read" };
       const country = crmCountry || trace.entity?.jurisdiction || trace.entity?.country || "country not known";
-      abroad = { accounts: null, traced: [{ name: partyGleif?.name || name, country, registrationNumber: null, via: "party", foundAt: null, gleif: trace }], checkedAt: new Date().toISOString(), party: true };
+      abroad = { accounts: null, traced: [{ name: partyGleif?.name || name, country, registrationNumber: abroadNumber, via: "party", foundAt: null, gleif: trace }], checkedAt: new Date().toISOString(), party: true };
     }
   }
 
@@ -1001,6 +1006,23 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     for (const p of await abroadPeopleFor(companyId, entityId).catch(() => [])) {
       add({ name: p.name, role: `owner behind ${p.ownerName}`, person: true, owner: true, dobYear: p.dob?.year || null, dobMonth: p.dob?.month || null, nationality: p.nationality || null,
         context: `beneficial owner behind ${p.ownerName}${p.ownerCountry ? ` (${p.ownerCountry})` : ""}, which owns ${where}${p.dob?.year ? `, born ${p.dob.month ? `${p.dob.month}/` : ""}${p.dob.year}` : ""}${p.nationality ? `, ${p.nationality}` : ""}` });
+    }
+  }
+
+  // The board and the owners its own register's extract lists, read in the
+  // app (23 November 2026): the directors against the sanctions lists, the
+  // owners in full as beneficial owners.
+  if (subjectKind === "company" && !companiesHouse) {
+    const { partyExtractPeople } = await import("./kyc-documents");
+    const fromExtract = await partyExtractPeople(companyId, entityId).catch(() => null);
+    for (const d of fromExtract?.directors || []) {
+      const born = d.born ? d.born.split("-").map(Number) : [];
+      add({ name: d.name, role: `${d.role || "director"} (register extract)`, person: true, dobYear: born[0] || null, dobMonth: born[1] || null,
+        context: `${d.role || "director"} of ${where}, on its register extract${d.born ? `, born ${born[1] ? `${born[1]}/` : ""}${born[0]}` : ""}` });
+    }
+    for (const o of fromExtract?.owners || []) {
+      add({ name: o.name, role: o.person ? "owner (register extract)" : "owning company (register extract)", person: o.person, owner: o.person, abroad: !o.person, dobYear: null,
+        context: `${o.person ? "person" : "company"} owning ${o.share ? `${o.share} of ` : ""}${where}, on its register extract${o.country ? `, ${o.country}` : ""}` });
     }
   }
 

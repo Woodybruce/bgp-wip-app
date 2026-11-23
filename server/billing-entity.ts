@@ -7,6 +7,7 @@
 //
 //   POST /api/billing-entities   { brandId, companyNumber }
 //   POST /api/billing-entities   { brandId, person: { name, email?, mobile? } }
+//   POST /api/billing-entities   { brandId, abroad: { name, country, registrationNumber?, registerUrl? } }
 //
 // A person (Woody, 20 November 2026: "need ability to create billing entity
 // or contracting entity as a person we will then KYC them"): filed under the
@@ -37,6 +38,7 @@
 // so the pure parts can be tested without them
 // (qa/regression/promote-to-solicitors.test.mjs).
 import type { Express, NextFunction, Request, Response } from "express";
+import { abroadCompanyInput, type AbroadCompany } from "@shared/foreign-company";
 
 export const BILLING_ENTITY_STAFF_ONLY = "Only BGP staff, signed in as themselves, create a billing entity.";
 // A company Companies House lists as closed cannot be billed.
@@ -127,7 +129,7 @@ type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>
 type Pool = Db & { connect: () => Promise<Db & { release: () => void }> };
 
 export type SavedEntity =
-  | { id: string; name: string; companiesHouseNumber: string | null; created: boolean; kind?: "company" | "individual"; contactId?: string | null }
+  | { id: string; name: string; companiesHouseNumber: string | null; created: boolean; kind?: "company" | "individual"; contactId?: string | null; country?: string | null; registrationNumber?: string | null }
   | { conflict: string };
 
 /**
@@ -210,6 +212,40 @@ export async function saveBillingEntity(pool: Pool, brandId: string, name: strin
   }
 }
 
+/**
+ * A company registered abroad under the brand (23 November 2026, Woody: no
+ * outside providers, "all happen in the app"): its name, country, number on
+ * its own register and a link to its entry. A company of that name already
+ * filed with a Companies House number is a UK company, not this one.
+ */
+export async function saveAbroadEntity(pool: Pool, brandId: string, abroad: AbroadCompany, actorName: string,
+  insertTradingEntity: (db: Db, entity: { parentCompanyId: string; name: string; companiesHouseNumber?: string | null }) => Promise<{ id: string; created: boolean }>): Promise<SavedEntity> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const made = await insertTradingEntity(client, { parentCompanyId: brandId, name: abroad.name, companiesHouseNumber: null });
+    const row = (await client.query(`SELECT id, name, companies_house_number, entity_kind FROM crm_trading_entities WHERE id = $1`, [made.id])).rows[0];
+    const held = String(row?.companies_house_number || "").replace(/\s+/g, "").toUpperCase();
+    if (!made.created && (held || row?.entity_kind === "individual")) {
+      await client.query("ROLLBACK");
+      return { conflict: held || "a person" };
+    }
+    await client.query(`UPDATE crm_trading_entities SET country = $2, registration_number = $3, register_url = $4, updated_at = now() WHERE id = $1`,
+      [made.id, abroad.country, abroad.registrationNumber, abroad.registerUrl]);
+    await client.query(
+      `INSERT INTO investment_comp_migration_log (batch, table_name, record_id, action, prior, note) VALUES ($1, $2, $3, $4, $5, $6)`,
+      ["billing-entity", "crm_trading_entities", made.id, made.created ? "entity_created" : "entity_updated", null,
+        `${actorName}: ${made.created ? "entity_created" : "recorded as registered abroad"} under ${brandId}: registered in ${abroad.country}${abroad.registrationNumber ? `, number ${abroad.registrationNumber}` : ""}, from a transaction`]);
+    await client.query("COMMIT");
+    return { id: made.id, name: String(row?.name || abroad.name), companiesHouseNumber: null, created: made.created, kind: "company", country: abroad.country, registrationNumber: abroad.registrationNumber };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** The firm's Xero contact by this exact name, or a new one from `body`. Never throws: a refusal is said in words. */
 async function xeroContactByName(name: string, body: Record<string, unknown>): Promise<{ contact: Record<string, unknown> | null; created: boolean; error: string | null }> {
   try {
@@ -248,6 +284,32 @@ export function setupBillingEntityRoutes(app: Express) {
       // viewing as a client, is refused before anything is read.
       const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
       if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) return res.status(403).json({ message: BILLING_ENTITY_STAFF_ONLY });
+      // A company registered abroad (23 November 2026): no Companies House record.
+      if (req.body && typeof req.body === "object" && req.body.abroad != null) {
+        const abroadIn = abroadCompanyInput(req.body);
+        if ("problem" in abroadIn) return res.status(400).json({ message: abroadIn.problem });
+        const { pool } = await import("./db");
+        const brand = (await pool.query(`SELECT id, name, merged_into_id FROM crm_companies WHERE id = $1`, [abroadIn.brandId])).rows[0];
+        if (!brand) return res.status(404).json({ message: "That landlord or brand was not found." });
+        if (brand.merged_into_id) return res.status(409).json({ message: "That landlord or brand was merged into another record. Pick it again." });
+        const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const me = userId ? (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0] : null;
+        const actorName = String(me?.name || me?.email || userId || "BGP staff");
+        const { insertTradingEntity } = await import("./tenancy-tenant");
+        const entity = await saveAbroadEntity(pool as unknown as Pool, brand.id, abroadIn.abroad, actorName, insertTradingEntity);
+        if ("conflict" in entity) {
+          return res.status(409).json({ message: entity.conflict === "a person"
+            ? `${brand.name} already has a person called ${abroadIn.abroad.name}. Pick them instead.`
+            : `${brand.name} already has a company called ${abroadIn.abroad.name}, with Companies House number ${entity.conflict}: a UK company. Pick that one instead.` });
+        }
+        if (req.body?.xero === false) return res.status(entity.created ? 201 : 200).json({ entity, contact: null, xeroCreated: false, xeroError: null });
+        const got = await xeroContactByName(abroadIn.abroad.name, { Name: abroadIn.abroad.name.slice(0, 255) });
+        if (got.contact) {
+          await pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`,
+            [entity.id, String(got.contact.ContactID), String(got.contact.Name || abroadIn.abroad.name)]).catch((e: any) => console.warn("[billing-entity] Xero contact not kept on the company abroad:", e?.message));
+        }
+        return res.status(entity.created || got.created ? 201 : 200).json({ entity, contact: got.contact, xeroCreated: got.created, xeroError: got.error });
+      }
       // A person (20 November 2026), or a company from Companies House.
       const personIn = req.body && typeof req.body === "object" && req.body.person != null ? billingPersonInput(req.body) : null;
       if (personIn && "problem" in personIn) return res.status(400).json({ message: personIn.problem });

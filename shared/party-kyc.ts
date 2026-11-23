@@ -170,8 +170,29 @@ export interface SignOffFacts {
   // guarantor is a party to the tenancy): the party is not signed off until
   // BGP's checks on each have run (shared/deal-guarantor.ts).
   guarantorChecks?: Array<{ name: string; state: GuarantorChecksState }>;
+  // A company registered outside the UK (Woody, 23 November 2026: everything in
+  // the app): its own register's extract must be on file and pass its check
+  // (HMRC AMLG11400 14.6: "For a non-UK based company, you must obtain an
+  // excerpt of the register kept under the law to which that business is
+  // subject"), or an officer accepted one that did not.
+  registerExtract?: RegisterExtractFact | null;
   note: string;
   now?: Date;
+}
+
+export interface RegisterExtractFact {
+  needed: boolean;
+  held: boolean;
+  company: string;
+  // Why the latest extract on file did not pass, when there is one.
+  reasons: string[];
+}
+
+/** Why a company registered abroad cannot be signed off yet for want of its register extract, or null. */
+export function registerExtractDenial(f: RegisterExtractFact | null | undefined): string | null {
+  if (!f?.needed || f.held) return null;
+  if (f.reasons.length) return `The register extract for ${f.company} did not pass its check (${f.reasons.map(r => r.replace(/\.$/, "")).join("; ")}): ask the client for a new one, or the Nominated Officer or a Deputy accepts it on Documents.`;
+  return `${f.company} is registered outside the UK, so its own register's extract is needed first. Ask the client for it, or upload it on Documents: the app reads it in any language.`;
 }
 
 /** Enhanced due diligence applies: a red flag or factor (the party's or the deal's), a higher-risk file, or owners abroad. */
@@ -207,6 +228,10 @@ export function signOffDenial(input: SignOffFacts): string | null {
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `The sanctions checks are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again first.`;
     return guarantorChecksDenial(f.guarantorChecks);
   }
+  // A company registered abroad: its own register's extract first, for any
+  // sign-off on the full checks (23 November 2026).
+  const extract = registerExtractDenial(f.registerExtract);
+  if (extract) return extract;
   // With the officers doing enhanced checks in-house, an open KYC4U request
   // no longer holds the party (Woody, 22 November 2026: "I dont actually think
   // KYC4U is doing anything we cant").

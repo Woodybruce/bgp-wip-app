@@ -106,8 +106,8 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     docType: "authority_to_act",
   },
   company_documents: {
-    title: "Company documents",
-    detail: "Only if the company is registered outside the UK: an extract from its official company register showing it is registered, a list of its directors, and its UK registration number if it is registered at Companies House as an overseas company or an overseas entity.",
+    title: "Company register extract",
+    detail: "Only if the company is registered outside the UK: an extract from its official company register, issued in the last three months, showing its registration number, its directors and its shareholders. It can be in any language: we translate it. If it is registered at Companies House as an overseas entity, give that number too.",
     docType: "company_cert",
   },
   // A trust (BGP's trust checklist, items 1, 2, 4 and 8; MLR 2017 reg 6).

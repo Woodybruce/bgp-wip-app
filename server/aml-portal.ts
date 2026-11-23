@@ -1123,6 +1123,20 @@ export async function fileClientDocument(row: TokenRow, file: { name: string; mi
     return documentId;
   }
 
+  if (docKey === "company_documents" && row.company_id) {
+    // A company registered abroad sends its own register's extract (HMRC
+    // AMLG11400 14.6). It is read in the app, in any language, translated into
+    // English, and checked against the company (23 November 2026, Woody: no
+    // outside providers, "all happen in the app including translation").
+    const documentId = String(doc.rows[0].id);
+    await pool.query(
+      `INSERT INTO kyc_document_readings (document_id, deal_id, company_id, trading_entity_id, seen_original, uploaded_by_name)
+       VALUES ($1, $2, $3, $4, false, $5) ON CONFLICT (document_id) DO NOTHING`,
+      [documentId, row.deal_id, row.company_id, row.trading_entity_id || null, `${sender} (client checks, ref ${request.ref})`.slice(0, 300)])
+      .catch((e: any) => console.warn(`[kyc] company document not queued for reading: ${e?.message}`));
+    void import("./kyc-documents").then(m => m.readUpload(pool, documentId)).catch((e: any) => console.warn(`[kyc] company document not read: ${e?.message}`));
+  }
+
   if (docKey === "certified_ids" && row.company_id) {
     // Certified copies a client sends (23 November 2026) are read and checked
     // as a document BGP uploads is (server/kyc-documents.ts): whose it is, in

@@ -34,7 +34,7 @@ import { amlFileName, amlFileDocWords, amlFileSafeName, amlFileStateWords, amlSt
 import { amlDeadline } from "@shared/aml-dashboard";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
-import type { PartyKycState } from "@shared/party-kyc";
+import type { PartyKycState, RegisterExtractFact } from "@shared/party-kyc";
 import { buildRiskAssessment, type RiskAssessment } from "@shared/aml-risk-assessment";
 import type { SolicitorCheck } from "@shared/solicitor-aml";
 
@@ -88,6 +88,8 @@ export interface AmlFileParty {
   joint?: JointAgentPartyView | null;
   // A trust's structure as BGP recorded it, as lines (23 November 2026); null when not a trust.
   trustStructure?: string[] | null;
+  // A company registered abroad: whether its own register's extract is on file and passed (23 November 2026).
+  registerExtract?: RegisterExtractFact | null;
   // A tenant's or buyer's guarantors, with where BGP's checks on each stand (23 November 2026).
   guarantors?: DealGuarantorView[];
 }
@@ -225,6 +227,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       return r ? trustStructureLines(r.structure, text(brand.name)) : ["No structure recorded yet."];
     }), null as string[] | null) : null;
     if (!flags) unread.push("the red flags");
+    const registerExtract = kind === "company" && !trusts.has(brandId) && amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime !== "sanctions_only"
+      ? await read("the register extract", import("./kyc-documents").then(m => m.registerExtractFact(brandId, entityId)), null) : null;
     parties.push({
       role,
       brand: { id: brandId, name: text(brand.name), number: text(brand.companies_house_number) || null },
@@ -257,6 +261,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
       joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
       trustStructure,
+      registerExtract,
     });
   }
   const data: AmlFileData = {
@@ -563,6 +568,7 @@ export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = n
     jointGaps: p.joint?.gaps || [],
     trustGaps: p.trust && (p.trustStructure || []).some(l => /^No structure recorded/.test(l)) ? ["add the trust's information: what kind of trust, who set it up, the trustees and who benefits"] : [],
     guarantors: (p.guarantors || []).map(g => ({ name: g.name, state: g.checks.state })),
+    registerExtract: p.registerExtract || null,
   });
 }
 
@@ -799,6 +805,9 @@ export async function buildAmlZip(data: AmlFileData, capBytes = 200 * 1024 * 102
     docNames.set("hots", name);
     included += 1;
   }
+  // Translations made in the app sit beside their originals (23 November 2026).
+  const { translationsFor, TRANSLATION_NOTE } = await import("./kyc-translation");
+  const translations = await translationsFor(pool, data.parties.flatMap(p => p.documents.map(d => d.id))).catch(() => new Map());
   for (const p of data.parties) {
     const folder = data.parties.length > 1 ? `${top}/${amlFileSafeName(`${DEAL_PARTY_LABEL[p.role]} - ${p.company?.name || p.brand.name}`)}` : top;
     let n = 0;
@@ -814,6 +823,11 @@ export async function buildAmlZip(data: AmlFileData, capBytes = 200 * 1024 * 102
       docNames.set(`${p.role}:${d.id}`, `documents/${name}`);
       total += got.data.length;
       included += 1;
+      const t = translations.get(d.id);
+      if (t?.translation) {
+        const header = `English translation of ${d.name}${t.language ? `, from ${t.language}` : ""}, made ${new Date(t.madeAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })}.\n${TRANSLATION_NOTE}${t.cut ? "\nCut short: the document is long. Read the original for the rest." : ""}\n\n`;
+        files.push({ path: `${folder}/documents/${String(n).padStart(2, "0")} ${amlFileSafeName(`${amlFileDocWords(d.type)} - ${base}`)} (English translation).txt`, data: Buffer.from(header + t.translation, "utf8") });
+      }
     }
   }
   for (const p of data.parties) {

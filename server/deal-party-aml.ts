@@ -205,6 +205,9 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     trust,
     trustGaps: trust ? (await import("./trust-structure").then(m => m.trustGapsFor(party.brandId, db)).catch(() => [{ words: "the trust's structure could not be read" }])).map(g => g.words) : [],
     sanctionsFlags: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => isSanctionsFlag(f)).length,
+    // A company registered abroad: its own register's extract (23 November 2026).
+    registerExtract: party.regime === "sanctions_only" || kind !== "company" || trust ? null
+      : await import("./kyc-documents").then(m => m.registerExtractFact(party.brandId, party.entityId, db)).catch(() => null),
     // The party's guarantors: signed off only once BGP's checks on each have run (23 November 2026).
     guarantorChecks: await import("./deal-guarantors")
       .then(m => m.guarantorViews(party.dealId, db))
