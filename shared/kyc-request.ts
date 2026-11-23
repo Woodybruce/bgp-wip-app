@@ -524,24 +524,31 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
 // own link, or certified copies sent now. The email and the page say both.
 export const TRUST_NEXT_WORDS = {
   links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check and a proof of address from the last three months, and takes about ten minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
-  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified by a solicitor, and one from List B.",
+  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified, and one from List B.",
 };
 // Certified copies in place of the online check, on every request (Jack, 23
 // November 2026: "these need to be sent on all AML request emails"). Who
 // they are for depends on who is asked.
 export function certifiedWords(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): string {
   if (ctx.purpose === "trust_structure") return TRUST_NEXT_WORDS.certified;
-  if (ctx.person || ctx.kind === "individual") return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified by a solicitor, and one from List B.";
-  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified by a solicitor, and one from List B.";
+  if (ctx.person || ctx.kind === "individual") return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified, and one from List B.";
+  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified, and one from List B.";
 }
+// Who may certify and what the certification must carry (Jack, 23 November
+// 2026; the details are HMRC's, AMLG11400). The app checks each copy against
+// both (shared/kyc-documents.ts).
+export const CERTIFIED_WHO = "Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official.";
+export const CERTIFIED_HOW = "They write \"Certified to be a true copy of the original seen by me\" on the copy, sign and date it, and print their name, occupation, address and telephone number.";
 const bullets = (items: string[]): string =>
   `<ul style="margin:0 0 6px 18px;padding:0;font-family:${FONT};font-size:14px;line-height:1.5;color:${BODY}">${items.map(i => `<li>${escHtml(i[0].toUpperCase() + i.slice(1))}</li>`).join("")}</ul>`;
 
 const certifiedLists = (): string => [
-  p(`<strong>List A</strong> (one, certified by a solicitor)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  p(`<strong>List A</strong> (one, certified)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
   bullets(CERTIFIED_LIST_A),
   p(`<strong>List B</strong> (one)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
   bullets(CERTIFIED_LIST_B),
+  p(escHtml(CERTIFIED_WHO), `font-size:14px;color:${BODY};margin:10px 0 2px`),
+  p(escHtml(CERTIFIED_HOW), `font-size:14px;color:${BODY}`),
 ].join("\n");
 
 function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: string } {

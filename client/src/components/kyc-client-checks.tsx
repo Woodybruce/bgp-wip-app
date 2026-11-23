@@ -605,7 +605,7 @@ function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
         <DialogHeader>
           <DialogTitle>{person.name}: certified documents</DialogTitle>
           <DialogDescription>
-            One List A document certified by a solicitor (passport, photocard driving licence or Home Office residence permit) and one List B (a utility or council tax bill under 3 months old). It counts for their ID and address.
+            One List A document certified by a solicitor, lawyer or notary, a chartered accountant, or a bank or building society official (passport, photocard driving licence or Home Office residence permit) and one List B (a utility or council tax bill under 3 months old). It counts for their ID and address.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

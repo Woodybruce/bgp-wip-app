@@ -5745,7 +5745,20 @@ Tests: `server/trust-structure.test.ts` (in `npm test`),
   as the record; anything else shows its reasons in the party's Upload
   documents box and waits for an officer (Accept it there with a note, or
   Certified documents on the person's row). Nobody accepts a certified copy
-  on trust.
+  on trust. **Who may certify, and what the certification must carry**
+  (Jack, the same day: "we will accept - Solicitors, lawyers, or notaries
+  public, Chartered accountants, Bank or building society officials", and
+  "Require the full HMRC details on the certification"; do not re-litigate):
+  `certifierGroup` in `shared/kyc-documents.ts` reads the occupation the
+  certifier wrote, then their firm (a plain "accountant" is not a chartered
+  one); `certifierRefusal` holds anyone else back with the reason.
+  `certificationGaps` asks for HMRC's list (AMLG11400): the words that it is
+  a true copy of the original, the signature, the date, the certifier's
+  name, occupation, address and telephone number (`address`, `phone`,
+  `signed` on the reading; a reading made before this has none, so Read
+  again). Both rules apply to a copy BGP uploads too. Every request email and
+  page says who can certify and how (`CERTIFIED_WHO`, `CERTIFIED_HOW`). The
+  app does not check the certifier exists: not built.
 - **A trust stays a trust when a company signs for it** (found on Fortis
   Green the same day: URC Thames North Trust has its company, 00075432, set
   as the company that signs, and the people reader, the sign-off, the AML

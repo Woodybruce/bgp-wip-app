@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CERTIFIED_LIST_A, CERTIFIED_LIST_B, TRUST_NEXT_WORDS, KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
+import { CERTIFIED_LIST_A, CERTIFIED_WHO, CERTIFIED_HOW, CERTIFIED_LIST_B, TRUST_NEXT_WORDS, KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
 
 type Loaded =
   | { state: "loading" }
@@ -907,10 +907,12 @@ export default function KycUploadPage() {
             {view.trustDocs && <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{TRUST_NEXT_WORDS.links}</p>}
             {!!view.optionalDocs?.length && <>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{view.certifiedWords}</p>
-              <p className="mt-2 text-sm font-medium">List A (one, certified by a solicitor)</p>
+              <p className="mt-2 text-sm font-medium">List A (one, certified)</p>
               <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_A.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
               <p className="mt-2 text-sm font-medium">List B (one)</p>
               <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_B.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{CERTIFIED_WHO}</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{CERTIFIED_HOW}</p>
             </>}
           </div>
         )}
