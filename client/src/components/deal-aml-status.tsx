@@ -9,7 +9,7 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
-import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
+import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
@@ -899,10 +899,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const regWarning = reg?.warnings[0] || charity?.warnings[0] || null;
   const askMissing = !!party && !party.person;
   const askNoEmail = !!party?.person && !party.person.email;
+  // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
+  const guarantors = party?.guarantors || [];
+  const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
   const signs: { state: StepState; text: ReactNode } = companyMissing
     ? { state: settled ? "todo" : "act", text: <span className="text-amber-800 dark:text-amber-300">Not set</span> }
     : {
-        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0) ? "act" : "done",
+        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0 || guarantorOpen) ? "act" : "done",
         text: <>
           {!isCompany && !party?.company
             ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
@@ -910,6 +913,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                 {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
           {isTrust && <span className={!settled && trustRecordedGaps.length ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}> · a trust{trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}</span>}
           {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
+          {guarantors.length > 0 && <span className={!settled && guarantorOpen ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"} data-testid={`aml-guarantor-summary-${cp.role}`}> · guarantor{guarantors.length > 1 ? "s" : ""}: {guarantors.map(g => g.name).join(", ")}{!settled && guarantorOpen ? " (checks to run)" : ""}</span>}
           {regWarning && <span className="text-red-700 dark:text-red-400"> · {shortReason(regWarning, 50)}</span>}
           {!settled && askMissing && <span className="text-amber-800 dark:text-amber-300"> · who to ask not set</span>}
           {!settled && askNoEmail && <span className="text-amber-800 dark:text-amber-300"> · no email for {party!.person!.name}</span>}
@@ -1205,6 +1209,8 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
   // party lines follow them.
   const staffView = !!data?.prechecks;
   const { data: parties } = useDealParties(dealId, staffView);
+  // The company on the unit's lease is set as the company that signs by itself (23 November 2026).
+  useWorkOutSigningCompanies(dealId, staffView ? parties : undefined);
   const { data: checks } = useClientChecks(dealId, staffView && !!data?.clientChecks);
   const { data: board } = useDealAmlRows(dealId, staffView);
   const { data: agents } = useDealAgentsAml(dealId, staffView);

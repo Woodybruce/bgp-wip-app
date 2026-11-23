@@ -13,6 +13,7 @@ import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedBasis, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
 import { payerRedFlags } from "@shared/deal-billing";
+import { guarantorRedFlags } from "@shared/deal-guarantor";
 import { DEAL_PARTY_COLUMNS, dealClientRole } from "@shared/deal-parties";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
@@ -140,6 +141,12 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     relationship: deal.invoice_payer_relationship || null, note: deal.invoice_payer_note || null,
   } : null;
 
+  // The guarantors of a tenant or a buyer (23 November 2026): their own flags
+  // join the party's, read from BGP's checks before asking on each.
+  const guarantors = ids.length
+    ? await read("the guarantors", async () => (await import("./deal-guarantors")).guarantorRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
+    : [];
+
   const parties: Record<string, KycRedFlag[]> = {};
   const setAside: Record<string, SetAsideFlag[]> = {};
   const levels: Record<string, PartyDueDiligence> = {};
@@ -163,6 +170,10 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     if (payer && payer.brandId === id) {
       const payerPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === payer.id && isPrecheckResult(p.result)) || null;
       all.push(...payerRedFlags({ payer: { id: payer.id, name: payer.name }, relationship: payer.relationship, note: payer.note, precheck: payerPre?.result || null }));
+    }
+    for (const g of guarantors.filter(g => g.companyId === id)) {
+      const guarantorPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === g.entityId && isPrecheckResult(p.result)) || null;
+      all.push(...guarantorRedFlags({ guarantor: { id: g.entityId, name: g.name }, precheck: guarantorPre?.result || null }));
     }
     const split = applyFlagReviews(all, reviewsForParty(reviews, id, signs[id] || null));
     parties[id] = split.live;

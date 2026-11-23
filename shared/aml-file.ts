@@ -3,6 +3,8 @@
 // then send to HMRC if asked? Also we can send to KYC4U"). Pure: the file is
 // made by server/aml-file.ts.
 
+import type { GuarantorChecksState } from "./deal-guarantor";
+
 /** The report, filed on a party's KYC record (for KYC4U until 23 November 2026). */
 export const AML_FILE_DOC_TYPE = "aml_file";
 
@@ -142,6 +144,8 @@ export interface StillNeededInput {
   // What the joint agent's files do not cover yet.
   jointGaps: string[];
   trustGaps: string[];
+  // A tenant's or buyer's guarantors and where BGP's checks on each stand (23 November 2026).
+  guarantors?: Array<{ name: string; state: GuarantorChecksState }>;
 }
 
 /**
@@ -158,6 +162,11 @@ export function amlStillNeeded(f: StillNeededInput): string[] {
   if (f.precheck === "not_run" || f.precheck === "off") out.push("Run BGP's checks before asking (Companies House, sanctions, public roles and adverse media).");
   else if (f.precheck === "old") out.push("Run BGP's checks again: the last run is more than 30 days old.");
   else if (f.precheck === "running") out.push("Wait for BGP's checks before asking to finish.");
+  for (const g of f.guarantors || []) {
+    if (g.state === "not_run") out.push(`Run BGP's checks on the guarantor, ${g.name}.`);
+    else if (g.state === "stale") out.push(`Run BGP's checks on the guarantor, ${g.name}, again: the last run is more than 30 days old.`);
+    else if (g.state === "running") out.push(`Wait for BGP's checks on the guarantor, ${g.name}, to finish.`);
+  }
   for (const g of f.trustGaps) out.push(`Trust: ${g.replace(/\.$/, "")}.`);
   const flags = f.flags.filter(x => !x.factor);
   const factors = f.flags.filter(x => x.factor);

@@ -814,7 +814,7 @@ export default function KycUploadPage() {
         </p>
       ) : view.person ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-person-intro">
-          {view.person.roles.includes("owner")
+          {view.person.roles.includes("owner") && !view.person.roles.includes("guarantor")
             ? <>Companies House lists you as someone who owns or controls <strong className="text-foreground">{view.partyName}</strong>, a party to {view.dealName}. The law requires us to confirm your identity too.</>
             : <>You are {view.person.words}. The law requires us to confirm your identity.</>}
           {" "}It takes about five minutes.

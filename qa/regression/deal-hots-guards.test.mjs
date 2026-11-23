@@ -68,6 +68,10 @@ test('the screen saves only through the routes that already exist', () => {
   const allowed = [
     /^POST \/api\/deals\/\$\{dealId\}\/heads-of-terms\/match$/,
     /^PUT \/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}$/,
+    // The company that signs set by itself from a certain reading (23 November 2026).
+    /^PUT \/api\/deals\/\$\{dealId\}\/parties\/\$\{p\.role\}$/,
+    // A guarantor the heads of terms name, made the transaction's guarantor (23 November 2026).
+    /^POST \/api\/deals\/\$\{dealId\}\/guarantors$/,
     /^POST \/api\/billing-entities$/,
     /^PUT \/api\/crm\/deals\/\$\{dealId\}$/,
     /^POST \/api\/crm\/companies$/,
@@ -90,7 +94,7 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
-  assert.match(partyBox, /if \(!o && !finding && !hotsOpen\) onClose\(\);/);
+  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
   assert.doesNotMatch(screen, /from "@\/components\/deal-parties"/);
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);

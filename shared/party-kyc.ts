@@ -12,6 +12,8 @@
 // the brand's own legal name). A brand the MLRO has rejected blocks whatever
 // company is named: a rejection is never stepped round by naming a company.
 
+import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
+
 export interface KycFacts { status: string | null; expiresAt: string | Date | null; approvedBy: string | null; approvedAt?: string | Date | null }
 
 export interface PartyKycInput {
@@ -122,6 +124,10 @@ export interface SignOffFacts {
   // 23 November 2026). trustGaps: what its file still needs.
   trust?: boolean;
   trustGaps?: string[];
+  // The guarantors of the party (23 November 2026; HMRC AMLG2300 s18: a
+  // guarantor is a party to the tenancy): the party is not signed off until
+  // BGP's checks on each have run (shared/deal-guarantor.ts).
+  guarantorChecks?: Array<{ name: string; state: GuarantorChecksState }>;
   note: string;
   now?: Date;
 }
@@ -156,6 +162,8 @@ export function signOffDenial(input: SignOffFacts): string | null {
     if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
     if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
+    const guarantorEdd = guarantorChecksDenial(f.guarantorChecks);
+    if (guarantorEdd) return guarantorEdd;
     if (f.trust && f.trustGaps?.length) return `The trust's file is not complete: ${f.trustGaps.map(g => g.replace(/\.$/, "")).join("; ")}.`;
     if (f.trust && f.clientChecksOutstanding?.length) return `The trust's people still owe their checks: ${f.clientChecksOutstanding.join("; ")}.`;
     if (text(f.note).length < IN_HOUSE_EDD_NOTE_MIN) return "Enhanced due diligence by BGP: say what was checked and why the risk is acceptable (each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust): at least a couple of sentences.";
@@ -170,6 +178,8 @@ export function signOffDenial(input: SignOffFacts): string | null {
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }
+  const guarantor = guarantorChecksDenial(f.guarantorChecks);
+  if (guarantor) return guarantor;
   if (!f.clientChecksFinished && !f.sanctionsOnly && !f.reliance && text(f.note).length < SIGN_OFF_NOTE_MIN) {
     return f.clientChecksOutstanding?.length
       ? `The client checks are not finished for this party (still to come: ${f.clientChecksOutstanding.join("; ")}): say what you relied on instead (at least a sentence).`

@@ -21,7 +21,10 @@ export type KycPartyKind = "individual" | "company";
 // people buying together before any company is set up; Jack, 20 November 2026).
 // The trust roles (23 November 2026): the people a trust's structure records
 // (shared/trust-structure.ts), each with their own checks.
-export type KycPersonRole = "owner" | "acting" | "director" | "joint" | "settlor" | "trustee" | "protector" | "beneficiary" | "controller";
+// guarantor: a person who guarantees the party; guarantor_owner: someone who
+// owns or controls a company that guarantees it (23 November 2026; HMRC
+// AMLG2300 s18: a guarantor is a party to the tenancy and a customer).
+export type KycPersonRole = "owner" | "acting" | "director" | "joint" | "settlor" | "trustee" | "protector" | "beneficiary" | "controller" | "guarantor" | "guarantor_owner";
 export const TRUST_PERSON_ROLES: readonly KycPersonRole[] = ["settlor", "trustee", "protector", "beneficiary", "controller"];
 export interface KycRequestPerson {
   key: string;
@@ -37,7 +40,9 @@ export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): s
     : roles.includes("protector") ? `the protector of ${partyName}`
     : roles.includes("beneficiary") ? `a beneficiary of ${partyName}`
     : roles.includes("controller") ? `someone with control of ${partyName}`
+    : roles.includes("guarantor") ? `the guarantor for ${withoutPrivateMark(partyName)}`
     : roles.includes("owner") ? `an owner of ${partyName}`
+    : roles.includes("guarantor_owner") ? `an owner of the company guaranteeing ${partyName}`
     : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
@@ -461,8 +466,12 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     ? ` That's you, for <strong>${escHtml(ctx.partyName)}</strong>, and the company's owners.`
     : "";
   // A person's own request: an owner may not know the deal at all.
-  const opening = ctx.person?.roles.includes("owner")
+  const opening = ctx.person?.roles.includes("guarantor")
+    ? `You're named as the guarantor for <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
+    : ctx.person?.roles.includes("owner")
     ? `Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, a party to <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
+    : ctx.person?.roles.includes("guarantor_owner")
+    ? `Companies House lists you as someone who owns or controls the company guaranteeing ${escHtml(ctx.partyName)} on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person?.roles.includes("joint")
       ? `You're named alongside <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person

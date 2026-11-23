@@ -445,7 +445,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
   let people: KycPortalView["people"] = null;
   if (!request.person) {
     const found = await partyPeopleForRow(row).catch(() => null);
-    const owners = (found?.people || []).filter(p => p.roles.includes("owner") && !personNamesMatch(p.name, row.contact_name || ""));
+    // A guarantor, and the owners of a company that guarantees, are passed on the same way (23 November 2026).
+    const owners = (found?.people || []).filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && !personNamesMatch(p.name, row.contact_name || ""));
     if (owners.length) {
       people = owners.map(p => {
         const ownLink = !!p.own && !p.own.isMain;
@@ -621,7 +622,7 @@ export async function createClientCheck(dealId: string, input: z.infer<typeof cl
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
     const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company", dealId }, await dealPeopleRequests(dealId)).catch(() => null);
     ownLinksFor = (people?.people || [])
-      .filter(p => p.roles.includes("owner") && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
+      .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
       .map(p => ({ key: p.key, name: p.name }));
   }
 

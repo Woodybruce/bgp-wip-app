@@ -279,6 +279,7 @@ export function ClientChecksForParty({ dealId, companyId, sanctionsOnly, notRequ
 const ROLE_WORDS: Record<KycPersonRole, string> = {
   owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them",
   settlor: "Settlor", trustee: "Trustee", protector: "Protector", beneficiary: "Beneficiary", controller: "Other control",
+  guarantor: "Guarantor", guarantor_owner: "Owns the guarantor",
 };
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {

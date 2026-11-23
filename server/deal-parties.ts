@@ -39,6 +39,7 @@ import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-
 import { readsLikeCharity } from "@shared/charity-register";
 import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { kycPersonRoleWords } from "@shared/kyc-request";
+import { isGuaranteedRole } from "@shared/deal-guarantor";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -191,6 +192,11 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     : [];
   const lease = roles.includes("tenant") ? await leaseCompanyId(db, deal) : null;
 
+  // Guarantors of a tenant or a buyer, with where BGP's checks on each stand (23 November 2026).
+  const guarantors = roles.some(r => isGuaranteedRole(r))
+    ? await import("./deal-guarantors").then(m => m.guarantorViews(deal.id, db)).catch(() => [])
+    : [];
+
   const parties: DealPartyView[] = [];
   for (const role of roles) {
     const col = DEAL_PARTY_COLUMNS[role];
@@ -232,6 +238,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       gaps: partyGaps({ role, kind, brandName: brandRow.name, companySet: !!company, person, trust: isTrustRecord(brandRow.aml_subject_type) }),
       client: role === clientRoleOf(deal),
       billing: role === clientRoleOf(deal) ? partyBilling(deal, role, kind, company, filed) : null,
+      ...(isGuaranteedRole(role) ? { guarantors: guarantors.filter(g => g.role === role).map(({ role: _r, companyId: _c, ...g }) => g) } : {}),
     });
   }
   return { deal: { id: deal.id, name: deal.name }, parties };
@@ -704,6 +711,77 @@ router.post("/api/deals/:id/payer/checks", async (req: Request, res: Response) =
     if (!payerId) return res.status(400).json({ message: "No third party pays on this transaction." });
     const { startPrecheck } = await import("./kyc-prechecks");
     res.json({ started: await startPrecheck(c.brandId, { entityId: payerId, dealId: c.deal.id, userId: me.id, force: true }) });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not start the checks" });
+  }
+});
+
+// Guarantors (Woody, 23 November 2026, on Inception T2: "one is signing
+// cornhill bar and the other is guaranteeing so should be able to allocate
+// add as the guarantor"). HMRC AMLG2300 s18: a guarantor is a party to the
+// tenancy and a customer. A company or person filed under the party (a tenant
+// or a buyer), never the company that signs; BGP's checks start on it at once,
+// its red flags join the party's and its owners join the people to check
+// (shared/deal-guarantor.ts, server/deal-guarantors.ts).
+router.post("/api/deals/:id/guarantors", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = req.body?.role;
+    if (!isGuaranteedRole(role)) return res.status(400).json({ message: "A guarantor stands behind the tenant or the buyer." });
+    const entityId = text(req.body?.companyId);
+    if (!entityId) return res.status(400).json({ message: "Pick the company or person that guarantees." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
+    const col = DEAL_PARTY_COLUMNS[role];
+    const label = DEAL_PARTY_LABEL[role].toLowerCase();
+    const brandId = text(deal[col.brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${label} on the transaction first.` });
+    const entity = (await pool.query(`SELECT id, name, parent_company_id FROM crm_trading_entities WHERE id = $1`, [entityId])).rows[0];
+    if (!entity || entity.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company or person filed under the ${label}, or find it at Companies House.` });
+    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is the company that signs. The guarantor is another company, or a person." });
+    const added = (await pool.query(
+      `INSERT INTO deal_guarantors (deal_id, role, company_id, entity_id, added_by, added_by_name) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (deal_id, role, entity_id) WHERE removed_at IS NULL DO NOTHING RETURNING id`,
+      [deal.id, role, brandId, entityId, me.id, me.name])).rows[0];
+    if (added) await audit(pool, deal.id, "guarantor", null, entityId, `${entity.name} added as the guarantor for the ${label}`, me);
+    const { startPrecheck } = await import("./kyc-prechecks");
+    const started = await startPrecheck(brandId, { entityId, dealId: deal.id, userId: me.id }).catch(() => null);
+    res.json({ ...(await loadDealParties(pool, deal.id)), started });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not add the guarantor" });
+  }
+});
+
+router.delete("/api/deals/:id/guarantors/:guarantorId", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const { pool } = await import("./db");
+    const row = (await pool.query(
+      `UPDATE deal_guarantors g SET removed_at = now(), removed_by_name = $3
+        WHERE g.id::text = $2 AND g.deal_id = $1 AND g.removed_at IS NULL
+        RETURNING g.entity_id, g.role, (SELECT name FROM crm_trading_entities e WHERE e.id = g.entity_id) AS name`,
+      [String(req.params.id), String(req.params.guarantorId), me.name])).rows[0];
+    if (!row) return res.status(404).json({ message: "That guarantor is not on this transaction." });
+    await audit(pool, String(req.params.id), "guarantor", String(row.entity_id), null,
+      `${row.name || "The guarantor"} taken off as the guarantor for the ${String(row.role)}`, me);
+    res.json(await loadDealParties(pool, String(req.params.id)));
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not take the guarantor off" });
+  }
+});
+
+router.post("/api/deals/:id/guarantors/:guarantorId/checks", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const { guarantorRows } = await import("./deal-guarantors");
+    const g = (await guarantorRows([String(req.params.id)])).find(x => x.id === String(req.params.guarantorId));
+    if (!g) return res.status(404).json({ message: "That guarantor is not on this transaction." });
+    const { startPrecheck } = await import("./kyc-prechecks");
+    res.json({ started: await startPrecheck(g.companyId, { entityId: g.entityId, dealId: g.dealId, userId: me.id, force: true }) });
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not start the checks" });
   }

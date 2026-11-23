@@ -544,6 +544,12 @@ export interface HotsPartyMatch {
   numberIsAnother?: HotsOtherCompany | null;
   /** The CRM records of that name, when the transaction has no party there yet. */
   candidates: DealNoteCandidate[];
+  /**
+   * A guarantor (23 November 2026): the party it stands behind (the tenant, or a
+   * sale's buyer) and that party's brand, and whether it is already the
+   * transaction's guarantor. filed is then a company filed under that brand.
+   */
+  guarantees?: { role: "tenant" | "purchaser"; brand: { id: string; name: string } | null; set: boolean } | null;
 }
 export interface HotsTermView extends HotsTerm { label: string; kind: HotsTermKind; current: number | string | null; state: HotsTermState }
 export interface HotsFiling { unitId: string; unitName: string; onFile: string | null }

@@ -3418,7 +3418,8 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   finds. A guarantor's number is said the same way. A company filed under
   the party by that number is still offered, with "check it is the same
   company" when the names share no such word.
-- **Nothing saves by itself.** The buttons save through the routes that
+- **Nothing saves by itself**, except the company that signs where the
+  reading is certain (below). The buttons save through the routes that
   already exist: Use as the company that signs (`PUT
   /api/deals/:id/parties/:role`), Add under <party> and use it (`POST
   /api/billing-entities` with `xero: false`, then the same PUT), Make them the
@@ -3457,6 +3458,75 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   on the transaction reads "On the transaction". Tests in
   `server/deal-hots.test.ts`.
 - Not run against Anthropic or Companies House from a build machine.
+
+## Guarantors, and the contracting entity worked out (Woody, 2026-11-23)
+
+Woody, on Inception T2's party box (Cornhill Bar Ltd signs; Inception
+Ventures Group Limited guarantees): "should be able to allocate add as the
+guarantor", then "we dont need this commnetry it should just wiork out what
+the contracting entity is". HMRC's letting guidance (AMLG2300, read
+23 November 2026): s18 "Guarantors are a party to a tenancy agreement" and
+are treated as customers; s19 the ID verification of the "tenant, guarantor
+or trustee" is completed "before any agreement or contract is made"; s21
+source of funds and wealth is verified "when guarantors pay". Do not
+re-litigate. Rules: `shared/deal-guarantor.ts`; reads:
+`server/deal-guarantors.ts`; routes in `server/deal-parties.ts`. Tests:
+`server/deal-guarantor.test.ts` (in `npm test`),
+`qa/regression/deal-guarantor-guards.test.mjs`.
+
+- **A guarantor** is a company or a person filed under the party it stands
+  behind, a tenant or a buyer (`GUARANTEED_ROLES`), never the company that
+  signs; more than one is allowed. Kept in `deal_guarantors` (boot migration
+  in `server/index.ts`: deal, role, the party's brand, the
+  `crm_trading_entities` row, who added it; `removed_at` when taken off, one
+  live row per guarantor). A row counts only while its company is still filed
+  under the party the transaction names and is not the company that signs
+  (`guarantorRows`). Merges repoint it (`COMPANY_REFS`).
+- **Routes** (BGP staff signed in as themselves): `POST
+  /api/deals/:id/guarantors { role, companyId }` (a history line `guarantor`;
+  BGP's checks before asking start on it at once, `startPrecheck` with its
+  entity), `DELETE /api/deals/:id/guarantors/:guarantorId`, and `POST
+  …/:guarantorId/checks` (Run checks). The party view carries `guarantors`
+  (`guarantorViews`: where BGP's checks on each stand, and its red flag
+  count).
+- **What follows from it**: its findings are red flags on the party it stands
+  behind (`guarantorRedFlags`, keys `guarantor:<entity>:…`, labels "The
+  guarantor, X: …"), on the transaction's AML box and the AML board
+  (`withGuarantorFlags`); its people join that party's People to check
+  (`guarantors` on `partyPeople`): a person who guarantees (role
+  `guarantor`) and the people who own or control a guarantor company (role
+  `guarantor_owner`, from its own register read) each owe an identity check
+  and a proof of address and get links of their own (the email and page say
+  why they are asked); its other directors are screened only; the party is
+  signed off only once BGP's checks on each guarantor have run, in the last
+  30 days (`guarantorChecks` on `SignOffFacts`, `guarantorChecksDenial`; a
+  read that fails holds the sign-off); the AML file names each guarantor and
+  what is still needed on it.
+- **Screens**: in the party box each of the brand's companies other than the
+  one that signs has **Guarantor** beside **Use**; the **Guarantor** section
+  lists the guarantors with their checks (**Run checks**, **Remove**) and has
+  **Find the guarantor at Companies House** and **A person guarantees** (the
+  billing entity dialog, never a Xero contact). The party lines and the AML
+  box's Who signs line name the guarantor. Heads of terms that name a
+  guarantor offer **Make them the guarantor** (filed under the party) or
+  **Add under <party> as the guarantor** (from Companies House by the number
+  the document gives): a press, never set by itself.
+- **The party box has no commentary**: the trust question shows only when the
+  name reads like a trust, foundation or charity (`trustHint`); the
+  paragraphs explaining the company that signs, who to ask and the CRM were
+  removed.
+- **The contracting entity is worked out by itself** where the app can be
+  sure, for a party with no company that signs: the company on the unit's
+  lease (`offer.why === "lease"`), set when the AML box or the party box loads
+  (`useWorkOutSigningCompanies`, once per transaction and party, through the
+  party save and its history line); and heads of terms or a typed note that
+  name it for certain (a company filed under the party with that number or
+  name, or the one live company Companies House holds under the number the
+  document gives, with the same name), set when the reading comes back. The
+  brand's main or only company is still a suggestion, never set by itself:
+  Inception T2's main company is not the one that signs.
+- Not built: a guarantor of a landlord or a seller; source of funds asked of a
+  guarantor that pays.
 
 ## KYC4U is no longer used (Woody, 2026-11-23)
 

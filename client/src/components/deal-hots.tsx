@@ -6,7 +6,7 @@
 // until a person presses a button, and each button saves through the route
 // the party box or the deal form already uses. BGP staff only: the server
 // (server/deal-hots.ts) refuses anyone else. The rules are shared/deal-hots.ts.
-import { Suspense, lazy, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -197,6 +197,44 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
   });
   const busy = act.isPending;
 
+  // Work out the company that signs (Woody, 23 November 2026: "it should just
+  // work out what the contracting entity is"): where the reading names it for
+  // certain and the party has none, it is set by itself. Certain: a company
+  // filed under the party with that number or name, or the one live company
+  // Companies House holds under the number the document gives, with the same
+  // name. Anything less is left as a button.
+  const autoKey = useRef<string | null>(null);
+  useEffect(() => {
+    const key = reply.parties.map(p => `${p.role}:${p.read.name}:${p.state}`).join("|");
+    if (autoKey.current === key || act.isPending) return;
+    autoKey.current = key;
+    const sure = reply.parties.filter(p => {
+      if (!p.role || !p.brand || p.signing) return false;
+      if (p.state === "filed") return !!p.filed && hotsNamesClose(p.filed.name, p.read.name);
+      const hit = p.register[0];
+      return p.state === "register" && !!hit && hit.agrees && !!p.read.number && !p.numberIsAnother
+        && !CLOSED.includes(String(hit.status || "").toLowerCase());
+    });
+    if (!sure.length) return;
+    act.mutate(async () => {
+      const done: string[] = [];
+      for (const p of sure) {
+        let companyId = p.filed?.id || "";
+        let name = p.filed?.name || "";
+        if (!companyId) {
+          const r = await apiRequest("POST", "/api/billing-entities", { brandId: p.brand!.id, companyNumber: p.register[0].number, xero: false });
+          const made = await r.json();
+          companyId = String(made?.entity?.id || "");
+          name = made?.entity?.name || p.register[0].name;
+        }
+        if (!companyId) continue;
+        await apiRequest("PUT", `/api/deals/${dealId}/parties/${p.role}`, { companyId });
+        done.push(`${name} signs for the ${p.role}`);
+      }
+      return done.length ? `Set from ${fromNote ? "your note" : "the heads of terms"}: ${done.join("; ")}` : "Nothing was set";
+    });
+  }, [reply.parties]);
+
   const useCompany = (role: DealPartyRole, companyId: string, name: string) => act.mutate(async () => {
     await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}`, { companyId });
     return `${name} signs for the ${role}`;
@@ -208,6 +246,21 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     if (!companyId) throw new Error("The company was not saved.");
     await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}`, { companyId });
     return `${made?.entity?.name || name} signs for the ${role}`;
+  });
+  // The guarantor (23 November 2026): BGP's checks start on it and its owners join the people to check.
+  const makeGuarantor = (role: "tenant" | "purchaser", companyId: string, name: string) => act.mutate(async () => {
+    await apiRequest("POST", `/api/deals/${dealId}/guarantors`, { role, companyId });
+    queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+    return `${name} is the guarantor: BGP's checks on it have started`;
+  });
+  const addGuarantor = (role: "tenant" | "purchaser", brandId: string, number: string, name: string) => act.mutate(async () => {
+    const r = await apiRequest("POST", "/api/billing-entities", { brandId, companyNumber: number, xero: false });
+    const made = await r.json();
+    const companyId = String(made?.entity?.id || "");
+    if (!companyId) throw new Error("The company was not saved.");
+    await apiRequest("POST", `/api/deals/${dealId}/guarantors`, { role, companyId });
+    queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+    return `${made?.entity?.name || name} added and made the guarantor: BGP's checks on it have started`;
   });
   const setParty = (role: DealPartyRole, brandId: string, brandName: string, entityId: string | null) => act.mutate(async () => {
     await apiRequest("PUT", `/api/crm/deals/${dealId}`, { [ROLE_FIELD[role]]: brandId });
@@ -297,14 +350,31 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
               <PartyLine key={`${p.role}-${p.read.name}`} match={p} busy={busy} source={fromNote ? "Your note" : "The heads of terms"}
                 onUse={useCompany} onAdd={addCompany} onSetParty={setParty} onAddParty={addParty} onChoose={(role) => (inEditor ? onClose() : setEditing(role))} />
             ))}
-            {guarantors.map(g => (
-              <div key={`g-${g.read.name}`} className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-hots-guarantor">
-                <div><span className="font-semibold">Guarantor</span> · {companyWords(g.read)}</div>
-                {g.numberIsAnother && <NumberIsAnother other={g.numberIsAnother} name={g.read.name} testId="deal-hots-number-other-guarantor" />}
-                {g.register[0] && <div className="text-muted-foreground">At Companies House: {companyWords(g.register[0])}{g.register[0].status ? ` · ${g.register[0].status.replace(/-/g, " ")}` : ""}</div>}
-                <Quote text={g.read.quote} />
-              </div>
-            ))}
+            {guarantors.map(g => {
+              // Make them the transaction's guarantor (23 November 2026): one filed under the
+              // party it stands behind, or added there from Companies House first.
+              const hit = g.register.find(h => h.agrees !== false && !/dissolved|closed|liquidat/i.test(String(h.status || "")));
+              const gFor = g.guarantees;
+              return (
+                <div key={`g-${g.read.name}`} className="flex flex-wrap items-start gap-2 rounded-md border px-2.5 py-2 text-xs" data-testid="deal-hots-guarantor">
+                  <div className="min-w-0 flex-1">
+                    <div><span className="font-semibold">Guarantor</span> · {companyWords(g.read)}</div>
+                    {g.numberIsAnother && <NumberIsAnother other={g.numberIsAnother} name={g.read.name} testId="deal-hots-number-other-guarantor" />}
+                    {g.filed && <div className="text-muted-foreground">Filed under {gFor?.brand?.name}: {companyWords(g.filed)}</div>}
+                    {!g.filed && g.register[0] && <div className="text-muted-foreground">At Companies House: {companyWords(g.register[0])}{g.register[0].status ? ` · ${g.register[0].status.replace(/-/g, " ")}` : ""}</div>}
+                    {gFor && !gFor.brand && <div className="text-amber-800 dark:text-amber-300">Set the {gFor.role === "tenant" ? "tenant" : "buyer"} first, then make them the guarantor.</div>}
+                    <Quote text={g.read.quote} />
+                  </div>
+                  {gFor?.set
+                    ? <span className="flex shrink-0 items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Guarantor on the transaction</span>
+                    : gFor?.brand && g.filed
+                      ? <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 text-xs" disabled={busy} onClick={() => makeGuarantor(gFor.role, g.filed!.id, g.filed!.name)} data-testid="deal-hots-guarantor-set">Make them the guarantor</Button>
+                      : gFor?.brand && hit && !g.numberIsAnother
+                        ? <Button type="button" size="sm" variant="outline" className="h-7 shrink-0 text-xs" disabled={busy} onClick={() => addGuarantor(gFor.role, gFor.brand!.id, hit.number, hit.name)} data-testid="deal-hots-guarantor-add">Add under {gFor.brand.name} as the guarantor</Button>
+                        : null}
+                </div>
+              );
+            })}
           </section>
 
           {(reply.contacts || []).length > 0 && (

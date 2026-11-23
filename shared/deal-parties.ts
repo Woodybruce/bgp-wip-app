@@ -15,6 +15,7 @@
 // writes, the screens draw from what it sends.
 
 import type { BillingState } from "./deal-billing";
+import type { DealGuarantorView } from "./deal-guarantor";
 
 export const DEAL_PARTY_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
 export type DealPartyRole = (typeof DEAL_PARTY_ROLES)[number];
@@ -191,6 +192,8 @@ export interface DealPartyView {
   // it is billed as against the company that signs (null for any other party).
   client?: boolean;
   billing?: DealPartyBilling | null;
+  // A tenant's or a buyer's guarantors (23 November 2026; shared/deal-guarantor.ts).
+  guarantors?: DealGuarantorView[];
 }
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();

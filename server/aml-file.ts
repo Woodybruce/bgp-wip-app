@@ -20,6 +20,7 @@
 // party (the company that signs when the deal names one), so Request KYC4U
 // check offers it with the other documents and the bookmark attaches it.
 
+import { guarantorLine, type DealGuarantorView } from "@shared/deal-guarantor";
 import { KYC4U_RETIRED_WORDS } from "@shared/kyc4u-portal";
 import type { JointAgentPartyView } from "@shared/joint-agent-checks";
 import { Router, type Request, type Response } from "express";
@@ -87,6 +88,8 @@ export interface AmlFileParty {
   joint?: JointAgentPartyView | null;
   // A trust's structure as BGP recorded it, as lines (23 November 2026); null when not a trust.
   trustStructure?: string[] | null;
+  // A tenant's or buyer's guarantors, with where BGP's checks on each stand (23 November 2026).
+  guarantors?: DealGuarantorView[];
 }
 
 export interface AmlFileData {
@@ -227,6 +230,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       brand: { id: brandId, name: text(brand.name), number: text(brand.companies_house_number) || null },
       company: pv?.company ? { id: pv.company.id, name: pv.company.name, number: pv.company.companiesHouseNumber || null } : null,
       person: pv?.person ? { name: pv.person.name, email: pv.person.email || null } : null,
+      guarantors: pv?.guarantors || [],
       individual: kind === "individual",
       state: (states as Record<string, PartyKycState>)[role] || null,
       notRequired: mark && mark.companyId === brandId ? { reasonWords: mark.reasonWords, comment: mark.comment || null, by: mark.by || null, at: mark.at || null } : null,
@@ -558,6 +562,7 @@ export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = n
     anyRequest: (p.requests || []).some((r: any) => String(r.status) !== "cancelled"),
     jointGaps: p.joint?.gaps || [],
     trustGaps: p.trust && (p.trustStructure || []).some(l => /^No structure recorded/.test(l)) ? ["add the trust's information: what kind of trust, who set it up, the trustees and who benefits"] : [],
+    guarantors: (p.guarantors || []).map(g => ({ name: g.name, state: g.checks.state })),
   });
 }
 
@@ -572,6 +577,8 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   w.kv("Brand on the transaction", p.brand.name);
   w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
+  if (p.guarantors?.length) w.kv(p.guarantors.length > 1 ? "Guarantors" : "Guarantor", p.guarantors.map(g => guarantorLine(g)).join("\n"),
+    p.guarantors.some(g => g.checks.state !== "done") ? AMBER : INK);
   if (p.trustStructure) w.kv("Trust structure (recorded by BGP)", p.trustStructure.join("\n"));
   const state = amlFileStateWords(p.state, p.notRequired);
   w.kv("Where it stands", state.words, state.tone === "done" ? GREEN : state.tone === "flag" ? RED : AMBER);

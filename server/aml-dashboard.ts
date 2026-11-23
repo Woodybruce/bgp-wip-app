@@ -25,6 +25,7 @@ import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, investmentDealS
 import { amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { applyFlagReviews, dealRedFlags, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
 import { payerRedFlags } from "@shared/deal-billing";
+import { guarantorRedFlags } from "@shared/deal-guarantor";
 import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult, ownersAbroadOf } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, simplifiedBasis, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
@@ -65,6 +66,17 @@ function withPayerFlags(p: { role: string; brandId: string; deal: any }, prechec
   return [...flags, ...payerRedFlags({
     payer: { id: payerId, name: String(p.deal.invoice_payer_name || "The company that pays") },
     relationship: p.deal.invoice_payer_relationship || null, note: p.deal.invoice_payer_note || null, precheck: pre?.result || null,
+  })];
+}
+
+// A tenant's or buyer's guarantors (23 November 2026): each one's flags join
+// its party's, as they do in the deal's AML box (server/kyc-red-flags.ts).
+function withGuarantorFlags(p: { brandId: string; deal: any }, prechecks: any[], flags: KycRedFlag[], guarantors: Array<{ dealId: string; companyId: string; entityId: string; name: string }>): KycRedFlag[] {
+  const mine = guarantors.filter(g => g.dealId === String(p.deal.id) && g.companyId === p.brandId);
+  if (!mine.length) return flags;
+  return [...flags, ...mine.flatMap(g => {
+    const pre = prechecks.find((r: any) => r.crm_company_id === p.brandId && (r.trading_entity_id || null) === g.entityId && isPrecheckResult(r.result)) || null;
+    return guarantorRedFlags({ guarantor: { id: g.entityId, name: g.name }, precheck: pre?.result || null });
   })];
 }
 
@@ -114,7 +126,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadNotRequired } = await import("./aml-policy");
   // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances] = await Promise.all([
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
@@ -167,6 +179,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       `SELECT DISTINCT ON (deal_id, company_id, trading_entity_id) deal_id, company_id, trading_entity_id, firm, recorded_at
          FROM kyc_reliance WHERE deal_id = ANY($1::varchar[]) AND withdrawn_at IS NULL
         ORDER BY deal_id, company_id, trading_entity_id, recorded_at DESC`, [dealIds])).rows, none),
+    // A tenant's or buyer's guarantors (23 November 2026): their flags join the party's, as on the transaction.
+    read("the guarantors", () => import("./deal-guarantors").then(m => m.guarantorRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
@@ -196,7 +210,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const jointLive = allTokens.filter((t: any) => isJoint(t) && !t.revoked_at);
     const jointAskedAt = jointLive.map((t: any) => t.request?.sentAt || (t.request?.manual ? t.created_at : null)).filter(Boolean).sort().pop() || null;
     const jointInAt = jointLive.map((t: any) => t.request?.jointAgent?.reliance?.agreedAt || (Number(t.files) > 0 ? t.last_used_at || t.created_at : null)).filter(Boolean).sort().pop() || null;
-    const live = applyFlagReviews(withPayerFlags(p, prechecks, partyRedFlags({
+    const live = applyFlagReviews(withGuarantorFlags(p, prechecks, withPayerFlags(p, prechecks, partyRedFlags({
       company: companyRow,
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
@@ -205,7 +219,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
-    })), reviewsForParty(reviews, p.brandId, p.entityId)).live;
+    })), guarantors), reviewsForParty(reviews, p.brandId, p.entityId)).live;
     const flags = live.map(f => f.label);
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
     const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });

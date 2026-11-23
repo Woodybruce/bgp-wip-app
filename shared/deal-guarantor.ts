@@ -1,0 +1,80 @@
+// Guarantors (Woody, 23 November 2026, on Inception T2: "one is signing
+// cornhill bar and the other is guaranteeing so should be able to allocate
+// add as the guarantor"). HMRC's letting agency guidance (AMLG2300 s18):
+// "Guarantors are a party to a tenancy agreement" and are treated as
+// customers; s19: the ID verification aspects of CDD on the "tenant,
+// guarantor or trustee" are completed "before any agreement or contract is
+// made"; s21: source of funds and wealth is verified "when guarantors pay".
+//
+// A guarantor is a company or a person filed under the party it stands
+// behind (a tenant, or a buyer), never the company that signs. BGP's checks
+// before asking run on it, its red flags join that party's, a company's owners
+// and a person who guarantees join that party's People to check, and the
+// party is not signed off until the guarantor's checks have run.
+
+import type { KycRedFlag } from "./kyc-red-flags";
+import { precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
+
+/** The parties whose obligations a guarantor stands behind: a tenant, or a buyer. */
+export const GUARANTEED_ROLES = ["tenant", "purchaser"] as const;
+export type GuaranteedRole = (typeof GUARANTEED_ROLES)[number];
+export const isGuaranteedRole = (v: unknown): v is GuaranteedRole =>
+  typeof v === "string" && (GUARANTEED_ROLES as readonly string[]).includes(v);
+
+/** How fresh the guarantor's checks must be for the party's sign-off (the party's own rule). */
+export const GUARANTOR_CHECKS_DAYS = 30;
+
+export type GuarantorChecksState = "not_run" | "running" | "done" | "stale";
+
+export interface DealGuarantorView {
+  /** The deal_guarantors row. */
+  id: string;
+  /** The company or person filed under the party (crm_trading_entities). */
+  entityId: string;
+  name: string;
+  kind: "company" | "individual";
+  companiesHouseNumber: string | null;
+  checks: { state: GuarantorChecksState; ranAt: string | null; redFlags: number };
+  addedBy: string | null;
+  addedAt: string;
+}
+
+export function guarantorChecksState(ranAt: string | null, running: boolean, now: Date = new Date()): GuarantorChecksState {
+  if (running) return "running";
+  if (!ranAt) return "not_run";
+  const t = Date.parse(ranAt);
+  if (!Number.isFinite(t)) return "not_run";
+  return now.getTime() - t > GUARANTOR_CHECKS_DAYS * 86400000 ? "stale" : "done";
+}
+
+export const GUARANTOR_CHECKS_WORDS: Record<GuarantorChecksState, string> = {
+  not_run: "BGP's checks have not run",
+  running: "BGP's checks are running",
+  done: "BGP's checks have run",
+  stale: `BGP's checks are more than ${GUARANTOR_CHECKS_DAYS} days old`,
+};
+
+/** The guarantor's findings, as red flags on the party it stands behind (keys and words of its own). */
+export function guarantorRedFlags(input: { guarantor: { id: string; name: string }; precheck: KycPrecheckResult | null }): KycRedFlag[] {
+  if (!input.precheck) return [];
+  const { id, name } = input.guarantor;
+  return precheckRedFlags(input.precheck, { sanctionsCurrent: true })
+    .map(f => ({ ...f, key: `guarantor:${id}:${f.key}`, label: `The guarantor, ${name}: ${f.label}` }));
+}
+
+/** Why the party cannot be signed off yet because of a guarantor, or null. */
+export function guarantorChecksDenial(list: Array<{ name: string; state: GuarantorChecksState }> | null | undefined): string | null {
+  const open = (list || []).filter(g => g.state !== "done");
+  if (!open.length) return null;
+  const running = open.filter(g => g.state === "running");
+  if (running.length === open.length) return `BGP's checks on the guarantor (${running.map(g => g.name).join(", ")}) are still running. Sign off once they finish.`;
+  return `Run BGP's checks on the guarantor first (${open.map(g => `${g.name}: ${GUARANTOR_CHECKS_WORDS[g.state].replace(/^BGP's checks /, "")}`).join("; ")}). Press Run checks on the guarantor's line.`;
+}
+
+/** One line for a guarantor on the party's card: "Inception Ventures Group Limited (07950473) · BGP's checks have run · 1 red flag". */
+export function guarantorLine(g: Pick<DealGuarantorView, "name" | "kind" | "companiesHouseNumber" | "checks">): string {
+  const who = g.kind === "individual" ? `${g.name} (a person)` : g.companiesHouseNumber ? `${g.name} (${g.companiesHouseNumber})` : g.name;
+  const flags = g.checks.state === "done" || g.checks.state === "stale"
+    ? g.checks.redFlags ? ` · ${g.checks.redFlags} red flag${g.checks.redFlags === 1 ? "" : "s"}` : " · no red flags" : "";
+  return `${who} · ${GUARANTOR_CHECKS_WORDS[g.checks.state]}${flags}`;
+}

@@ -121,6 +121,11 @@ export interface PartyPeopleInput {
   // A trust's structure as BGP recorded it (23 November 2026): its people are
   // the trust's beneficial owners (MLR 2017 reg 6).
   trust?: TrustStructure | null;
+  // The party's guarantors (23 November 2026; HMRC AMLG2300 s18: a guarantor
+  // is a party to the tenancy and a customer): a person who guarantees, and
+  // the owners of a company that guarantees, are people to check; the
+  // company's directors are screened only. precheck: BGP's checks on it.
+  guarantors?: Array<{ name: string; kind: "company" | "individual"; precheck: (Pick<KycPrecheckResult, "companiesHouse" | "sanctions">) | null }>;
   // Another firm's checks BGP relies on for this party (MLR 2017 reg 39;
   // 21 November 2026): while it stands, no one on the list owes anything.
   reliance?: PartyReliance | null;
@@ -272,6 +277,25 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       add(p.name, "owner", { detail: `behind ${p.ownerName}${p.ownerCountry ? ` (${p.ownerCountry})` : ""}: ${p.detail}`, dob: p.dob });
     }
   }
+  // The guarantors: a person who guarantees, and a company's owners as its
+  // register names them (a listed company has none to identify).
+  const guarantorOfficers: NonNullable<KycPrecheckResult["companiesHouse"]>["officers"] = [];
+  for (const g of input.guarantors || []) {
+    if (g.kind === "individual") { add(g.name, "guarantor", { detail: "the guarantor" }); continue; }
+    const gch = g.precheck?.companiesHouse || null;
+    if (!gch) continue;
+    if (!gch.listing) {
+      for (const o of gch.owners.filter(o => o.kind === "individual")) {
+        const line = [...new Set(o.controls.map(controlWords))].join("; ") || "significant control";
+        add(o.name, "guarantor_owner", { detail: `owns or controls the guarantor, ${g.name}: ${line}`, dob: o.dob, register: true });
+      }
+      for (const p of gch.peopleUpChain) {
+        const line = [...new Set(p.controls.map(controlWords))].join("; ");
+        add(p.name, "guarantor_owner", { detail: `up the guarantor's ownership chain (${g.name}), in ${p.foundAt}${line ? `: ${line}` : ""}`, dob: p.dob, register: true });
+      }
+    }
+    guarantorOfficers.push(...gch.officers);
+  }
   // A trust's people, as its structure records them (23 November 2026).
   const trust = input.kind === "company" ? input.trust || null : null;
   const trustCorporate = (trust?.people || []).filter(p => p.corporate);
@@ -286,7 +310,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   // Someone sent a request of their own stays on the list if the register changes.
   for (const r of party.filter(r => r.person)) for (const role of r.person!.roles) add(r.person!.name, role);
 
-  const officers = (ch?.officers || []).filter(o => isPerson(o.role));
+  const officers = [...(ch?.officers || []), ...guarantorOfficers].filter(o => isPerson(o.role));
   for (const d of drafts) {
     const officer = officers.find(o => samePerson(o.name, d.name));
     if (!officer) continue;
@@ -300,13 +324,16 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   for (const d of drafts) if (trust && [...d.roles].every(r => trustRoles.has(r)) && !d.trustOwes) d.trustOnly = true;
 
   const sanctionsFor = (name: string): PersonSanctions => {
-    const line = (input.precheck?.sanctions?.lines || []).find(l => samePerson(l.name, name));
+    // The party's own screening first, then each guarantor's.
+    const line = [input.precheck, ...(input.guarantors || []).map(g => g.precheck)]
+      .map(pre => (pre?.sanctions?.lines || []).find(l => samePerson(l.name, name)))
+      .find(Boolean);
     return line ? line.outcome : "not_screened";
   };
 
   const people: KycPartyPerson[] = drafts.filter(d => !d.trustOnly).map(d => {
     const name = personDisplayName(d.name);
-    const roles = (["settlor", "trustee", "protector", "beneficiary", "controller", "owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
+    const roles = (["settlor", "trustee", "protector", "beneficiary", "controller", "owner", "guarantor", "guarantor_owner", "acting", "joint", "director"] as const).filter(r => d.roles.has(r));
     // Their own requests: a cancelled one still holds what was done on it (a
     // check passed or a file sent is evidence), but is no longer their link.
     const own = (r: PeopleRequest) => r.companyId === input.companyId && !r.trustDocs
@@ -385,7 +412,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     .filter((name, i, all) => all.findIndex(n => samePerson(n, name)) === i && !drafts.some(d => samePerson(d.name, name))) : [];
   const trusteeChair = new Set(pc ? pc.trustees.filter(t => t.chair).map(t => trusteePersonName(t.name)) : []);
   const directors = officers
-    .filter(o => !drafts.some(d => samePerson(d.name, o.name)) && !trustees.some(t => samePerson(t, o.name)))
+    .filter((o, i, all) => !drafts.some(d => samePerson(d.name, o.name)) && !trustees.some(t => samePerson(t, o.name))
+      && all.findIndex(x => samePerson(x.name, o.name)) === i)
     .map(o => ({ name: personDisplayName(o.name), sanctions: sanctionsFor(o.name) }));
   const loose = party
     .filter(r => !r.person)

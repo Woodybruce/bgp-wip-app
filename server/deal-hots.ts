@@ -365,7 +365,21 @@ export async function matchHotsParties(db: Db, deal: DealRow, reading: HotsParty
     const role = dealRoleFor(read, roles, reading);
     const base: HotsPartyMatch = { read, role, brand: null, signing: null, state: "guarantor", filed: null, register: [], registerNote: null, numberIsAnother: null, candidates: [] };
     if (!role) {
-      if (read.number) {
+      // A guarantor (23 November 2026): looked for among the companies filed under
+      // the party it stands behind, so it can be made the transaction's guarantor.
+      const gRole = roles.includes("tenant") ? "tenant" as const : roles.includes("purchaser") ? "purchaser" as const : null;
+      const gBrandId: string | null = gRole ? (deal as any)[`${gRole}_id`] || null : null;
+      const gBrand = gBrandId ? brands.rows.find((b: any) => String(b.id) === String(gBrandId)) : null;
+      if (read.role === "guarantor" && gRole) {
+        const under = entities.rows.filter((e: any) => gBrandId && String(e.parent_company_id) === String(gBrandId));
+        const filed = (read.number && under.find((e: any) => sameCompaniesHouseNumber(e.companies_house_number, read.number)))
+          || under.find((e: any) => legalNameKey(e.name) === legalNameKey(read.name) && (!read.number || !e.companies_house_number));
+        if (filed) base.filed = { id: String(filed.id), name: String(filed.name), number: filed.companies_house_number || null };
+        const set = !!filed && (await db.query(
+          `SELECT 1 FROM deal_guarantors WHERE deal_id = $1 AND entity_id = $2 AND removed_at IS NULL LIMIT 1`, [deal.id, String(filed.id)]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+        base.guarantees = { role: gRole, brand: gBrand ? { id: String(gBrand.id), name: String(gBrand.name) } : null, set };
+      }
+      if (read.number && !base.filed) {
         const r = await lookUpRegister(read, lookups);
         Object.assign(base, { register: r.register, registerNote: r.note, numberIsAnother: r.numberIsAnother });
       }
