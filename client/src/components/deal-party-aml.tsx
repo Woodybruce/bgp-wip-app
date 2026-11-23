@@ -21,10 +21,9 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { IN_HOUSE_EDD_NOTE_MIN, KYC4U_RESULTS, KYC4U_RESULT_MAX_FILES, SIGN_OFF_NOTE_MIN, type Kyc4uResultKey } from "@shared/party-kyc";
 import {
-  DUE_DILIGENCE_LABEL, JOINT_ASKED_HOW, JOINT_OUTCOMES, NOT_REQUIRED_REASONS, jointAgentNotRequiredRefusal, notRequiredInput,
-  type JointAgentRule, type JointAskedHow, type JointOutcome, type NotRequiredReason,
+  DUE_DILIGENCE_LABEL, NOT_REQUIRED_CHOOSABLE, NOT_REQUIRED_REASONS, notRequiredInput,
+  type JointAgentRule, type NotRequiredReason,
 } from "@shared/aml-policy";
-import { useJointChecks } from "@/components/joint-agent-checks";
 import type { DealAmlStatus } from "@/components/deal-aml-status";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
@@ -269,55 +268,18 @@ function Kyc4uResultDialog({ dealId, role, partyName, onClose }: { dealId: strin
 // their checks and what came back (AMLG2200 s21): a request made in the app
 // (server/joint-agent-checks.ts), or how, when and whom BGP asked otherwise.
 // On a letting at £10,000 a month or more the reason is not offered.
-export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRule, initialRef, onClose }: {
-  dealId: string; role: string; companyId?: string; partyName: string; jointRule?: JointAgentRule | null; initialRef?: string | null; onClose: () => void;
+export function NotRequiredDialog({ dealId, role, jointRule, partyName, onClose }: {
+  dealId: string; role: string; companyId?: string; partyName: string; jointRule?: JointAgentRule | null; onClose: () => void;
 }) {
   const { toast } = useToast();
-  const rule: JointAgentRule = jointRule || "other";
-  const [reason, setReason] = useState<NotRequiredReason | "">(initialRef ? "joint_agent" : "");
+  const [reason, setReason] = useState<NotRequiredReason | "">("");
   const [comment, setComment] = useState("");
-  const joint = useJointChecks(dealId, reason === "joint_agent" && rule === "sale");
-  const jointParty = joint.data?.parties.find(p => p.companyId === companyId) || null;
-  const requests = (jointParty?.requests || []).filter(r => r.status !== "cancelled" && (r.sentAt || r.openedAt || r.manual));
-  // What the latest request's files do not cover, and what they show (22 November 2026).
-  const currentRef = jointParty?.requests.find(r => r.status !== "cancelled")?.ref || null;
-  const gapsOf = (ref: string) => (ref && ref === currentRef && jointParty?.coverage ? { missing: jointParty.coverage.missing, flags: jointParty.coverage.flags } : { missing: [] as string[], flags: [] as string[] });
-  const [missingText, setMissingText] = useState("");
-  const [flagNote, setFlagNote] = useState("");
-  const [checkedByHand, setCheckedByHand] = useState("");
-  const [askedBy, setAskedBy] = useState<"app" | "other">(initialRef ? "app" : "other");
-  const [jointRef, setJointRef] = useState(initialRef || "");
-  const [askedOn, setAskedOn] = useState("");
-  const [askedHow, setAskedHow] = useState<JointAskedHow | "">("");
-  const [askedWhom, setAskedWhom] = useState("");
-  const [outcome, setOutcome] = useState<JointOutcome | "">("");
-  const selected = askedBy === "app" ? gapsOf(jointRef) : { missing: [] as string[], flags: [] as string[] };
-  const body = {
-    reason, comment: comment.trim(),
-    ...(reason === "joint_agent" && rule === "sale" ? {
-      outcome,
-      ...(askedBy === "app" ? { jointRef } : { askedOn, askedHow, askedWhom: askedWhom.trim() }),
-      ...(outcome === "partly" ? { missing: missingText } : {}),
-      ...(outcome !== "not_provided" && selected.flags.length ? { flagNote: flagNote.trim() } : {}),
-      ...(outcome === "received" && selected.missing.length ? { checkedByHand: checkedByHand.trim() } : {}),
-    } : {}),
-  };
-  const forRecord = requests.map(r => ({
-    ref: r.ref, sentAt: r.manual ? r.files[0]?.uploadedAt || new Date().toISOString() : r.sentAt || r.openedAt,
-    whom: `${r.firm}${r.to ? ` (${r.to})` : ""}`, how: r.manual ? "email" as const : "app" as const, files: r.files.length,
-    ...gapsOf(r.ref),
-  }));
-  // "They sent part of their checks": what did not come, from their files, to check and edit.
-  const pickOutcome = (v: JointOutcome) => {
-    setOutcome(v);
-    if (v === "partly" && !missingText.trim() && selected.missing.length) setMissingText(selected.missing.join("\n"));
-  };
-  const checked = reason ? notRequiredInput(body, { rule, requests: forRecord }) : null;
-  const refused = reason === "joint_agent" ? jointAgentNotRequiredRefusal(rule) : null;
+  const body = { reason, comment: comment.trim() };
+  const checked = reason ? notRequiredInput(body, { rule: jointRule || "other" }) : null;
   const missing = !reason ? "Choose why." : checked && "problem" in checked ? checked.problem : null;
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/not-required`, body)).json(),
-    onSuccess: () => { refreshAfterDecision(dealId); queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "joint-agent-checks"] }); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this transaction.` }); onClose(); },
+    onSuccess: () => { refreshAfterDecision(dealId); toast({ title: "Marked Not required", description: `${partyName} needs no checks on this transaction.` }); onClose(); },
     onError: (e: any) => toast({ title: "Not marked", description: plain(e), variant: "destructive" }),
   });
   return (
@@ -326,7 +288,7 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
         <DialogHeader>
           <DialogTitle>No checks needed on {partyName}?</DialogTitle>
           <DialogDescription>
-            The joint agent dealt with this party on a sale, or no transaction was done. It stays on the transaction with your name.
+            Only when no transaction was done with this party. It stays on the transaction with your name.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -335,84 +297,17 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
             <Select value={reason} onValueChange={v => setReason(v as NotRequiredReason)}>
               <SelectTrigger data-testid={`aml-not-required-reason-${role}`}><SelectValue placeholder="Choose" /></SelectTrigger>
               <SelectContent>
-                {(Object.keys(NOT_REQUIRED_REASONS) as NotRequiredReason[]).map(k => <SelectItem key={k} value={k}>{NOT_REQUIRED_REASONS[k]}</SelectItem>)}
+                {NOT_REQUIRED_CHOOSABLE.map(k => <SelectItem key={k} value={k}>{NOT_REQUIRED_REASONS[k]}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
-          {refused && <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid={`aml-not-required-refused-${role}`}>{refused}</p>}
-          {reason === "joint_agent" && rule === "sale" && (
-            <div className="space-y-2 rounded border p-2" data-testid={`aml-not-required-asked-${role}`}>
-              <p className="text-xs font-medium">How BGP asked the joint agent</p>
-              <Select value={askedBy} onValueChange={v => setAskedBy(v as "app" | "other")}>
-                <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-asked-by-${role}`}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="app">The request in the app</SelectItem>
-                  <SelectItem value="other">Asked another way</SelectItem>
-                </SelectContent>
-              </Select>
-              {askedBy === "app" ? (
-                requests.length ? (
-                  <Select value={jointRef} onValueChange={setJointRef}>
-                    <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-ref-${role}`}><SelectValue placeholder="Choose the request" /></SelectTrigger>
-                    <SelectContent>
-                      {requests.map(r => <SelectItem key={r.ref} value={r.ref}>{r.firm}, ref {r.ref} · {r.files.length} file{r.files.length === 1 ? "" : "s"}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                ) : <p className="text-[11px] text-muted-foreground">{joint.isLoading ? "Loading the requests…" : "No request to them yet. Ask from the Joint agent line, or say how you asked."}</p>
-              ) : (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label htmlFor={`aml-asked-on-${role}`} className="text-[11px]">When you asked</Label>
-                    <Input id={`aml-asked-on-${role}`} type="date" value={askedOn} onChange={e => setAskedOn(e.target.value)} max={todayLondon()} className="h-8 text-xs" data-testid={`aml-not-required-asked-on-${role}`} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[11px]">How</Label>
-                    <Select value={askedHow} onValueChange={v => setAskedHow(v as JointAskedHow)}>
-                      <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-asked-how-${role}`}><SelectValue placeholder="Choose" /></SelectTrigger>
-                      <SelectContent>
-                        {(Object.keys(JOINT_ASKED_HOW) as JointAskedHow[]).filter(k => k !== "app").map(k => <SelectItem key={k} value={k}>{JOINT_ASKED_HOW[k]}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label htmlFor={`aml-asked-whom-${role}`} className="text-[11px]">Whom, at the joint agent</Label>
-                    <Input id={`aml-asked-whom-${role}`} value={askedWhom} onChange={e => setAskedWhom(e.target.value)} maxLength={160} placeholder="Savills (Jane Smith)" className="h-8 text-xs" data-testid={`aml-not-required-asked-whom-${role}`} />
-                  </div>
-                </div>
-              )}
-              <Select value={outcome} onValueChange={v => pickOutcome(v as JointOutcome)}>
-                <SelectTrigger className="h-8 text-xs" data-testid={`aml-not-required-outcome-${role}`}><SelectValue placeholder="What came back" /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(JOINT_OUTCOMES) as JointOutcome[]).map(k => <SelectItem key={k} value={k}>{JOINT_OUTCOMES[k][0].toUpperCase() + JOINT_OUTCOMES[k].slice(1)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {outcome === "partly" && (
-                <div className="space-y-1">
-                  <Label htmlFor={`aml-missing-${role}`} className="text-[11px]">What they did not send (one per line)</Label>
-                  <Textarea id={`aml-missing-${role}`} value={missingText} onChange={e => setMissingText(e.target.value)} rows={3} maxLength={1500} className="text-xs" data-testid={`aml-not-required-missing-text-${role}`} />
-                </div>
-              )}
-              {outcome === "received" && selected.missing.length > 0 && (
-                <div className="space-y-1 rounded border border-amber-300 bg-amber-50 p-1.5 text-[11px] text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
-                  <p>Their files do not cover: {selected.missing.join("; ")}. Choose "they sent part of their checks", or say how you checked these by hand.</p>
-                  <Textarea value={checkedByHand} onChange={e => setCheckedByHand(e.target.value)} rows={2} maxLength={1000} className="text-xs" data-testid={`aml-not-required-by-hand-${role}`} />
-                </div>
-              )}
-              {outcome && outcome !== "not_provided" && selected.flags.length > 0 && (
-                <div className="space-y-1 rounded border border-red-300 bg-red-50 p-1.5 text-[11px] text-red-950 dark:bg-red-950/30 dark:text-red-100" data-testid={`aml-not-required-flags-${role}`}>
-                  <p>Their files show something to look at: {selected.flags.join("; ")}. Say what you did about it.</p>
-                  <Textarea value={flagNote} onChange={e => setFlagNote(e.target.value)} rows={2} maxLength={1000} className="text-xs" data-testid={`aml-not-required-flag-note-${role}`} />
-                </div>
-              )}
-            </div>
-          )}
           <div className="space-y-1.5">
             <Label htmlFor={`aml-not-required-comment-${role}`}>What happened</Label>
             <Textarea id={`aml-not-required-comment-${role}`} value={comment} onChange={e => setComment(e.target.value)} rows={3} maxLength={1000}
-              placeholder="For example: Savills found the buyer and ran the negotiation; BGP acted for the seller only"
+              placeholder="For example: the tenant withdrew before heads of terms and no letting was done"
               data-testid={`aml-not-required-comment-${role}`} />
           </div>
-          {missing && !refused && <p className="text-[11px] text-muted-foreground" data-testid={`aml-not-required-missing-${role}`}>{missing}</p>}
+          {missing && <p className="text-[11px] text-muted-foreground" data-testid={`aml-not-required-missing-${role}`}>{missing}</p>}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
@@ -422,19 +317,6 @@ export function NotRequiredDialog({ dealId, role, companyId, partyName, jointRul
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** The officers' button on the Joint agent line of a sale: Not required, with the request as the record. */
-export function JointNotRequiredButton({ dealId, role, companyId, partyName, jointRef }: { dealId: string; role: string; companyId: string; partyName: string; jointRef: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpen(true)} data-testid={`joint-not-required-${role}`}>
-        <CircleSlash className="w-3.5 h-3.5 mr-1" />Mark Not required
-      </Button>
-      {open && <NotRequiredDialog dealId={dealId} role={role} companyId={companyId} partyName={partyName} jointRule="sale" initialRef={jointRef} onClose={() => setOpen(false)} />}
-    </>
   );
 }
 

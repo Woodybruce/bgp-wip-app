@@ -12,7 +12,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   JOINT_AGENT_RULE_WORDS, jointAgentNotRequiredRefusal, jointAgentRule, jointAskWords, notRequiredInput, notRequiredLapse,
-  type JointRequestForRecord,
 } from "../shared/aml-policy";
 import {
   JOINT_CHASE_MAX, agentWords, bornAgrees, bornKey, checkJointReading, jointChaseDue, jointCoverage, jointGapLines, jointLine, jointNextChaseDay, jointRelianceInput, jointRelianceTerms, jointWorkingDay, londonDayNumber, sameJointCompany,
@@ -42,67 +41,37 @@ test("a sale or purchase takes HMRC's ask-and-record route; a letting at £10,00
   for (const rule of ["sale", "letting", "letting_under", "advisory", "other"] as const) assert.ok(JOINT_AGENT_RULE_WORDS[rule].length > 10);
 });
 
-test("the joint agent reason is refused on a letting in scope and on anything but a sale, in HMRC's terms", () => {
-  assert.match(jointAgentNotRequiredRefusal("letting") || "", /every party is checked/);
-  assert.match(jointAgentNotRequiredRefusal("other") || "", /Only a sale/);
-  assert.equal(jointAgentNotRequiredRefusal("sale"), null);
-  assert.equal(jointAgentNotRequiredRefusal("letting_under"), null);
-  assert.equal(jointAgentNotRequiredRefusal("advisory"), null);
+test("the joint agent reason is refused on every transaction since Issue 4 of BGP's policy", () => {
+  // BGP's policy, Issue 4 (23 November 2026): the counterparty on a joint
+  // instruction is always checked, sales included, which goes further than HMRC.
+  for (const rule of ["sale", "letting", "letting_under", "advisory", "other"] as const) {
+    assert.match(jointAgentNotRequiredRefusal(rule) || "", /checks the counterparty on every joint instruction/, rule);
+  }
 });
 
-// ── Not required: the record of asking ──────────────────────────────────────
+// ── Not required ────────────────────────────────────────────────────────────
 
 const comment = "Savills found the buyer and ran the negotiation; BGP acted for the seller only.";
-const sent: JointRequestForRecord[] = [
-  { ref: "7K2Q9M", sentAt: "2026-11-20T09:15:00.000Z", whom: "Savills (Jane Smith)", how: "app", files: 3 },
-  { ref: "ABCD12", sentAt: "2026-11-21T09:15:00.000Z", whom: "Savills", how: "email", files: 0 },
-  { ref: "NOSEND", sentAt: null, whom: "Savills", how: "app", files: 0 },
-];
-const problem = (body: Record<string, unknown>, rule: Parameters<typeof notRequiredInput>[1]["rule"] = "sale") => {
-  const r = notRequiredInput({ reason: "joint_agent", comment, ...body }, { rule, today, requests: sent });
-  assert.ok("problem" in r, JSON.stringify(body));
-  return (r as { problem: string }).problem;
-};
 
-test("on a sale the joint agent reason needs what came back and how BGP asked", () => {
-  assert.match(problem({}), /what came back/);
-  assert.match(problem({ outcome: "received" }), /date you asked/);
-  assert.match(problem({ outcome: "received", askedOn: "2026-11-25", askedHow: "email", askedWhom: "Savills" }), /future/);
-  assert.match(problem({ outcome: "received", askedOn: "2026-11-20", askedHow: "app", askedWhom: "Savills" }), /how you asked/);
-  assert.match(problem({ outcome: "received", askedOn: "2026-11-20", askedHow: "phone", askedWhom: "" }), /who you asked/);
-  const typed = notRequiredInput({ reason: "joint_agent", comment, outcome: "not_provided", askedOn: "2026-11-18", askedHow: "phone", askedWhom: "Savills (Jane Smith)" }, { rule: "sale", today, requests: sent });
-  assert.ok(!("problem" in typed));
-  assert.deepEqual(typed.asked, { askedOn: "2026-11-18", how: "phone", whom: "Savills (Jane Smith)", outcome: "not_provided", ref: null, missing: null, note: null });
-  assert.equal(jointAskWords(typed.asked!), "Asked Savills (Jane Smith) for their checks on 18 Nov 2026, by phone: they did not provide them");
-});
-
-test("a request made in the app is the record: sent, on this party, and with files when they sent their checks", () => {
-  const app = notRequiredInput({ reason: "joint_agent", comment, outcome: "received", jointRef: "7k2q9m" }, { rule: "sale", today, requests: sent });
-  assert.ok(!("problem" in app));
-  assert.deepEqual(app.asked, { askedOn: "2026-11-20", how: "app", whom: "Savills (Jane Smith)", outcome: "received", ref: "7K2Q9M", missing: null, note: null });
-  // Files the joint agent emailed to someone at BGP: asked by email.
-  const emailed = notRequiredInput({ reason: "joint_agent", comment, outcome: "not_provided", jointRef: "ABCD12" }, { rule: "sale", today, requests: sent });
-  assert.ok(!("problem" in emailed));
-  assert.equal(emailed.asked?.how, "email");
-  assert.match(problem({ outcome: "received", jointRef: "ABCD12" }), /Nothing has come back/);
-  assert.match(problem({ outcome: "received", jointRef: "NOSEND" }), /not sent/);
-  assert.match(problem({ outcome: "received", jointRef: "ZZZZZZ" }), /not on this party/);
-});
-
-test("the joint agent reason is refused on a letting in scope; a letting under £10,000 a month and no deal need no record", () => {
-  assert.match(problem({ outcome: "received", jointRef: "7K2Q9M" }, "letting"), /every party is checked/);
-  const under = notRequiredInput({ reason: "joint_agent", comment }, { rule: "letting_under", today });
-  assert.ok(!("problem" in under) && under.asked === null);
-  const noDeal = notRequiredInput({ reason: "no_deal", comment }, { rule: "letting", today });
+test("Not required takes no joint agent reason, with a record of asking or without; no transaction still does", () => {
+  for (const body of [{}, { outcome: "received", jointRef: "7K2Q9M" }, { outcome: "not_provided", askedOn: "2026-11-18", askedHow: "phone", askedWhom: "Savills (Jane Smith)" }]) {
+    const r = notRequiredInput({ reason: "joint_agent", comment, ...body }, { rule: "sale" });
+    assert.ok("problem" in r && /every joint instruction/.test(r.problem), JSON.stringify(body));
+  }
+  const noDeal = notRequiredInput({ reason: "no_deal", comment: "The buyer withdrew before an offer was accepted." }, { rule: "sale" });
   assert.ok(!("problem" in noDeal) && noDeal.reason === "no_deal");
 });
 
-test("a mark made before the rule lapses on a letting, and on a sale with no record of asking", () => {
-  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "letting") || "", /every party is checked/);
-  assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, "sale") || "", /No record of asking the joint agent/);
-  assert.equal(notRequiredLapse({ reason: "joint_agent", asked: { askedOn: "2026-11-20", how: "app", whom: "Savills", outcome: "received", ref: "7K2Q9M" } }, "sale"), null);
-  assert.equal(notRequiredLapse({ reason: "joint_agent", asked: null }, "letting_under"), null);
+test("a joint agent mark made before Issue 4 lapses on every transaction, with or without its record; a no-deal mark holds", () => {
+  const asked = { askedOn: "2026-11-20", how: "app" as const, whom: "Savills", outcome: "received" as const, ref: "7K2Q9M" };
+  for (const rule of ["sale", "letting", "letting_under"] as const) {
+    assert.match(notRequiredLapse({ reason: "joint_agent", asked: null }, rule) || "", /every joint instruction/, rule);
+  }
+  assert.match(notRequiredLapse({ reason: "joint_agent", asked }, "sale") || "", /every joint instruction/);
   assert.equal(notRequiredLapse({ reason: "no_deal", asked: null }, "letting"), null);
+  // Its record still reads, so the lapsed mark says what it was.
+  assert.equal(jointAskWords({ ...asked, how: "phone", whom: "Savills (Jane Smith)", outcome: "not_provided", askedOn: "2026-11-18", ref: null }),
+    "Asked Savills (Jane Smith) for their checks on 18 Nov 2026, by phone: they did not provide them");
 });
 
 // ── Asking ──────────────────────────────────────────────────────────────────
@@ -423,15 +392,16 @@ const facts = (over: Partial<AmlBoxFacts> = {}): AmlBoxFacts => ({
   signOffBlocked: null, needsNote: false, ...over,
 });
 
-test("the Next line follows the joint agent: waiting on them, then the officers decide in HMRC's terms", () => {
+test("the Next line follows the joint agent: waiting on them, then BGP signs the party off on its documents", () => {
   const sale = { firm: "Savills", rule: "sale" as const, reliance: false, missing: 0 };
   const waiting = amlNextStep(facts({ joint: { ...sale, status: "sent" } }));
   assert.equal(waiting.who, "joint_agent");
   assert.equal(waiting.action, "joint");
-  assert.equal(`${waiting.lead} · ${waiting.words}`, "Waiting on Savills · for their checks");
+  assert.equal(`${waiting.lead} · ${waiting.words}`, "Waiting on Savills · for the documents");
+  // Issue 4 of BGP's policy: a sale's counterparty is checked as a letting's is, never marked Not required.
   const inSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 0 } }));
-  assert.equal(inSale.who, "officers");
-  assert.equal(`${inSale.lead} · ${inSale.words}`, "For the officers · Savills' checks are in: mark Not required");
+  assert.equal(inSale.action, "sign_off");
+  assert.equal(`${inSale.lead} · ${inSale.words}`, "Ready to sign off · Savills' documents are in: add a note");
   const gapsSale = amlNextStep(facts({ stage: "joint_in", joint: { ...sale, status: "in", missing: 2 } }));
   assert.equal(gapsSale.who, "bgp");
   assert.equal(gapsSale.action, "joint_remind");
@@ -445,11 +415,13 @@ test("the Next line follows the joint agent: waiting on them, then the officers 
   assert.equal(amlNextStep(facts({ joint: { ...letting, status: "finished", reliance: true } })).words, "Savills' checks are in: record the reliance");
   // A link that ran out goes back to the client checks.
   assert.equal(amlNextStep(facts({ stage: "not_started", joint: { ...sale, status: "expired" } })).action, "send_client_checks");
-  // Red flags still come first.
   // A red flag: the joint agent's route still runs; the officers sign off with a note (KYC4U is no longer used).
-  assert.equal(amlNextStep(facts({ redFlags: 1, joint: { ...sale, status: "in" } })).action, "joint");
+  const flagged = amlNextStep(facts({ redFlags: 1, joint: { ...sale, status: "in" } }));
+  assert.equal(flagged.action, "sign_off");
+  assert.equal(flagged.who, "officers");
   // With their route running, BGP's own step of setting the company that signs waits.
-  assert.equal(amlNextStep(facts({ companyMissing: true, joint: { ...sale, status: "in" } })).action, "joint");
+  assert.equal(amlNextStep(facts({ companyMissing: true, joint: { ...sale, status: "sent" } })).action, "joint");
+  assert.equal(amlNextStep(facts({ companyMissing: true, joint: { ...sale, status: "in" } })).action, "sign_off");
   assert.equal(amlNextStep(facts({ companyMissing: true, stage: "not_started", joint: { ...sale, status: "not_sent" } })).action, "fill_in");
   assert.equal(amlNextStep(facts({ companyMissing: true, stage: "not_started" })).action, "fill_in");
 });
@@ -558,30 +530,6 @@ test("chasing counts London calendar days, so the date shown is the day the morn
   assert.equal(jointWorkingDay(new Date("2026-11-22T10:00:00Z")), false, "a Sunday");
   // Tuesday 22 December + 3 is Christmas Day; Saturday, Sunday and Monday 28th (a bank holiday) follow.
   assert.equal(jointNextChaseDay(["2026-12-22T09:00:00Z"])?.slice(0, 10), "2026-12-29");
-});
-
-test("on a sale the record says what did not come, and what their files showed is answered first", () => {
-  const withGaps: JointRequestForRecord[] = [{ ref: "7K2Q9M", sentAt: "2026-11-20T09:15:00.000Z", whom: "Savills", how: "app", files: 2,
-    missing: ["Daniel North: address", "their sanctions and PEP screening"], flags: ["s.pdf: the screening found a possible match"] }];
-  const ask = (b: Record<string, unknown>) => notRequiredInput({ reason: "joint_agent", comment, jointRef: "7K2Q9M", ...b }, { rule: "sale", today, requests: withGaps });
-  const flagged = ask({ outcome: "partly" });
-  assert.ok("problem" in flagged && /show something to look at/.test(flagged.problem));
-  const partly = ask({ outcome: "partly", flagNote: "The match is a namesake: different date of birth." });
-  assert.ok(!("problem" in partly));
-  assert.deepEqual(partly.asked?.missing, ["Daniel North: address", "their sanctions and PEP screening"]);
-  assert.match(jointAskWords(partly.asked!), /they sent part of their checks \(not sent: Daniel North: address; their sanctions and PEP screening\)/);
-  assert.match(partly.asked?.note || "", /namesake/);
-  const typedList = ask({ outcome: "partly", flagNote: "The match is a namesake.", missing: "Their screening\nThe register entry" });
-  assert.deepEqual(!("problem" in typedList) && typedList.asked?.missing, ["Their screening", "The register entry"]);
-  const received = ask({ outcome: "received", flagNote: "The match is a namesake." });
-  assert.ok("problem" in received && /say how you checked these by hand/.test(received.problem));
-  const byHand = ask({ outcome: "received", flagNote: "The match is a namesake.", checkedByHand: "Their CDD summary shows both, seen in their file." });
-  assert.ok(!("problem" in byHand) && /Checked by hand/.test(byHand.asked?.note || ""));
-  // Nothing came: the flags and gaps do not apply.
-  assert.ok(!("problem" in ask({ outcome: "not_provided" })));
-  // Asked another way: "part of them" needs what did not come.
-  const typed = notRequiredInput({ reason: "joint_agent", comment, outcome: "partly", askedOn: "2026-11-18", askedHow: "phone", askedWhom: "Savills" }, { rule: "sale", today });
-  assert.ok("problem" in typed && /did not send/.test(typed.problem));
 });
 
 test("the Next line says what is still missing and that the app is chasing", () => {

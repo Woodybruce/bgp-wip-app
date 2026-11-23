@@ -890,9 +890,10 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     : null;
   const listingNote = ch.listing
     ? [
-        "No beneficial owners to identify: the company itself is identified and verified from the register, and simplified due diligence may apply.",
-        ch.listing.viaParent ? "KYC4U to confirm the chain." : "",
-        listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent.",
+        ch.listing.viaParent
+          ? "No individual owners to identify: the owner is the listed company. Standard due diligence (policy 4.2); the officers confirm the chain."
+          : "No beneficial owners to identify: the company itself is identified and verified from the register, and simplified due diligence may apply.",
+        listingSettled(ch.listing.market) ? "" : "The officers confirm the market's disclosure rules are equivalent.",
       ].filter(Boolean).join(" ")
     : null;
   const trading = tradingState(ch);
@@ -1032,10 +1033,10 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const where = LISTING_WORDS[input.listing.market];
     const who = input.listing.viaParent ? `Owned through one company at each level by ${input.listing.company}, which is ${where}` : `${where[0].toUpperCase()}${where.slice(1)}`;
     // The regulation names the listed company itself: a subsidiary reached
-    // through a chain, or a market abroad, is for KYC4U to confirm.
+    // through a chain, or a market abroad, is for the officers to confirm.
     const check = [
-      input.listing.viaParent ? " KYC4U to confirm the chain." : "",
-      listingSettled(input.listing.market) ? "" : " KYC4U to confirm the market's disclosure rules are equivalent.",
+      input.listing.viaParent ? " The officers confirm the chain." : "",
+      listingSettled(input.listing.market) ? "" : " The officers confirm the market's disclosure rules are equivalent.",
     ].join("");
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
@@ -1697,7 +1698,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
     if (ch.listing) {
       out.push({
         key: "listing", label: ch.listing.viaParent ? `Owned by ${ch.listing.company}, ${LISTING_WORDS[ch.listing.market]}` : `Listed: ${LISTING_WORDS[ch.listing.market]}`, state: "info",
-        detail: [`No beneficial owners to ask for.`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. KYC4U to confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "KYC4U to confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
+        detail: [`No beneficial owners to ask for.`, ch.listing.viaParent ? `Owned through: ${ch.chain.map(c => c.name).join(" > ") || ch.listing.company}. The officers confirm the chain.` : "", listingSettled(ch.listing.market) ? "" : "The officers confirm the market's disclosure rules are equivalent."].filter(Boolean).join(" "),
         links: [],
       });
     } else {

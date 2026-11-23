@@ -116,11 +116,12 @@ test("a listed company is not asked for an owners chart or owner IDs", () => {
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
   assert.equal(asks.confirmOwners, null);
-  // Through a parent, and a market abroad: KYC4U to confirm the market.
+  // Through a parent, and a market abroad: the officers confirm the chain and the market (KYC4U is no longer used).
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
     { kind: "company", role: "landlord", idCheck: true, contactName: null, today: TODAY });
   assert.deepEqual(viaParent.notAsked.map(n => n.key), ["ownership", "owner_ids"]);
-  assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*KYC4U to confirm/);
+  assert.match(viaParent.notAsked[0].reason, /Owned through one company at each level by BIG INC.*The officers confirm the chain\. The officers confirm the market/);
+  assert.doesNotMatch(viaParent.notAsked[0].reason, /KYC4U/);
 });
 
 test("owners on the register are confirmed, not drawn; a director is not asked for authority", () => {

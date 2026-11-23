@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import {
   AML_HOTS_CLAUSE, AML_POLICY_DOCUMENTS, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, POLICY_SOURCE, RECHECK_YEARS,
   MAX_AML_DEPUTIES, amlOfficerRole, amlPolicyDocument, amlPolicyDocumentReplaced, amlRegime, countryOf, countryRisk, deputyNames, dueDiligenceLevel, inLondonOrSouthEast, isDealAgent,
-  notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, readDeputies, recheckDate, sectorMatches, sellsCitizenship,
-  simplifiedBasis, superPrimeFlag,
+  NOT_REQUIRED_CHOOSABLE, notRequiredInput, officerWords, policyFactorFlags, policyFactorsToWeigh, readDeputies, recheckDate, sectorMatches, sellsCitizenship,
+  simplifiedBasis, standardBasis, superPrimeFlag, superPrimeWeigh,
 } from "../shared/aml-policy";
 import { STANDARD_HOTS_TEMPLATE, STANDARD_HOTS_TEMPLATE_37 } from "../shared/unit-hots";
 import { dealRedFlags, partyRedFlags, redFlagNote } from "../shared/kyc-red-flags";
@@ -27,7 +27,7 @@ test("the Nominated Officer and the Deputy both decide; admins only while no Nom
   assert.equal(officerWords(officers), "the Nominated Officer (Jack Barratt) or the Deputy (Layla O'Driscoll)");
 });
 
-test("Use the policy's officers looks for the officers Issue 3 names: Jack Barratt, then Layla O'Driscoll and Woody Bruce", () => {
+test("Use the policy's officers looks for the officers Issues 3 and 4 name: Jack Barratt, then Layla O'Driscoll and Woody Bruce", () => {
   assert.equal(POLICY_OFFICER_NAMES.nominated, "Jack Barratt");
   assert.deepEqual([...POLICY_OFFICER_NAMES.deputies], ["Layla O'Driscoll", "Woody Bruce"]);
 });
@@ -144,11 +144,19 @@ test("the policy's higher-risk factors, read from the register", () => {
   assert.deepEqual(policyFactorsToWeigh({ precheck: precheck({ sicCodes: ["56101"] }) }).length, 1);
 });
 
-test("the policy's basis for simplified due diligence", () => {
+test("the policy's basis for simplified due diligence (Issue 4: a reduction, never for a company owned by a listed one)", () => {
   assert.match(simplifiedBasis({ precheck: precheck({ listing: { market: "uk_regulated", since: null, company: "HAMMERSON PLC", companyNumber: "00360632", viaParent: false } }) })!, /regulated market/);
-  assert.match(simplifiedBasis({ precheck: precheck({ type: "investment-company-with-variable-capital" }) })!, /FCA/);
-  assert.match(simplifiedBasis({ precheck: null, partyName: "London Borough of Croydon" })!, /public body/);
+  assert.match(simplifiedBasis({ precheck: precheck({ type: "investment-company-with-variable-capital" }) })!, /FCA.*owners are still identified/);
+  assert.match(simplifiedBasis({ precheck: null, partyName: "London Borough of Croydon" })!, /public body.*still identified/);
   assert.equal(simplifiedBasis({ precheck: precheck({}) }), null);
+  // HMRC (AMLG11500): none where the ownership goes beyond one UK legal entity.
+  const subsidiary = precheck({ listing: { market: "uk_regulated", since: null, company: "HAMMERSON PLC", companyNumber: "00360632", viaParent: true } });
+  assert.equal(simplifiedBasis({ precheck: subsidiary }), null);
+  assert.match(standardBasis({ precheck: subsidiary })!, /Owned through HAMMERSON PLC, a listed company: standard due diligence/);
+  assert.equal(standardBasis({ precheck: precheck({}) }), null);
+  const level = dueDiligenceLevel({ partyFlags: [], dealFlags: [], simplifiedBasis: null, standardBasis: standardBasis({ precheck: subsidiary }) });
+  assert.equal(level.level, "standard");
+  assert.match(level.why[0], /HAMMERSON PLC/);
 });
 
 test("super-prime sales: £5m in London and the South East, over £1m elsewhere", () => {
@@ -165,15 +173,18 @@ test("super-prime sales: £5m in London and the South East, over £1m elsewhere"
   assert.equal(superPrimeFlag({ dealType: "Sale", pricing: 1_000_000, postcode: "M1 1AE" }), null, "over £1m, not £1m itself");
 });
 
-test("Not required: one of the policy's two reasons and a comment", () => {
+test("Not required: no transaction with the party, and a comment; the joint agent reason is gone (Issue 4)", () => {
   assert.ok("problem" in notRequiredInput({ reason: "other", comment: "A long enough comment" }));
-  assert.ok("problem" in notRequiredInput({ reason: "joint_agent", comment: "short" }));
-  // Since 22 November 2026 HMRC's route for the deal decides the joint agent
-  // reason (server/joint-agent-checks.test.ts): refused on a letting at
-  // £10,000 a month or more, open on one under it.
-  const ok = notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." }, { rule: "letting_under" });
-  assert.ok("reason" in ok && ok.reason === "joint_agent");
-  assert.ok("problem" in notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." }, { rule: "letting" }));
+  assert.ok("problem" in notRequiredInput({ reason: "no_deal", comment: "short" }));
+  const ok = notRequiredInput({ reason: "no_deal", comment: "The tenant withdrew before heads of terms." }, { rule: "letting" });
+  assert.ok("reason" in ok && ok.reason === "no_deal");
+  // The counterparty on a joint instruction is always checked, on any transaction.
+  for (const rule of ["sale", "letting", "letting_under", "advisory", "other"] as const) {
+    const said = notRequiredInput({ reason: "joint_agent", comment: "Savills found and negotiated the tenant." }, { rule });
+    assert.ok("problem" in said && /every joint instruction/.test(said.problem), rule);
+  }
+  assert.deepEqual([...NOT_REQUIRED_CHOOSABLE], ["no_deal"]);
+  // Both reasons still read, so marks made before Issue 4 show what they were.
   assert.equal(Object.keys(NOT_REQUIRED_REASONS).length, 2);
   assert.equal(amlStage({ role: "tenant", dealStatus: "SOL", kyc: { status: null, expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, notRequired: true }), "not_required");
   assert.equal(amlBucket("not_required", true), "done");
@@ -197,11 +208,12 @@ test("factors reach the red flags, the deal's flags and KYC4U's note, listed apa
   const flags = partyRedFlags({ company: { company_type: "Tenant - Bar" }, latestInvestigation: null, requests: [], idChecks: [],
     precheck: { result: precheck({ sicCodes: ["92000"] }), current: true } });
   assert.ok(flags.some(f => f.factor && f.kind === "policy_sector"));
-  const deal = dealRedFlags({ deal_type: "Sale", pricing: 8_000_000, postcode: "SW1A 1AA" });
-  assert.equal(deal[0].kind, "super_prime");
-  const note = redFlagNote([{ ...flags[0] }], deal);
+  // A super-prime sale is weighed on each party, not a flag (risk assessment Issue 3).
+  assert.deepEqual(dealRedFlags({ deal_type: "Sale", pricing: 8_000_000, postcode: "SW1A 1AA" }), []);
+  assert.match(superPrimeWeigh({ dealType: "Sale", pricing: 8_000_000, postcode: "SW1A 1AA" })!, /Super-prime sale.*weigh it with the rest/);
+  assert.equal(superPrimeWeigh({ dealType: "Sale", pricing: 3_000_000, postcode: "SW1A 1AA" }), null);
+  const note = redFlagNote([{ ...flags[0] }], []);
   assert.match(note, /Higher-risk factors in BGP's AML policy \(enhanced due diligence\):/);
-  assert.match(note, /On the transaction: Super-prime sale/);
 });
 
 test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is kept to recognise", () => {
@@ -210,14 +222,18 @@ test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is 
   assert.ok(STANDARD_HOTS_TEMPLATE.trimEnd().endsWith("Code for Leasing Business Premises in England & Wales."));
 });
 
-test("the documents are listed by issue, the trust checklist among them; Issue 2 of the policy is kept behind Issue 3", () => {
-  assert.equal(AML_POLICY_DOCUMENTS.length, 4);
+test("the documents are listed by issue, the trust checklist among them; earlier issues are kept behind the current ones", () => {
+  assert.equal(AML_POLICY_DOCUMENTS.length, 6);
   assert.equal(amlPolicyDocument("checklist-trusts")?.file, "bgp-aml-checklist-trusts.docx");
+  assert.equal(amlPolicyDocument("policy-issue-4")?.file, "bgp-aml-policy-issue-4.docx");
   assert.equal(amlPolicyDocument("policy-issue-3")?.file, "bgp-aml-policy-issue-3.docx");
   assert.equal(amlPolicyDocument("policy-issue-2")?.file, "bgp-aml-policy-issue-2.docx");
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-2")!), true, "Issue 3 replaced it");
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), false);
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), false, "the risk assessment is still Issue 2");
+  assert.equal(amlPolicyDocument("risk-assessment-issue-3")?.file, "bgp-firm-wide-aml-risk-assessment-issue-3.docx");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-4")!), false, "Issue 4 is the current policy");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), true, "Issue 4 replaced it");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-2")!), true);
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-3")!), false, "Issue 3 is the current risk assessment");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), true);
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
-  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 3) and risk assessment (Issue 2)");
+  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 4) and risk assessment (Issue 3)");
 });

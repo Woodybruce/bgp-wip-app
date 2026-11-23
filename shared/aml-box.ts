@@ -235,9 +235,10 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     if (canSign && f.signOffBlocked === null) return ready(`relying on ${firm}${edd ? "; add a note" : ""}`);
     return f.signOffBlocked ? blocked() : step("wait", "officers", `Relying on ${firm}`, edd ? "an officer signs off" : "an agent or an officer signs off");
   }
-  // The joint agent asked for their checks (HMRC: on a sale, ask and record
-  // what came back; on a letting, their checks only under a reliance
-  // agreement). A request that ran out falls back to the client checks.
+  // The joint agent asked for their documents. Since Issue 4 of BGP's policy
+  // the counterparty on any joint instruction is checked, so a sale's
+  // documents come in and are signed off as a letting's are. A request that
+  // ran out falls back to the client checks.
   const joint = f.joint && f.joint.status !== "expired" ? f.joint : null;
   const clientGoing = !!f.request && f.request.status !== "expired" && f.request.status !== "not_sent";
   if (joint && (joint.status === "in" || joint.status === "finished")) {
@@ -250,7 +251,6 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
         ? step("wait", "joint_agent", `Waiting on ${firm}`, n, "joint_remind")
         : step("act", "bgp", "To do", `ask ${firm} for ${joint.missing === 1 ? "the missing document" : `${joint.missing} missing documents`}`, "joint_remind");
     }
-    if (joint.rule === "sale") return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: mark Not required`, "joint");
     // A reliance they agreed before 23 November 2026 can still be recorded.
     if (joint.reliance) return step("act", "officers", "For the officers", `${possessive(firm)} checks are in: record the reliance`, "joint");
     // No reliance terms any more (Woody, 23 November 2026: "we cant agree
@@ -265,7 +265,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("act", "bgp", "To do", `the email to ${firmShort(joint.firm)} didn't go: ask again`, "joint");
   }
   if (joint && (joint.status === "sent" || joint.status === "opened") && !clientGoing) {
-    return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, joint.rule === "sale" ? "for their checks" : "for the documents", "joint");
+    return step("wait", "joint_agent", `Waiting on ${firmShort(joint.firm)}`, "for the documents", "joint");
   }
   if (f.due === false && !f.request) {
     return step("wait", "nobody", "Not due yet", DUE_WORDS[f.role] || "");

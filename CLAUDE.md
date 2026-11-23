@@ -3574,12 +3574,97 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   - Guards: `qa/regression/kyc-via-agent-guards.test.mjs`; tests in
     `server/kyc-request.test.ts`. Not run against Microsoft from a build
     machine.
-- **For Jack, not done**: the policy (Issue 2, and Issue 3, which kept the
-  section) says BGP "uses a third-party service provider to conduct due
-  diligence checks" (D, Outsourcing of KYC administration). That is no
-  longer true and is not one of the four Issue 3 changes he signed off. Its
-  section D also still names Victoria Broadhead as Deputy Compliance Officer.
-  Both wait on a further issue that Jack signs.
+- **Settled by Issue 4 of the policy** (23 November 2026, next section): the
+  outsourcing section now says the checks are carried out in-house in
+  ChatBGP, and section D names Layla O'Driscoll and Woody Bruce as Deputy
+  Compliance Officers (Issue 2 and Issue 3 still named KYC4U's outsourcing
+  and Victoria Broadhead). Issue 4 waits on Jack's approval.
+
+## AML policy Issue 4 is the source of truth (Woody, 2026-11-23)
+
+Woody sent Jack's "BGP AML Policy: Recommended Amendments for Issue 4" ("this
+is jacks updated BGP policies? Can you check?"), then: "Can you clean it up
+and amend our Company policy on the app we will use that as the source of
+truth. cant be AI slang stuff though needs to be normal", and "we are going
+to use dun and bradstreet". Do not re-litigate. The recommendations were
+checked against GOV.UK (HMRC's AMLG2200, AMLG2300, AMLG11410, AMLG11500,
+AMLG11600; the Money Laundering and Terrorist Financing (Amendment)
+Regulations 2026, SI 2026/621, in force 30 June 2026) and written into
+**Issue 4 of the policy** and **Issue 3 of the risk assessment** in plain
+words, with three corrections: a buyer's checks start at agreed heads of
+terms and must be complete before exchange (HMRC treats the offer as
+accepted at exchange; the recommendations said earlier); full checks on the
+counterparty on every joint instruction, sales included, is BGP's choice and
+goes further than HMRC (AMLG2200 s21 only asks a sale's other agent for its
+checks); and FATF's increased monitoring list is treated as high risk by
+BGP's choice (since SI 2026/621 the law requires enhanced due diligence for
+call for action countries only).
+
+- **The documents** (`AML_POLICY_DOCUMENTS`, buttons on Deals → AML →
+  Policy): `bgp-aml-policy-issue-4.docx` (`policy-issue-4`) and
+  `bgp-firm-wide-aml-risk-assessment-issue-3.docx` (`risk-assessment-issue-3`)
+  in `server/assets/aml-policy/`; Issues 2 and 3 of the policy and Issue 2 of
+  the risk assessment are kept on the quiet line (policy M). The footer of
+  Issue 4 names Jack as approver and its change record says what changed;
+  **it waits on Jack's approval**. Each person confirms Issue 4 on My BGP →
+  AML training (`CURRENT_POLICY_READ_TITLE` takes the latest issue).
+  `POLICY_SOURCE` names both. The policy's link to the risk assessment and
+  the risk assessment's link to the policy point at the app's Policy pill.
+- **What Issue 4 says, and what the app does with it**:
+  - **Simplified due diligence is a reduction, never an exemption**: owners
+    are still identified unless the company itself is listed; never with a
+    PEP, an unclear source of funds, ownership beyond one UK legal entity,
+    any higher-risk factor, a call for action country or a suspicion (HMRC
+    AMLG11500). In the app: an FCA-authorised fund's or a public body's
+    owners are still identified (`simplifiedBasis` says so), and a company
+    owned through a listed one is **standard**, not simplified
+    (`simplifiedBasis` returns null for `viaParent`; `standardBasis` gives
+    the reason "Owned through X, a listed company: standard due diligence";
+    the officers, not KYC4U, confirm the chain and a market abroad).
+  - **Super-prime value is weighed on every transaction**, not a red flag
+    by itself (risk assessment Issue 3): `superPrimeWeigh` adds it to each
+    party's factors to weigh (`server/kyc-red-flags.ts`,
+    `server/aml-dashboard.ts`); `dealRedFlags` no longer adds it. Enhanced
+    due diligence comes from another higher-risk factor or the agent's
+    judgement. `superPrimeFlag` stays the reading.
+  - **The counterparty on a joint instruction is always checked**, using the
+    joint agent's documents or BGP's own checks, sale or letting. The
+    joint agent reason for Not required is gone: `jointAgentNotRequiredRefusal`
+    refuses it on every transaction, `NOT_REQUIRED_CHOOSABLE` is
+    `["no_deal"]`, `notRequiredInput` refuses anything else, and the record
+    of asking (its form, `JointNotRequiredButton`, `jointRequestsForRecord`)
+    was deleted. A joint agent mark made before Issue 4 lapses
+    (`notRequiredLapse`) and its record still reads. A sale's joint agent
+    documents are signed off as a letting's: "Waiting on Savills · for the
+    documents", then "Ready to sign off · Savills' documents are in: add a
+    note". The Rules page says BGP goes further than HMRC here.
+  - **When checks are done**: landlord or seller before marketing; tenant
+    when the landlord accepts the offer; buyer from agreed heads of terms;
+    all complete before exchange of contracts or completion of a lease, and
+    no tenant deposit before. **Not built: the app still lets a transaction
+    move to Exchanged or Completed with checks outstanding and emails the
+    officers** (Woody's "gating remain as is" of 17 November 2026). Whether
+    the app should now hold the move is Woody's call.
+  - **In-house checks in ChatBGP** (section D and the risk assessment's
+    outsourcing row): KYC4U's past checks kept as records; **Dun & Bradstreet
+    reports for companies owned from overseas** (the evidence lists also
+    accept a D&B report in place of the Companies House record with BGP's
+    screening). The app has no D&B connection yet: it needs D&B Direct+ API
+    keys from D&B (Railway `DNB_API_KEY` / `DNB_API_SECRET`, not set);
+    BGP's D&B Finance Analytics web login has no API the app can use. Until
+    then an officer downloads the D&B report and drops it on the party's
+    **Upload documents**.
+  - Also in Issue 4: the letting threshold is £10,000 a month or more;
+    records kept five years from the end of the relationship; discrepancies
+    reported to Companies House; when enhanced due diligence must be applied
+    and that each case is approved by the Nominated Officer or a Deputy; what
+    happens when checks cannot be completed (Stop acting); the officers named
+    on BGP's HMRC registration; training; independent review.
+- ChatBGP's prompt and app map name Issue 4 and the risk assessment Issue 3.
+- Tests: `server/aml-policy.test.ts`, `server/joint-agent-checks.test.ts`,
+  `server/kyc-prechecks.test.ts` (all in `npm test`);
+  `qa/regression/aml-policy-guards.test.mjs` and
+  `joint-agent-checks-guards.test.mjs`.
 
 ## Upload documents on a party (Woody, 2026-11-23)
 
@@ -4935,13 +5020,16 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   parent's latest accounts or a record of how the deal is funded (4.4); and the
   Deputy Nominated Officers (C.b). The risk assessment is still Issue 2
   (`POLICY_SOURCE` names both). Training confirms the latest issue: each
-  person confirms Issue 3 afresh on My BGP → AML training.
+  person confirms Issue 3 afresh on My BGP → AML training. **Superseded the
+  same day by Issue 4 of the policy and Issue 3 of the risk assessment**: see
+  "AML policy Issue 4 is the source of truth".
 - **Levels** (policy F.a): each party is Simplified, Standard or Enhanced
   (`dueDiligenceLevel`): enhanced on any red flag or higher-risk factor that
   counts (set aside with a comment, it does not); simplified on a basis
-  (`simplifiedBasis`: listed on a regulated market or owned through one, an
-  FCA-authorised ICVC, a UK public body by its name with no Companies House
-  record); otherwise standard. Worked out in `loadDealRedFlags` (`levels`) and
+  (`simplifiedBasis`: listed on a regulated market, an FCA-authorised ICVC, a
+  UK public body by its name with no Companies House record; a company owned
+  through a listed one was simplified until Issue 4 of the policy made it
+  standard, `standardBasis`); otherwise standard. Worked out in `loadDealRedFlags` (`levels`) and
   the AML dashboard (`level`, `levelWhy`); shown on the deal card
   (`PartyLevel`) and the dashboard's **Due diligence** column.
 - **Higher-risk factors** (`policyFactorFlags`, flags with `factor: true`):
@@ -4956,7 +5044,8 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   shops, convenience stores, mining and oil and gas, dual-use manufacturing);
   and on the deal a super-prime sale (`superPrimeFlag`: an investment deal's
   price £5m or more in London and the South East by postcode, over £1m
-  elsewhere). They count as red flags do (KYC4U, then the officers), can be
+  elsewhere; since Issue 3 of the risk assessment, 23 November 2026, it is a
+  factor to weigh on each party, `superPrimeWeigh`, not a flag). They count as red flags do (KYC4U, then the officers), can be
   set aside with a comment where they do not apply, and are listed apart, in
   amber, on the card and in KYC4U's note. Restaurants, bars, pubs, gaming
   venues and car parks are only "to weigh" (`policyFactorsToWeigh`). FATF's
@@ -4990,7 +5079,9 @@ the officers only. Rules: `shared/aml-policy.ts`; routes:
   `notRequired`) and the dashboard (stage `not_required`, bucket Done) read
   it. A rejected party is never exempt. Since 22 November 2026 the
   `joint_agent` reason follows HMRC (see "The joint agent's checks, and
-  HMRC's joint agent rules" below).
+  HMRC's joint agent rules" below). **Since Issue 4 of the policy (23
+  November 2026) the only reason taken is `no_deal`**: the counterparty on a
+  joint instruction is always checked.
 - **Escalations**: a move to Exchanged or Completed with a party not
   approved records the warning as before and emails the officers once per
   deal and stage (`alertOfficersOfOutstandingChecks`, `deal_events`
@@ -5168,7 +5259,9 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   a letting: checked, or relied on). Shown in words on each party's Joint
   agent line (`JOINT_AGENT_RULE_WORDS`) and on the AML status
   (`jointRule`, BGP staff only).
-- **Not required, joint agent reason**: refused on `letting` and `other`
+- **Not required, joint agent reason** (**superseded by Issue 4 of the
+  policy, 23 November 2026: refused on every transaction, the record of
+  asking below no longer taken; old marks lapse**): refused on `letting` and `other`
   (`jointAgentNotRequiredRefusal`); on a sale it needs the record of asking
   and what came back (`kyc_party_exemptions.asked_on`, `asked_how`,
   `asked_whom`, `asked_outcome`, `joint_ref`, boot migrations): a request made
@@ -5274,7 +5367,9 @@ the joint agent mode of `client/src/pages/kyc-upload.tsx`. Tests:
   `JOINT_CHASE_MAX` (10) of its own chases since the last one a person sent it
   stops, emails the deal's agents once (`jointAgentChaseStoppedEmail`) and
   shows it; a person asking again starts it again.
-- **The officers decide** (the Joint agent line's buttons): **Not required,
+- **The officers decide** (the Joint agent line's buttons; **Not required
+  with this record is gone since Issue 4: a sale's party is signed off on
+  the joint agent's documents as a letting's is**): **Not required,
   with this record** on a sale, answering what came back: their checks, **part
   of them** (`partly`: what did not come is written into the record,
   `asked_missing`, prefilled from what their files do not cover) or nothing.

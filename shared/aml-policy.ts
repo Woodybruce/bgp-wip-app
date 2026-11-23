@@ -1,5 +1,10 @@
-// BGP's Anti-Money Laundering Policy (Issue 3, November 2026) and Firm-Wide
-// Risk Assessment (Issue 2, November 2026), as the rules the app applies.
+// BGP's Anti-Money Laundering Policy (Issue 4, November 2026) and Firm-Wide
+// Risk Assessment (Issue 3, November 2026), as the rules the app applies; the
+// app's copies of the two documents are the source of truth (Woody, 23
+// November 2026: "amend our Company policy on the app we will use that as the
+// source of truth"). Issue 4 made simplified due diligence a reduction, not an
+// exemption; super-prime value a factor to weigh; and the counterparty on a
+// joint instruction always checked.
 // Issue 3 of the policy is Issue 2 with the four changes Jack signed off on
 // 23 November 2026: companies evidenced from Companies House with BGP's
 // screening (4.1, 4.2, 4.4, 4.6); a certified digital identity check counts as
@@ -37,8 +42,10 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-4", title: "Anti-Money Laundering Policy", issue: 4, date: "November 2026", file: "bgp-aml-policy-issue-4.docx" },
   { key: "policy-issue-3", title: "Anti-Money Laundering Policy", issue: 3, date: "November 2026", file: "bgp-aml-policy-issue-3.docx" },
   { key: "policy-issue-2", title: "Anti-Money Laundering Policy", issue: 2, date: "November 2026", file: "bgp-aml-policy-issue-2.docx" },
+  { key: "risk-assessment-issue-3", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 3, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-3.docx" },
   { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
   { key: "checklist-trusts", title: "AML checklist: trusts", issue: 1, date: "November 2026", file: "bgp-aml-checklist-trusts.docx" },
 ];
@@ -89,11 +96,12 @@ export const amlPolicyDocumentReplaced = (d: AmlPolicyDocument): boolean =>
 
 // ── The officers (policy C.b and D) ─────────────────────────────────────────
 
-// Who the policy names (Issue 3, C.b). The app holds who is set (AML
-// settings); these are only what "Use the policy's officers" looks for. Since
-// 20 November 2026 there can be more than one Deputy (Woody: "jack as officer
-// and then layla and i as depituties"), set in the AML policy panel; Issue 3
-// names both Deputies (Issue 2 named Victoria Broadhead).
+// Who the policy names (C.b; Issue 4 names the same officers as Issue 3, and
+// the same two as Deputy Compliance Officers in D). The app holds who is set
+// (AML settings); these are only what "Use the policy's officers" looks for.
+// Since 20 November 2026 there can be more than one Deputy (Woody: "jack as
+// officer and then layla and i as depituties"), set in the AML policy panel
+// (Issue 2 named Victoria Broadhead).
 export const POLICY_OFFICER_NAMES: { readonly nominated: string; readonly deputies: readonly string[] } = {
   nominated: "Jack Barratt", deputies: ["Layla O'Driscoll", "Woody Bruce"],
 };
@@ -200,6 +208,8 @@ export function dueDiligenceLevel(input: {
   dealFlags: Array<Pick<KycRedFlag, "label" | "factor">>;
   simplifiedBasis: string | null;
   toWeigh?: string[];
+  // Why standard rather than simplified, when the records say (a company owned by a listed one).
+  standardBasis?: string | null;
 }): PartyDueDiligence {
   const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the transaction: ${f.label}` }))];
   if (all.length) {
@@ -208,7 +218,7 @@ export function dueDiligenceLevel(input: {
   if (input.simplifiedBasis) {
     return { level: "simplified", why: [input.simplifiedBasis], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.simplified };
   }
-  return { level: "standard", why: ["No higher-risk factor found: identify and verify the beneficial owners."], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.standard };
+  return { level: "standard", why: [input.standardBasis || "No higher-risk factor found: identify and verify the beneficial owners."], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.standard };
 }
 
 // ── Which checks a deal needs (policy A) ────────────────────────────────────
@@ -239,9 +249,10 @@ export function amlRegime(deal: { dealType?: string | null; team?: string[] | st
 
 // ── Countries (risk assessment: geography; policy appendix 3.2) ─────────────
 
-// The UK's high-risk third countries are FATF's two lists as they stand
-// (MLR 2017 reg 33(3), since SI 2024/69): enhanced due diligence is required
-// by law. FATF reviews them each February, June and October: update these
+// FATF's two lists as they stand. Since the 2026 amendments (SI 2026/621, 30
+// June 2026) the law requires enhanced due diligence for call for action
+// countries only (MLR 2017 reg 33); BGP's policy (Issue 4, appendix 3.2)
+// treats the increased monitoring list as high risk too. FATF reviews them each February, June and October: update these
 // lists and the date after each plenary.
 export const FATF_LISTS_AS_OF = "30 October 2026";
 const FATF_CALL_FOR_ACTION = ["Iran", "North Korea", "Myanmar"];
@@ -343,7 +354,7 @@ export const sellsCitizenship = (country: string | null): boolean => !!country &
 
 const COUNTRY_RISK_WORDS: Record<CountryRisk, string> = {
   fatf_call_for_action: `on FATF's call for action list (${FATF_LISTS_AS_OF}): enhanced due diligence is required by law`,
-  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): a high-risk third country, so enhanced due diligence is required by law`,
+  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): BGP's policy treats it as high risk, so enhanced due diligence applies`,
   fwra_eurasia_africa: "named in BGP's risk assessment among the countries linked to corruption and fraud laundered through UK property: refer it to the Nominated Officer",
 };
 
@@ -392,7 +403,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy (Issue 3) and risk assessment (Issue 2)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 4) and risk assessment (Issue 3)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);
@@ -522,17 +533,22 @@ export function simplifiedBasis(input: { precheck?: KycPrecheckResult | null; pa
   const ch = input.precheck?.companiesHouse || null;
   const listing = ch?.listing || null;
   if (listing) {
-    if (listing.viaParent) return `Owned through ${listing.company}, a company listed on a regulated market: simplified due diligence (policy 4.2), the chain confirmed by the officers.`;
+    // Owned by a listed company: standard due diligence (policy Issue 4, 4.2; HMRC: none where the ownership goes beyond one UK legal entity).
+    if (listing.viaParent) return null;
     if (listing.market === "other_regulated" || listing.market === "listed_market") return `Listed on a market outside the UK and EU: simplified due diligence when that market is equivalent to the London Stock Exchange (policy 4.2).`;
     return `Listed on a regulated market: simplified due diligence, no beneficial owners to verify (policy 4.2).`;
   }
-  if (ch?.type && ICVC_TYPES.has(ch.type)) return "An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1).";
+  if (ch?.type && ICVC_TYPES.has(ch.type)) return "An open-ended investment company authorised by the FCA: simplified due diligence (policy 4.1). Its owners are still identified.";
   const name = String(input.partyName || ch?.name || "");
-  if (!ch && PUBLIC_BODY.test(name)) return "A UK public body, by its name: simplified due diligence once that is confirmed (policy 4.3).";
+  if (!ch && PUBLIC_BODY.test(name)) return "A UK public body, by its name: simplified due diligence once that is confirmed (policy 4.3). Who controls it is still identified.";
   return null;
 }
 
 // ── Super-prime sales (risk assessment: transactions, high value) ───────────
+// Since Issue 3 of the risk assessment (23 November 2026) a value above the
+// threshold is weighed on every transaction: enhanced due diligence comes from
+// another higher-risk factor or the agent's judgement, not the value alone.
+// superPrimeFlag stays the reading; superPrimeWeigh is how the app uses it.
 
 // £5 million or more in London and the South East counties the risk
 // assessment names (Berkshire, Buckinghamshire, East Sussex, Hampshire, the
@@ -616,7 +632,7 @@ export function jointAgentRule(deal: { dealType?: string | null; team?: string[]
 // One line each (Woody, 22 November 2026: a status, not an explanation; the
 // HMRC references are on the Rules page).
 export const JOINT_AGENT_RULE_WORDS: Record<JointAgentRule, string> = {
-  sale: "A sale: ask the joint agent for their checks and record what comes back.",
+  sale: "A sale: ask the joint agent for the documents and check this party yourself.",
   letting: "A letting: ask the joint agent for the documents and check this party yourself.",
   letting_under: "A letting under £10,000 a month: sanctions checks only.",
   advisory: "Advisory work: no checks on the other side.",
@@ -624,10 +640,10 @@ export const JOINT_AGENT_RULE_WORDS: Record<JointAgentRule, string> = {
 };
 
 /** Why the joint agent reason cannot be used on this deal, in HMRC's terms, or null when it can. */
-export function jointAgentNotRequiredRefusal(rule: JointAgentRule): string | null {
-  if (rule === "letting") return "Not on a letting of £10,000 a month or more: every party is checked. Rely on the joint agent's checks under the reliance terms, or send the client checks.";
-  if (rule === "other") return "Only a sale has the joint agent route. Check this party, or rely on the joint agent's checks under the reliance terms.";
-  return null;
+export function jointAgentNotRequiredRefusal(_rule: JointAgentRule): string | null {
+  // BGP's policy, Issue 4 (23 November 2026): full checks on the counterparty on
+  // every joint instruction, sales included, which goes further than HMRC.
+  return "BGP's policy (Issue 4) checks the counterparty on every joint instruction: ask the joint agent for the documents, or send the client checks.";
 }
 
 // ── Not required: the other side of a deal (policy G note; F.f) ─────────────
@@ -637,10 +653,14 @@ export const NOT_REQUIRED_REASONS = {
   no_deal: "No transaction was done with this party",
 } as const;
 export type NotRequiredReason = keyof typeof NOT_REQUIRED_REASONS;
+// The reasons a person can choose now: the joint agent reason is kept only to
+// read marks made before Issue 4 of the policy.
+export const NOT_REQUIRED_CHOOSABLE: readonly NotRequiredReason[] = ["no_deal"];
 export const NOT_REQUIRED_COMMENT_MIN = 10;
 
 // How BGP asked the joint agent for their checks, and what came back (HMRC:
-// "document in writing that it has been requested and not provided").
+// "document in writing that it has been requested and not provided"), as
+// recorded on joint agent marks made before Issue 4; read, no longer written.
 export const JOINT_ASKED_HOW = { app: "through the app", email: "by email", phone: "by phone", letter: "by letter", meeting: "in a meeting" } as const;
 export type JointAskedHow = keyof typeof JOINT_ASKED_HOW;
 export const JOINT_OUTCOMES = { received: "they sent their checks", partly: "they sent part of their checks", not_provided: "they did not provide them" } as const;
@@ -656,91 +676,36 @@ export function jointAskWords(a: JointAskRecord): string {
   return `Asked ${a.whom} for their checks on ${day}, ${JOINT_ASKED_HOW[a.how]}: ${JOINT_OUTCOMES[a.outcome]}${missing}`;
 }
 
-/**
- * A joint agent request made in the app, as the Not required form can name
- * it. how: "email" for files the joint agent emailed to someone at BGP and BGP
- * added (sentAt is then the day they were added). files: how many came back.
- */
-export interface JointRequestForRecord {
-  ref: string; sentAt: string | null; whom: string; how?: "app" | "email"; files?: number;
-  // What their files do not cover, and what they show to look at, in BGP's words (shared/joint-agent-checks.ts).
-  missing?: string[]; flags?: string[];
-}
-
+/** Why no checks are needed on a party, checked: the reason and what happened, or the problem. */
 export function notRequiredInput(
   body: unknown,
-  ctx: { rule?: JointAgentRule; today?: Date; requests?: JointRequestForRecord[] } = {},
-): { reason: NotRequiredReason; comment: string; asked: JointAskRecord | null } | { problem: string } {
+  ctx: { rule?: JointAgentRule } = {},
+): { reason: NotRequiredReason; comment: string } | { problem: string } {
   const b = (body || {}) as Record<string, unknown>;
   const reason = String(b.reason || "");
   if (!Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, reason)) return { problem: "Choose why no checks are needed on this party." };
+  // Issue 4 of the policy (23 November 2026): the counterparty on a joint
+  // instruction is always checked, so the joint agent reason is never taken.
+  if (!(NOT_REQUIRED_CHOOSABLE as readonly string[]).includes(reason)) return { problem: jointAgentNotRequiredRefusal(ctx.rule || "other") || "Choose why no checks are needed on this party." };
   const comment = String(b.comment ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
   if (comment.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Say what happened (at least ${NOT_REQUIRED_COMMENT_MIN} characters): it is kept on the transaction.` };
-  if (reason !== "joint_agent") return { reason: reason as NotRequiredReason, comment, asked: null };
-  const rule = ctx.rule || "other";
-  const refused = jointAgentNotRequiredRefusal(rule);
-  if (refused) return { problem: refused };
-  // A letting under £10,000 a month or advisory work needs no record of asking.
-  if (rule !== "sale") return { reason: "joint_agent", comment, asked: null };
-  const outcome = String(b.outcome || "") as JointOutcome;
-  if (!(outcome in JOINT_OUTCOMES)) return { problem: "Say what came back from the joint agent: their checks, part of them, or nothing." };
-  const note = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 1000);
-  const listOf = (v: unknown) => (Array.isArray(v) ? v : String(v ?? "").split(/\s*[;\n]\s*/)).map(x => String(x).replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 20);
-  const typedMissing = listOf(b.missing);
-  const ref = String(b.jointRef || "").trim().toUpperCase();
-  if (ref) {
-    const req = (ctx.requests || []).find(r => r.ref === ref);
-    if (!req) return { problem: "That request to the joint agent is not on this party." };
-    if (!req.sentAt) return { problem: "That request to the joint agent was not sent: send it, or record how you asked." };
-    if (outcome !== "not_provided" && req.files === 0) return { problem: "Nothing has come back on that request yet: wait for their checks, or record that they did not provide them." };
-    const notes: string[] = [];
-    // Their files show something to look at: say what you did about it first.
-    if (outcome !== "not_provided" && req.flags?.length) {
-      const flagNote = note(b.flagNote);
-      if (flagNote.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Their files show something to look at: ${req.flags.join("; ")}. Say what you did about it.` };
-      notes.push(`On what their files showed: ${flagNote}`);
-    }
-    let missing: string[] | null = null;
-    if (outcome === "partly") {
-      missing = typedMissing.length ? typedMissing : req.missing || [];
-      if (!missing.length) return { problem: "Say what they did not send." };
-    }
-    if (outcome === "received" && req.missing?.length) {
-      const byHand = note(b.checkedByHand);
-      if (byHand.length < NOT_REQUIRED_COMMENT_MIN) return { problem: `Their files do not cover: ${req.missing.join("; ")}. Choose "they sent part of their checks", or say how you checked these by hand.` };
-      notes.push(`Checked by hand: ${byHand}`);
-    }
-    return { reason: "joint_agent", comment, asked: { askedOn: req.sentAt.slice(0, 10), how: req.how || "app", whom: req.whom, outcome, ref, missing, note: notes.join(" ") || null } };
-  }
-  const askedOn = String(b.askedOn || "").trim();
-  const when = /^\d{4}-\d{2}-\d{2}$/.test(askedOn) ? new Date(`${askedOn}T12:00:00Z`) : null;
-  if (!when || Number.isNaN(when.getTime())) return { problem: "Give the date you asked the joint agent for their checks." };
-  if (when.getTime() > (ctx.today || new Date()).getTime() + 86400000) return { problem: "The date you asked cannot be in the future." };
-  const how = String(b.askedHow || "") as JointAskedHow;
-  if (!(how in JOINT_ASKED_HOW) || how === "app") return { problem: "Say how you asked: by email, phone, letter or in a meeting." };
-  const whom = String(b.askedWhom || "").replace(/\s+/g, " ").trim().slice(0, 160);
-  if (whom.length < 2) return { problem: "Say who you asked at the joint agent." };
-  if (outcome === "partly" && !typedMissing.length) return { problem: "Say what they did not send." };
-  return { reason: "joint_agent", comment, asked: { askedOn, how, whom, outcome, ref: null, missing: outcome === "partly" ? typedMissing : null, note: null } };
+  return { reason: reason as NotRequiredReason, comment };
 }
 
 export interface PartyNotRequired {
   id: number; reason: NotRequiredReason; reasonWords: string; comment: string; by: string | null; at: string | null;
-  // On a sale: when, how and whom BGP asked for the joint agent's checks, and what came back.
+  // A joint agent mark made before Issue 4: when, how and whom BGP asked, and what came back.
   asked?: JointAskRecord | null;
 }
 
 /**
- * Whether a Not required mark still counts under HMRC's rules: the joint
- * agent reason holds on a sale only with the record of asking, and never on
- * a letting at £10,000 a month or more. Null when it counts; else why not.
+ * Whether a Not required mark still counts. A joint agent mark no longer
+ * does: since Issue 4 of the policy the counterparty on a joint instruction is
+ * always checked. Null when it counts; else why not.
  */
 export function notRequiredLapse(mark: { reason: NotRequiredReason; asked?: JointAskRecord | null }, rule: JointAgentRule): string | null {
   if (mark.reason !== "joint_agent") return null;
-  const refused = jointAgentNotRequiredRefusal(rule);
-  if (refused) return refused;
-  if (rule === "sale" && !mark.asked) return "No record of asking the joint agent for their checks. Take this off and mark it again with the record.";
-  return null;
+  return jointAgentNotRequiredRefusal(rule);
 }
 
 // ── Heads of terms and marketing (policy 3.8) ───────────────────────────────
@@ -760,4 +725,17 @@ export function isDealAgent(user: { id: string; name?: string | null }, deal: { 
   const name = lower(user.name);
   const names = Array.isArray(deal.internal_agent) ? deal.internal_agent.map(lower) : [];
   return !!name && names.includes(name);
+}
+
+/** A super-prime sale, as a factor to weigh on every party (risk assessment Issue 3), or null. */
+export function superPrimeWeigh(deal: Parameters<typeof superPrimeFlag>[0]): string | null {
+  const f = superPrimeFlag(deal);
+  return f ? `${f.label}: weigh it with the rest; enhanced checks if it comes with another higher-risk factor` : null;
+}
+
+/** Why a party is standard rather than simplified, when its records say (owned by a listed company). */
+export function standardBasis(input: { precheck?: KycPrecheckResult | null }): string | null {
+  const listing = input.precheck?.companiesHouse?.listing || null;
+  if (!listing?.viaParent) return null;
+  return `Owned through ${listing.company}, a listed company: standard due diligence (policy 4.2). Its owner is the listed company, so there are no individual owners to verify; the chain is read at Companies House.`;
 }

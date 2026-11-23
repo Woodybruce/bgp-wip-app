@@ -6,10 +6,10 @@
 // In each party's AML box, BGP staff ask the joint agent for their checks
 // (an email from the KYC mailbox with a page of their own), add the files the
 // joint agent emailed to someone at BGP, and see each file as it was read,
-// set against the people the checks need. The officers then decide: on a
-// sale, Not required with the request as the record of asking (HMRC,
-// AMLG2200 s21); on a letting at £10,000 a month or more, the reliance on the
-// joint agent's checks (MLR 2017 reg 39). The server is
+// set against the people the checks need. With their documents in, the
+// party is signed off on BGP's check of them, sale or letting (BGP's policy,
+// Issue 4: the counterparty on a joint instruction is always checked); a
+// reliance agreed before 23 November 2026 can still be recorded. The server is
 // server/joint-agent-checks.ts; the rules shared/joint-agent-checks.ts.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -528,8 +528,8 @@ function AddFilesDialog({ dealId, view, party, onClose }: { dealId: string; view
 /**
  * The joint agent's checks inside a party's Documents step: HMRC's route in
  * a line, what their files cover as ticks, the chase, then the request on one
- * line and the files folded. `decide` is the officers' button (Not required
- * on a sale, the reliance on a letting).
+ * line and the files folded. `decide` is the officers' button (recording a
+ * reliance agreed before 23 November 2026).
  */
 export function JointAgentPanel({ dealId, view, party, decide }: {
   dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; decide?: React.ReactNode;
