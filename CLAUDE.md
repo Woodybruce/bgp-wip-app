@@ -3495,6 +3495,29 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   transaction), then saves through the transaction's own save. A firm already
   on the transaction reads "On the transaction". Tests in
   `server/deal-hots.test.ts`.
+- **Asset managers are the client's contact, never an agent** (Woody, the
+  same evening: "it pulled out the Landlord contact and wanted to add it as
+  joint agent but its the client contact because they are the asset
+  managers for the building ... they are often the person to ask for
+  docs"). A contact's kind can be `manager` (`HotsContactKind`, with `role`:
+  asset manager, property manager, managing agent, estate, fund or
+  investment manager, `hotsManagerRole`): the provider's enum has it, the
+  rules read "Landlord's Asset Manager" or "Managing Agent:" labels
+  (`CONTACT_LABEL`), and a contact the provider calls an agent whose own
+  words say asset manager or managing agent is a manager (`MANAGER_WORDS`).
+  On the server (`hotsContactViews`) a manager, or a contact whose firm is
+  the party itself (its brand or a company filed under it, by the whole name,
+  `hotsFirmIsParty`), is `forParty`: never offered as the joint agent or the
+  side's agent. The dialog (now **Solicitors, agents and asset managers**)
+  offers **Make them who to ask** (`makeAsk`: the party box's own route,
+  `POST /api/deals/:id/parties/:role/person`, found under the party by email
+  or added there, with the role and their firm as the job title), says "Who
+  to ask" once they are, and names who to ask now otherwise. With no email
+  or mobile it says to add them in the party box. The contact route refuses
+  a manager. Do we KYC an asset manager? Not as a customer (Issue 4 calls
+  them intermediaries); the person who instructs us for the party is the
+  person acting (MLR 2017 reg 28(10)): their identity check and authority to
+  act, which the client checks already ask of who to ask.
 - Not run against Anthropic or Companies House from a build machine.
 
 ## Guarantors, and the contracting entity worked out (Woody, 2026-11-23)
@@ -5808,7 +5831,11 @@ the AML box, he answered "yes go ahead". Do not re-litigate. Rules (pure):
   the BGP team card above it and the deal's own Xero contact under it when
   one is held. A slot with no party shows its picker (`UnsetPartyRow`); a
   party change refreshes the box (`refreshDealAml`). Client logins keep the
-  read-only Parties card (`DealPartiesCard`).
+  read-only Parties card (`DealPartiesCard`). The pencil beside a party's
+  name opens the company search in one press (Woody, 23 November 2026: "two
+  edit buttons to change the Landlord? we only need one?"): the slot's
+  `change`, `InlineLinkSelect` with `nameless` (the pencil alone,
+  `aml-party-relink-<role>`); there is no second picker row.
 - **One set of status words** for the box and the AML board
   (`AML_STAGE_LABEL`: Screened, Documents in, Joint agent's files in,
   Cleared). The AML board's policy is its own **Policy** pill, and its button
@@ -6597,6 +6624,18 @@ SRA every 24 hours. Rules: `shared/sra-register.ts`; read and kept:
   solicitors and checks them in the same press. The risk assessment lists
   both sides, each "Not checked yet" until checked. Tests in
   `server/sra-register.test.ts`, `server/aml-risk-assessment.test.ts`.
+- **Our client's solicitors: the SRA check only** (Woody, the same evening:
+  "with the solcitors dont we just need to check they are an SRA firm? do
+  we need this other info for HMRC?"). HMRC asks for no check on
+  solicitors; BGP's policy (Issue 4, counterparties) asks "Is there any
+  negative media around the agent and / or solicitor?" and the size and
+  reputation of the law firm, of the counterparty's only. So
+  `runSolicitorCheck` runs the web search for the other side's solicitors
+  only (`wantMedia`), and `solicitorCheckWords` leaves a web search an
+  earlier check ran on our client's solicitors out of their words and tone
+  (`solicitorMediaCounts`); the panel hides those results. The web search
+  leaves out an allegation that was dismissed or found no case to answer
+  (Simmons & Simmons read red for a dismissed tribunal application).
 
 
 ## KYC4U's files kept in the app, and KYC4U in Subscriptions & APIs (Woody, 2026-11-21)

@@ -40,10 +40,15 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 23 November 2026
+  { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Our client's solicitors: the SRA check only",
+    text: "HMRC asks for no check on solicitors. Our client's solicitors are checked against the SRA's register only. The other side's are also searched on the web for regulatory action or misconduct, because BGP's policy (Issue 4) asks about negative media around the counterparty's solicitor. An allegation that was dismissed is not reported." },
+  { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A party's asset manager is the person to ask",
+    text: "An asset manager, property manager or managing agent acts for its client: it is not our customer and is not a joint agent. The person who instructs us for the party is the person acting: we check their identity and that they may act for it. Heads of terms that name the asset manager offer them as the person to ask for the party's documents." },
   { date: "2026-11-23", who: ["Woody"], topic: "Who we check and when", title: "A simple sanctions-only version for small lettings",
     text: "On a letting under £10,000 a month each party shows three steps: who signs, the sanctions check and the sign-off. Only a possible sanctions match holds it up, and an agent on the transaction signs it off. Other findings stay under Show the full checks. A trust keeps its own rules." },
   { date: "2026-11-23", who: ["Woody"], topic: "Agents and joint agents", title: "Our client's solicitors are checked at the SRA too",
-    text: "Both sides' solicitors on a transaction are checked against the SRA's register and the web for regulatory action or misconduct: our client's as well as the other side's. Saving our client's solicitors from the heads of terms checks them in the same press." },
+    text: "Both sides' solicitors on a transaction are checked against the SRA's register and the web for regulatory action or misconduct: our client's as well as the other side's. Saving our client's solicitors from the heads of terms checks them in the same press.",
+    changed: "23 November 2026: our client's solicitors get the SRA check only (see Our client's solicitors: the SRA check only)." },
   { date: "2026-11-23", who: ["Woody"], topic: "Officers and sign-off", title: "A sanctions-only sign-off covers small lettings only",
     text: "A sign-off on a letting under £10,000 a month covers the sanctions checks only. On a sale, a purchase or a letting at £10,000 a month or more with the same party, it does not count: that transaction needs the full checks and a new sign-off." },
   { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "A company abroad on the overseas register is read as listed",

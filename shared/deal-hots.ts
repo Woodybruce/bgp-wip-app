@@ -594,11 +594,18 @@ export interface HotsReadReply {
 // <partner> | T: ... | Email: ..."). They are not parties: the screen
 // offers to put each on the transaction, and nothing is saved by a reading.
 
-export type HotsContactKind = "solicitor" | "agent";
+// A manager is the side's asset manager, property manager or managing agent: the
+// people who look after the building for its owner and speak for it, never a
+// letting agent (Woody, 23 November 2026: "it pulled out the Landlord contact and
+// wanted to add it as joint agent but its the client contact because they are the
+// asset managers for the building ... they are often the person to ask for docs").
+export type HotsContactKind = "solicitor" | "agent" | "manager";
 export type HotsContactSide = "landlord" | "tenant" | "vendor" | "purchaser";
 export interface HotsContact {
   side: HotsContactSide;
   kind: HotsContactKind;
+  /** A manager's role in the document's words: asset manager, property manager, managing agent. */
+  role?: string | null;
   /** The firm as the document writes it. */
   firm: string;
   person: string | null;
@@ -609,8 +616,40 @@ export interface HotsContact {
 }
 
 export const HOTS_CONTACT_SIDE_WORDS: Record<HotsContactSide, string> = { landlord: "Landlord", tenant: "Tenant", vendor: "Seller", purchaser: "Buyer" };
-export const hotsContactLabel = (c: Pick<HotsContact, "side" | "kind">): string =>
-  `${HOTS_CONTACT_SIDE_WORDS[c.side]}'s ${c.kind === "solicitor" ? "solicitors" : "agent"}`;
+export const hotsContactLabel = (c: Pick<HotsContact, "side" | "kind"> & { role?: string | null }): string =>
+  `${HOTS_CONTACT_SIDE_WORDS[c.side]}'s ${c.kind === "solicitor" ? "solicitors" : c.kind === "manager" ? c.role || "asset manager" : "agent"}`;
+
+/**
+ * A contact's firm is the party itself: the same name with the legal form left
+ * out, or one name of two words or more held whole in the other ("Hondo
+ * Enterprises" and "Hondo Enterprises Holdings Ltd"). One word alone is never
+ * enough: Savills the agent is not Savills Investment Management the landlord.
+ */
+export function hotsFirmIsParty(firm: string, partyName: string): boolean {
+  const words = (v: string) => {
+    let s = squash(v).replace(/&/g, " and ").replace(/['’]/g, "").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the\s+/, "");
+    for (let i = 0; i < 2; i++) s = s.replace(/\s*\b(?:limited|ltd|public limited company|plc|llp|limited liability partnership|lp|llc|inc|incorporated|b ?v|n ?v|gmbh|s ?a|s ?a ?r ?l|sarl|ag)\s*$/, "").trim();
+    return s ? s.split(" ") : [];
+  };
+  const a = words(firm), b = words(partyName);
+  if (!a.length || !b.length) return false;
+  if (a.join(" ") === b.join(" ")) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (short.length < 2) return false;
+  for (let i = 0; i + short.length <= long.length; i++) if (short.every((w, j) => long[i + j] === w)) return true;
+  return false;
+}
+
+/** A manager's role in a few plain words, from the document's label or the reader's. */
+export function hotsManagerRole(raw: unknown): string {
+  const s = String(raw ?? "").toLowerCase();
+  if (/managing\s*agent/.test(s)) return "managing agent";
+  if (/property\s*manag/.test(s)) return "property manager";
+  if (/estate\s*manag/.test(s)) return "estate manager";
+  if (/fund\s*manag/.test(s)) return "fund manager";
+  if (/investment\s*manag/.test(s)) return "investment manager";
+  return "asset manager";
+}
 
 const CONTACT_SIDES: Record<string, HotsContactSide> = {
   landlord: "landlord", lessor: "landlord", tenant: "tenant", lessee: "tenant",
@@ -619,6 +658,8 @@ const CONTACT_SIDES: Record<string, HotsContactSide> = {
 export const hotsContactSide = (raw: unknown): HotsContactSide | null => CONTACT_SIDES[String(raw ?? "").trim().toLowerCase()] || null;
 export function hotsContactKind(raw: unknown): HotsContactKind | null {
   const s = String(raw ?? "").toLowerCase();
+  // Before "agent": a managing agent is the owner's manager, not a letting agent.
+  if (/asset\s*manag|property\s*manag|managing\s*agent|estate\s*manag|fund\s*manag|investment\s*manag|\bmanager\b/.test(s)) return "manager";
   if (/solicitor|lawyer|legal|law\s*firm|conveyanc/.test(s)) return "solicitor";
   if (/agent|surveyor/.test(s)) return "agent";
   return null;
@@ -649,11 +690,13 @@ function checkHotsContacts(raw: unknown, text: string, checkable: boolean, dropp
   const lower = text.toLowerCase();
   for (const c of Array.isArray(raw) ? raw.slice(0, 12) : []) {
     const side = hotsContactSide(c?.side);
-    const kind = hotsContactKind(c?.kind);
-    const firm = oneLine(c?.firm).slice(0, 160);
     const quote = oneLine(c?.quote).slice(0, 400);
+    // An "agent" whose own words say asset manager or managing agent is the owner's manager.
+    const kind = hotsContactKind(c?.kind) === "agent" && MANAGER_WORDS.test(quote) ? "manager" : hotsContactKind(c?.kind);
+    const role = kind === "manager" ? hotsManagerRole(MANAGER_WORDS.test(quote) ? quote : c?.role || c?.kind) : null;
+    const firm = oneLine(c?.firm).slice(0, 160);
     if (!side || !kind || firm.length < 2 || NOT_A_PARTY.test(firm)) continue;
-    const what = hotsContactLabel({ side, kind });
+    const what = hotsContactLabel({ side, kind, role });
     if (checkable && !quoteInDocument(quote, text)) { dropped.push({ what, value: firm, reason: "its words are not in the document" }); continue; }
     if (checkable && !textKey.includes(alnum(firm))) { dropped.push({ what, value: firm, reason: "the firm is not in the document" }); continue; }
     let person: string | null = oneLine(c?.person).slice(0, 120) || null;
@@ -663,15 +706,18 @@ function checkHotsContacts(raw: unknown, text: string, checkable: boolean, dropp
     let phone: string | null = oneLine(c?.phone).slice(0, 40) || null;
     if (phone && (digitsOf(phone).length < 9 || (checkable && !textDigits.includes(digitsOf(phone))))) phone = null;
     if (out.some(x => x.side === side && x.kind === kind)) continue;
-    out.push({ side, kind, firm, person, email, phone, quote, checked: checkable });
+    out.push({ side, kind, ...(role ? { role } : {}), firm, person, email, phone, quote, checked: checkable });
   }
   return out;
 }
 
+// The words that make a contact the owner's manager rather than a letting agent.
+const MANAGER_WORDS = /asset\s+manag|property\s+manag|managing\s+agent|estate\s+manag/i;
+
 // "Landlord Solicitors", "Landlord's Agent", "Tenant's Solicitors: ...", "12. Purchaser's solicitors".
 // After the label: a separator and the firm, the firm itself (a PDF flattens a
 // contact sheet's row onto one line), or nothing (the firm is on the next lines).
-const CONTACT_LABEL = new RegExp(String.raw`^\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:the\s+)?(landlord|lessor|tenant|lessee|vendor|seller|purchaser|buyer)(?:'s|s'|s)?\s+((?:letting\s+|leasing\s+|acquiring\s+|acquisition\s+|joint\s+|selling\s+|buying\s+)?(?:solicitors?|lawyers?|legal\s+advisers?|agents?|surveyors?))\b\s*(?:([:\-–—|])\s*)?(.*)$`, "i");
+const CONTACT_LABEL = new RegExp(String.raw`^\s*(?:\d+(?:\.\d+)*\.?\s+)?(?:the\s+)?(landlord|lessor|tenant|lessee|vendor|seller|purchaser|buyer)(?:'s|s'|s)?\s+((?:letting\s+|leasing\s+|acquiring\s+|acquisition\s+|joint\s+|selling\s+|buying\s+)?(?:solicitors?|lawyers?|legal\s+advisers?|asset\s+managers?|asset\s+management|property\s+managers?|property\s+management|estate\s+managers?|estate\s+management|managing\s+agents?|investment\s+managers?|fund\s+managers?|agents?|surveyors?))\b\s*(?:([:\-–—|])\s*)?(.*)$`, "i");
 const SIDE_HEADING = /^(?:the\s+)?(?:landlord|lessor|tenant|lessee|vendor|seller|purchaser|buyer|guarantor)s?\s*:?$/i;
 // A line of a contact's own details (as opposed to the next clause's "Term: 10 years").
 const CONTACT_FIELD = /^(?:fao|f\.a\.o\.?|for the attention of|attention|attn|contact|company|firm|organisation|organization|name|address|tel|telephone|t|m|mob|mobile|phone|dd|ddi|direct(?:\s+line)?|e-?mail(?:\s+address)?|dx|ref|reference)\s*[:.]/i;
@@ -760,7 +806,7 @@ export function readHotsContactsByRules(documentText: string, opts: HotsTextOpti
     }
     const c = contactFromBlock(block);
     if (!c) continue;
-    out.push({ side, kind, ...c, quote: oneLine(block.join(" ")).slice(0, 400), checked: checkable });
+    out.push({ side, kind, ...(kind === "manager" ? { role: hotsManagerRole(m[2]) } : {}), ...c, quote: oneLine(block.join(" ")).slice(0, 400), checked: checkable });
   }
   return out;
 }
@@ -771,7 +817,7 @@ export function mergeHotsContacts(ai: HotsContact[] | null | undefined, rules: H
   for (const a of ai || []) {
     const r = rules.find(x => x.side === a.side && x.kind === a.kind);
     const same = r && (alnum(r.firm).includes(alnum(a.firm)) || alnum(a.firm).includes(alnum(r.firm)));
-    out.push(same ? { ...a, person: a.person || r!.person, email: a.email || r!.email, phone: a.phone || r!.phone } : a);
+    out.push(same ? { ...a, role: a.role || r!.role, person: a.person || r!.person, email: a.email || r!.email, phone: a.phone || r!.phone } : a);
   }
   for (const r of rules) if (!out.some(x => x.side === r.side && x.kind === r.kind)) out.push(r);
   return out;
@@ -792,6 +838,18 @@ export interface HotsContactView {
   same: boolean;
   /** Solicitors: checked at the SRA on this transaction. */
   checked: boolean;
+  /**
+   * Speaks for the party: its asset manager, property manager or managing agent,
+   * or someone at the party's own company. Offered as the person to ask for the
+   * party's documents, never as an agent (23 November 2026).
+   */
+  forParty?: boolean;
+  /** At the party's own company (its brand, or a company filed under it). */
+  own?: boolean;
+  /** Who the party's person to ask is now, by name. */
+  asked?: string | null;
+  /** That person is this contact already. */
+  askIsThem?: boolean;
 }
 
 /** Contacts the screen sends back, kept only in the shape the reader makes. */
@@ -804,7 +862,8 @@ export function contactsFromBody(raw: unknown): HotsContact[] {
     if (!side || !kind || firm.length < 2 || out.some(x => x.side === side && x.kind === kind)) continue;
     const email = (EMAIL_RE.exec(String(c?.email ?? "")) || [])[0] || null;
     out.push({
-      side, kind, firm, person: oneLine(c?.person).slice(0, 120) || null, email,
+      side, kind, ...(kind === "manager" ? { role: hotsManagerRole(c?.role || c?.kind) } : {}),
+      firm, person: oneLine(c?.person).slice(0, 120) || null, email,
       phone: oneLine(c?.phone).slice(0, 40) || null, quote: oneLine(c?.quote).slice(0, 400), checked: !!c?.checked,
     });
   }

@@ -63,6 +63,20 @@ test('a solicitor or agent from the heads of terms: staff only, never BGP, the C
   assert.match(screen, /solicitorFirm: v\.read\.firm/);
 });
 
+// Woody, 23 November 2026: "it pulled out the Landlord contact and wanted to add it as
+// joint agent but its the client contact because they are the asset managers".
+test('an asset manager, or someone at the party itself, is offered as the person to ask, never as an agent', () => {
+  // The provider may call a contact a manager, and its own words decide over an "agent".
+  assert.match(server, /kind: \{ type: "string", enum: \["solicitor", "agent", "manager"\]/);
+  assert.match(read('shared/deal-hots.ts'), /hotsContactKind\(c\?\.kind\) === "agent" && MANAGER_WORDS\.test\(quote\) \? "manager"/);
+  // The party's own people are found on the server; the screen offers who to ask before anything an agent gets.
+  assert.match(server, /const forParty = !us && \(read\.kind === "manager" \|\| own\);/);
+  assert.match(server, /if \(read\.kind === "agent" && !forParty\)/);
+  assert.match(screen, /: v\.forParty\n\s+\? \(v\.askIsThem \? done\("Who to ask"\)/);
+  // A manager is never filed as a firm by the contact route.
+  assert.match(server, /if \(kind === "manager"\) return res\.status\(400\)/);
+});
+
 test('the screen saves only through the routes that already exist', () => {
   const writes = [...screen.matchAll(/apiRequest\("(POST|PUT|PATCH|DELETE)", `?([^`",]+)/g)].map(m => `${m[1]} ${m[2]}`);
   const allowed = [
@@ -78,6 +92,8 @@ test('the screen saves only through the routes that already exist', () => {
     // Solicitors and agents (23 November 2026): the CRM filing, and the SRA check of the AML box.
     /^POST \/api\/deals\/\$\{dealId\}\/heads-of-terms\/contact$/,
     /^POST \/api\/deals\/\$\{dealId\}\/solicitors-aml\/check$/,
+    // The party's asset manager made the person to ask, through the party box's own route (23 November 2026).
+    /^POST \/api\/deals\/\$\{dealId\}\/parties\/\$\{v\.side\}\/person$/,
   ];
   assert.ok(writes.length >= 5, writes.join(', '));
   for (const w of writes) assert.ok(allowed.some(re => re.test(w)), `unexpected write: ${w}`);

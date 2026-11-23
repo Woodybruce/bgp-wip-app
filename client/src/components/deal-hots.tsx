@@ -313,6 +313,20 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
     if (answer?.choose) return `${v.read.firm} saved as our client's solicitors: more than one firm on the SRA register matches, so choose it under Solicitors in the AML box`;
     return `${v.read.firm} saved as our client's solicitors and checked at the SRA`;
   });
+  // The party's asset manager, or someone at the party itself, is the person to ask
+  // for its documents (Woody, 23 November 2026: "they are often the person to ask for
+  // docs"): found under the party in the CRM by their email, or added there.
+  const makeAsk = (v: HotsContactView) => act.mutate(async () => {
+    const r = v.read;
+    const role = r.kind === "manager" ? (r.role || "asset manager") : null;
+    const jobTitle = [role ? role.charAt(0).toUpperCase() + role.slice(1) : null, v.own ? null : r.firm].filter(Boolean).join(", ") || null;
+    // The party box takes an email, or at least a mobile: a landline in the heads of terms is not one.
+    const mobile = !r.email && r.phone && /^(?:\+?44\s*\(?0?\)?\s*7|07)/.test(r.phone.replace(/[^\d+()\s]/g, "")) ? r.phone : null;
+    const name = r.person || r.email || "";
+    await apiRequest("POST", `/api/deals/${dealId}/parties/${v.side}/person`, { name, email: r.email, mobile, jobTitle });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    return `${name} is who to ask for the ${HOTS_CONTACT_SIDE_WORDS[v.side].toLowerCase()}'s documents`;
+  });
   const checkSolicitors = (v: HotsContactView) => act.mutate(async () => {
     await fileContact(v.read);
     const r = await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, { firm: v.read.firm, side: "other" });
@@ -401,9 +415,9 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
 
           {(reply.contacts || []).length > 0 && (
             <section className="space-y-2" data-testid="deal-hots-contacts">
-              <h4 className="text-sm font-semibold">Solicitors and agents</h4>
+              <h4 className="text-sm font-semibold">Solicitors, agents and asset managers</h4>
               {reply.contacts!.map(v => (
-                <ContactLine key={`${v.side}-${v.read.kind}`} view={v} busy={busy} onAgent={setAgent} onOurs={saveOurSolicitors} onCheck={checkSolicitors} />
+                <ContactLine key={`${v.side}-${v.read.kind}`} view={v} busy={busy} onAgent={setAgent} onOurs={saveOurSolicitors} onCheck={checkSolicitors} onAsk={makeAsk} />
               ))}
             </section>
           )}
@@ -485,15 +499,22 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
 }
 
 // A solicitor or agent read from the heads of terms, with the one thing to do with it.
-function ContactLine({ view: v, busy, onAgent, onOurs, onCheck }: {
+function ContactLine({ view: v, busy, onAgent, onOurs, onCheck, onAsk }: {
   view: HotsContactView; busy: boolean;
-  onAgent: (v: HotsContactView) => void; onOurs: (v: HotsContactView) => void; onCheck: (v: HotsContactView) => void;
+  onAgent: (v: HotsContactView) => void; onOurs: (v: HotsContactView) => void; onCheck: (v: HotsContactView) => void; onAsk: (v: HotsContactView) => void;
 }) {
   const who = [v.read.person, v.read.email, v.read.phone].filter(Boolean).join(" · ");
   const id = `deal-hots-contact-${v.side}-${v.read.kind}`;
   const small = "h-7 text-xs shrink-0";
   const done = (words: string) => <span className="flex shrink-0 items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{words}</span>;
+  // An asset manager, or someone at the party itself, speaks for the party: the person to ask, never an agent.
+  const canAsk = !!(v.read.person || v.read.email) && !!(v.read.email || v.read.phone);
+  const label = v.forParty && v.read.kind !== "manager" ? `${HOTS_CONTACT_SIDE_WORDS[v.side]}'s contact` : hotsContactLabel({ side: v.side, kind: v.read.kind, role: v.read.role });
   const action = v.us ? <span className="shrink-0 text-muted-foreground">BGP</span>
+    : v.forParty
+      ? (v.askIsThem ? done("Who to ask")
+        : canAsk ? <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onAsk(v)} data-testid={`${id}-ask`}>Make them who to ask</Button>
+        : <span className="shrink-0 text-muted-foreground">No email given: add them in the party box</span>)
     : v.read.kind === "agent"
       ? (v.same ? done("On the transaction")
         : <Button type="button" size="sm" variant="outline" className={small} disabled={busy} onClick={() => onAgent(v)} data-testid={`${id}-set`}>
@@ -507,9 +528,10 @@ function ContactLine({ view: v, busy, onAgent, onOurs, onCheck }: {
   return (
     <div className="flex flex-wrap items-start gap-2 rounded-md border px-2.5 py-2 text-xs" data-testid={id}>
       <div className="min-w-0 flex-1">
-        <div><span className="font-semibold">{hotsContactLabel({ side: v.side, kind: v.read.kind })}</span> · {v.read.firm}{v.us ? " (us)" : ""}</div>
+        <div><span className="font-semibold">{label}</span> · {v.read.firm}{v.us ? " (us)" : ""}</div>
         {who && <div className="text-muted-foreground">{who}</div>}
         {v.onDeal && !v.same && <div className="text-amber-800 dark:text-amber-300">The transaction has {v.onDeal}</div>}
+        {v.forParty && v.asked && !v.askIsThem && <div className="text-muted-foreground">Who to ask now: {v.asked}</div>}
         <Quote text={v.read.quote} />
       </div>
       {action}

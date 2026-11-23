@@ -149,9 +149,21 @@ const mediaWords = (c: SolicitorCheck) => !c.media.ran ? "the web search did not
   : c.media.findings.length ? `${c.media.findings.length} report${c.media.findings.length === 1 ? "" : "s"} of regulatory action or misconduct to read`
   : "no negative media found";
 
+/**
+ * Our client's solicitors are checked at the SRA alone (Woody, 23 November 2026:
+ * "dont we just need to check they are an SRA firm?"): HMRC asks for no check
+ * on solicitors, and BGP's policy (Issue 4) asks about negative media around the
+ * counterparty's solicitor only. A web search an earlier check ran on them is
+ * left out of what they read.
+ */
+export const solicitorMediaCounts = (c: Pick<SolicitorCheck, "side">): boolean => c.side !== "client";
+
 /** Where the firm stands, in a line, and whether it needs a look. */
 export function solicitorCheckWords(c: SolicitorCheck): { tone: "ok" | "attention" | "info"; words: string } {
   const reg = c.register;
+  // Our client's solicitors: the register alone, as if no web search had been asked for.
+  const media = solicitorMediaCounts(c) ? c.media : null;
+  const mediaLine = media ? ` · ${mediaWords(c)}` : "";
   if (reg.source === "sra_data") {
     const f = reg.sra || null;
     const st = f ? sraStatus(f) : null;
@@ -159,17 +171,16 @@ export function solicitorCheckWords(c: SolicitorCheck): { tone: "ok" | "attentio
     const regWords = st ? st.line
       : reg.declined ? `none of the ${reg.declined} entr${reg.declined === 1 ? "y" : "ies"} on the SRA's register under that name is them: look them up on the SRA's register`
       : "not found on the SRA's register under that name: check its exact name, or look it up on the SRA's register";
-    const attention = st?.tone === "attention" || c.media.findings.some(x => !x.unsureIdentity);
-    const info = !attention && (!st || st.tone === "info" || !c.media.ran || c.media.findings.length > 0);
-    return { tone: attention ? "attention" : info ? "info" : "ok", words: `${who}: ${regWords} · ${mediaWords(c)}` };
+    const attention = st?.tone === "attention" || !!media?.findings.some(x => !x.unsureIdentity);
+    const info = !attention && (!st || st.tone === "info" || (!!media && (!media.ran || media.findings.length > 0)));
+    return { tone: attention ? "attention" : info ? "info" : "ok", words: `${who}: ${regWords}${mediaLine}` };
   }
   const regWords = reg.status === "found"
     ? `on the SRA register${reg.sraNumber ? ` (SRA ${reg.sraNumber}` : ""}${reg.authorisation ? `${reg.sraNumber ? ", " : " ("}${reg.authorisation.toLowerCase()}` : ""}${reg.sraNumber || reg.authorisation ? ")" : ""}`
     : reg.status === "not_found" ? "not found on the SRA register: check it is a firm of solicitors and its exact name"
     : reg.status === "not_run" ? "the SRA register could not be searched"
     : "the SRA register search was not conclusive: look it up on the SRA's site";
-  const media = mediaWords(c);
-  const attention = reg.status === "not_found" || (reg.status === "found" && NOT_AUTHORISED.test(reg.authorisation || "")) || c.media.findings.some(f => !f.unsureIdentity);
-  const info = !attention && (reg.status !== "found" || !c.media.ran || c.media.findings.length > 0);
-  return { tone: attention ? "attention" : info ? "info" : "ok", words: `${reg.firmName || c.firm}: ${regWords} · ${media}` };
+  const attention = reg.status === "not_found" || (reg.status === "found" && NOT_AUTHORISED.test(reg.authorisation || "")) || !!media?.findings.some(f => !f.unsureIdentity);
+  const info = !attention && (reg.status !== "found" || (!!media && (!media.ran || media.findings.length > 0)));
+  return { tone: attention ? "attention" : info ? "info" : "ok", words: `${reg.firmName || c.firm}: ${regWords}${mediaLine}` };
 }

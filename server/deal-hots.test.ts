@@ -7,6 +7,7 @@ import {
   checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsPersonName, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
   readHotsByRules, readHotsNoteRules,
   contactsFromBody, firmLike, isBgpContact, mergeHotsContacts, readHotsContactsByRules,
+  hotsContactKind, hotsContactLabel, hotsFirmIsParty,
   type HotsContact, type HotsParty,
 } from "@shared/deal-hots";
 import { hotsContactViews, hotsTermViews, matchHotsParties, partiesFromBody, readHotsDocument, readHotsNote, termsFromBody, type RegisterLookups } from "./deal-hots";
@@ -542,6 +543,70 @@ test("each contact beside the transaction: the agent set, our client's solicitor
   const sale = await hotsContactViews(contactsDb({}, []), { id: "d2", deal_type: "Sale" } as any, contacts);
   assert.deepEqual([...new Set(sale.map(v => v.side))].sort(), ["purchaser", "vendor"]);
   assert.ok(sale.find(v => v.side === "vendor" && v.read.kind === "solicitor")!.clientSide);
+});
+
+// Woody, 23 November 2026: "it pulled out the Landlord contact and wanted to add it as
+// joint agent but its the client contact because they are the asset managers for the
+// building ... they are often the person to ask for docs". An asset manager, property
+// manager or managing agent is the owner's manager, never a letting agent; someone at
+// the party's own company speaks for it; both are offered as the person to ask.
+test("an asset manager or managing agent is the owner's manager, never an agent", () => {
+  assert.equal(hotsContactKind("Asset Manager"), "manager");
+  assert.equal(hotsContactKind("Managing Agents"), "manager");
+  assert.equal(hotsContactKind("property management"), "manager");
+  assert.equal(hotsContactKind("manager"), "manager");
+  assert.equal(hotsContactKind("Letting agent"), "agent");
+  assert.equal(hotsContactKind("Solicitors"), "solicitor");
+  const sheet = "Landlord's Asset Manager\nHondo Enterprises\nJane Smith\njane.smith@hondo.example\nLandlord's Managing Agent: Workman LLP\nTenant's Agent\nSavills (UK) Limited";
+  const c = readHotsContactsByRules(sheet, { note: true });
+  const am = contactOf(c, "landlord", "manager")!;
+  assert.deepEqual([am.role, am.firm, am.person, am.email], ["asset manager", "Hondo Enterprises", "Jane Smith", "jane.smith@hondo.example"]);
+  assert.equal(hotsContactLabel(am), "Landlord's asset manager");
+  assert.equal(contactOf(c, "tenant", "agent")!.kind, "agent");
+  // One manager a side: the managing agent after the asset manager is not a second one.
+  assert.equal(c.filter(x => x.kind === "manager").length, 1);
+  const ma = readHotsContactsByRules("Landlord's Managing Agent: Workman LLP", { note: true });
+  assert.deepEqual([ma[0].kind, ma[0].role, ma[0].firm], ["manager", "managing agent", "Workman LLP"]);
+  // The provider calling an asset manager an agent: its own words say otherwise.
+  const checked = checkHotsAnswer({ parties: [], contacts: [{ side: "landlord", kind: "agent", firm: "Hondo Enterprises", person: "Jane Smith", quote: "Landlord's Asset Manager Hondo Enterprises" }] }, sheet, { note: true });
+  assert.deepEqual([checked.contacts[0].kind, checked.contacts[0].role], ["manager", "asset manager"]);
+  // Sent back by the screen, a manager keeps its role.
+  assert.equal(contactsFromBody([{ side: "landlord", kind: "manager", role: "managing agent", firm: "Workman LLP" }])[0].role, "managing agent");
+});
+
+test("a contact's firm is the party itself only on its whole name", () => {
+  assert.ok(hotsFirmIsParty("Hondo Enterprises", "Hondo Enterprises Limited"));
+  assert.ok(hotsFirmIsParty("AG Hondo Brixton Village B.V.", "AG HONDO BRIXTON VILLAGE BV"));
+  assert.ok(hotsFirmIsParty("Hondo Enterprises", "The Hondo Enterprises Group"));
+  assert.ok(!hotsFirmIsParty("Hondo", "Hondo Enterprises"));
+  assert.ok(!hotsFirmIsParty("Savills", "Savills Investment Management"));
+  assert.ok(!hotsFirmIsParty("Workman LLP", "Hondo Enterprises"));
+});
+
+test("the party's manager or its own people are offered as the person to ask, never as the joint agent", async () => {
+  const contacts: HotsContact[] = [
+    // Read as the landlord's agent, but at the landlord itself.
+    { side: "landlord", kind: "agent", firm: "Hondo Enterprises Ltd", person: "Jane Smith", email: "jane.smith@hondo.example", phone: null, quote: "Hondo Enterprises Ltd", checked: true },
+    { side: "tenant", kind: "manager", role: "property manager", firm: "Example Property Management", person: "Pat Manager", email: null, phone: null, quote: "x", checked: true },
+    { side: "tenant", kind: "agent", firm: "Savills (UK) Limited", person: null, email: null, phone: null, quote: "x", checked: true },
+  ];
+  const db = {
+    query: async (sql: string) => {
+      if (/FROM crm_companies/.test(sql)) return { rows: [{ id: "c-hondo", name: "Hondo Enterprises" }, { id: "c-sav", name: "Savills (UK) Limited" }] };
+      if (/FROM crm_contacts/.test(sql)) return { rows: [{ id: "p-jane", name: "Jane Smith", email: "Jane.Smith@hondo.example" }] };
+      return { rows: [] };
+    },
+  };
+  const deal: any = { id: "d1", deal_type: "New Letting", bgp_acting_for: "landlord", team: ["London Estate"], landlord_id: "c-hondo", landlord_contact_id: "p-jane", tenant_id: "c-t", acquisition_agent_id: "c-sav" };
+  const views = await hotsContactViews(db, deal, contacts);
+  const own = views.find(v => v.side === "landlord")!;
+  assert.deepEqual([own.forParty, own.own, own.onDeal, own.asked, own.askIsThem], [true, true, null, "Jane Smith", true]);
+  const manager = views.find(v => v.side === "tenant" && v.read.kind === "manager")!;
+  assert.deepEqual([manager.forParty, manager.own, manager.asked, manager.askIsThem], [true, false, null, false]);
+  // A letting agent stays an agent.
+  const agent = views.find(v => v.side === "tenant" && v.read.kind === "agent")!;
+  assert.ok(!agent.forParty);
+  assert.equal(agent.onDeal, "Savills (UK) Limited");
 });
 
 // Woody, 23 November 2026: "read hots and click choose company and it went back to

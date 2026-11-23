@@ -1176,21 +1176,26 @@ function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onPartySave, onActi
     }
     return list;
   };
-  const slots: PartySlot[] = defs.map(slot => ({
-    role: slot.role, label: slot.label, companyId: slot.value || null, client: clientRole === slot.role,
-    picker: (
-      <div data-testid={`deal-party-${slot.role}`}>
-        <InlineLinkSelect
-          value={slot.value}
-          options={companyOptions(slot.keep, slot.value)}
-          href={slot.value ? `/companies/${slot.value}` : undefined}
-          onSave={(v) => onPartySave(slot.field, v || null)}
-          onCreate={(name) => onCreate(slot.field, slot.createType, name)}
-          placeholder={`Link ${slot.label.toLowerCase()}`}
-        />
-      </div>
-    ),
-  }));
+  const slots: PartySlot[] = defs.map(slot => {
+    const select = (nameless: boolean) => (
+      <InlineLinkSelect
+        value={slot.value}
+        options={companyOptions(slot.keep, slot.value)}
+        href={slot.value ? `/companies/${slot.value}` : undefined}
+        onSave={(v) => onPartySave(slot.field, v || null)}
+        onCreate={(name) => onCreate(slot.field, slot.createType, name)}
+        placeholder={`Link ${slot.label.toLowerCase()}`}
+        nameless={nameless}
+        triggerLabel={nameless ? `Change the ${slot.label.toLowerCase()}` : undefined}
+        triggerTestId={nameless ? `aml-party-relink-${slot.role}` : undefined}
+      />
+    );
+    return {
+      role: slot.role, label: slot.label, companyId: slot.value || null, client: clientRole === slot.role,
+      picker: <div data-testid={`deal-party-${slot.role}`}>{select(false)}</div>,
+      change: select(true),
+    };
+  });
   // Which side BGP acts for on a leasing deal: drives instruction vs related
   // activity on the landlord and brand pages (Woody, 2026-09-26).
   const actingForControl = !partiesInvestment ? (

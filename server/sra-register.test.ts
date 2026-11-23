@@ -171,6 +171,11 @@ test("the solicitors check words a firm from the SRA's data, and says so when th
   assert.equal(solicitorCheckWords(check(none)).tone, "info");
   const missing = registerFromSra(findSraFirm(INDEX, "Pemberton Greenish"), readAt);
   assert.match(solicitorCheckWords(check(missing)).words, /not found on the SRA's register under that name/);
+  // Our client's solicitors: the SRA check alone (Woody, 23 November 2026: "dont we just need
+  // to check they are an SRA firm?"); a web search an earlier check ran on them is left out.
+  assert.deepEqual(solicitorCheckWords({ ...check(found, 1), side: "client" }), { tone: "ok", words: "FORSTERS LLP (SRA 400249, 2 offices): an SRA-regulated firm, recognised body since 1 Mar 2005" });
+  assert.equal(solicitorCheckWords({ ...check(found, 1), side: "other" }).tone, "attention");
+  assert.equal(solicitorCheckWords({ ...check(glen, 0), side: "client" }).tone, "attention");
 });
 
 // Woody, 23 November 2026: "we need our clients solicitors checked at SRA too I think".

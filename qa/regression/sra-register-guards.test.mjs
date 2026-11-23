@@ -28,7 +28,10 @@ test("a name that matches several entries asks which firm before anything runs",
   const s = read("server/solicitor-aml.ts");
   const route = s.slice(s.indexOf('router.post("/api/deals/:id/solicitors-aml/check"'));
   assert.ok(route.indexOf("solicitorChoices(firm, sraNumber)") > 0);
-  assert.ok(route.indexOf("solicitorChoices(firm, sraNumber)") < route.indexOf("runSolicitorCheck(firm, { sraNumber, noneOfThese })"));
+  assert.ok(route.indexOf("solicitorChoices(firm, sraNumber)") < route.indexOf("runSolicitorCheck(firm, { sraNumber, noneOfThese, side })"));
+  // Our client's solicitors are checked at the SRA alone; the web search is the other side's (Woody, 23 November 2026).
+  assert.match(s, /const wantMedia = opts\.side !== "client";/);
+  assert.match(read("shared/solicitor-aml.ts"), /export const solicitorMediaCounts = \(c: Pick<SolicitorCheck, "side">\): boolean => c\.side !== "client";/);
   assert.match(route, /if \(choices\) return res\.json\(\{ choose: true, firm, \.\.\.choices \}\);/);
   // Without the key, or when the SRA's data cannot be read, the register is searched on the web as before.
   assert.match(s, /searchDomains: SOLICITOR_REGISTER_SITES/);

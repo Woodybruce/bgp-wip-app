@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle, Pencil } from "lucide-react";
+import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
@@ -772,6 +772,10 @@ export interface PartySlot {
   client: boolean;
   // The deal page's picker: link, change or add the party.
   picker: ReactNode;
+  // The same picker as one pencil for the card's heading, which already shows the
+  // name: one press opens the search (Woody, 23 November 2026: "two edit buttons to
+  // change the Landlord? we only need one?").
+  change?: ReactNode;
 }
 
 function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen, slot }: {
@@ -784,7 +788,6 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const [folded, setFolded] = useState(!startOpen && !openAll.all);
   useEffect(() => { if (openAll.at) setFolded(!openAll.all); }, [openAll.at]);
   const [editing, setEditing] = useState(false);
-  const [changing, setChanging] = useState(false);
   const drafts = useQuery<any[]>({
     enabled: staff,
     queryKey: ["/api/kyc4u/drafts", dealId, cp.id],
@@ -1078,11 +1081,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{roleLabel}</span>
           <Link href={`/companies/${cp.id}`} className="min-w-0 truncate text-sm font-semibold hover:underline">{cp.name}</Link>
           {(slot?.client ?? party?.client) && <span className="text-xs text-muted-foreground">BGP's client</span>}
-          {staff && slot?.picker && (
-            <button type="button" data-no-min-touch onClick={() => setChanging(c => !c)} className="rounded p-0.5 text-muted-foreground hover:text-foreground" title={`Change the ${roleLabel.toLowerCase()}`} aria-label={`Change the ${roleLabel.toLowerCase()}`} data-testid={`aml-party-relink-${cp.role}`}>
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-          )}
+          {staff && slot?.change}
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
             {flags.length > 0 && (
               <button type="button" data-no-min-touch onClick={() => reveal("screening")} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-box-flags-${cp.role}`}>
@@ -1095,12 +1094,6 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {statusPill && <span data-testid={`aml-box-stage-${cp.role}`}>{statusPill}</span>}
           </span>
         </div>
-        {changing && slot?.picker && (
-          <div className="flex flex-wrap items-center gap-2" data-testid={`aml-party-picker-${cp.role}`}>
-            <div className="min-w-0 flex-1">{slot.picker}</div>
-            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setChanging(false)}>Done</Button>
-          </div>
-        )}
         {showNext && nextLine}
         {sanctionsOnlyLine}
         {deadline}

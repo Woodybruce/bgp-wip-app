@@ -765,9 +765,15 @@ interface InlineLinkSelectProps {
   // client's list holds only the records it may open): plain text, with the
   // pencil, never read as an empty cell.
   selectedLabel?: string | null;
+  // The pencil alone, for a heading that already shows the name, so one press
+  // opens the search (Woody, 23 November 2026: "two edit buttons to change the
+  // Landlord? we only need one?").
+  nameless?: boolean;
+  triggerLabel?: string;
+  triggerTestId?: string;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false, selectedLabel }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false, selectedLabel, nameless = false, triggerLabel, triggerTestId }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -780,17 +786,17 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
 
   return (
     <div className="flex items-center gap-1 min-w-0 max-w-full">
-      {!compact && !listedName && selectedName ? (
+      {!nameless && !compact && !listedName && selectedName ? (
         <span className="min-w-0 flex-1 text-xs truncate block" title={selectedName}>{selectedName}</span>
       ) : null}
-      {!compact && listedName && href ? (
+      {!nameless && !compact && listedName && href ? (
         <Link href={href} className="min-w-0 flex-1">
           <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName || undefined}>
             {selectedName}
           </span>
         </Link>
       ) : null}
-      {compact && listedName && href ? (
+      {!nameless && compact && listedName && href ? (
         <Link href={href}>
           <ExternalLink className="w-3 h-3 text-primary hover:text-primary/80" />
         </Link>
@@ -799,11 +805,14 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-            data-testid="inline-link-select-trigger"
+            className={nameless ? "rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0" : "text-muted-foreground hover:text-foreground transition-colors shrink-0"}
+            title={triggerLabel}
+            aria-label={triggerLabel}
+            {...(nameless ? { "data-no-min-touch": true } : {})}
+            data-testid={triggerTestId || "inline-link-select-trigger"}
           >
             {selectedName ? (
-              <Pencil className="w-3 h-3" />
+              <Pencil className={nameless ? "h-3.5 w-3.5" : "w-3 h-3"} />
             ) : (
               <span className="text-[10px] flex items-center gap-0.5">
                 <Plus className="w-3 h-3" />

@@ -59,6 +59,8 @@ test("a party owned through a company abroad is enhanced due diligence by the of
   const box = read("shared/aml-box.ts");
   assert.match(box, /const edd = !!f\.trust \|\| !!f\.ownersAbroad \|\| f\.redFlags > 0 \|\| f\.factors > 0;/);
   assert.doesNotMatch(box, /request_kyc4u|Not yet with KYC4U/);
-  assert.match(read("shared/party-kyc.ts"), /export const signOffEnhanced = [\s\S]{0,200}!!f\.ownersAbroad\?\.length/);
+  assert.match(read("shared/party-kyc.ts"), /export const signOffEnhanced = [\s\S]{0,400}!!f\.ownersAbroad\?\.length/);
+  // A letting under £10,000 a month needs the sanctions checks only, so its party is never enhanced unless a trust.
+  assert.match(read("shared/party-kyc.ts"), /export const signOffEnhanced = [\s\S]{0,300}!\(f\.sanctionsOnly && !f\.trust\) &&/);
   assert.doesNotMatch(read("client/src/pages/aml-dashboard.tsx"), /amlNeedsKyc4u/);
 });

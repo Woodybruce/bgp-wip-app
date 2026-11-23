@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { SOLICITOR_SIDES, SOLICITOR_SIDE_WORDS, sameSolicitorFirm, solicitorCheckWords, type SolicitorCheck, type SolicitorSide } from "@shared/solicitor-aml";
+import { SOLICITOR_SIDES, SOLICITOR_SIDE_WORDS, sameSolicitorFirm, solicitorCheckWords, solicitorMediaCounts, type SolicitorCheck, type SolicitorSide } from "@shared/solicitor-aml";
 import { SRA_ATTRIBUTION_URL, SRA_ATTRIBUTION_WORDS, SRA_REGISTER_SEARCH_URL, sraStatus, type SraChoice, type SraTone } from "@shared/sra-register";
 
 export interface DealSolicitorsAml { dealId: string; onDeal: string | null; checks: Array<SolicitorCheck & { id: string; by: string | null; side: SolicitorSide }> }
@@ -144,7 +144,7 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
   const usesSra = !!choice || data.checks.some(c => c.register.source === "sra_data");
   return (
     <div className="space-y-3 text-xs" data-testid="deal-solicitors-aml">
-      <p className="text-muted-foreground">Each firm is checked against the SRA's own data on the firms it regulates, and the web for regulatory action or misconduct. Only what a source it read says is kept.</p>
+      <p className="text-muted-foreground">Each firm is checked against the SRA's own data on the firms it regulates. The other side's are also searched on the web for regulatory action or misconduct, as BGP's policy asks. Only what a source it read says is kept.</p>
       {choice && (
         <div className="rounded border px-2 py-1.5 space-y-1" data-testid="sra-choose">
           <p>{choice.candidates.length + choice.more} entries on the SRA's register match <span className="font-medium">{choice.firm}</span>. Which firm is acting for {choice.side === "client" ? "our client" : "the other side"}?</p>
@@ -184,7 +184,7 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
                         {c.register.url && <a href={c.register.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">Register page <ExternalLink className="w-3 h-3" /></a>}
                         {c.register.office && <p className="text-muted-foreground">Office: {c.register.office}</p>}
                       </>}
-                  {c.media.findings.length > 0 && (
+                  {solicitorMediaCounts(c) && c.media.findings.length > 0 && (
                     <ul className="space-y-0.5">
                       {c.media.findings.map(f => (
                         <li key={f.url}>{f.summary}{f.unsureIdentity ? <span className="text-muted-foreground"> (may be another firm)</span> : null} · <a href={f.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{f.source}</a>{f.date ? <span className="text-muted-foreground">, {f.date}</span> : null}</li>
@@ -209,7 +209,7 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
           </div>
         );
       })}
-      {check.isPending && !choice && <p className="text-muted-foreground">Checking the SRA's register and searching the web: about a minute.</p>}
+      {check.isPending && !choice && <p className="text-muted-foreground">{check.variables?.side === "client" ? "Checking the SRA's register." : "Checking the SRA's register and searching the web: about a minute."}</p>}
       {usesSra && (
         <p className="text-[11px] text-muted-foreground" data-testid="sra-attribution">
           <a href={SRA_ATTRIBUTION_URL} target="_blank" rel="noreferrer" className="hover:underline">{SRA_ATTRIBUTION_WORDS}</a>.
