@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { amlOfficerLabel } from "@shared/aml-policy";
 
 interface PolicyFeed {
   documents: Array<{ key: string; title: string; issue: number; date: string; url: string; onFile: boolean; replaced?: boolean }>;
@@ -131,6 +132,12 @@ function InHouseEddLine() {
 /** Enhanced checks are always the officers' (KYC4U is no longer used). */
 export function useAmlInHouse(): boolean {
   return true;
+}
+
+/** "AML Officer (Jack)": who a red flag is raised with (Jack, 23 November 2026). */
+export function useAmlOfficerLabel(): string {
+  const { data } = useQuery<{ officers?: { nominated?: { name: string | null } | null } }>({ queryKey: ["/api/aml-policy"], staleTime: 60_000 });
+  return amlOfficerLabel(data?.officers?.nominated?.name);
 }
 
 export function AmlPolicyPanel() {

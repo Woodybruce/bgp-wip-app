@@ -293,7 +293,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   );
   if (row.company_id && !row.is_test) {
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'red_flag_alert', 'ChatBGP', $2)`,
-      [row.company_id, `Red flag on ref ${request.ref}, the agents and officers told: ${fresh.map(f => f.label).join("; ")}`]).catch(() => {});
+      [row.company_id, `Red flag on ref ${request.ref}, the agents and the AML Officer told: ${fresh.map(f => f.label).join("; ")}`]).catch(() => {});
   }
   return { sent: fresh.length };
 }

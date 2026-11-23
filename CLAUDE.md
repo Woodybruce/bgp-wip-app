@@ -5042,6 +5042,25 @@ boards". Do not re-litigate.
   explanation.
 - `useAmlInHouse()` (`aml-policy-panel.tsx`) reads the switch where a
   screen's words depend on it.
+- **In-house is the default, and a red flag goes to the AML Officer**
+  (Jack, 23 November 2026: "should say raise with AML Officer (Jack) ...
+  any reference to KYC4U across all of AML should now say 'AML Officer
+  (Jack)' as we are breaking away from them unless super complex situations
+  which ill make call on"). `readInHouseEdd` reads ON unless an officer has
+  switched it off (no stored row was on live, so it went on). The red flag
+  and higher-risk boxes say "Red flag: raise with AML Officer (Jack)"
+  (`amlOfficerLabel` in `shared/aml-policy.ts`: the Nominated Officer's first
+  name; `useAmlOfficerLabel` on the screens), a KYC4U request prepared but
+  not submitted no longer flags the Documents step, and KYC4U stays only as
+  **KYC4U (complex case)** under Other ways. Switched off, the KYC4U words
+  come back as before. **Merged the same day with "KYC4U is no longer used"
+  (Woody: "We are no longer using KYC 4U update the app accross
+  everyhting")**: there is no switch (`readInHouseEdd` always answers on) and
+  no KYC4U (complex case) button, because every route that would send a
+  request to KYC4U answers 410. The "raise with AML Officer (Jack)" words
+  stay. For a complex case Jack still chooses to send to KYC4U, BGP
+  commissions KYC4U directly, drops their report on the party's Upload
+  documents, and the Nominated Officer or a Deputy signs the party off.
 
 ## AML rules in short, checked against HMRC every 3 months (Woody, 2026-11-22)
 

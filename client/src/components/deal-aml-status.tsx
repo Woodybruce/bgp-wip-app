@@ -7,6 +7,7 @@ import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
 import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { SecondReadPanel } from "@/components/aml-second-read";
+import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, TrustLine, partyAmlFacts, useDealParties } from "@/components/deal-parties";
 import { DealDescribeBox } from "@/components/deal-hots";
@@ -491,6 +492,10 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
   const flags = data.redFlags?.parties[companyId] || [];
   const aside = data.redFlags?.setAside?.[companyId] || [];
   const who = data.decisions?.officerWords;
+  // Raised with the AML Officer, not KYC4U (Jack, 23 November 2026), while
+  // the officers do enhanced checks in-house.
+  const officer = useAmlOfficerLabel();
+  const inHouse = data.decisions?.inHouseEdd !== false;
   return (
     <>
       {only !== "factors" && <RedFlagList
@@ -500,8 +505,8 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         setAside={aside.filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
-        title="Red flag: enhanced checks by the officers"
-        step="The Nominated Officer or a Deputy looks into each flag, then signs the party off with a note, or sets a flag aside with a comment where it is not this party."
+        title={`Red flag: raise with ${officer}`}
+        step={`${officer} checks each one and signs the party off, or sets a flag aside with a comment.`}
         testId={`kyc-red-flags-${companyId}`}
       />}
       {only !== "flags" && <RedFlagList
@@ -513,7 +518,7 @@ function PartyRedFlags({ dealId, data, companyId, role, only }: { dealId: string
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
         title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
-        step="The Nominated Officer or a Deputy signs the party off with a note of what was checked, or sets a factor aside with a comment where it does not apply."
+        step={`${officer} checks these and signs the party off, or sets one aside where it does not apply.`}
         testId={`kyc-policy-factors-${companyId}`}
       />}
     </>
@@ -564,6 +569,8 @@ function DealRegime({ data }: { data: DealAmlStatus }) {
 
 function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus }) {
   const unchecked = data.redFlags?.unchecked || [];
+  const officer = useAmlOfficerLabel();
+  const inHouse = data.decisions?.inHouseEdd !== false;
   return (
     <>
       <RedFlagList
@@ -574,7 +581,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Red flag on the transaction record"
-        step="It is not tied to one party: the officers weigh it when they sign off the party it concerns."
+        step={`It is not tied to one party: raise it with ${officer}.`}
         testId="kyc-red-flags-deal"
       />
       <RedFlagList
@@ -586,7 +593,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
         title="Enhanced due diligence on the transaction: a higher-risk factor in BGP's AML policy"
-        step="It applies to every party: the Nominated Officer or a Deputy weighs it when signing each party off."
+        step={`It applies to every party: ${officer} checks it before signing them off.`}
         testId="kyc-policy-factors-deal"
       />
       {unchecked.length > 0 && (
