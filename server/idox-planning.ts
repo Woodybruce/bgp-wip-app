@@ -107,7 +107,7 @@ function extractField(meta: string, labelRe: RegExp): string {
   return m ? m[1].trim() : "";
 }
 
-function parseResultsHtml(html: string, host: string, lpaName: string): IdoxPlanningApp[] {
+export function parseResultsHtml(html: string, host: string, lpaName: string): IdoxPlanningApp[] {
   const results: IdoxPlanningApp[] = [];
   const itemRe = /<li\b[^>]*class="[^"]*\bsearchresult\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
   let m: RegExpExecArray | null;
@@ -170,7 +170,7 @@ function parseCookies(setCookieHeader: string | null): string {
     .join("; ");
 }
 
-const BROWSER_UA =
+export const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 // Railway's default DNS ordering prefers IPv6, which misroutes to several
@@ -279,6 +279,20 @@ async function deriveIdoxHostFromPlanit(postcode: string): Promise<{ name: strin
   }
   hostCache.set(key, { at: Date.now(), lpa: result });
   return result;
+}
+
+/** The Idox council for a council name ("Lambeth") or a postcode. Null when none is known. */
+export async function resolveIdoxCouncil(args: { postcode?: string | null; council?: string | null }): Promise<{ name: string; host: string } | null> {
+  const wanted = (args.council || "").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  if (wanted) {
+    const hit = LPA_REGISTRY.find(l => {
+      const name = l.name.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+      return name === wanted || name.includes(wanted) || wanted.includes(name);
+    });
+    if (hit) return { name: hit.name, host: hit.host };
+  }
+  if (args.postcode) return resolveLpa(args.postcode) || (await deriveIdoxHostFromPlanit(args.postcode));
+  return null;
 }
 
 export async function fetchIdoxPlanning(

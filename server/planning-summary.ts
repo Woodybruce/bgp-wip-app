@@ -7,6 +7,10 @@
 
 import { storage } from "./storage";
 import { fetchPlanitPlanning } from "./planit-planning";
+import { planningAddressFit, planningPlaceKey, referenceYear, type PlanningPlaceKey } from "@shared/planning-address";
+
+// When the council register could not be read, try again sooner than a day.
+const RETRY_TTL_MS = 15 * 60 * 1000;
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const memoryCache = new Map<string, { fetchedAt: number; data: PlanningSummary }>();
@@ -41,6 +45,9 @@ export type PlanningApplication = {
   decision?: string;
   lpa?: string;
   documentUrl?: string;
+  address?: string;
+  /** The year in the reference, for an application the council register gives no date for. */
+  year?: number | null;
 };
 
 export type PlanningSummary = {
@@ -57,8 +64,15 @@ export type PlanningSummary = {
     floodRisk: PlanningConstraint[];
     other: PlanningConstraint[];
   };
+  /** The property's own applications (its address or building name), newest first. */
   recentApplications: PlanningApplication[];
+  /** Applications near the property in the last five years that are not its own. */
+  nearbyApplications: PlanningApplication[];
   applicationCount: { total: number; lastYear: number; pending: number };
+  /** False when the property's name and address give no number and street or building name to match on. */
+  addressKnown: boolean;
+  /** The council whose register gave the building's history, when one was read. */
+  historyFrom: string | null;
   fetchedAt: string;
 };
 
@@ -78,7 +92,10 @@ function emptySummary(propertyId: string, postcode: string | null): PlanningSumm
       other: [],
     },
     recentApplications: [],
+    nearbyApplications: [],
     applicationCount: { total: 0, lastYear: 0, pending: 0 },
+    addressKnown: false,
+    historyFrom: null,
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -150,11 +167,23 @@ function summariseApplications(apps: PlanningApplication[]) {
     const dt = a.receivedAt ? Date.parse(a.receivedAt) : NaN;
     if (!Number.isNaN(dt) && dt >= yearAgo) lastYear++;
     const status = (a.status || "").toLowerCase();
-    if (status && !/(decided|determined|withdrawn|refused|granted|approved)/.test(status)) {
+    if (status && !/(decided|determined|withdrawn|refused|grant|approved|permitted|dismissed|allowed|disposed|lapsed|split decision)/.test(status)) {
       pending++;
     }
   }
   return { total: apps.length, lastYear, pending };
+}
+
+const appTime = (a: PlanningApplication) => Date.parse(a.receivedAt || a.decidedAt || "") || (a.year ? Date.UTC(a.year, 0, 1) : 0);
+const refKey = (r: string) => (r || "").toUpperCase().replace(/\s+/g, "");
+
+async function councilHistory(postcode: string | null, key: PlanningPlaceKey | null) {
+  if (!postcode || !key?.searchTerm) return null;
+  const { idoxBuildingHistory } = await import("./idox-application");
+  return Promise.race([
+    idoxBuildingHistory({ postcode, searchTerm: key.searchTerm, fits: (address) => !!planningAddressFit(address, key) }),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
+  ]).catch(() => null);
 }
 
 async function buildSummary(
@@ -162,6 +191,7 @@ async function buildSummary(
   postcode: string | null,
   coordinates: { lat: number; lng: number } | null,
   propertyName: string | null,
+  key: PlanningPlaceKey | null = null,
 ): Promise<PlanningSummary> {
   if (!coordinates && postcode) {
     coordinates = await geocodePostcode(postcode);
@@ -173,20 +203,26 @@ async function buildSummary(
   }
 
   const datasetResults: Record<string, PlanningConstraint[]> = {};
-  const [, applicationsRaw] = await Promise.all([
+  const [, applicationsRaw, council] = await Promise.all([
     Promise.all(
       PLANNING_DATA_DATASETS.map(async (dataset) => {
         datasetResults[dataset] = await fetchDataset(dataset, coordinates!.lat, coordinates!.lng);
       })
     ),
     postcode
-      ? fetchPlanitPlanning(postcode, propertyName || "", { maxAgeYears: 5, radiusKm: 0.2 }).catch(() => [])
+      ? fetchPlanitPlanning(postcode, propertyName || "", { maxAgeYears: 20, radiusKm: 0.2 }).catch(() => [])
       : Promise.resolve([]),
+    councilHistory(postcode, key),
   ]);
 
-  const recentApplications: PlanningApplication[] = (applicationsRaw as any[])
-    .slice(0, 20)
-    .map((a) => ({
+  // PlanIt answers for everything within 200m of the postcode: only the
+  // applications whose address is the property's are its own; the rest are
+  // its neighbours' (Woody, 2026-11-24, 26A and 26B The Pavement).
+  const own = new Map<string, PlanningApplication>();
+  const nearby: PlanningApplication[] = [];
+  const fiveYearsAgo = Date.now() - 5 * 365 * 24 * 60 * 60 * 1000;
+  for (const a of applicationsRaw as any[]) {
+    const app: PlanningApplication = {
       reference: a.reference,
       description: a.description,
       status: a.status,
@@ -195,7 +231,21 @@ async function buildSummary(
       decision: a.decision,
       lpa: a.lpa,
       documentUrl: a.documentUrl,
-    }));
+      address: a.address,
+      year: referenceYear(a.reference || ""),
+    };
+    if (planningAddressFit(a.address, key)) own.set(refKey(app.reference), app);
+    else if (appTime(app) >= fiveYearsAgo) nearby.push(app);
+  }
+  for (const h of council?.history ?? []) {
+    const k = refKey(h.reference);
+    const had = own.get(k);
+    if (had) { own.set(k, { ...had, documentUrl: had.documentUrl || h.url, status: had.status || h.status }); continue; }
+    own.set(k, { reference: h.reference, description: h.description, status: h.status, decision: h.status, lpa: council!.council, documentUrl: h.url, year: h.year });
+  }
+
+  const recentApplications = [...own.values()].sort((a, b) => appTime(b) - appTime(a));
+  const nearbyApplications = nearby.sort((a, b) => appTime(b) - appTime(a)).slice(0, 15);
 
   const summary: PlanningSummary = {
     propertyId: cacheKey,
@@ -203,11 +253,15 @@ async function buildSummary(
     coordinates,
     constraints: bucketConstraints(datasetResults),
     recentApplications,
+    nearbyApplications,
     applicationCount: summariseApplications(recentApplications),
+    addressKnown: !!key,
+    historyFrom: council?.history.length ? council.council : null,
     fetchedAt: new Date().toISOString(),
   };
 
-  memoryCache.set(cacheKey, { fetchedAt: Date.now(), data: summary });
+  const councilMissed = !!key?.searchTerm && !council && !!postcode;
+  memoryCache.set(cacheKey, { fetchedAt: councilMissed ? Date.now() - CACHE_TTL_MS + RETRY_TTL_MS : Date.now(), data: summary });
   return summary;
 }
 
@@ -233,7 +287,7 @@ export async function getPlanningSummary(
     if (!Number.isNaN(lat) && !Number.isNaN(lng)) coordinates = { lat, lng };
   }
 
-  return buildSummary(propertyId, postcode, coordinates, property.name || null);
+  return buildSummary(propertyId, postcode, coordinates, property.name || null, planningPlaceKey({ name: property.name, address: property.address }));
 }
 
 // Variant for callers that don't have a crm_properties.id — e.g. pathway runs
@@ -256,7 +310,7 @@ export async function getPlanningSummaryForLocation(args: {
   const coordinates = args.lat != null && args.lng != null && !Number.isNaN(args.lat) && !Number.isNaN(args.lng)
     ? { lat: args.lat as number, lng: args.lng as number }
     : null;
-  return buildSummary(cacheKey, postcode, coordinates, args.propertyName ?? null);
+  return buildSummary(cacheKey, postcode, coordinates, args.propertyName ?? null, planningPlaceKey({ name: args.propertyName }));
 }
 
 // Compact markdown block for injection into AI generation prompts
@@ -278,13 +332,22 @@ export function planningSummaryToMarkdown(s: PlanningSummary): string {
   if (chips.length === 0) lines.push("- No designated constraints found at this location.");
   else for (const chip of chips) lines.push(`- ${chip}`);
 
-  if (s.recentApplications.length > 0) {
-    lines.push("", `**Recent planning history** (${s.applicationCount.total} apps total, ${s.applicationCount.lastYear} in last year, ${s.applicationCount.pending} pending):`);
-    for (const a of s.recentApplications.slice(0, 5)) {
-      const date = a.receivedAt ? a.receivedAt.slice(0, 10) : "?";
-      const status = a.decision || a.status || "?";
-      lines.push(`- ${date} · ${a.reference} · ${status} · ${a.description?.slice(0, 120) ?? ""}`);
-    }
+  const appLine = (a: PlanningApplication) => {
+    const date = a.receivedAt ? a.receivedAt.slice(0, 10) : a.year ? String(a.year) : "?";
+    const status = a.decision || a.status || "?";
+    return `- ${date} · ${a.reference} · ${status} · ${a.address ? `${a.address} · ` : ""}${a.description?.slice(0, 140) ?? ""}`;
+  };
+  if (!s.addressKnown) {
+    lines.push("", "The property's address gives no number and street or building name, so its own applications could not be told from its neighbours'.");
+  } else if (s.recentApplications.length > 0) {
+    lines.push("", `**Planning history at this address** (${s.applicationCount.total} applications${s.historyFrom ? `, from ${s.historyFrom}'s register and PlanIt` : ", from PlanIt (last 20 years)"}; ${s.applicationCount.lastYear} in the last year, ${s.applicationCount.pending} pending):`);
+    for (const a of s.recentApplications.slice(0, 12)) lines.push(appLine(a));
+  } else {
+    lines.push("", "No planning applications found at this address.");
+  }
+  if (s.nearbyApplications.length > 0) {
+    lines.push("", `**Nearby, not this building** (last 5 years, within 200m; ${s.nearbyApplications.length} shown):`);
+    for (const a of s.nearbyApplications.slice(0, 5)) lines.push(appLine(a));
   }
 
   return lines.join("\n");

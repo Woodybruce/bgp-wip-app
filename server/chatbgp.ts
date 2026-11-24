@@ -857,6 +857,7 @@ function getToolProgressLabel(toolName: string): string {
     property_lookup: "Looking up property data...",
     get_property_planning: "Pulling planning constraints + recent applications...",
     get_planning_drawings: "Fetching planning drawings from the council portal...",
+    get_planning_application: "Reading the application on the council's planning register...",
     measure_plan: "Reading the drawing's scale and measuring...",
     annotate_image: "Stamping labels onto the drawing...",
     property_data_lookup: "Querying PropertyData...",
@@ -3292,7 +3293,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_property_planning",
-      description: "Get a focused planning-data summary for a CRM property: which constraints affect it (Listed Building, Conservation Area, Article 4 Direction, Tree Preservation Order, Scheduled Monument, World Heritage Site, Flood Risk Zone) and recent planning applications nearby (last 5 years). Faster and more focused than property_lookup when the user is asking specifically about planning, designations, or recent applications. Pass the crm_properties.id when known.",
+      description: "Get a focused planning-data summary for a CRM property: which constraints affect it (Listed Building, Conservation Area, Article 4 Direction, Tree Preservation Order, Scheduled Monument, World Heritage Site, Flood Risk Zone) and the planning applications at the property itself (its own address or building name, from the council register where the app can read it, else PlanIt for 20 years), with neighbouring applications listed apart. Never present a neighbour's application as the property's. For one application in detail (conditions, refusal reasons, decision notice text) call get_planning_application. Faster and more focused than property_lookup when the user is asking specifically about planning, designations, or recent applications. Pass the crm_properties.id when known.",
       parameters: {
         type: "object",
         properties: {
@@ -3318,6 +3319,24 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
             description: "Which documents to bundle. 'existing' = existing-building drawings only (for an existing-use underwrite); 'proposed' = the proposed-scheme drawings; 'all_drawings' (default) = every drawing/plan/elevation/section/site plan; 'everything' = all documents including reports and statements.",
           },
           title: { type: "string", description: "Optional title for the bundled PDF (defaults to the address + reference)." },
+        },
+        required: ["reference"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_planning_application",
+      description: "Read one planning application on its council's own register (Idox Public Access councils: Lambeth, Westminster, Camden, Islington, Tower Hamlets, Hammersmith & Fulham, Hackney, Coventry, Stroud, and others found from the postcode). Returns the register's summary (address, proposal, received and decision dates, the decision, any appeal), the full list of documents with links, the building's whole planning history as the council files it (every application at that property, with its outcome), and the text of the key documents (decision notices, officers' reports, appeal decisions) so you can read conditions such as the time limit, and refusal reasons. Use it whenever the user asks about a specific application, whether a consent is still live or has lapsed, what was refused and why, or the history of a building; never guess an outcome from a search summary. Give the reference exactly as the council writes it (e.g. '13/04314/FUL') and the council's name or the property's postcode. For RBKC drawings use get_planning_drawings.",
+      parameters: {
+        type: "object",
+        properties: {
+          reference: { type: "string", description: "The council's application reference, e.g. '13/04314/FUL'." },
+          council: { type: "string", description: "The council's name, e.g. 'Lambeth'. Give this or postcode." },
+          postcode: { type: "string", description: "The property's postcode, used to find the council when no council is named." },
+          readDocuments: { type: "boolean", description: "Read the text of the key documents (decision notice, officer's report, appeal decision). Default true." },
         },
         required: ["reference"],
       },
@@ -15646,6 +15665,33 @@ export function setupChatBGPRoutes(app: Express) {
       const { getPlanningSummary, planningSummaryToMarkdown } = await import("./planning-summary");
       const summary = await getPlanningSummary(String(tcArgs.propertyId));
       return { data: planningSummaryToMarkdown(summary) };
+    }
+    if (tcName === "get_planning_application") {
+      const { lookupIdoxApplication, keyDocuments, readIdoxDocumentText } = await import("./idox-application");
+      const found = await lookupIdoxApplication({ reference: String(tcArgs.reference || ""), council: tcArgs.council ? String(tcArgs.council) : null, postcode: tcArgs.postcode ? String(tcArgs.postcode) : null });
+      if (!found.ok) return { data: { error: found.error } };
+      const a = found.application;
+      const keyDocs = tcArgs.readDocuments === false ? [] : keyDocuments(a.documents, 3);
+      const read: Array<{ date: string; type: string; url: string; text: string | null }> = [];
+      for (const d of keyDocs) read.push({ date: d.date, type: d.type || d.description, url: d.url, text: await readIdoxDocumentText(found.session, d) });
+      return {
+        data: {
+          council: a.council,
+          reference: a.reference,
+          registerLink: a.url,
+          address: a.address,
+          proposal: a.proposal,
+          received: a.received,
+          status: a.status,
+          decision: a.decision,
+          decisionIssued: a.decided,
+          appeal: a.appealStatus && a.appealStatus !== "Not Available" ? `${a.appealStatus}${a.appealDecision && a.appealDecision !== "Not Available" ? `: ${a.appealDecision}` : ""}` : null,
+          documents: a.documents.slice(0, 60).map(d => ({ date: d.date, type: d.type, description: d.description, url: d.url })),
+          buildingHistory: a.history.map(h => ({ reference: h.reference, year: h.year, outcome: h.status, proposal: h.description.slice(0, 300), registerLink: h.url })),
+          keyDocumentText: read,
+          note: "Read from the council's register. A permission must normally be begun within its time limit (read condition 1 of the decision notice); a later change to its conditions does not extend that limit unless the notice says so. Applications filed against the building's other property records are included in buildingHistory.",
+        },
+      };
     }
     // Fetch RBKC planning drawings and bundle them into one downloadable PDF.
     if (tcName === "get_planning_drawings") {
