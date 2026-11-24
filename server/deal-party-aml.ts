@@ -15,6 +15,7 @@
 //   POST /api/deals/:id/parties/:role/kyc4u-result/read   multipart: files[]: where each will be filed and what KYC4U's report says (saves nothing)
 //   POST /api/deals/:id/parties/:role/public-figure       multipart: key, note, links, files[]: a person verified from public sources
 //   POST /api/deals/:id/parties/:role/public-figure/:checkId/withdraw
+//   PUT  /api/deals/:id/parties/:role/person-details (a private individual's date of birth and nationality)
 //   POST /api/deals/:id/parties/:role/reliance            multipart: the firm, its supervisor, the date it agreed, the confirmations, note, files[]
 //   POST /api/deals/:id/parties/:role/reliance/:relianceId/withdraw
 //   POST /api/deals/:id/parties/:role/not-required        { reason, comment }: no checks needed on this party
@@ -50,6 +51,7 @@ import { amlFileDocWords } from "@shared/aml-file";
 import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personVerifiedWords } from "@shared/kyc-people";
 import { relianceInput, relianceWords } from "@shared/aml-reliance";
 import { sddNoteProblem, type SavedSddNote } from "@shared/aml-sdd";
+import { personDetailsInput, personDetailsWords, personDobNeeded, type PersonDetailsView } from "@shared/kyc-person-details";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -147,7 +149,7 @@ export interface KnownFacts {
 }
 
 /** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
-export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null }> {
+export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null; person: PersonDetailsView | null }> {
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
@@ -190,6 +192,12 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
   // A trust is checked by BGP's officers, never KYC4U (Jack, 23 November 2026).
   const trust = String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
+  // A private individual's date of birth and nationality, typed in by BGP (24 November 2026):
+  // a sanctions-only sign-off waits for the date, and for a run of the checks made after it.
+  const personDetails = kind === "individual"
+    ? await import("./kyc-person-details").then(m => m.readPersonDetails(party.brandId, party.entityId, db)).catch(() => null)
+    : null;
+  const dobNeeded = personDobNeeded({ kind, sanctionsOnly: party.regime === "sanctions_only", trust });
   const people = await import("./kyc-people")
     .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
       await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId })))
@@ -228,17 +236,22 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
       .then(list => list.filter(g => g.companyId === party.brandId).map(g => ({ name: g.name, state: g.checks.state })))
       .catch(() => [{ name: "the guarantors (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
+    dobNeeded: dobNeeded && !personDetails,
+    dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
+    person: kind === "individual" ? { details: personDetails, needed: dobNeeded, words: personDetailsWords(personDetails) } : null,
   };
 }
 
 /** For the deal's AML card: may the party be signed off now, and is a note needed. edd: enhanced due diligence by BGP, the officers' to sign off. */
-export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[] } {
+export function signOffView(facts: Omit<SignOffFacts, "note"> & { person?: PersonDetailsView | null }): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; person: PersonDetailsView | null } {
   const edd = signOffEnhanced(facts) && signOffInHouse(facts);
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(Math.max(SIGN_OFF_NOTE_MIN, IN_HOUSE_EDD_NOTE_MIN)) }),
     needsNote: edd || (!facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance),
     edd,
     outstanding: facts.sanctionsOnly || facts.reliance ? [] : facts.clientChecksOutstanding || [],
+    // A private individual's date of birth and nationality (24 November 2026).
+    person: facts.person ?? null,
   };
 }
 
@@ -845,6 +858,39 @@ async function recordPersonVerified(req: Request, res: Response, certified: bool
 
 router.post(["/api/deals/:id/parties/:role/certified-documents/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/certified-documents/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, true));
 router.post(["/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/public-figure/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, false));
+
+// A private individual's date of birth and nationality, typed in by BGP with no
+// documents (Woody, 24 November 2026): any BGP person signed in as themselves,
+// on a transaction's party or a client file. BGP's checks run again with them,
+// so the screening tells the person from a namesake. The date itself goes on
+// the KYC history only, never on the transaction's history.
+router.put(["/api/deals/:id/parties/:role/person-details", "/api/client-kyc/:companyId/subjects/:entity/person-details"], async (req: Request, res: Response) => {
+  try {
+    const userId = String((req as any).session?.userId || (req as any).tokenUserId || "");
+    if (!userId) return res.status(401).json({ message: "Not signed in." });
+    const { contactViewer } = await import("./contact-viewer");
+    if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const party = await subjectFor(req, res);
+    if (!party) return;
+    if ((await partyKindOf(pool, party)) !== "individual") {
+      return res.status(409).json({ message: "Only a private individual's date of birth is recorded here: a company's people come from its register." });
+    }
+    const input = personDetailsInput(req.body);
+    if (!input.ok) return res.status(400).json({ message: input.message });
+    const u = (await pool.query(`SELECT id, name, email FROM users WHERE id = $1`, [userId])).rows[0];
+    const by = { id: userId, name: text(u?.name) || text(u?.email) || "BGP" };
+    const { savePersonDetails } = await import("./kyc-person-details");
+    const details = await savePersonDetails(party.brandId, party.entityId, input, by);
+    if (party.dealId) await dealAudit(party.dealId, "aml_person_details", null, "recorded", `${subjectLabel(party)}: ${partyName(party)}: date of birth${input.nationality ? " and nationality" : ""} recorded by BGP`, by);
+    // The screening runs again with the date of birth.
+    const { startPrecheck } = await import("./kyc-prechecks");
+    const started = await startPrecheck(party.brandId, { dealId: party.dealId, userId, force: true, entityId: party.entityId }).catch(() => null);
+    res.json({ details, words: personDetailsWords(details), started });
+  } catch (e: any) {
+    console.error("[deal-party-aml] person details:", e?.message);
+    res.status(500).json({ message: "The date of birth could not be saved." });
+  }
+});
 async function withdrawPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
     const me = certified ? await decider(req) : await adminDecider(req);

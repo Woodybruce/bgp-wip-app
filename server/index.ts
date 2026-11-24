@@ -3161,6 +3161,22 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
     // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
     `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
+    // A private individual's date of birth and nationality, typed in by BGP
+    // (Woody, 24 November 2026): one row per party record (the brand, and the
+    // person who signs when there is one). BGP's checks screen with them, and
+    // a sanctions-only sign-off of a private individual waits for the date.
+    // server/kyc-person-details.ts.
+    `CREATE TABLE IF NOT EXISTS kyc_person_details (
+      id serial PRIMARY KEY,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      date_of_birth date NOT NULL,
+      nationality text,
+      recorded_by varchar,
+      recorded_by_name text,
+      recorded_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS kyc_person_details_party_idx ON kyc_person_details (company_id, COALESCE(trading_entity_id, ''))`,
     // Documents BGP uploads on a party (Woody, 23 November 2026: "upload
     // documents ... the app must read these and check they are acceptable"):
     // the reading of each (server/kyc-documents.ts), whether an agent saw the

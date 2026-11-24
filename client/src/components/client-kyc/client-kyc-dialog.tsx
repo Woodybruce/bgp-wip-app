@@ -30,6 +30,8 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { CLIENT_INSTRUCTIONS, clientSubjectParam, type ClientKycNext } from "@shared/client-kyc";
 import type { PrecheckCardLine, PrecheckCompany } from "@shared/kyc-prechecks";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
+import type { PersonDetailsView } from "@shared/kyc-person-details";
+import { PersonDetailsLine } from "@/components/aml-person-details";
 
 export interface ClientFileView {
   subject: { companyId: string; accountName: string; entityId: string | null; name: string; number: string | null; kind: string; country: string | null; sameCompany: boolean };
@@ -37,7 +39,9 @@ export interface ClientFileView {
   state: { status: string | null; expiresAt: string | null; approvedBy: string | null; scope: string | null; bucket: string };
   precheck: { ranAt: string | null; running: boolean; lines: PrecheckCardLine[]; company: PrecheckCompany | null } | null;
   flags: { live: KycRedFlag[]; setAside: SetAsideFlag[]; level: { level: "simplified" | "standard" | "enhanced"; why: string[]; toWeigh?: string[] } | null; unchecked: string[] };
-  signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean };
+  signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean;
+    // A private individual's date of birth and nationality (24 November 2026).
+    person?: PersonDetailsView | null };
   next: ClientKycNext;
   documents?: { done: boolean; request?: { status: ClientRequestStatus; who: string; sentAt: string | null } | null; owing?: number };
   // The company's sanctions-only switch (24 November 2026): the sanctions steps alone, nothing asked of the client.
@@ -152,8 +156,13 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
     missing: false,
     kind: view.subject.kind === "individual" ? "a person" : null,
     warning: pre?.company?.warnings[0] || null,
-    gaps: !cleared && !sanctionsOnly && !view.file?.contact && !request ? ["who to ask not set"] : [],
+    gaps: [
+      !cleared && !sanctionsOnly && !view.file?.contact && !request ? "who to ask not set" : null,
+      // A private individual's date of birth, before a sanctions-only sign-off (24 November 2026).
+      !cleared && view.signOff.person?.needed && !view.signOff.person.details ? "date of birth to add" : null,
+    ].filter((g): g is string => !!g),
     notes: [
+      view.signOff.person?.words ? view.signOff.person.words.replace(/^Born /, "born ") : null,
       view.file?.contact && !cleared ? `ask ${view.file.contact.name}` : null,
       view.subject.entityId ? (view.xero ? "in Xero" : "not in Xero") : null,
       view.transactions.length ? `${view.transactions.length} transaction${view.transactions.length === 1 ? "" : "s"}` : null,
@@ -215,6 +224,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                   <SendClientChecksButton dealId={scopeKey} companyId={companyId} partyName={view.subject.name} label="Send client checks" className="h-7 text-xs bg-background" />
                 )}
                 {view.next.action === "sign_off" && <Button size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpenStep(signOffStep)}>Sign off</Button>}
+                {view.next.action === "person_details" && <Button size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpenStep(1)} data-testid="client-kyc-next-dob">Add it</Button>}
               </>} />
               {view.sanctionsOnly && (
                 <p className="mb-2 text-xs text-muted-foreground" data-testid="client-kyc-sanctions-only">Sanctions checks only: for lettings under £10,000 a month. Nothing is asked of the client; the sign-off covers small lettings only.</p>
@@ -226,6 +236,10 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
               <AmlStep n={1} label={isPerson ? AML_STEP_LABEL.person : AML_STEP_LABEL.company} testId="client-kyc-step-company" open={step(1)} onToggle={() => toggle(1)}
                 state={companyLine.state} summary={companyLine.words}>
                 {pre?.company && <CompanyFactsList company={pre.company} testKey={`client-${view.subject.entityId || view.subject.companyId}`} />}
+                {view.signOff.person && (
+                  <PersonDetailsLine view={view.signOff.person} url={`/api/client-kyc/${encodeURIComponent(companyId)}/subjects/${encodeURIComponent(entity)}/person-details`}
+                    onSaved={refresh} testKey="client" />
+                )}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
                   {view.xero ? <span>Xero: <span className="font-medium">{view.xero.name}</span>, used for invoices when it signs</span>

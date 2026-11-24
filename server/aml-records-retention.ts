@@ -41,6 +41,7 @@ const PARTY_TABLES: Array<{ table: string; party: string; at: string }> = [
   { table: "kyc_flag_reviews", party: "company_id", at: "COALESCE(restored_at, set_aside_at)" },
   { table: "kyc_party_exemptions", party: "company_id", at: "COALESCE(undone_at, set_at)" },
   { table: "kyc_public_figure_checks", party: "company_id", at: "COALESCE(withdrawn_at, verified_at)" },
+  { table: "kyc_person_details", party: "company_id", at: "recorded_at" },
   { table: "kyc_document_readings", party: "company_id", at: "COALESCE(accepted_at, uploaded_at)" },
   { table: "kyc_document_translations", party: "company_id", at: "made_at" },
   { table: "kyc_abroad_records", party: "company_id", at: "COALESCE(removed_at, added_at)" },
@@ -232,6 +233,7 @@ async function deleteParty(client: PoolClient, companyId: string): Promise<Recor
   if (tables.has("kyc_flag_reviews")) await del("kyc_flag_reviews", `DELETE FROM kyc_flag_reviews WHERE company_id = $1`);
   if (tables.has("kyc_party_exemptions")) await del("kyc_party_exemptions", `DELETE FROM kyc_party_exemptions WHERE company_id = $1`);
   if (tables.has("kyc_public_figure_checks")) await del("kyc_public_figure_checks", `DELETE FROM kyc_public_figure_checks WHERE company_id = $1`);
+  if (tables.has("kyc_person_details")) await del("kyc_person_details", `DELETE FROM kyc_person_details WHERE company_id = $1`);
   if (tables.has("kyc_document_readings")) await del("kyc_document_readings", `DELETE FROM kyc_document_readings WHERE company_id = $1`);
   if (tables.has("kyc_document_translations")) await del("kyc_document_translations", `DELETE FROM kyc_document_translations WHERE company_id = $1`);
   if (tables.has("kyc_abroad_records")) await del("kyc_abroad_records", `DELETE FROM kyc_abroad_records WHERE company_id = $1`);

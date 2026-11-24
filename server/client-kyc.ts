@@ -200,6 +200,7 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     request: main ? main.status : "none",
     waitingOn: view.outstanding.length && main?.status === "finished" ? requests.filter((r: any) => r.person && r.status !== "finished").map((r: any) => r.person.name) : [],
     signOffBlocked: view.blocked,
+    dobNeeded: !!view.person?.needed && !view.person.details,
   };
   const fmt = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
   const { rows: transactions } = await pool.query(

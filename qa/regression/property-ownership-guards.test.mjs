@@ -29,9 +29,15 @@ test("the ownership routes are BGP staff's and read only the free Land Registry 
   assert.match(rules, /if \(text\(input\.tenure\)\.toLowerCase\(\) === "leasehold"\) \{\n\s+if \(input\.unitLease\) return null;/);
   assert.match(rules, /if \(!input\.roles\.longLeaseholderId\) return \{ kind: "long_leaseholder", company: input\.proprietor\.crm \? "existing" : "create", files: true \};/);
   assert.match(s, /const accountId = leasehold \? leaseholderId : asFreeholder \? freeholderId : ownerId;/);
-  // The KYC on a company filed here is the shared client KYC window (one build for AML, 24 November 2026):
-  // the card has no checks of its own, and nothing here starts BGP's checks.
-  assert.doesNotMatch(s, /ownership\/check|startPrecheck/);
+  // The KYC on a company filed here is the shared client KYC window (one build for AML, 24 November 2026): the
+  // card has no checks route of its own. BGP's checks start by themselves once Use has filed a company and the
+  // change is saved (Woody, 24 November 2026), never inside the transaction and never on a read.
+  assert.doesNotMatch(s, /ownership\/check/);
+  const commitAt = s.indexOf('await client.query("COMMIT");');
+  const startAt = s.indexOf("startPrecheck(filedFor.accountId");
+  assert.ok(commitAt > 0 && startAt > commitAt, "the checks start after the commit");
+  assert.equal((s.match(/startPrecheck\(/g) || []).length, 1);
+  assert.match(s, /startPrecheck\(filedFor\.accountId, \{ entityId: filedFor\.entityId, userId: actor\.id \}\)/);
   assert.match(read("client/src/components/property-page/ownership-card.tsx"), /<ClientKycDialog companyId=\{owner\.account\.id\} entityId=\{owner\.filed\.entityId\}/);
   // Beyond the postcode only with no freehold among the building's titles; a title a person typed is read from the lists.
   assert.match(s, /if \(landRegistry\.available && !here\.some\(f => isFreehold\(f\.t\)\)\) \{/);

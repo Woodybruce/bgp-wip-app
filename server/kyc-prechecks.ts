@@ -43,6 +43,7 @@ import {
   charityFacts, charityKindWords, chTypeMayBeCharity, readsLikeCharity, trusteePersonName, trusteesInOrder,
   type CharityFacts, type PrecheckCharity,
 } from "@shared/charity-register";
+import { dobParts } from "@shared/kyc-person-details";
 import type { KycPartyKind } from "@shared/kyc-request";
 import { partySubjectKind } from "@shared/deal-parties";
 
@@ -655,6 +656,7 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
           score: typeof m.score === "number" ? m.score : null, profileId: d.profileId ? clean(d.profileId, 80) : null,
           birthYearAgrees: typeof d.birthYearAgrees === "boolean" ? d.birthYearAgrees : null, unread: !!d.unread,
           ...(d.birthYearNear === true ? { birthYearNear: true } : {}),
+          ...(d.birthYearOnly === true ? { birthYearOnly: true } : {}),
           media: (Array.isArray(d.media) ? d.media : []).slice(0, 3).map((x: any) => ({ title: clean(x?.title, 200), url: x?.url ? clean(x.url, 500) : null, date: x?.date ? clean(x.date, 20) : null })),
         };
       }),
@@ -936,7 +938,16 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (s.context.length > seen.context.length && !(/\bborn\b/.test(seen.context) && !/\bborn\b/.test(s.context))) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
-  if (subjectKind === "individual") add({ name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });
+  // A private individual's date of birth and nationality, typed in by BGP (24 November 2026), so the
+  // screening can tell them from a namesake: the lists and ComplyAdvantage compare the year and month.
+  const personDetails = subjectKind === "individual"
+    ? await import("./kyc-person-details").then(m => m.readPersonDetails(companyId, entityId)).catch(() => null) : null;
+  const born = dobParts(personDetails?.dateOfBirth);
+  if (subjectKind === "individual") add({
+    name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: born?.year ?? null, dobMonth: born?.month ?? null,
+    nationality: personDetails?.nationality || null,
+    context: `a private individual dealing in UK commercial property${born ? `, born ${born.month}/${born.year}` : ""}${personDetails?.nationality ? `, ${personDetails.nationality}` : ""}`,
+  });
   else add({ name: partyName, role: "the company", person: false, dobYear: null, context: companiesHouse ? `UK company ${companiesHouse.number}, registered office ${companiesHouse.registeredOffice || "not given"}` : "a company in a UK property transaction" });
   // Everyone on a private individual's side, as People to check lists them
   // (22 November 2026: someone added alongside was never screened): each

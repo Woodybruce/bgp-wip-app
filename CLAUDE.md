@@ -5186,7 +5186,7 @@ chain walk keeps each owner's date of birth). Tests:
   90% like anything else. A company, and every check from before this
   change, keeps the earlier rule, so its flags stand until **Run again**.
 - **A year either side is not enough for adverse media** (24 November 2026,
-  Woody's "random red flags"): Fortis Green's trustee Ian Macfarlane
+  Woody's "random red flags"; widened the same day, next bullet): Fortis Green's trustee Ian Macfarlane
   Anderson, born November 1948, was a red flag on the Jethro Tull musician
   Ian Anderson's adverse media profile, whose only birth date is a year one
   either side (`profileDobAgrees` takes a year alone within a year). The
@@ -5196,6 +5196,16 @@ chain walk keeps each owner's date of birth). Tests:
   possible namesake ("the profile gives only a year, one either side of
   theirs"); a public role or a sanctions list still counts it. Stored checks
   hold no profile years, so it applies from the next run.
+- **Nor is a year with no month** (24 November 2026, Fortis Green's run
+  again: the same musician's profile now gave 1948, Ian Macfarlane Anderson's
+  own year, worked out from his age in a 2026 This is Money article, so the
+  rule above did not catch it). The match also carries `birthYearOnly`
+  (every agreeing date on the profile is a year with no month, the person's
+  own year included), and for adverse media, a warning list or fitness and
+  probity such a match is a possible namesake ("the profile gives only a year
+  of birth, no month"): a month that agrees ties the person, a year alone
+  does not. A public role or a sanctions list still counts the year. From
+  the next run, as above.
 - **A charity trustee is the director of the same name** (same day): the
   Charity Commission lists "IAN CRITCHLEY" and Companies House "CRITCHLEY,
   Ian Martin", so they were screened as two people, the trustee with no date
@@ -6514,10 +6524,12 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   name when it answers; a company Companies House shows closed is refused). The
   pills at the top follow. A role a person set is never changed. One line in
   `investment_comp_migration_log` (batch `property-ownership`).
-- **KYC only when asked**: **Run checks** (`POST …/ownership/check { entityId,
-  again }`) runs BGP's checks before asking on a company filed under the
-  building's Owner (`startPrecheck(owner, { entityId })`), the same record a
-  transaction's AML box reads. Nothing checks a building by itself.
+- **KYC only when asked** (superseded on 24 November 2026: the checks start
+  by themselves once Use files a company, see the Touchwood bullets below):
+  **Run checks** (`POST …/ownership/check { entityId, again }`) ran BGP's
+  checks before asking on a company filed under the building's Owner
+  (`startPrecheck(owner, { entityId })`), the same record a transaction's AML
+  box reads. Nothing checks a building that nobody set up.
 - **Feeding the AML box**: on a transaction at the building, the landlord's or
   seller's party offers the building's registered owner (`landRegistryOwnerOf`
   in `server/deal-parties.ts`, from the property's stored title): a company
@@ -6584,10 +6596,28 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
     (`accountFor`, `fileUnder`: a UK number, or the overseas list's country,
     so BGP's checks look for it abroad). Set as long leaseholder sets the
     empty pill and files the company; File it for the AML files a co-owner or
-    one already set. The checks still start only when a person asks (his rule
-    of 23 November): a filed company shows its KYC and a **KYC** button that
+    one already set. A filed company shows its KYC and a **KYC** button that
     opens the shared client KYC window (one build); the card's own checks
     line and `POST .../ownership/check` were removed.
+  - **BGP's checks start by themselves** when Use files a company for the AML
+    (Woody, 24 November 2026: yes to "should checks start by themselves when
+    you set a building's owner, rather than when someone presses KYC?";
+    supersedes his "only when someone presses" of 23 November): after the
+    transaction commits, `useLandRegistryOwner` calls `startPrecheck(account,
+    { entityId })` on the company it filed, within the day's allowance
+    (`KYC_PRECHECK_DAILY_CAP`), and the toast says what happened
+    (`ownershipChecksWords`: started, already running, checked in the last 30
+    days, waiting for tomorrow's allowance). The button's words say so ("...
+    for the AML and starts BGP's checks"). A company filed before then starts
+    its checks when its KYC window opens, as before.
+  - **A street named after the building is not the building**
+    (`addressNamesBuilding`, 24 November 2026: live Touchwood listed
+    "garages at Touchwood Hall Close"): the building's name counts only where
+    the part of the address it is in does not go on, within three words, to a
+    street's name (Close, Road, Street, Lane, Avenue and the like). On live
+    the wider search found the council's freehold the same day: WM937485,
+    "Land on the north side of Poplar Arcade, Touchwood Centre", the
+    Metropolitan Borough of Solihull, listed for a person to pick.
   - **The old KYC card**: BGP staff get the shared Companies and KYC card
     (`AccountEntitiesPanel`, with `label`) for the Owner, Freeholder and Long
     leaseholder (`PropertyOwnersKyc`) in place of the older company checks
@@ -6830,6 +6860,45 @@ Tests: `server/party-kyc.test.ts`, `server/kyc-red-flags.test.ts`,
 - **The results stay in the app**: no stored value was rewritten, and the
   KYC history keeps every line (`loadRecordHistory` reads six lines per
   company, with each line's action, to tell the two apart).
+
+## A private individual's date of birth on a small letting (Woody, 2026-11-24)
+
+Woody: "on the sanctions only for a private are you sure we dont need adderess
+or DOB?" Answered: the law asks for neither on a letting under £10,000 a month
+(only the sanctions checks apply), but a date of birth is what tells a person
+from a namesake on the lists; he said yes to recording it, typed in, with no
+documents. Do not re-litigate. Rules: `shared/kyc-person-details.ts`; store:
+`server/kyc-person-details.ts` (boot table `kyc_person_details`, one row per
+party record: the brand, with the person who signs when there is one); route
+in `server/deal-party-aml.ts`; line: `client/src/components/aml-person-details.tsx`.
+Tests: `server/kyc-person-details.test.ts` (in `npm test`),
+`qa/regression/kyc-person-details-guards.test.mjs`.
+
+- **Where**: step 1 ("The person") of a private individual's AML, on the
+  transaction's AML box and in the client KYC window: **Date of birth** with
+  Add or Change (a date box and Nationality, if known). `PUT
+  /api/deals/:id/parties/:role/person-details` and
+  `/api/client-kyc/:companyId/subjects/:entity/person-details`: any BGP person
+  signed in as themselves, a private individual only (`partyKindOf`, else
+  409), checked by `personDetailsInput` (a real date, 16 to 110 years ago; a
+  nationality in words). The date goes on the KYC history only; the
+  transaction's history says only that it was recorded.
+- **Screening**: BGP's checks run again on saving (`startPrecheck`, `force`),
+  and `runPrecheck` screens the party with its year and month of birth and
+  nationality (`dobParts`, `meshNationality`): the lists set aside an entry
+  whose date of birth disagrees, ComplyAdvantage goes by the date-of-birth
+  rules ("Who is screened, and the date of birth decides").
+- **Sign-off**: a private individual on sanctions checks only
+  (`personDobNeeded`) is not signed off until the date is recorded
+  (`PERSON_DOB_NEEDED`, ahead of a possible sanctions match, which the date
+  helps settle), nor while the latest run of the checks is older than the date
+  (`PERSON_DOB_AFTER_RUN`). The Next line reads "To do · Add their date of
+  birth" (`person_details`), on the box and the client window. The full checks
+  do not ask for it (the identity check gives it).
+- Five-year deletion covers the table; a company merge leaves the row on the
+  merged-away record (the table holds one row per record).
+- Not built: a date of birth for someone named alongside a private individual;
+  showing it on the AML file.
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 
@@ -7599,7 +7668,11 @@ our system and check along side what KYC4U did to see if we get the same".
   number / registered office" and "matching the queried company" as the
   register, and reads a cut last sentence of 40 characters or fewer that
   opens with "No", "Nothing", "None" or "There is no" as saying nothing; any
-  other cut sentence keeps the finding.
+  other cut sentence keeps the finding. St George plc's run of the same day
+  raised "Companies House identifies The Berkeley Group plc as holding 75% or
+  more of ST GEORGE PLC's shares ... provide no indication that this parent is
+  government- or state-owned": "identifies" now reads as the register
+  restated, like lists, shows, names and records.
   (2) Companies House writes 9999-12-31 for a date not set: the app read it
   as "identity verification statement removed on 31 Dec 9999" (Choux). It is
   no date now (`idvOf`, `idvState`).

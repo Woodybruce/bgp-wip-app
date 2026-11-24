@@ -221,8 +221,12 @@ test("each profile says whether its birth year agrees with the person's", () => 
   assert.equal(tull.matches[0].details.birthYearNear, true);
   const sameYear = ca.matchesFromRisks([risk({ name: "ian anderson", types: ["ADVERSE-MEDIA-V2-OTHER-MINOR"], dob: ["1948", "1947"] })], { name: "ANDERSON, Ian Macfarlane", birthYear: 1948, birthMonth: 11 }, "person");
   assert.equal(sameYear.matches[0].details.birthYearNear, false, "one of its years is the person's own");
+  // ...but every year it gives is a year alone: still only a year (24 November 2026, the second live run).
+  assert.equal(tull.matches[0].details.birthYearOnly, true);
+  assert.equal(sameYear.matches[0].details.birthYearOnly, true);
   const month = ca.matchesFromRisks([risk({ name: "ian anderson", types: ["ADVERSE-MEDIA-V2-OTHER-MINOR"], dob: ["1948-11-03"] })], { name: "ANDERSON, Ian Macfarlane", birthYear: 1948, birthMonth: 11 }, "person");
   assert.equal(month.matches[0].details.birthYearNear, false);
+  assert.equal(month.matches[0].details.birthYearOnly, false, "a month that agrees");
 });
 
 test("a person goes to Mesh with their birth month and year and a UK nationality; Mesh refusing them screens the bare name", async () => {

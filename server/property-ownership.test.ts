@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addressNamesBuilding, addressNumberAndStreet, buildingNameKey, buildingSearchTerm, countryWords, isUnitLease, ownershipKycWords, postTown,
-  sameRegisteredCompany, titleFit, titleUsePlan, titleUseWords, unnumberedStreet,
+  ownershipChecksWords, sameRegisteredCompany, titleFit, titleUsePlan, titleUseWords, unnumberedStreet,
 } from "../shared/property-ownership";
 
 test("the building's number and street, as Land Registry files an address", () => {
@@ -63,22 +63,37 @@ test("what Use does: a freehold sets up the owner; a leasehold only the empty Lo
   // All done: nothing to offer.
   assert.equal(titleUsePlan({ onRecord: true, tenure: "Freehold", owner: { id: "tpg" }, proprietor: { filed: true, crm: null }, roles: { freeholderId: "tpg", longLeaseholderId: null } }), null);
   assert.equal(titleUseWords({ kind: "owner", records: true, owner: "keep", files: true, freeholder: false }, { titleNumber: "NGL1", ownerName: "TPG Angelo Gordon", proprietorName: "AG MILLENNIUM PROPCO LIMITED" }),
-    "Records title NGL1 on the building, files AG MILLENNIUM PROPCO LIMITED under TPG Angelo Gordon for the AML.");
+    "Records title NGL1 on the building, files AG MILLENNIUM PROPCO LIMITED under TPG Angelo Gordon for the AML and starts BGP's checks.");
   assert.equal(titleUseWords({ kind: "owner", records: true, owner: "keep", files: false, freeholder: false }, { titleNumber: "NGL2", ownerName: "TPG", proprietorName: "X", storedTitle: "NGL1" }),
     "Records title NGL2 on the building in place of NGL1.");
   assert.equal(titleUseWords({ kind: "long_leaseholder", company: "create", files: true }, { titleNumber: "NGL3", ownerName: "TPG", proprietorName: "QA OVERSEAS SARL" }),
-    "Adds QA OVERSEAS SARL to the CRM and sets it as the Long leaseholder, and files it for the AML.");
+    "Adds QA OVERSEAS SARL to the CRM and sets it as the Long leaseholder, files it for the AML and starts BGP's checks.");
   assert.equal(titleUseWords({ kind: "long_leaseholder", company: "keep", files: true }, { titleNumber: "WM757813", ownerName: null, proprietorName: "ASF UK TOUCHWOOD TRUSTEE 2 LIMITED", accountName: "ASF UK TOUCHWOOD TRUSTEE 1 LIMITED" }),
-    "Files ASF UK TOUCHWOOD TRUSTEE 2 LIMITED under ASF UK TOUCHWOOD TRUSTEE 1 LIMITED for the AML.");
+    "Files ASF UK TOUCHWOOD TRUSTEE 2 LIMITED under ASF UK TOUCHWOOD TRUSTEE 1 LIMITED for the AML and starts BGP's checks.");
   assert.equal(titleUseWords({ kind: "long_leaseholder", company: "keep", files: true }, { titleNumber: "WM757813", ownerName: null, proprietorName: "ASF UK TOUCHWOOD TRUSTEE 1 LIMITED", accountName: "ASF UK Touchwood Trustee 1 Ltd" }),
-    "So its KYC can be checked.");
+    "Files it for the AML and starts BGP's checks.");
   // A building held on a long lease: a freehold found is the Freeholder's; the head lease stays on the record and the Owner is untouched.
   const held = { freeholderId: null, longLeaseholderId: "asf" };
   assert.deepEqual(titleUsePlan({ onRecord: false, tenure: "Freehold", owner: null, proprietor: { filed: false, crm: null }, roles: held }), { kind: "freeholder", company: "create", files: true });
   assert.deepEqual(titleUsePlan({ onRecord: false, tenure: "Freehold", owner: null, proprietor: { filed: false, crm: { id: "smbc" } }, roles: { freeholderId: "smbc", longLeaseholderId: "asf" } }), { kind: "freeholder", company: "keep", files: true });
   assert.equal(titleUsePlan({ onRecord: false, tenure: "Freehold", owner: null, proprietor: { filed: true, crm: { id: "smbc" } }, roles: { freeholderId: "smbc", longLeaseholderId: "asf" } }), null);
   assert.equal(titleUseWords({ kind: "freeholder", company: "create", files: true }, { titleNumber: "WM1", ownerName: null, proprietorName: "SOLIHULL METROPOLITAN BOROUGH COUNCIL" }),
-    "Adds SOLIHULL METROPOLITAN BOROUGH COUNCIL to the CRM and sets it as the Freeholder, and files it for the AML.");
+    "Adds SOLIHULL METROPOLITAN BOROUGH COUNCIL to the CRM and sets it as the Freeholder, files it for the AML and starts BGP's checks.");
+  // The Freeholder set and the company filed: the sentence ends on the filing and the checks.
+  assert.equal(titleUseWords({ kind: "owner", records: false, owner: "create", files: true, freeholder: true }, { titleNumber: "NGL4", ownerName: null, proprietorName: "AG PROPCO LIMITED" }),
+    "Adds AG PROPCO LIMITED to the CRM as the Owner, sets the Freeholder to AG PROPCO LIMITED, files AG PROPCO LIMITED under AG PROPCO LIMITED for the AML and starts BGP's checks.");
+});
+
+test("BGP's checks start by themselves on the company Use filed (24 November 2026), in the toast's words", () => {
+  // After the line that names the company ("AG PROPCO LIMITED filed under the owner").
+  assert.equal(ownershipChecksWords("started"), "BGP's checks started");
+  assert.equal(ownershipChecksWords("running"), "BGP's checks already running");
+  assert.equal(ownershipChecksWords("fresh"), "BGP's checks ran in the last 30 days");
+  assert.equal(ownershipChecksWords("cap"), "BGP's checks wait for tomorrow: today's allowance is used");
+  assert.equal(ownershipChecksWords("waiting"), "BGP's checks did not start: press KYC to try again");
+  assert.equal(ownershipChecksWords(null), "BGP's checks did not start: press KYC to try again");
+  // Switched off: the toast says nothing about checks.
+  assert.equal(ownershipChecksWords("off"), null);
 });
 
 test("a company's KYC in the transaction's words", () => {
@@ -115,6 +130,10 @@ test("beyond the postcode: the building's own name, its street and town, and lea
   assert.equal(addressNamesBuilding("Land and buildings at Touchwood, Homer Road, Solihull", "touchwood", "Solihull"), true);
   assert.equal(addressNamesBuilding("Touchwoods Garden Centre, Solihull", "touchwood", "Solihull"), false);
   assert.equal(addressNamesBuilding("Touchwood Hall Close, Solihull", "touchwood", "Birmingham"), false);
+  // A street named after the building is not the building; the building named beside a street still is.
+  assert.equal(addressNamesBuilding("garages at Touchwood Hall Close, Solihull", "touchwood", null), false);
+  assert.equal(addressNamesBuilding("Land On The North Side Of Poplar Arcade, Touchwood Centre, Solihull", "touchwood", null), true);
+  assert.equal(addressNamesBuilding("Touchwood, Homer Road, Solihull", "touchwood", null), true);
   // Land Registry's overseas country, as people write it.
   assert.equal(countryWords("JERSEY"), "Jersey");
   assert.equal(countryWords("BRITISH VIRGIN ISLANDS"), "British Virgin Islands");

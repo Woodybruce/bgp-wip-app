@@ -37,6 +37,8 @@ import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register"
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
+import type { PersonDetailsView } from "@shared/kyc-person-details";
+import { PersonDetailsLine } from "@/components/aml-person-details";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
@@ -99,7 +101,9 @@ export interface DealAmlStatus {
     canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
     officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
     // full: on a letting under £10,000 a month, whether the full checks may be signed off (23 November 2026).
-    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; full?: { blocked: string | null; needsNote: boolean; edd?: boolean } }>;
+    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; full?: { blocked: string | null; needsNote: boolean; edd?: boolean };
+      // A private individual's date of birth and nationality (24 November 2026).
+      person?: PersonDetailsView | null }>;
     // The officers' setting: BGP does enhanced due diligence itself (21 November 2026).
     inHouseEdd?: boolean;
   } | null;
@@ -599,6 +603,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     inHouseEdd: true,
     sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
     joint: jointBoxFacts(jointQ.data, cp.id),
+    // A private individual's date of birth, before a sanctions-only sign-off (24 November 2026).
+    dobNeeded: !settled && !!decision?.person?.needed && !decision.person.details,
   };
   const step = amlNextStep(facts);
 
@@ -606,6 +612,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
       case "trust": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
+      case "person_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-dob-${cp.role}`}>Add it</Button>;
       case "fill_in": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
@@ -642,9 +649,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       askNoEmail ? `no email for ${party!.person!.name}` : null,
       facts.billingDiffers ? "BGP bills another company" : null,
       trustRecordedGaps.length ? "trust information to add" : null,
+      facts.dobNeeded ? "date of birth to add" : null,
       guarantorOpen ? "guarantor checks to run" : null,
     ].filter((g): g is string => !!g),
     notes: [
+      decision?.person?.details && decision.person.words ? decision.person.words.replace(/^Born /, "born ") : null,
       party?.person && !askNoEmail && !sanctionsOnly && !settled ? `ask ${party.person.name}` : null,
       ownedAbroad.length ? "owned from abroad" : null,
       guarantors.length ? `guarantor${guarantors.length > 1 ? "s" : ""}: ${guarantors.map(g => g.name).join(", ")}` : null,
@@ -794,6 +803,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {decision?.person && (
+              <PersonDetailsLine view={decision.person} url={`/api/deals/${dealId}/parties/${cp.role}/person-details`} testKey={cp.role}
+                onSaved={() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+                }} />
+            )}
             {party && !settled && <PublicBodyLine dealId={dealId} party={party} compact />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}

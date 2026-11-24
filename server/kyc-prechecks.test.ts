@@ -745,6 +745,10 @@ test("a web finding that only says nothing was found is no finding, and raises n
   const nothing = "Companies House lists Jane Example as the company's active director. The search found no source establishing that the company is government/state-owned or controlled, or that its director is a politically exposed person. The available record lists the director, but does not establish the compa";
   assert.equal(webFindingSaysNothing(nothing), true);
   assert.equal(webFindingSaysNothing("There is no evidence of adverse media about the company."), true);
+  // St George plc's second run (24 November 2026): the register restated with "identifies", then nothing found.
+  assert.equal(webFindingSaysNothing("Companies House identifies The Berkeley Group plc as holding 75% or more of ST GEORGE PLC’s shares and voting rights, with the right to appoint or remove directors. The searched sources describe Berkeley Group as a listed company and provide no indication that this parent is government- or state-own"), true);
+  // ...but the register named beside something found says something.
+  assert.equal(webFindingSaysNothing("Companies House identifies Jane Example as a director. She was convicted of fraud in 2019."), false);
   assert.equal(webFindingSaysNothing("No credible reports were found."), true);
   // Anything that says something keeps the finding.
   assert.equal(webFindingSaysNothing("Jane Example served as Minister of Finance of Exampleland until March 2026 (Reuters)."), false);
@@ -904,7 +908,15 @@ test("the random red flags of 24 November: a longer company name, a web result t
   const dated = { person: true, dobKnown: true };
   const tull = caMatch({ name: "ian anderson", kind: "adverse_media", score: 0.9, profileId: "p-ia", birthYearAgrees: true, birthYearNear: true });
   assert.equal(providerMatchFlags(tull, dated), false);
-  assert.equal(providerMatchFlags({ ...tull, birthYearNear: undefined }, dated), true, "the same year stays a red flag");
+  assert.equal(providerMatchFlags({ ...tull, birthYearNear: undefined }, dated), true, "a check from before: the same year stays a red flag");
+  // The person's own year, with no month (the second live run: the profile gives 1948 from an age): a possible namesake.
+  const ownYear = { ...tull, birthYearNear: false, birthYearOnly: true };
+  assert.equal(providerMatchFlags(ownYear, dated), false);
+  assert.equal(providerMatchFlags({ ...ownYear, kind: "pep" }, dated), true, "a public role counts the year");
+  assert.equal(providerMatchFlags({ ...tull, birthYearNear: false, birthYearOnly: false }, dated), true, "a month that agrees ties them");
+  const fortis2 = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ ...caLine("ANDERSON, Ian Macfarlane", [ownYear]), ...dated }] } });
+  assert.deepEqual(precheckRedFlags(fortis2, { sanctionsCurrent: true }).map(f => f.label), []);
+  assert.match(precheckNamesakes(fortis2)[0].what, /only a year of birth, no month/);
   assert.equal(providerMatchFlags({ ...tull, kind: "pep" }, dated), true, "a public role a year either side stays a red flag");
   assert.equal(providerMatchFlags({ ...tull, kind: "sanctions" }, dated), true, "sanctions stay a red flag");
   const fortis = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ ...caLine("ANDERSON, Ian Macfarlane", [tull]), ...dated }] } });

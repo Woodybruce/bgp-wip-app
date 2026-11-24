@@ -24,6 +24,7 @@ export type AmlBoxWho = "nobody" | "bgp" | "client" | "officers" | "joint_agent"
 export type AmlBoxAction =
   | "fill_in"            // the party box: the company that signs, who to ask, an email
   | "trust"              // a trust's structure (23 November 2026)
+  | "person_details"     // a private individual's date of birth (24 November 2026)
   | "add_details"        // the party box, for the people the checks need
   | "send_client_checks"
   | "send_via_agent"     // the client checks, through the party's own agent to pass on
@@ -121,6 +122,9 @@ export interface AmlBoxFacts {
   joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number; chasing?: boolean; unread?: number } | null;
   // The Not required reason's key ("joint_agent", "no_deal"), for its short words.
   notRequiredReason?: string | null;
+  // A private individual on a letting under £10,000 a month with no date of
+  // birth recorded (shared/kyc-person-details.ts, 24 November 2026).
+  dobNeeded?: boolean;
   // The firm relied on (MLR 2017 reg 39), by name.
   relianceFirm?: string | null;
 }
@@ -215,6 +219,8 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   // A letting under £10,000 a month: the sanctions checks only, kept simple (Woody,
   // 23 November 2026). Only a possible sanctions match holds it up; an agent signs off.
   if (f.sanctionsOnly && !f.trust) {
+    // A private individual's date of birth first: it is what sets a namesake on the lists aside.
+    if (f.dobNeeded) return step("act", "bgp", "To do", "Add their date of birth", "person_details");
     if ((f.sanctionsFlags || 0) > 0) return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
     if (f.billingDiffers) return BILLING_STEP;
     if (f.canSignOff && f.signOffBlocked === null) return step("act", "bgp", "Ready to sign off", "sanctions only, all clear", "sign_off");

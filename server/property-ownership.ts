@@ -18,7 +18,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { propertyLookupIdentity } from "@shared/property-lookup-identity";
 import {
-  OWNERSHIP_ROLES, addressNamesBuilding, addressNumberAndStreet, buildingSearchTerm, countryWords, isUnitLease, ownershipKycWords, postTown,
+  OWNERSHIP_ROLES, addressNamesBuilding, addressNumberAndStreet, buildingSearchTerm, countryWords, isUnitLease, ownershipChecksWords, ownershipKycWords, postTown,
   sameRegisteredCompany, titleFit, titleUsePlan, unnumberedStreet,
   type LandRegistryProprietor, type OwnershipCompanyRef, type OwnershipKyc, type PropertyOwnershipView,
   type ProprietorView, type TitleView,
@@ -364,6 +364,8 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
 
   const client = await (pool as any).connect();
   const done: string[] = [];
+  // The company filed for the AML: BGP's checks start on it once the change is saved.
+  let filedFor: { accountId: string; entityId: string } | null = null;
   try {
     await client.query("BEGIN");
     const p = await readProperty(client, propertyId, true);
@@ -411,6 +413,7 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
           return { status: 409, message: `The ${role} already has a company called ${companyName}, with number ${filed.conflict}. Check which company is right on its page.` };
         }
         done.push(`${companyName} filed for the AML`);
+        filedFor = { accountId: holderId, entityId: filed.id };
       }
     } else {
     if (plan.records) {
@@ -442,6 +445,7 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
         return { status: 409, message: `The owner already has a company called ${companyName}, with Companies House number ${filed.conflict}. Check which company is right on its page.` };
       }
       done.push(`${companyName} filed under the owner`);
+      filedFor = { accountId: ownerId!, entityId: filed.id };
     }
     }
     await client.query(
@@ -450,13 +454,20 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
         JSON.stringify({ title_number: p.title_number, proprietor_name: p.proprietor_name, landlord_id: p.landlord_id, freeholder_id: p.freeholder_id, long_leaseholder_id: p.long_leaseholder_id }),
         `${actor.name}: title ${titleNumber}, ${pr.name}${pr.number ? ` (${pr.number})` : ""}: ${done.join(", ")}`]);
     await client.query("COMMIT");
-    return { status: 200, message: done.join(", "), done };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw e;
   } finally {
     client.release();
   }
+  // BGP's checks start by themselves on the company filed (Woody, 24 November 2026), as opening its KYC does.
+  if (filedFor) {
+    const { startPrecheck } = await import("./kyc-prechecks");
+    const started = await startPrecheck(filedFor.accountId, { entityId: filedFor.entityId, userId: actor.id }).catch(() => null);
+    const words = ownershipChecksWords(started);
+    if (words) done.push(words);
+  }
+  return { status: 200, message: done.join(", "), done };
 }
 
 const router = Router();

@@ -282,9 +282,21 @@ export function postTown(address: unknown, name?: unknown): string | null {
 /** The address names the building (its own words, whole) and its town. */
 export function addressNamesBuilding(titleAddress: unknown, term: string, town: string | null): boolean {
   const at = ` ${words(titleAddress)} `;
-  if (!at.includes(` ${words(term)} `)) return false;
-  return !town || at.includes(` ${words(town)} `);
+  const name = words(term);
+  if (!at.includes(` ${name} `)) return false;
+  // A street named after the building ("garages at Touchwood Hall Close") is not the building (24 November 2026):
+  // the building's name counts only where the part of the address it is in does not go on to a street's name.
+  const named = text(titleAddress).split(",").some(part => {
+    const w = ` ${words(part)} `;
+    const at2 = w.indexOf(` ${name} `);
+    if (at2 < 0) return false;
+    const rest = w.slice(at2 + name.length + 2).trim().split(" ").filter(Boolean);
+    return !(rest.length >= 1 && rest.length <= 3 && STREET_WORDS.has(rest[rest.length - 1]));
+  });
+  return named && (!town || at.includes(` ${words(town)} `));
 }
+
+const STREET_WORDS = new Set(["road", "rd", "street", "st", "close", "lane", "avenue", "drive", "way", "grove", "gardens", "crescent", "terrace", "mews", "rise", "row", "walk"]);
 
 /** Land Registry's country for a company abroad, as people write it: "JERSEY" is "Jersey". */
 export function countryWords(country: unknown): string | null {
@@ -330,6 +342,22 @@ export function titleUsePlan(input: {
   return plan.records || plan.owner !== "keep" || plan.files || plan.freeholder ? plan : null;
 }
 
+// BGP's checks start by themselves on a company filed here for the AML (Woody,
+// 24 November 2026: yes to "should checks start by themselves when you set a
+// building's owner, rather than when someone presses KYC?"). This supersedes
+// "checks only when a person asks" of 23 November.
+const CHECKS_START = "and starts BGP's checks";
+
+/** What happened to BGP's checks on the company Use filed, for the toast after the line that names it; null when the checks are switched off. */
+export function ownershipChecksWords(start: string | null): string | null {
+  if (start === "started") return "BGP's checks started";
+  if (start === "running") return "BGP's checks already running";
+  if (start === "fresh") return "BGP's checks ran in the last 30 days";
+  if (start === "cap") return "BGP's checks wait for tomorrow: today's allowance is used";
+  if (start === "off" || start === "needs_company") return null;
+  return "BGP's checks did not start: press KYC to try again";
+}
+
 /** The words for what Use does, for the screen ("Records title NGL123 on the building, files it under TPG Angelo Gordon for the AML"). */
 export function titleUseWords(plan: TitleUsePlan, ctx: { titleNumber: string; ownerName: string | null; proprietorName: string; crmName?: string | null; storedTitle?: string | null; accountName?: string | null }): string {
   if (plan.kind === "long_leaseholder" || plan.kind === "freeholder") {
@@ -337,20 +365,20 @@ export function titleUseWords(plan: TitleUsePlan, ctx: { titleNumber: string; ow
     if (plan.company === "keep") {
       if (!plan.files) return "";
       const under = ctx.accountName || `the ${role}`;
-      return ctx.accountName && legalNameKey(ctx.accountName) === legalNameKey(ctx.proprietorName) ? "So its KYC can be checked." : `Files ${ctx.proprietorName} under ${under} for the AML.`;
+      return ctx.accountName && legalNameKey(ctx.accountName) === legalNameKey(ctx.proprietorName) ? `Files it for the AML ${CHECKS_START}.` : `Files ${ctx.proprietorName} under ${under} for the AML ${CHECKS_START}.`;
     }
     const holder = plan.company === "existing" ? ctx.crmName || ctx.proprietorName : ctx.proprietorName;
     const set = plan.company === "existing" ? `Sets the ${role} to ${holder}` : `Adds ${ctx.proprietorName} to the CRM and sets it as the ${role}`;
     if (!plan.files) return `${set}.`;
-    return legalNameKey(holder) === legalNameKey(ctx.proprietorName) ? `${set}, and files it for the AML.` : `${set}, and files ${ctx.proprietorName} under it for the AML.`;
+    return legalNameKey(holder) === legalNameKey(ctx.proprietorName) ? `${set}, files it for the AML ${CHECKS_START}.` : `${set}, files ${ctx.proprietorName} under it for the AML ${CHECKS_START}.`;
   }
   const owner = ctx.ownerName || ctx.crmName || ctx.proprietorName;
   const replaces = ctx.storedTitle && ctx.storedTitle !== ctx.titleNumber ? ` in place of ${ctx.storedTitle}` : "";
   const parts = [
     plan.records ? `records title ${ctx.titleNumber} on the building${replaces}` : "",
     plan.owner === "existing" ? `sets the Owner to ${ctx.crmName || ctx.proprietorName}` : plan.owner === "create" ? `adds ${ctx.proprietorName} to the CRM as the Owner` : "",
-    plan.files ? `files ${ctx.proprietorName} under ${owner} for the AML` : "",
     plan.freeholder ? `sets the Freeholder to ${owner}` : "",
+    plan.files ? `files ${ctx.proprietorName} under ${owner} for the AML ${CHECKS_START}` : "",
   ].filter(Boolean);
   const said = parts.join(", ");
   return said ? `${said[0].toUpperCase()}${said.slice(1)}.` : "";

@@ -203,13 +203,15 @@ export interface ClientKycNextFacts {
   signOffBlocked: string | null;
   // The company's sanctions-only switch is on: lettings under £10,000 a month, so nothing is asked of the client.
   sanctionsChecks?: boolean;
+  // A private individual's date of birth, before a sanctions-only sign-off (24 November 2026).
+  dobNeeded?: boolean;
 }
 
 export interface ClientKycNext {
   tone: "ok" | "act" | "wait" | "bad";
   lead: string;
   words: string;
-  action: "run_checks" | "pick_person" | "send_checks" | "remind" | "sign_off" | "full_checks" | null;
+  action: "run_checks" | "pick_person" | "send_checks" | "remind" | "sign_off" | "full_checks" | "person_details" | null;
 }
 
 const step = (tone: ClientKycNext["tone"], lead: string, words: string, action: ClientKycNext["action"] = null): ClientKycNext => ({ tone, lead, words, action });
@@ -219,6 +221,7 @@ export function clientKycNextStep(f: ClientKycNextFacts, fmt: (iso: string) => s
   if (f.rejected) return step("bad", "Rejected", "by the officers");
   if (f.cleared) return step("ok", "Cleared", f.cleared.until ? `until ${fmt(f.cleared.until)}` : "");
   if (f.sanctionsOnly) return step("act", "To do", "signed off for sanctions checks only: run the full checks", "full_checks");
+  if (f.sanctionsChecks && f.dobNeeded) return step("act", "To do", "add their date of birth", "person_details");
   if (f.precheck === "running") return step("wait", "Checking", "BGP's checks are running");
   if (f.precheck === "not_run") return step("act", "To do", "run BGP's checks", "run_checks");
   if (f.redFlags) return step("act", "Red flag", `${f.redFlags} to review: for the officers`, f.canDecide && !f.signOffBlocked ? "sign_off" : null);

@@ -15,6 +15,7 @@
 import { signedOffStatus } from "./kyc-status";
 import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
 import { countryInSentence } from "./kyc-prechecks";
+import { PERSON_DOB_AFTER_RUN, PERSON_DOB_NEEDED } from "./kyc-person-details";
 
 export interface KycFacts {
   status: string | null; expiresAt: string | Date | null; approvedBy: string | null; approvedAt?: string | Date | null;
@@ -189,6 +190,12 @@ export interface SignOffFacts {
   // excerpt of the register kept under the law to which that business is
   // subject"), or an officer accepted one that did not.
   registerExtract?: RegisterExtractFact | null;
+  // A private individual on a letting under £10,000 a month (Woody, 24 November
+  // 2026): their date of birth, typed in by BGP, before the sign-off; dobAfterRun:
+  // added after BGP's checks last ran, so the screening has not used it yet
+  // (shared/kyc-person-details.ts).
+  dobNeeded?: boolean;
+  dobAfterRun?: boolean;
   note: string;
   now?: Date;
 }
@@ -244,10 +251,13 @@ export function signOffDenial(input: SignOffFacts): string | null {
   // sign-off and an agent on the transaction signs it off. Other findings are for
   // information. A trust keeps its own rules.
   if (f.sanctionsOnly && !f.trust) {
+    // A private individual's date of birth first: it is what sets a namesake on the lists aside.
+    if (f.dobNeeded) return PERSON_DOB_NEEDED;
     if ((f.sanctionsFlags || 0) > 0) return SANCTIONS_MATCH_DENIAL;
     if (f.precheckRunning) return "The sanctions checks are still running. Sign off once they finish.";
     if (!f.precheck) return notRunDenial(f, "The sanctions checks have not run for this party. Press Run again first.");
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `The sanctions checks are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again first.`;
+    if (f.dobAfterRun) return PERSON_DOB_AFTER_RUN;
     return guarantorChecksDenial(f.guarantorChecks);
   }
   // A company registered abroad: its own register's extract first, for any
