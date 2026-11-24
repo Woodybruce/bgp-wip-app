@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Check, CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
+import { CheckCircle2, AlertCircle, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, ChevronRight, TrendingUp, TrendingDown, FolderOpen, Flag, AlertTriangle } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { kyc4uDraftState } from "@shared/kyc4u-portal";
 import { ClientChecksForParty, SendClientChecksButton, useClientChecks, type ClientChecks, type ClientChecksAgent } from "@/components/kyc-client-checks";
@@ -12,13 +12,16 @@ import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, PublicBodyLine, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
 import { SddBox } from "@/components/aml-sdd";
+import { RedFlagList, RedFlagLists } from "@/components/aml-red-flags";
 import { DealDescribeBox } from "@/components/deal-hots";
 import { PartyDecisionButton, PartyDecisions } from "@/components/deal-party-aml";
 import { legacyToCode } from "@shared/deal-status";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { personDisplayName, personNamesMatch, precheckDay, type PrecheckCardLine, type PrecheckCompany } from "@shared/kyc-prechecks";
 import { type AmlRegime, type JointAgentRule, type JointAskRecord, type PartyDueDiligence } from "@shared/aml-policy";
-import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, firmShort, shortReason, type AmlBoxFacts, type AmlBoxTone } from "@shared/aml-box";
+import { AML_BOX_WHO_WORDS, amlBoxDay, amlNextStep, firmShort, shortReason, type AmlBoxFacts } from "@shared/aml-box";
+import { AML_STEP_LABEL, companyStepLine, documentsStepLine, sanctionsStepLine, screeningStepLine, signOffStepLine, type AmlStepState, type ClientRequestStatus, type ScreeningRun } from "@shared/aml-steps";
+import { AmlCheckLines, AmlLevelChip, AmlNextBox, AmlScreeningHead, AmlStep, CompanyFactsList, RedFlagChip } from "@/components/aml-frame";
 import { type AmlDashboardRow, type AmlStage } from "@shared/aml-dashboard";
 import { peopleToReach, type DealPartyRole, type DealPartyView } from "@shared/deal-parties";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
@@ -131,53 +134,10 @@ const clock = (iso: string | null | undefined) => {
 // The company the checks are about, as the register gives it (Woody,
 // 2026-11-19: "in this box we need to see the company info").
 function PartyCompanyFacts({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
-  const [more, setMore] = useState(false);
   const c = data.prechecks?.[companyId]?.company;
   if (!c) return null;
-  const directors = more ? c.directors : c.directors.slice(0, 4);
-  return (
-    <div className="space-y-1.5" data-testid={`kyc-company-${companyId}`}>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
-        <span className="font-semibold">{c.name}</span>
-        <span className="font-mono tabular-nums text-muted-foreground">{c.number}</span>
-        <a href={c.registerUrl} target="_blank" rel="noreferrer" className="ml-auto text-[11px] text-primary hover:underline">Companies House register</a>
-      </div>
-      <div className="text-[11px] text-muted-foreground">{[c.type, c.status, c.incorporatedOn ? `incorporated ${c.incorporatedOn}` : null].filter(Boolean).join(" · ")}</div>
-      {c.warnings.length > 0 && (
-        <ul className="text-xs text-red-700 dark:text-red-400 space-y-0.5">{c.warnings.map(w => <li key={w}>{w}</li>)}</ul>
-      )}
-      <dl className="grid grid-cols-1 gap-y-1 text-xs">
-        {c.registeredOffice && <div><dt className="inline text-muted-foreground">Registered office: </dt><dd className="inline">{c.registeredOffice}</dd></div>}
-        {c.business.length > 0 && <div><dt className="inline text-muted-foreground">Business: </dt><dd className="inline">{c.business.join("; ")}</dd></div>}
-        {c.listing && <div data-testid={`kyc-company-listing-${companyId}`}><dt className="inline text-muted-foreground">Listed: </dt><dd className="inline">{c.listing}. {c.listingNote}</dd></div>}
-        {c.overseasEntity && <div data-testid={`kyc-company-overseas-${companyId}`}><dt className="inline text-muted-foreground">{/^An overseas entity/.test(c.overseasEntity) ? "Register of Overseas Entities" : "Incorporated abroad"}: </dt><dd className="inline">{c.overseasEntity}</dd></div>}
-        {c.home && <div data-testid={`kyc-company-home-${companyId}`}><dt className="inline text-muted-foreground">Home register: </dt><dd className="inline">{c.home}</dd></div>}
-        {directors.length > 0 && (
-          <div><dt className="inline text-muted-foreground">Directors: </dt><dd className="inline">{directors.join(", ")}
-            {c.directors.length > 4 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}
-          </dd></div>
-        )}
-        {c.owners.length > 0 && <div><dt className="inline text-muted-foreground">Owners: </dt><dd className="inline">{c.owners.map(o => `${o.name} (${o.control})`).join("; ")}</dd></div>}
-        {c.ownerNote && <div><dt className="inline text-muted-foreground">Owners: </dt><dd className="inline">{c.ownerNote}</dd></div>}
-        {c.chain.length > 0 && <div><dt className="inline text-muted-foreground">Owned through: </dt><dd className="inline">{c.chain.join(" › ")}</dd></div>}
-        {c.accounts && <div><dt className="inline text-muted-foreground">Latest accounts: </dt><dd className="inline">{c.accounts}</dd></div>}
-        {c.trading && (
-          <div data-testid={`kyc-company-trading-${companyId}`}><dt className="inline text-muted-foreground">Trading: </dt>
-            <dd className="inline">{c.trading.words || (c.trading.trading ? "Yes: it files trading accounts" : "Not shown: no accounts filed yet")}</dd></div>
-        )}
-        {(c.identity?.length ?? 0) > 0 && (
-          <div data-testid={`kyc-company-idv-${companyId}`}><dt className="inline text-muted-foreground">Identity verified at Companies House: </dt>
-            <dd className="inline">{c.identity!.map((i, n) => (
-              <span key={`${i.name}-${n}`} className={i.state === "overdue" ? "text-red-700 dark:text-red-400" : i.state === "verified" ? "" : "text-muted-foreground"}>
-                {n ? "; " : ""}{i.name}: {i.state === "verified" ? "yes" : i.words}
-              </span>
-            ))}. <span className="text-muted-foreground">Information only: BGP still checks identity itself.</span></dd></div>
-        )}
-        {c.documents.some(d => d.onFile) && <div><dt className="inline text-muted-foreground">On the KYC record: </dt><dd className="inline">{c.documents.filter(d => d.onFile).map(d => d.title).join("; ")}</dd></div>}
-        {c.gleif && <div data-testid={`kyc-company-gleif-${companyId}`}><dt className="inline text-muted-foreground">GLEIF: </dt><dd className="inline">{c.gleif.replace(/^GLEIF:\s*/, "")}</dd></div>}
-      </dl>
-    </div>
-  );
+  // The same list as the client KYC window: one build for AML (24 November 2026).
+  return <CompanyFactsList company={c} testKey={companyId} />;
 }
 
 // The Charity Commission's register (Woody, 21 November 2026: "We need
@@ -284,7 +244,7 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
 // need to do everyhting we can before we ask questions on someone"). It
 // starts by itself when the card opens; Run again starts it afresh.
 // only: the lines to show (the simple sanctions-only view shows the sanctions line alone).
-function PartyPrechecks({ dealId, data, companyId, only, intro }: { dealId: string; data: DealAmlStatus; companyId: string; only?: string[]; intro?: string }) {
+function PartyPrechecks({ dealId, data, companyId, only, level }: { dealId: string; data: DealAmlStatus; companyId: string; only?: string[]; level?: PartyDueDiligence | null }) {
   const { toast } = useToast();
   const view = data.prechecks?.[companyId];
   const again = useMutation({
@@ -298,22 +258,16 @@ function PartyPrechecks({ dealId, data, companyId, only, intro }: { dealId: stri
     },
     onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
   });
-  if (!view || view.state === "off" || view.state === "needs_company") return null;
+  if (!view || view.state === "off" || view.state === "needs_company") return level ? <AmlScreeningHead level={level} testId={`aml-level-${companyId}`} /> : null;
   const running = view.state === "running" || again.isPending;
-  const rank = (l: PrecheckCardLine) => (l.state === "attention" ? 0 : l.failed ? 1 : l.state === "ok" ? 3 : 2);
-  const icon = (l: PrecheckCardLine) => l.state === "ok" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-    : l.state === "attention" ? <Flag className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-    : l.failed ? <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-    : l.state === "not_run" ? <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-    : <AlertCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />;
   return (
     <div className="text-xs space-y-1.5" data-testid={`kyc-prechecks-${companyId}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground">{intro || "What BGP checked before asking anyone anything."}</span>
-        <Button type="button" variant="outline" size="sm" className="ml-auto h-7 px-2 text-xs" disabled={running} onClick={() => again.mutate()} data-testid={`kyc-prechecks-again-${companyId}`}>
-          Run again
+      {/* Run again and the level of due diligence on one line, as the client KYC window has them. */}
+      <AmlScreeningHead level={only ? null : level} testId={`aml-level-${companyId}`} action={
+        <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={running} onClick={() => again.mutate()} data-testid={`kyc-prechecks-again-${companyId}`}>
+          {running && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}{view.ranAt ? "Run again" : "Run BGP's checks"}
         </Button>
-      </div>
+      } />
       {running && (
         <p className="flex items-center gap-1.5 text-muted-foreground" data-testid={`kyc-prechecks-running-${companyId}`}>
           <Loader2 className="w-3.5 h-3.5 animate-spin" />Reading Companies House, screening the sanctions lists and searching the web for public roles and adverse media. This takes a minute or two.
@@ -327,22 +281,7 @@ function PartyPrechecks({ dealId, data, companyId, only, intro }: { dealId: stri
       {!running && view.state === "cap" && <p className="text-muted-foreground">Today's limit for these checks is used up: they run when the card is next opened tomorrow.</p>}
       {!running && view.state === "waiting" && !view.unfinished && <p className="text-muted-foreground">The last run did not finish. It is tried again shortly, or press Run again.</p>}
       {!running && !view.lines.length && view.state === "none" && <p className="text-muted-foreground">Not run yet.</p>}
-      {!running && view.lines.length > 0 && (
-        <ul className="space-y-1.5" data-testid={`kyc-prechecks-lines-${companyId}`}>
-          {view.lines.filter(l => !only || only.includes(l.key)).sort((a, b) => rank(a) - rank(b)).map(l => (
-            <li key={l.key} className="flex items-start gap-1.5">
-              {icon(l)}
-              <div className="min-w-0">
-                <div className={l.failed ? "text-amber-800 dark:text-amber-300" : "text-foreground"}>{l.label}</div>
-                {l.detail && <div className="text-muted-foreground break-words">{l.detail}</div>}
-                {l.links.map(link => (
-                  <a key={link.url} href={link.url} target="_blank" rel="noreferrer" className="block underline underline-offset-2 text-muted-foreground hover:text-foreground break-words">{link.label}</a>
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {!running && <AmlCheckLines lines={view.lines} only={only} testId={`kyc-prechecks-lines-${companyId}`} />}
       {view.errors.length > 0 && (
         <p className="text-muted-foreground" data-testid={`kyc-prechecks-errors-${companyId}`}>Could not be read: {view.errors.join("; ")}.</p>
       )}
@@ -350,206 +289,19 @@ function PartyPrechecks({ dealId, data, companyId, only, intro }: { dealId: stri
   );
 }
 
-// A red flag makes the party the officers' (enhanced due diligence; it went to
-// KYC4U until 23 November 2026, when Woody stopped using them).
-// Each opens what is behind it, and the MLRO (admins until one is appointed)
-// can set one aside with a comment (Woody, 2026-11-19: "We also need to see
-// the detail of the red flag and have the option to ignore with a comment as
-// comply advantage is picking up things that are not really a massive problem").
+// The red flags list is shared with the client KYC window (aml-red-flags.tsx).
 function refreshAml(dealId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
   queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
-}
-
-function FlagFacts({ flag }: { flag: KycRedFlag }) {
-  const facts = flag.facts || [];
-  return (
-    <dl className="mt-1 space-y-0.5 rounded border border-border bg-background p-2 text-[11px] text-foreground" data-testid={`kyc-flag-facts-${flag.key}`}>
-      {facts.map((f, i) => (
-        <div key={i}>
-          <dt className="inline text-muted-foreground">{f.label}: </dt>
-          <dd className="inline break-words">{f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-primary">{f.value}</a> : f.value}</dd>
-        </div>
-      ))}
-      <div><dt className="inline text-muted-foreground">Found by: </dt><dd className="inline">{flag.source}{flag.at ? `, ${precheckDay(flag.at)}` : ""}</dd></div>
-    </dl>
-  );
-}
-
-function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void }) {
-  const { toast } = useToast();
-  // An old automatic flag the current screening does not bear out comes with words to start from; the officer reads and edits them.
-  const [comment, setComment] = useState("");
-  const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/set-aside`, { role, key: flag.key, comment })).json(),
-    onSuccess: () => { refreshAml(dealId); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
-    onError: (e: any) => toast({ title: "Not set aside", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
-  });
-  const short = comment.trim().length < FLAG_REVIEW_COMMENT_MIN;
-  return (
-    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg" data-testid="kyc-flag-set-aside-dialog">
-        <DialogHeader><DialogTitle>Set this red flag aside</DialogTitle></DialogHeader>
-        <div className="space-y-3 text-sm">
-          <div>
-            <div className="font-medium">{flag.label}</div>
-            {flag.detail && <div className="text-muted-foreground text-xs mt-0.5">{flag.detail}</div>}
-            <FlagFacts flag={flag} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why it is not a concern</Label>
-            <Textarea value={comment} onChange={e => setComment(e.target.value)} rows={3} placeholder="e.g. The article is about a merger review by the CMA, cleared in 2016: no finding of wrongdoing." data-testid="input-kyc-flag-comment" />
-            <p className="text-[11px] text-muted-foreground">Kept on the KYC record with your name and the date. If the checks find something new about it, it is raised again.</p>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button disabled={short || save.isPending} onClick={() => save.mutate()} data-testid="button-kyc-flag-set-aside-save">
-            {save.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}Set aside
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId, whoDecides, factors }: {
-  dealId: string; role: string | null; flags: KycRedFlag[]; setAside: SetAsideFlag[]; canDecide: boolean;
-  title: string; step: string; testId: string; whoDecides?: string;
-  // The policy's higher-risk factors: amber, not red, and worded as factors.
-  factors?: boolean;
-}) {
-  const { toast } = useToast();
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const [asideOpen, setAsideOpen] = useState(false);
-  const [dialog, setDialog] = useState<KycRedFlag | null>(null);
-  const putBack = useMutation({
-    mutationFn: async (reviewId: number) => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/put-back`, { reviewId })).json(),
-    onSuccess: () => { refreshAml(dealId); toast({ title: "Put back", description: "It counts as a red flag again." }); },
-    onError: (e: any) => toast({ title: "Not put back", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
-  });
-  if (!flags.length && !setAside.length) return null;
-  return (
-    <div className="space-y-1.5" data-testid={testId}>
-      {flags.length > 0 && (
-        <div className={`rounded-md border p-2.5 text-xs ${factors ? "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" : "border-red-300 bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200"}`} data-testid={`${testId}-live`}>
-          <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
-          <ul className="mt-1.5 space-y-1.5">
-            {flags.map((f, i) => {
-              const id = `${f.key}-${i}`;
-              const open = openKey === id;
-              return (
-                <li key={id} className="space-y-0.5" data-testid={`kyc-flag-${f.key}`}>
-                  <div className="flex items-start gap-1.5">
-                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors ? "bg-amber-600" : "bg-red-600"}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{f.label}</div>
-                      {f.detail && <div className={`${factors ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
-                      {f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label)) ? (
-                        <div className="mt-0.5 font-medium" data-testid={`kyc-flag-ofsi-${f.key}`}>If it is a true match: tell the Nominated Officer now. It is reported to OFSI as soon as practicable, and legal advice is taken before BGP acts further (AML policy J and 3.10).</div>
-                      ) : null}
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                        <button type="button" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" onClick={() => setOpenKey(open ? null : id)} data-testid={`kyc-flag-detail-${f.key}`}>
-                          {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}{open ? "Hide detail" : "Detail"}
-                        </button>
-                        {canDecide && (
-                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>Set aside</button>
-                        )}
-                        {(f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label))) && (
-                          <RaiseReportButton variant="text" className="underline-offset-2 hover:underline"
-                            label={canDecide ? "Record an OFSI report" : "Tell the Nominated Officer"} kind="sanctions" dealId={dealId} role={role}
-                            seed={`${f.label}.${f.detail ? ` ${f.detail}` : ""}`} officer={canDecide} testId={`kyc-flag-ofsi-report-${f.key}`} />
-                        )}
-                      </div>
-                      {open && <FlagFacts flag={f} />}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="mt-1.5">{step}{canDecide ? (/aside/.test(step) ? "" : " Or, if one does not apply, set it aside with a comment.") : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
-        </div>
-      )}
-      {setAside.length > 0 && (
-        <div className="rounded-md border border-border bg-muted/30 p-2 text-xs" data-testid={`${testId}-aside`}>
-          <button type="button" className="flex w-full items-center gap-1 text-left text-muted-foreground hover:text-foreground" onClick={() => setAsideOpen(o => !o)}>
-            {asideOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {setAside.length} {factors ? "factor" : "red flag"}{setAside.length === 1 ? "" : "s"} set aside
-          </button>
-          {asideOpen && (
-            <ul className="mt-1.5 space-y-1.5">
-              {setAside.map(({ flag, review }) => (
-                <li key={review.id || flag.key} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
-                  <div className="text-foreground line-through decoration-muted-foreground/60">{flag.label}</div>
-                  <div className="text-muted-foreground">Set aside{review.by ? ` by ${review.by}` : ""}{review.at ? `, ${precheckDay(review.at)}` : ""}: “{review.comment}”</div>
-                  {/* Set aside by the app itself (id 0): a new match brings it back, nothing to put back by hand. */}
-                  {canDecide && review.id > 0 && (
-                    <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={putBack.isPending} onClick={() => putBack.mutate(review.id)} data-testid={`kyc-flag-put-back-${flag.key}`}>Put back</button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      {dialog && <SetAsideDialog dealId={dealId} role={role} flag={dialog} onClose={() => setDialog(null)} />}
-    </div>
-  );
 }
 
 // only: the box draws the red flags under Red flags and the policy's
 // higher-risk factors under Due diligence (20 November 2026).
 // sanctionsOnly: the simple view of a letting under £10,000 a month lists possible sanctions matches only.
 function PartyRedFlags({ dealId, data, companyId, role, only, sanctionsOnly }: { dealId: string; data: DealAmlStatus; companyId: string; role: string; only?: "flags" | "factors"; sanctionsOnly?: boolean }) {
-  const flags = (data.redFlags?.parties[companyId] || []).filter(f => !sanctionsOnly || isSanctionsFlag(f));
-  const aside = (data.redFlags?.setAside?.[companyId] || []).filter(a => !sanctionsOnly || isSanctionsFlag(a.flag));
-  const who = data.decisions?.officerWords;
-  // Raised with the AML Officer, not KYC4U (Jack, 23 November 2026), while
-  // the officers do enhanced checks in-house.
-  const officer = useAmlOfficerLabel();
-  const inHouse = data.decisions?.inHouseEdd !== false;
-  return (
-    <>
-      {only !== "factors" && <RedFlagList
-        dealId={dealId}
-        role={role}
-        flags={flags.filter(f => !f.factor)}
-        setAside={aside.filter(a => !a.flag.factor)}
-        canDecide={!!data.decisions?.canDecide}
-        whoDecides={who}
-        title={`Red flag: raise with ${officer}`}
-        step={`${officer} checks each one and signs the party off, or sets a flag aside with a comment.`}
-        testId={`kyc-red-flags-${companyId}`}
-      />}
-      {only !== "flags" && <RedFlagList
-        dealId={dealId}
-        role={role}
-        factors
-        flags={flags.filter(f => f.factor)}
-        setAside={aside.filter(a => a.flag.factor)}
-        canDecide={!!data.decisions?.canDecide}
-        whoDecides={who}
-        title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
-        step={`${officer} checks these and signs the party off, or sets one aside where it does not apply.`}
-        testId={`kyc-policy-factors-${companyId}`}
-      />}
-    </>
-  );
-}
-
-// The party's level of due diligence under BGP's AML policy, and why.
-function PartyLevel({ data, companyId }: { data: DealAmlStatus; companyId: string }) {
-  const level = data.redFlags?.levels?.[companyId];
-  if (!level) return null;
-  return (
-    <div className="text-xs space-y-0.5" data-testid={`aml-level-${companyId}`}>
-      {level.level === "enhanced"
-        ? <div className="text-muted-foreground">Enhanced because of: {level.why.join("; ")}.</div>
-        : level.why.map(w => <div key={w} className="text-muted-foreground">{w}</div>)}
-      {level.toWeigh.length > 0 && <div className="text-muted-foreground" data-testid={`aml-level-weigh-${companyId}`}>To weigh: {level.toWeigh.join("; ")}</div>}
-    </div>
-  );
+  // The same lists, in the same words, as the client KYC window (aml-red-flags.tsx).
+  return <RedFlagLists dealId={dealId} role={role} flags={data.redFlags?.parties[companyId] || []} setAside={data.redFlags?.setAside?.[companyId] || []}
+    canDecide={!!data.decisions?.canDecide} whoDecides={data.decisions?.officerWords} only={only} sanctionsOnly={sanctionsOnly} testKey={companyId} />;
 }
 
 // A party marked Not required (the other side of a deal a joint agent
@@ -643,72 +395,9 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
 // and Sign-off, each one line that opens its detail. The officers' tools are
 // in the box's menu. A status, not an explanation.
 
-export const AML_STAGE_TONE: Record<AmlStage, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  bgp_checked: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
-  client_sent: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  joint_asked: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  joint_in: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
-  client_finished: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
-  relied: "bg-violet-100 text-violet-900 dark:bg-violet-900/40 dark:text-violet-200",
-  with_kyc4u: "bg-orange-100 text-orange-900 dark:bg-orange-900/40 dark:text-orange-200",
-  approved: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  rejected: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  expiring: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  expired: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  not_required: "bg-muted text-muted-foreground",
-};
-
-type BoxTone = AmlBoxTone | "info";
-
-function BoxToneIcon({ tone }: { tone: BoxTone }) {
-  const c = "w-3.5 h-3.5 shrink-0 mt-[2px]";
-  if (tone === "done") return <CheckCircle2 className={`${c} text-emerald-600`} />;
-  if (tone === "act") return <AlertCircle className={`${c} text-amber-600`} />;
-  if (tone === "flag") return <Flag className={`${c} text-red-600`} />;
-  if (tone === "wait") return <Clock className={`${c} text-sky-600`} />;
-  return <span className={`${c} inline-flex items-center justify-center`}><span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" /></span>;
-}
-
-const NEXT_BOX: Record<AmlBoxTone, string> = {
-  done: "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/20 dark:text-emerald-100",
-  act: "bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100",
-  flag: "bg-red-50 text-red-950 dark:bg-red-950/30 dark:text-red-100",
-  wait: "bg-sky-50 text-sky-950 dark:bg-sky-950/20 dark:text-sky-100",
-};
-
-type StepState = "done" | "act" | "wait" | "flag" | "todo";
-
-function StepIcon({ n, state }: { n?: number; state: StepState }) {
-  const base = "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold";
-  if (state === "done") return <span className={`${base} bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300`}><Check className="h-3 w-3" /></span>;
-  if (state === "flag") return <span className={`${base} bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300`}><Flag className="h-3 w-3" /></span>;
-  const tone = state === "act" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200"
-    : state === "wait" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"
-    : "bg-muted text-muted-foreground";
-  return <span className={`${base} ${tone}`}>{n ?? <span className="h-1.5 w-1.5 rounded-full bg-current" />}</span>;
-}
-
-// One step of a party, or one of the deal's own checks: one line, the detail on press.
-function StepRow({ id, n, label, state, summary, open, onToggle, children, testId }: {
-  id: string; n?: number; label: string; state: StepState; summary: ReactNode; open: boolean; onToggle: () => void; children?: ReactNode; testId: string;
-}) {
-  return (
-    <div id={id} className="border-t border-border/60 first:border-t-0 scroll-mt-4" data-testid={testId}>
-      <button type="button" className="flex w-full min-w-0 items-center gap-2.5 rounded px-2.5 py-2 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-expanded={open} onClick={onToggle} data-testid={`${testId}-toggle`}>
-        <StepIcon n={n} state={state} />
-        {/* On a phone the label sits over its line, so the line has the width. */}
-        <span className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-2.5">
-          <span className="block text-[13px] font-semibold sm:w-[5.75rem] sm:shrink-0">{label}</span>
-          <span className="block min-w-0 break-words text-[13px] leading-snug sm:flex-1">{summary}</span>
-        </span>
-        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && <div className="space-y-2.5 pb-3 pl-[2.6rem] pr-2.5" data-testid={`${testId}-detail`}>{children}</div>}
-    </div>
-  );
-}
+// The colours, the Next box and the step lines are the shared ones
+// (aml-frame.tsx): one build for every AML screen (Woody, 24 November 2026).
+export { AML_STAGE_TONE } from "@/components/aml-frame";
 
 // A part of a step's detail that stays folded until pressed.
 function Folded({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
@@ -723,7 +412,8 @@ function Folded({ label, children, testId }: { label: string; children: ReactNod
   );
 }
 
-const SubHead = ({ children }: { children: ReactNode }) => <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
+// A part's name inside a step: plain words, as the client KYC window has them (24 November 2026).
+const SubHead = ({ children }: { children: ReactNode }) => <p className="text-xs font-medium text-muted-foreground">{children}</p>;
 
 const OPEN_ALL_KEY = "bgp:aml-box:open-all";
 const readOpenAll = (): boolean => { try { return window.localStorage.getItem(OPEN_ALL_KEY) === "1"; } catch { return false; } };
@@ -766,7 +456,6 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const LEVEL_WORDS: Record<PartyDueDiligence["level"], string> = { simplified: "Simplified (SDD)", standard: "Standard", enhanced: "Enhanced" };
 const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
@@ -916,9 +605,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const nextAction: ReactNode = (() => {
     const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
-      case "trust": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
-      case "fill_in": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
-      case "add_details": return <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
+      case "trust": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
+      case "fill_in": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
+      case "add_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
       case "send_via_agent": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} label="Send" agent={theirAgent} viaAgent />;
       case "people": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-people-${cp.role}`}>Open</Button>;
@@ -933,7 +622,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     }
   })();
 
-  // ── The four steps' lines.
+  // ── The four steps' lines, by the one rule every AML screen uses (shared/aml-steps.ts).
   const reg = pre?.company || null;
   const charity = pre?.charity?.state === "found" ? pre.charity : null;
   const regWarning = reg?.warnings[0] || charity?.warnings[0] || null;
@@ -943,101 +632,70 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
   const guarantors = party?.guarantors || [];
   const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
-  const signs: { state: StepState; text: ReactNode } = companyMissing
-    ? { state: settled ? "todo" : "act", text: <span className="text-amber-800 dark:text-amber-300">Not set</span> }
-    : {
-        state: regWarning ? "flag" : !settled && (askMissing || askNoEmail || facts.billingDiffers || trustRecordedGaps.length > 0 || guarantorOpen) ? "act" : "done",
-        text: <>
-          {!isCompany && !party?.company
-            ? <>{partyName} <span className="text-muted-foreground">· a person</span></>
-            : <><span className="font-medium">{party?.company?.name || charity?.name || cp.signsAs || partyName}</span>
-                {(party?.company?.companiesHouseNumber || charity) && <span className="ml-1 whitespace-nowrap font-mono tabular-nums text-muted-foreground">{party?.company?.companiesHouseNumber || `charity ${charity!.number}`}</span>}</>}
-          {isPublicBody && <span className="text-muted-foreground"> · a UK public body</span>}
-          {isTrust && <span className={!settled && trustRecordedGaps.length ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"}> · a trust{trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}</span>}
-          {ownedAbroad.length > 0 && <span className="text-muted-foreground"> · owned from abroad</span>}
-          {guarantors.length > 0 && <span className={!settled && guarantorOpen ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"} data-testid={`aml-guarantor-summary-${cp.role}`}> · guarantor{guarantors.length > 1 ? "s" : ""}: {guarantors.map(g => g.name).join(", ")}{!settled && guarantorOpen ? " (checks to run)" : ""}</span>}
-          {regWarning && <span className="text-red-700 dark:text-red-400"> · {shortReason(regWarning, 50)}</span>}
-          {!settled && askMissing && <span className="text-amber-800 dark:text-amber-300"> · who to ask not set</span>}
-          {!settled && askNoEmail && <span className="text-amber-800 dark:text-amber-300"> · no email for {party!.person!.name}</span>}
-          {!settled && facts.billingDiffers && <span className="text-amber-800 dark:text-amber-300"> · BGP bills another company</span>}
-        </>,
-      };
+  const signs = companyStepLine({
+    missing: companyMissing,
+    kind: !isCompany && !party?.company ? "a person" : isPublicBody ? "a UK public body"
+      : isTrust ? `a trust${trustQ.data ? `: ${trustSummary(trustQ.data)}` : ""}` : charity ? `charity ${charity.number}` : null,
+    warning: regWarning,
+    gaps: settled ? [] : [
+      askMissing ? "who to ask not set" : null,
+      askNoEmail ? `no email for ${party!.person!.name}` : null,
+      facts.billingDiffers ? "BGP bills another company" : null,
+      trustRecordedGaps.length ? "trust information to add" : null,
+      guarantorOpen ? "guarantor checks to run" : null,
+    ].filter((g): g is string => !!g),
+    notes: [
+      party?.person && !askNoEmail && !sanctionsOnly && !settled ? `ask ${party.person.name}` : null,
+      ownedAbroad.length ? "owned from abroad" : null,
+      guarantors.length ? `guarantor${guarantors.length > 1 ? "s" : ""}: ${guarantors.map(g => g.name).join(", ")}` : null,
+    ].filter((g): g is string => !!g),
+  });
 
-  const attention = pre ? pre.lines.filter(l => l.state === "attention").length : 0;
   const unchecked = data.redFlags?.unchecked || [];
   const flagAside = aside.filter(a => !a.flag.factor).length;
-  const screening: { state: StepState; text: ReactNode } | null = (() => {
-    if (flags.length) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">{plural(flags.length, "red flag")}: {shortReason(flags[0].label, 60)}</span> };
-    if (!pre || pre.state === "off") return data.redFlags ? { state: "done", text: "No red flags" } : null;
-    if (pre.state === "needs_company") return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
-    if (pre.state === "running") return { state: "wait", text: "Running now" };
-    if (pre.state === "cap") return { state: "wait", text: "Runs tomorrow: today's limit is used" };
-    if (pre.state === "none") return { state: "wait", text: "Not run yet" };
-    if (pre.unfinished || pre.state === "waiting") return { state: "act", text: "Not finished: trying again" };
-    if (attention) return { state: "flag", text: `${attention} to look at` };
-    // A list or ComplyAdvantage failed someone: not a clear screen (22 November 2026).
-    const failedLine = pre.lines.find(l => l.failed);
-    if (failedLine) return { state: "act", text: failedLine.key === "sanctions" ? "Sanctions lists not read: run again" : "ComplyAdvantage didn't screen everyone" };
-    const extra = [level?.level === "enhanced" ? "higher risk" : null, flagAside ? `${flagAside} set aside` : null, unchecked.length ? "some records not read" : null].filter(Boolean);
-    return { state: level?.level === "enhanced" ? "act" : "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}${extra.length ? ` · ${extra.join(" · ")}` : ""}` };
-  })();
+  const run: ScreeningRun = !pre || pre.state === "off" ? "off" : pre.state === "needs_company" ? "needs_company" : pre.state === "running" ? "running"
+    : pre.state === "cap" ? "cap" : pre.state === "none" ? "none" : pre.unfinished || pre.state === "waiting" ? "unfinished" : "done";
+  // A list or ComplyAdvantage failed someone: not a clear screen (22 November 2026).
+  const failedLine = pre?.lines.find(l => l.failed) || null;
+  const screening = screeningStepLine({
+    run, ranAt: pre?.ranAt || null, redFlags: flags.map(f => f.label),
+    attention: pre ? pre.lines.filter(l => l.state === "attention").length : 0,
+    failed: failedLine ? (failedLine.key === "sanctions" ? "sanctions" : "provider") : null,
+    enhanced: level?.level === "enhanced", setAside: flagAside, unread: unchecked.length > 0, flagsRead: !!data.redFlags,
+  });
 
   const jointMissing = jointParty && current && current.files.length ? Math.max(0, jointParty.gaps.filter(g => !/reliance terms$/.test(g)).length - (jointParty.unread ? 1 : 0)) : 0;
   const letting = data.jointRule === "letting" || data.jointRule === "other";
-  const documents: { state: StepState; text: ReactNode } = (() => {
-    if (cp.notRequired) return { state: "done", text: "Not needed" };
-    if (sanctionsOnly) return { state: "done", text: "Not needed: sanctions checks only" };
-    if (people?.reliance) return { state: "done", text: `Relying on ${firmShort(people.reliance.firm)}` };
-    if (current && jointParty) {
-      const firm = firmShort(current.firm);
-      if (current.status === "not_sent") return { state: "act", text: `Asked ${firm}: the email didn't go` };
-      if (current.status === "expired") return { state: "act", text: `The link to ${firm} ran out` };
-      if (current.status === "sent" || current.status === "opened") return { state: "wait", text: `Asked ${firm} ${day(current.sentAt)} · nothing back yet` };
-      if (jointParty.unread) return { state: "act", text: `From ${firm} · ${plural(jointParty.unread, "file")} not read yet` };
-      if (jointMissing) return { state: current.nextChaseAt ? "wait" : "act", text: <>From {firm} ({current.who}) · <span className="font-medium text-amber-800 dark:text-amber-300">{jointMissing} missing</span></> };
-      if (letting && !current.reliance) return { state: "wait", text: `From ${firm} · terms not agreed yet` };
-      return { state: "done", text: `From ${firm} · all in` };
-    }
-    if (request) {
-      const n = people?.people.length || 0;
-      const who = request.recipientName || request.recipientEmail || "the client";
-      if (request.status === "not_sent") return { state: "act", text: "The client checks email didn't go" };
-      if (request.status === "expired") return { state: "act", text: "The client checks link ran out" };
-      if (request.status === "finished" && !owing.length) return { state: "done", text: `From ${who} · all in` };
-      return { state: "wait", text: `Sent to ${who}${request.sentAt ? ` ${day(request.sentAt)}` : ""}${n > 1 ? ` · ${n - owing.length} of ${n} people done` : ""}` };
-    }
-    if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
-    if (!data.clientChecks) return { state: "act", text: "For the officers to sign off" };
-    return { state: "act", text: "Not asked yet" };
-  })();
+  const documents = documentsStepLine({
+    notRequired: !!cp.notRequired, sanctionsOnly, cleared: approved, reliance: people?.reliance?.firm || null,
+    joint: current && jointParty ? {
+      firm: current.firm, who: current.who || null, sentAt: current.sentAt || null,
+      status: current.status === "not_sent" || current.status === "expired" || current.status === "sent" || current.status === "opened" ? current.status : "in",
+      unread: jointParty.unread || 0, missing: jointMissing, chasing: !!current.nextChaseAt, termsPending: letting && !current.reliance,
+    } : null,
+    request: request ? { status: request.status as ClientRequestStatus, who: request.recipientName || request.recipientEmail || "the client", sentAt: request.sentAt || null } : null,
+    people: people ? { total: people.people.length, owing: owing.length } : null,
+    companyMissing, clientChecks: !!data.clientChecks,
+  });
 
   // The simple view's second step: the sanctions screen alone.
   const sanctionsFlagCount = [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length;
   const sanctionsLine = pre?.lines.find(l => l.key === "sanctions") || null;
-  const sanctionsStep: { state: StepState; text: ReactNode } = (() => {
-    if (companyMissing) return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
-    if (!pre || pre.state === "off") return { state: "wait", text: "Not run" };
-    if (pre.state === "running") return { state: "wait", text: "Running now" };
-    if (pre.state === "cap") return { state: "wait", text: "Runs tomorrow: today's limit is used" };
-    if (pre.state === "none") return { state: "wait", text: "Not run yet" };
-    if (sanctionsFlagCount) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">Possible match: raise with {officer}</span> };
-    if (!sanctionsLine || sanctionsLine.failed) return { state: "act", text: "Sanctions lists not read: run again" };
-    return { state: "done", text: `Clear${pre.ranAt ? ` · ${precheckDay(pre.ranAt)}` : ""}` };
-  })();
+  const sanctionsStep = sanctionsStepLine({
+    run: companyMissing ? "needs_company" : run === "unfinished" ? "done" : run, ranAt: pre?.ranAt || null,
+    match: sanctionsFlagCount > 0, read: !!sanctionsLine && !sanctionsLine.failed, officer,
+  });
   const gateStep = simple ? sanctionsStep : screening;
 
-  const decisionStep: { state: StepState; text: ReactNode } = stage === "rejected" ? { state: "flag", text: "Rejected" }
-    : cp.notRequired ? { state: "done", text: `Not required${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""] ? `: ${NOT_REQUIRED_SHORT[cp.notRequired.reason || ""]}` : ""}` }
-    : approved ? { state: "done", text: `Cleared${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}${cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
-    : cp.isExpired ? { state: "flag", text: `Expired${cp.kyc_expires_at ? ` ${amlBoxDay(cp.kyc_expires_at)}` : ""}` }
-    // The steps before it come first: their own lines say what is still to do.
-    : companyMissing ? { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> }
-    : gateStep && (gateStep.state === "todo" || gateStep.state === "wait") ? { state: "todo", text: <span className="text-muted-foreground">{simple ? "After the sanctions checks" : "After screening"}</span> }
-    : documents.state !== "done" || !decision ? { state: "todo", text: <span className="text-muted-foreground">After the documents</span> }
-    : decision.blocked !== null ? { state: "todo", text: <span className="text-muted-foreground">{shortReason(decision.blocked)}</span> }
-    : decision.edd ? (canDecide ? { state: "act", text: "Ready: an officer signs off, with a note" } : { state: "wait", text: "Ready: for an officer" })
-    : !canSignOff ? { state: "wait", text: "Ready: for an agent or an officer" }
-    : { state: "act", text: decision.needsNote ? "Ready: sign off with a note" : "Ready to sign off" };
+  const decisionStep = signOffStepLine({
+    rejected: stage === "rejected",
+    notRequired: cp.notRequired ? (NOT_REQUIRED_SHORT[cp.notRequired.reason || ""] || "") : null,
+    approved: approved ? { by: cp.kyc_approved_by || null, until: cp.kyc_expires_at || null } : null,
+    expired: cp.isExpired ? { on: cp.kyc_expires_at || null } : null,
+    companyMissing, screeningPending: !!gateStep?.pending, sanctionsView: simple,
+    documentsDone: documents.state === "done", decisionRead: !!decision,
+    blocked: decision?.blocked ?? null, edd: !!decision?.edd, canDecide, canSignOff, needsNote: !!decision?.needsNote,
+  });
 
   const aml = partyAmlFacts(data, cp.id);
   const sid = (k: StepKey) => `aml-${cp.id}-${k}`;
@@ -1058,63 +716,68 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const clientRoute = !!request || (!current && !people?.reliance);
   // Joint agent under Other ways asks them for the documents by email; reliance is not offered (Woody, 23 November 2026: "we cant agree reliance").
 
-  const statusPill = stage === "rejected" ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200">Rejected</span>
-    : cp.notRequired ? <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">Not required</span>
-    : approved ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"><Check className="h-3 w-3" />Cleared{cp.kyc_expires_at ? ` until ${amlBoxDay(cp.kyc_expires_at)}` : ""}</span>
-    : cp.isExpired ? <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200">Expired</span>
-    : null;
-  const showNext = !(stage === "approved" || stage === "not_required");
-
+  // The Next box always shows, "Cleared · until …" included: it is the party's status (24 November 2026).
   const nextLine = (
-    <div className={`flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md px-2.5 py-1.5 ${NEXT_BOX[step.tone]}`} data-testid={`aml-next-${cp.role}`}>
-      <BoxToneIcon tone={step.tone} />
-      <span className="min-w-0 flex-1 basis-40 text-[13px] leading-snug" data-testid={`aml-next-words-${cp.role}`}>
-        <span className="sr-only">{AML_BOX_WHO_WORDS[step.who]}: </span>
-        <span className="font-semibold">{step.lead}</span>{step.words ? <> · {step.words}</> : null}
-      </span>
-      {nextAction && <span className="flex flex-wrap items-center gap-1.5">{nextAction}</span>}
-    </div>
+    <AmlNextBox tone={step.tone} lead={step.lead} words={step.words} action={nextAction} who={AML_BOX_WHO_WORDS[step.who]}
+      testId={`aml-next-${cp.role}`} wordsTestId={`aml-next-words-${cp.role}`} />
   );
 
   // When the checks must be complete (Issue 4 of BGP's policy), and in red once
   // the transaction has passed that point with the party not decided.
   const sanctionsOnlyLine = cp.sanctionsOnlyApproval ? (
-    <p className="px-0.5 text-[11px] text-amber-800 dark:text-amber-300" data-testid={`aml-sanctions-only-approval-${cp.role}`}>
+    <p className="text-xs text-amber-800 dark:text-amber-300" data-testid={`aml-sanctions-only-approval-${cp.role}`}>
       Signed off{cp.sanctionsOnlyApproval.at ? ` ${amlBoxDay(cp.sanctionsOnlyApproval.at)}` : ""}{cp.sanctionsOnlyApproval.by ? ` by ${cp.sanctionsOnlyApproval.by}` : ""} for sanctions checks only, on a smaller letting. This transaction needs the full checks.
     </p>
   ) : null;
-  const deadline = row && showNext && !cp.notRequired && row.deadline ? (
-    <p className={`px-0.5 text-[11px] ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
+  const deadline = row && !settled && !cp.notRequired && row.deadline ? (
+    <p className={`text-xs ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
       {row.late ? "Late: needed " : "Needed "}{row.deadline}
     </p>
   ) : null;
 
+  // The heading leads with the company being checked, as the client KYC window
+  // does; the role, the brand and its register sit in grey under it (Woody, 24
+  // November 2026). With no company that signs set, the heading is the brand.
+  const company = party?.company || null;
+  const register = company
+    ? (company.kind === "individual" ? "a person" : company.abroad ? [company.abroad.country, company.abroad.registrationNumber].filter(Boolean).join(" · ")
+      : company.companiesHouseNumber ? `Companies House ${company.companiesHouseNumber}` : null)
+    : charity ? `charity ${charity.number}` : null;
+  const isClient = !!(slot?.client ?? party?.client);
+  const subParts: ReactNode[] = [
+    roleLabel,
+    partyName !== cp.name ? <Link key="brand" href={`/companies/${cp.id}`} className="hover:underline" data-testid={`aml-box-brand-${cp.role}`}>{cp.name}</Link> : null,
+    isClient ? "BGP's client" : null,
+    register,
+    companyMissing ? "the company that signs is not set yet" : null,
+  ].filter(Boolean);
+
   return (
     <div className="min-w-0 rounded-lg border border-border bg-card" data-testid={`counterparty-${cp.id}`}>
-      <div className="space-y-2 px-3 py-2.5">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <div className="space-y-2 px-4 pt-3 pb-2">
+        <div className="flex items-start gap-2">
           {staff ? (
-            <button type="button" data-no-min-touch onClick={() => setFolded(f => !f)} aria-expanded={!folded} aria-label={folded ? "Show this party's checks" : "Hide this party's checks"} className="shrink-0 rounded text-muted-foreground hover:text-foreground" data-testid={`aml-box-unfold-${cp.role}`}>
-              <ChevronRight className={`h-4 w-4 transition-transform ${folded ? "" : "rotate-90"}`} />
+            <button type="button" data-no-min-touch onClick={() => setFolded(f => !f)} aria-expanded={!folded} aria-label={folded ? "Show this party's checks" : "Hide this party's checks"} className="mt-1 shrink-0 rounded text-muted-foreground hover:text-foreground" data-testid={`aml-box-unfold-${cp.role}`}>
+              <ChevronDown className={`h-4 w-4 transition-transform ${folded ? "-rotate-90" : ""}`} />
             </button>
           ) : null}
-          <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{roleLabel}</span>
-          <Link href={`/companies/${cp.id}`} className="min-w-0 truncate text-sm font-semibold hover:underline">{cp.name}</Link>
-          {(slot?.client ?? party?.client) && <span className="text-xs text-muted-foreground">BGP's client</span>}
-          {staff && slot?.change}
-          <span className="ml-auto flex flex-wrap items-center gap-1.5">
-            {flags.length > 0 && (
-              <button type="button" data-no-min-touch onClick={() => reveal("screening")} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200" data-testid={`aml-box-flags-${cp.role}`}>
-                <Flag className="h-3 w-3" />{flags.length}
-              </button>
-            )}
-            {level && level.level !== "standard" && !cp.notRequired && (
-              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${level.level === "enhanced" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"}`} data-testid={`aml-box-level-${cp.role}`}>{LEVEL_WORDS[level.level]}</span>
-            )}
-            {statusPill && <span data-testid={`aml-box-stage-${cp.role}`}>{statusPill}</span>}
-          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {partyName === cp.name
+                ? <Link href={`/companies/${cp.id}`} className="min-w-0 break-words text-base font-semibold hover:underline" data-testid={`aml-box-title-${cp.role}`}>{partyName}</Link>
+                : <span className="min-w-0 break-words text-base font-semibold" data-testid={`aml-box-title-${cp.role}`}>{partyName}</span>}
+              {staff && slot?.change}
+              <span className="ml-auto flex flex-wrap items-center gap-1.5">
+                <RedFlagChip count={flags.length} onClick={() => reveal("screening")} testId={`aml-box-flags-${cp.role}`} />
+                {level && !cp.notRequired && <AmlLevelChip level={level.level} testId={`aml-box-level-${cp.role}`} />}
+              </span>
+            </div>
+            <div className="text-sm text-muted-foreground" data-testid={`aml-box-sub-${cp.role}`}>
+              {subParts.map((part, i) => <span key={i}>{i ? " · " : ""}{part}</span>)}
+            </div>
+          </div>
         </div>
-        {showNext && nextLine}
+        {nextLine}
         {sanctionsOnlyLine}
         {deadline}
         {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
@@ -1125,8 +788,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       </div>
 
       {staff && !folded && (
-        <div className="mx-3 mb-3 rounded-md border border-border/70" data-testid={`aml-steps-${cp.role}`}>
-          <StepRow id={sid("signs")} testId={tid("signs")} n={1} label="Who signs" state={signs.state} summary={signs.text} open={open.has("signs")} onToggle={() => toggle("signs")}>
+        <div className="px-4 pb-2" data-testid={`aml-steps-${cp.role}`}>
+          <AmlStep id={sid("signs")} testId={tid("signs")} n={1} label={!isCompany && !company ? AML_STEP_LABEL.person : company?.kind === "individual" ? AML_STEP_LABEL.person : AML_STEP_LABEL.company}
+            state={signs.state} summary={signs.words} open={open.has("signs")} onToggle={() => toggle("signs")}>
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
@@ -1140,18 +804,18 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />
               </div>
             )}
-            {reg
-              ? <Folded label="Company details" testId={`aml-company-details-${cp.role}`}><PartyCompanyFacts data={data} companyId={cp.id} /><PartyCharityFacts data={data} companyId={cp.id} /></Folded>
-              : pre?.charity ? <PartyCharityFacts data={data} companyId={cp.id} /> : null}
+            {/* The company as the register gives it, in the same list as the client KYC window. */}
+            {reg && <div data-testid={`aml-company-details-${cp.role}`}><PartyCompanyFacts data={data} companyId={cp.id} /></div>}
+            {pre?.charity && <PartyCharityFacts data={data} companyId={cp.id} />}
             {!reg && pre?.gleif && <p className="text-xs text-muted-foreground">{pre.gleif}</p>}
-          </StepRow>
+          </AmlStep>
           {simple ? (
             <>
-              <StepRow id={sid("screening")} testId={`aml-step-${cp.role}-sanctions`} n={2} label="Sanctions" state={sanctionsStep.state} summary={sanctionsStep.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
+              <AmlStep id={sid("screening")} testId={`aml-step-${cp.role}-sanctions`} n={2} label={AML_STEP_LABEL.sanctions} state={sanctionsStep.state} summary={sanctionsStep.words} open={open.has("screening")} onToggle={() => toggle("screening")}>
+                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} only={["sanctions"]} />
                 {sanctionsFlagCount > 0 && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" sanctionsOnly />}
-                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} only={["sanctions"]} intro="Each name on this party, checked against the sanctions lists. A letting under £10,000 a month needs nothing more." />
-              </StepRow>
-              <StepRow id={sid("decision")} testId={tid("decision")} n={3} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
+              </AmlStep>
+              <AmlStep id={sid("decision")} testId={tid("decision")} n={3} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
                 <PartyNotRequiredBox cp={cp} />
                 <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
                 {canDecide && (
@@ -1159,24 +823,20 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                     <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
                   </div>
                 )}
-              </StepRow>
+              </AmlStep>
             </>
           ) : (
             <>
             {screening && (
-              <StepRow id={sid("screening")} testId={tid("screening")} n={2} label="Screening" state={screening.state} summary={screening.text} open={open.has("screening")} onToggle={() => toggle("screening")}>
+              <AmlStep id={sid("screening")} testId={tid("screening")} n={2} label={AML_STEP_LABEL.screening} state={screening.state} summary={screening.words} open={open.has("screening")} onToggle={() => toggle("screening")}>
+                {/* Run again and the level first, then each check, then the red flags: the client KYC window's order. */}
+                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} level={cp.notRequired ? null : level} />
                 {(flags.length > 0 || flagAside > 0) && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />}
+                {level && !cp.notRequired && <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />}
                 {unchecked.length > 0 && <p className="text-xs text-amber-800 dark:text-amber-300">Not read: {unchecked.join(", ")}.</p>}
-                {level && !cp.notRequired && (
-                  <div className="space-y-1.5">
-                    <PartyLevel data={data} companyId={cp.id} />
-                    <PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="factors" />
-                  </div>
-                )}
-                <PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />
-              </StepRow>
+              </AmlStep>
             )}
-            <StepRow id={sid("documents")} testId={tid("documents")} n={3} label="Documents" state={documents.state} summary={documents.text} open={open.has("documents")} onToggle={() => toggle("documents")}>
+            <AmlStep id={sid("documents")} testId={tid("documents")} n={3} label={AML_STEP_LABEL.documents} state={documents.state} summary={documents.words} open={open.has("documents")} onToggle={() => toggle("documents")}>
               {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
               <PartyFiles dealId={dealId} role={cp.role} />
               {companyMissing && !current
@@ -1213,8 +873,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                       </div>
                     )}
                   </>}
-            </StepRow>
-            <StepRow id={sid("decision")} testId={tid("decision")} n={4} label="Sign-off" state={decisionStep.state} summary={decisionStep.text} open={open.has("decision")} onToggle={() => toggle("decision")}>
+            </AmlStep>
+            <AmlStep id={sid("decision")} testId={tid("decision")} n={4} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
               <PartyNotRequiredBox cp={cp} />
               <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
               {canDecide && !cp.notRequired && (
@@ -1226,11 +886,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                   <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
                 </div>
               )}
-            </StepRow>
+            </AmlStep>
             </>
           )}
           {smallLetting && !isTrust && (
-            <div className="border-t border-border/60 px-3 py-1.5 text-[11px]">
+            <div className="border-t border-border py-1.5 text-[11px]">
               <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setFullView(v => !v)} data-testid={`aml-full-view-${cp.role}`}>
                 {fullView ? "Show the simple view" : "Show the full checks"}
               </button>
@@ -1323,12 +983,13 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
   const dealFlags = data.redFlags?.deal || [];
   const dealAside = data.redFlags?.dealSetAside || [];
   const agentList = agents?.agents || [];
-  const agentState: StepState = agentList.some(a => a.state.tone === "red") ? "flag" : agentList.some(a => a.state.tone === "amber") ? "act" : agentList.every(a => a.state.tone === "ok") ? "done" : "todo";
+  // Red for an agent off HMRC's register; a tick when every one is on it (the shared step look).
+  const agentState: AmlStepState = agentList.some(a => a.state.tone === "red") ? "flag" : agentList.length && agentList.every(a => a.state.tone === "ok") ? "done" : "todo";
   const agentSummary = agentList.length === 1
-    ? `${agentList[0].name}${agentState === "done" ? ": on HMRC's register" : agentState === "flag" ? ": not on HMRC's register" : agentState === "act" ? ": check HMRC's register" : ""}`
-    : `${plural(agentList.length, "agent")}${agentState === "flag" ? " · one not on HMRC's register" : agentState === "act" ? ` · ${agentList.filter(a => a.state.tone === "amber").length} to check` : agentState === "done" ? " · all on HMRC's register" : ""}`;
+    ? `${agentList[0].name}${agentState === "done" ? ": on HMRC's register" : agentState === "flag" ? ": not on HMRC's register" : agentList[0].state.tone === "amber" ? ": check HMRC's register" : ""}`
+    : `${plural(agentList.length, "agent")}${agentState === "flag" ? " · one not on HMRC's register" : agentList.some(a => a.state.tone === "amber") ? ` · ${agentList.filter(a => a.state.tone === "amber").length} to check` : agentState === "done" ? " · all on HMRC's register" : ""}`;
   const sol = solicitorsSummary(solicitors);
-  const solState: StepState = sol.tone === "done" ? "done" : sol.tone === "flag" ? "flag" : sol.tone === "act" ? "act" : "todo";
+  const solState: AmlStepState = sol.tone === "done" ? "done" : sol.tone === "flag" ? "flag" : "todo";
   const box = (cp: Counterparty, slot: PartySlot | null) => (
     <PartyAmlBox
       key={`${cp.role}-${cp.id}`}
@@ -1381,25 +1042,26 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
         </div>
 
         {staffView && data.counterparties.length > 0 && (
-          <div className="rounded-md border border-border/70" data-testid="aml-deal-sections">
+          // The transaction's own lines, in the parties' card and step look (24 November 2026).
+          <div className="rounded-lg border border-border bg-card px-4 py-1" data-testid="aml-deal-sections">
             {(dealFlags.length > 0 || dealAside.length > 0) && (
-              <StepRow id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The transaction" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "act" : "done"}
+              <AmlStep id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The transaction" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "todo" : "done"}
                 summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")}: ${shortReason(dealFlags[0].label, 60)}` : `${dealAside.length} set aside`}
                 open={deal.open.has("deal")} onToggle={() => deal.toggle("deal")}>
                 <DealRedFlags dealId={dealId} data={data} />
-              </StepRow>
+              </AmlStep>
             )}
             {agentList.length > 0 && (
-              <StepRow id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" state={agentState} summary={agentSummary}
+              <AmlStep id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" state={agentState} summary={agentSummary}
                 open={deal.open.has("agents")} onToggle={() => deal.toggle("agents")}>
                 <DealAgentsAml dealId={dealId} bare />
-              </StepRow>
+              </AmlStep>
             )}
             {/* The other side's solicitors (21 November 2026, "do 7"). */}
-            <StepRow id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" state={solState} summary={sol.words}
+            <AmlStep id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" state={solState} summary={sol.words}
               open={deal.open.has("solicitors")} onToggle={() => deal.toggle("solicitors")}>
               <DealSolicitorsAmlPanel dealId={dealId} />
-            </StepRow>
+            </AmlStep>
           </div>
         )}
         {footer}

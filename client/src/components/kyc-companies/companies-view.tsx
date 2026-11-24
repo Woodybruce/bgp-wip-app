@@ -21,7 +21,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
-import { AML_STAGE_TONE } from "@/components/deal-aml-status";
+import { AmlCard, AmlCardGrid, AmlLateChip, AmlStageChip, DealStatusChip, KycStatusChip, storeAmlView, storedAmlView, type AmlListView } from "@/components/aml-frame";
+import { ViewToggle } from "@/components/mobile-card-view";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { CrmSelectBar } from "@/components/crm-hub/crm-select-bar";
@@ -29,9 +30,7 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
-import { AML_STAGE_LABEL, amlDealStatusWords } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
-import { DEAL_STATUS_COLORS } from "@shared/deal-status";
 import {
   KYC_COMPANY_FILTERS, kycCompanyCounts, kycCompanyMatchesFilter, kycCompanyMatchesSearch,
   type KycCompanyFilter, type KycCompanyRow, type KycCompanyTransaction,
@@ -40,12 +39,6 @@ import {
 export const KYC_COMPANIES_KEY = "/api/aml-dashboard/companies";
 interface Feed { rows: KycCompanyRow[]; unchecked: string[] }
 
-const KYC_TONE: Record<KycCompanyRow["kyc"]["tone"], string> = {
-  ok: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
-  warn: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
-  bad: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-  none: "bg-muted text-muted-foreground",
-};
 const NEXT_TONE: Record<KycCompanyRow["next"]["tone"], string> = {
   ok: "text-emerald-700 dark:text-emerald-300",
   act: "text-foreground",
@@ -56,8 +49,9 @@ const KIND_WORDS: Record<KycCompanyRow["kind"], string> = { landlord: "Landlord"
 const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[role] : role);
 const errorText = (e: any) => { const m = String(e?.message || e || ""); try { const j = JSON.parse(m.slice(m.indexOf("{"))); return j.message || j.error || m; } catch { return m.replace(/^\d{3}:\s*/, ""); } };
 
+// The shared chips (aml-frame.tsx): one KYC chip, AML stage, Late and transaction status everywhere.
 function KycChip({ row }: { row: Pick<KycCompanyRow, "id" | "kyc"> }) {
-  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", KYC_TONE[row.kyc.tone])} title={row.kyc.title} data-testid={`kyc-company-chip-${row.id}`}>{row.kyc.label}</span>;
+  return <KycStatusChip label={row.kyc.label} tone={row.kyc.tone} title={row.kyc.title} testId={`kyc-company-chip-${row.id}`} />;
 }
 
 function NextLine({ row }: { row: Pick<KycCompanyRow, "id" | "next"> }) {
@@ -69,13 +63,11 @@ function NextLine({ row }: { row: Pick<KycCompanyRow, "id" | "next"> }) {
 }
 
 function StageChip({ t }: { t: KycCompanyTransaction }) {
-  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", AML_STAGE_TONE[t.stage])}>{AML_STAGE_LABEL[t.stage]}</span>;
+  return <AmlStageChip stage={t.stage} />;
 }
 
 function StatusChip({ t }: { t: KycCompanyTransaction }) {
-  const s = amlDealStatusWords({ dealStatus: t.status, dealType: t.dealType });
-  if (!s.words) return null;
-  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", s.code ? DEAL_STATUS_COLORS[s.code] : "bg-muted text-muted-foreground")}>{s.words}</span>;
+  return <DealStatusChip status={t.status} dealType={t.dealType} />;
 }
 
 function EntitiesCell({ row }: { row: KycCompanyRow }) {
@@ -103,7 +95,7 @@ function TransactionsCell({ row }: { row: KycCompanyRow }) {
           <span className="font-mono text-muted-foreground">{t.ref != null ? `#${t.ref}` : ""}</span>
           <span className="truncate max-w-[160px]" title={t.name}>{t.name}</span>
           <StageChip t={t} />
-          {t.late && <span className="rounded-full bg-red-100 px-1.5 text-[10px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200">Late</span>}
+          {t.late && <AmlLateChip />}
         </span>
       ))}
       {row.transactions.length > 2 && <span className="text-muted-foreground">+{row.transactions.length - 2} more</span>}
@@ -134,6 +126,24 @@ function CompanyCell({ row }: { row: KycCompanyRow }) {
   );
 }
 
+// One company as a card, on a phone and in the Cards view (Woody, 24 November 2026:
+// "can we have a cards view of the AML checks? like we do with CRM").
+function KycCompanyCard({ row, onOpen, selected }: { row: KycCompanyRow; onOpen: (row: KycCompanyRow) => void; selected?: boolean }) {
+  return (
+    <AmlCard testId={`kyc-company-row-${row.id}`} onOpen={() => onOpen(row)} selected={selected}
+      title={row.name}
+      sub={<>{KIND_WORDS[row.kind]}{row.website ? ` · ${row.website}` : ""}{row.sanctionsOnly.on ? " · sanctions only" : ""}</>}
+      chips={<KycChip row={row} />}
+      rows={[
+        ["Entities", <EntitiesCell row={row} />],
+        ["Transactions", <TransactionsCell row={row} />],
+        ["People", <PeopleCell row={row} />],
+      ]}
+      footer={<NextLine row={row} />}
+    />
+  );
+}
+
 export function KycCompaniesView({ isAdmin }: { isAdmin: boolean }) {
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState<KycCompanyFilter>("all");
@@ -143,6 +153,13 @@ export function KycCompaniesView({ isAdmin }: { isAdmin: boolean }) {
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: [KYC_COMPANIES_KEY] });
+  // Table or cards, as the CRM lists have it, remembered in this browser; a phone has cards.
+  const [view, setView] = useState<AmlListView>(() => storedAmlView("companies"));
+  const chooseView = (next: "table" | "card" | "board") => {
+    const picked: AmlListView = next === "table" ? "table" : "card";
+    setView(picked);
+    if (!isMobile) storeAmlView("companies", picked);
+  };
   const searched = useMemo(() => (data?.rows || []).filter(r => kycCompanyMatchesSearch(r, query)), [data, query]);
   const counts = useMemo(() => kycCompanyCounts(searched), [searched]);
   const shown = useMemo(() => searched.filter(r => kycCompanyMatchesFilter(r, filter)), [searched, filter]);
@@ -167,6 +184,7 @@ export function KycCompaniesView({ isAdmin }: { isAdmin: boolean }) {
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Company, entity, transaction, Ref, agent" className="h-8 pl-7 w-full sm:w-64 text-sm" data-testid="kyc-companies-search" />
           </div>
+          <div className="hidden md:block" data-testid="kyc-companies-view-toggle"><ViewToggle view={view} onToggle={chooseView} /></div>
           <Button size="sm" className="h-8" onClick={() => setAdding(true)} data-testid="kyc-companies-add"><Plus className="w-3.5 h-3.5 mr-1" />Add a company</Button>
           {isAdmin && !selecting && <Button size="sm" variant="outline" className="h-8" onClick={() => { setSelecting(true); setPicked(new Set()); }} data-testid="kyc-companies-select">Select</Button>}
         </div>
@@ -190,21 +208,8 @@ export function KycCompaniesView({ isAdmin }: { isAdmin: boolean }) {
         <p className="text-sm text-destructive">The companies could not be read.</p>
       ) : !shown.length ? (
         <p className="text-sm text-muted-foreground" data-testid="kyc-companies-empty">No companies here{query ? " for that search" : ""}.</p>
-      ) : isMobile ? (
-        <ul className="space-y-2" data-testid="kyc-companies-cards">
-          {shown.map(r => (
-            <li key={r.id}>
-              <button type="button" onClick={() => onRow(r)} className={cn("w-full text-left rounded-lg border bg-card p-3 space-y-1.5", picked.has(r.id) && "ring-2 ring-primary")} data-testid={`kyc-company-row-${r.id}`}>
-                <div className="flex items-start justify-between gap-2"><CompanyCell row={r} /><KycChip row={r} /></div>
-                <NextLine row={r} />
-                <div className="text-xs text-muted-foreground">
-                  {r.entities.length ? `${r.entities.length} contracting ${r.entities.length === 1 ? "entity" : "entities"}` : "No contracting entity"}
-                  {" · "}{r.transactions.length} transaction{r.transactions.length === 1 ? "" : "s"}
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
+      ) : isMobile || view === "card" ? (
+        <AmlCardGrid items={shown} testId="kyc-companies-cards" render={r => <KycCompanyCard key={r.id} row={r} onOpen={onRow} selected={selecting ? picked.has(r.id) : undefined} />} />
       ) : (
         <div className="rounded-lg border overflow-hidden" data-testid="kyc-companies-table-box">
           <ScrollableTable minWidth={1080} topScrollbar>

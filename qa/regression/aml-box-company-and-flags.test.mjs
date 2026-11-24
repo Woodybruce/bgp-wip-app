@@ -117,7 +117,13 @@ test('a flag set aside counts nowhere: the deal card, KYC4U, the sign-off, the d
 test('the AML box shows the company checked and the detail behind each flag', () => {
   const card = read('client/src/components/deal-aml-status.tsx');
   assert.equal((card.match(/<PartyCompanyFacts data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 1, 'one party box for every layout');
-  assert.match(card, /data-testid=\{`kyc-flag-detail-\$\{f\.key\}`\}/);
-  assert.match(card, /\{canDecide && \(\s*<button[^>]*onClick=\{\(\) => setDialog\(f\)\}/, 'Set aside only for the MLRO');
-  assert.match(card, /disabled=\{short \|\| save\.isPending\}/, 'a comment is needed');
+  // The red flags list is shared with the client KYC window (24 November 2026: "one build for AML").
+  const flagsUi = read('client/src/components/aml-red-flags.tsx');
+  assert.match(card, /import \{ RedFlagList, RedFlagLists \} from "@\/components\/aml-red-flags";/);
+  assert.match(flagsUi, /data-testid=\{`kyc-flag-detail-\$\{f\.key\}`\}/);
+  assert.match(flagsUi, /\{canDecide && \(\s*<button[^>]*onClick=\{\(\) => setDialog\(f\)\}/, 'Set aside only for the MLRO');
+  assert.match(flagsUi, /disabled=\{short \|\| save\.isPending\}/, 'a comment is needed');
+  // Its addresses come from the AML scope: a transaction's, or a client file's.
+  assert.match(flagsUi, /`\$\{urls\.redFlags\(dealId\)\}\/set-aside`/);
+  assert.match(flagsUi, /`\$\{urls\.redFlags\(dealId\)\}\/put-back`/);
 });

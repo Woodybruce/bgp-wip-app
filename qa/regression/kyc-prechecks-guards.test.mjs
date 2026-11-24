@@ -136,7 +136,8 @@ test("the deal card shows the run for each party and reads again while it runs",
   assert.match(card, /function PartyPrechecks\(/);
   // Never false: the card keeps the app's 30 second refresh when nothing runs.
   assert.match(card, /some\(p => p\.state === "running"\) \? 5000 : 30_000/);
-  assert.equal((card.match(/<PartyPrechecks dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} \/>/g) || []).length, 1);
+  // Once in the screening step, with the level of due diligence beside Run again (24 November 2026).
+  assert.equal((card.match(/<PartyPrechecks dealId=\{dealId\} data=\{data\} companyId=\{cp\.id\} level=\{cp\.notRequired \? null : level\} \/>/g) || []).length, 1);
   assert.match(card, /apiRequest\("POST", `\/api\/kyc\/deal\/\$\{dealId\}\/prechecks`, \{ companyId \}\)/);
 });
 

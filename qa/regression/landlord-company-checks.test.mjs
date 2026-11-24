@@ -179,6 +179,8 @@ test('the companies card lists the account and each company under it with its nu
     useMutation: () => ({}), useState: initial => [initial, value => { review = value; }],
     useRef: initial => ({ current: initial }), useEffect: () => {}, looksLikeSiteMenu: () => false,
     bucketOf: () => 'unchecked', BUCKET_ORDER: ['unchecked'], TONE: { unchecked: '', expired: '' }, tone: value => value,
+    // The shared chip colours (aml-frame.tsx, 24 November 2026).
+    KYC_CHIP_TONE: { ok: '', warn: '', bad: '', none: '' }, AML_CHIP_BASE: '',
     chip: 'chip', RELATION_LABEL: { self: 'Account', subsidiary: 'Subsidiary' },
     // A company with checks, a file or a request under way reads In progress (24 November 2026).
     clientStarted: () => false,

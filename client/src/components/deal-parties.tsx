@@ -728,11 +728,12 @@ export function PayerDialog({ dealId, party, onClose }: { dealId: string; party:
 }
 
 // One labelled line of a party.
+// The shared label and value look (aml-frame.tsx AmlFact): one build for AML (24 November 2026).
 function PartyRow({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-[9.5rem_minmax(0,1fr)] sm:gap-x-3 gap-y-0.5" data-testid={testId}>
-      <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:pt-0.5">{label}</dt>
-      <dd className="min-w-0 text-sm break-words">{children}</dd>
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 text-xs" data-testid={testId}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words">{children}</dd>
     </div>
   );
 }
@@ -758,7 +759,7 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
   const gaps = askQuiet ? party.gaps.filter(g => g.key !== "person" && g.key !== "email") : party.gaps;
   return (
     <div className="space-y-2" data-testid={`deal-party-lines-${role}`}>
-      <dl className="space-y-1.5">
+      <dl className="space-y-1">
         {party.brand.kind === "company" || party.company ? (
           <PartyRow label={party.company?.kind === "individual" ? "Who signs" : "Company that signs"} testId={`deal-party-row-company-${role}`}>
             {party.company ? (

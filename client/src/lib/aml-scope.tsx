@@ -11,6 +11,8 @@ export interface AmlUrls {
   clientChecks: (dealId: string) => string;
   /** A party's own routes: documents, public sources, certified documents, owners abroad. */
   party: (dealId: string, role: string) => string;
+  /** Setting a red flag aside and putting it back: `${redFlags}/set-aside`, `${redFlags}/put-back`. */
+  redFlags: (dealId: string) => string;
   /** Set on a client file: the deal routes it has no answer for are not offered. */
   clientFile?: { companyId: string; entity: string };
 }
@@ -18,11 +20,12 @@ export interface AmlUrls {
 export const DEAL_AML_URLS: AmlUrls = {
   clientChecks: dealId => `/api/aml/deal/${dealId}/client-checks`,
   party: (dealId, role) => `/api/deals/${dealId}/parties/${role}`,
+  redFlags: dealId => `/api/deals/${dealId}/red-flags`,
 };
 
 export const clientFileUrls = (companyId: string, entity: string): AmlUrls => {
   const base = `/api/client-kyc/${encodeURIComponent(companyId)}/subjects/${encodeURIComponent(entity)}`;
-  return { clientChecks: () => `${base}/client-checks`, party: () => base, clientFile: { companyId, entity } };
+  return { clientChecks: () => `${base}/client-checks`, party: () => base, redFlags: () => `${base}/red-flags`, clientFile: { companyId, entity } };
 };
 
 /** The cache key a client file uses where a transaction's id goes (it never reaches the server). */

@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { pillMetrics } from "@/components/ui/pill";
+import { AML_CHIP_BASE, KYC_CHIP_TONE } from "@/components/aml-frame";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -121,14 +121,15 @@ const BUCKET_ORDER: Bucket[] = ["rejected", "expired", "unchecked", "inReview", 
 
 // Static chips on the pill standard (docs/DESIGN.md §3); status colours are
 // the semantic KYC map shared with SubCompaniesPanel (companies.tsx).
-const chip = cn(pillMetrics, "border border-border text-muted-foreground");
-const tone = (cls: string) => cn(pillMetrics, "border border-transparent", cls);
+// The shared chip size and colours (aml-frame.tsx): one KYC chip everywhere (24 November 2026).
+const chip = cn(AML_CHIP_BASE, "border border-border text-muted-foreground");
+const tone = (cls: string) => cn(AML_CHIP_BASE, cls);
 const TONE = {
-  current: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-  inReview: "bg-yellow-100 text-yellow-700",
-  rejected: "bg-red-100 text-red-700",
-  expired: "bg-amber-100 text-amber-700",
-  unchecked: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+  current: KYC_CHIP_TONE.ok,
+  inReview: KYC_CHIP_TONE.warn,
+  rejected: KYC_CHIP_TONE.bad,
+  expired: KYC_CHIP_TONE.bad,
+  unchecked: KYC_CHIP_TONE.none,
 };
 
 // Woody, 23 November 2026, on AG Hondo Brixton Village BV: "is approved KYC for deals under £10k
@@ -384,7 +385,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
     status: e.kyc?.status ?? null, expiresAt: e.kyc?.expiresAt ?? null, scope: e.kyc?.scope ?? null,
     started: !!(e.client!.checksAt || e.client!.file || (e.client!.request && e.client!.request.status !== "not_sent")),
   })), new Date())) : null;
-  const CHIP_TONE = { ok: TONE.current, warn: TONE.expired, bad: TONE.rejected, none: TONE.unchecked } as const;
+  const CHIP_TONE = KYC_CHIP_TONE;
   return (
     <Card data-testid={`account-entities-${companyId}`}>
       <CardHeader className="p-3 pb-2">

@@ -226,7 +226,12 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     flags: { live, setAside: flags.setAside?.[subject.brandId] || [], level: flags.levels?.[subject.brandId] || null, unchecked: flags.unchecked || [] },
     signOff: { ...view, canSignOff, canDecide: officer },
     // The documents are in once the client checks came back and nobody still owes theirs (or the company is cleared).
-    documents: { done: bucket === "cleared" || bucket === "expiring" || (main?.status === "finished" && view.outstanding.length === 0) },
+    documents: {
+      done: bucket === "cleared" || bucket === "expiring" || (main?.status === "finished" && view.outstanding.length === 0),
+      // For the Documents step's line, worked out by the rule every AML screen uses (shared/aml-steps.ts).
+      request: main ? { status: main.status, who: main.recipientName || main.recipientEmail || "the client", sentAt: main.sentAt || null } : null,
+      owing: view.outstanding.length,
+    },
     // The company's sanctions-only switch: the three sanctions steps, and nothing asked of the client.
     sanctionsOnly: smallOnly,
     next: clientKycNextStep(nextFacts, fmt),

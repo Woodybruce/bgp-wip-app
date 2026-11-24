@@ -13,7 +13,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { AML_STAGE_TONE, DealAmlStatusCard } from "@/components/deal-aml-status";
+import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { AmlCard, AmlCardGrid, AmlLateChip, AmlStageChip, DealStatusChip as AmlDealStatusChip, storeAmlView, storedAmlView, type AmlListView } from "@/components/aml-frame";
+import { ViewToggle } from "@/components/mobile-card-view";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AmlPolicyPanel } from "@/components/aml-policy-panel";
 import { AmlRegisterBoard, MyRegisterReports, RaiseReportButton } from "@/components/aml-register";
@@ -26,9 +28,8 @@ import { KycCompaniesView } from "@/components/kyc-companies/companies-view";
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { AML_BUCKETS, AML_STAGE_LABEL, amlDealStatusWords, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { AML_BUCKETS, amlDealStatusWords, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
-import { DEAL_STATUS_COLORS } from "@shared/deal-status";
 
 interface Feed { rows: AmlDashboardRow[]; unchecked: string[] }
 interface Trail {
@@ -88,13 +89,13 @@ const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: 
 const isSection = (v: string | null): v is Section => !!v && SECTIONS.some(x => x.key === v);
 interface PolicyRoles { isOfficer?: boolean; managesTraining?: boolean; inHouseEdd?: { on: boolean } }
 
+// The shared chips (aml-frame.tsx): the same AML stage, Late and transaction status everywhere.
 function StageChip({ row }: { row: AmlDashboardRow }) {
-  const label = row.stage === "expiring" && row.expiresAt ? `Expires ${day(row.expiresAt)}` : AML_STAGE_LABEL[row.stage];
   return (
     <span className="flex flex-col items-start gap-1">
-      <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${AML_STAGE_TONE[row.stage]}`} data-testid={`aml-stage-${row.key}`}>{label}</span>
+      <AmlStageChip stage={row.stage} expiresAt={row.expiresAt} testId={`aml-stage-${row.key}`} />
       {/* Past the point BGP's policy (Issue 4) needs the checks by, and not decided. */}
-      {row.late && <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 whitespace-nowrap dark:bg-red-950/40 dark:text-red-200" title={`Needed ${row.deadline}`} data-testid={`aml-late-${row.key}`}>Late</span>}
+      {row.late && <AmlLateChip deadline={row.deadline} testId={`aml-late-${row.key}`} />}
     </span>
   );
 }
@@ -161,12 +162,13 @@ function AgentsCell({ row }: { row: AmlDashboardRow }) {
   );
 }
 
+// The company being checked first, its role and brand in grey under it: every AML screen's heading (24 November 2026).
 function PartyCell({ row }: { row: AmlDashboardRow }) {
   return (
     <div className="min-w-0">
-      <div className="font-medium truncate">{row.brandName}</div>
+      <div className="font-medium truncate">{row.signsAs || row.brandName}</div>
       <div className="text-[11px] text-muted-foreground truncate">
-        {roleWords(row.role)}{row.signsAs ? <> · signs as {row.signsAs}</> : null}
+        {roleWords(row.role)}{row.signsAs ? <> · {row.brandName}</> : null}
       </div>
     </div>
   );
@@ -182,11 +184,29 @@ function DealCell({ row }: { row: AmlDashboardRow }) {
 }
 
 // The transaction's own status (Woody, 23 November 2026), in the Transactions
-// board's words and colours.
+// board's words and colours: the shared chip.
 function DealStatusChip({ row }: { row: AmlDashboardRow }) {
-  const { code, words } = amlDealStatusWords(row);
-  if (!words) return <span className="text-muted-foreground">—</span>;
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${code ? DEAL_STATUS_COLORS[code] : "bg-muted text-muted-foreground"}`} data-testid={`aml-deal-status-${row.key}`}>{words}</span>;
+  if (!amlDealStatusWords(row).words) return <span className="text-muted-foreground">—</span>;
+  return <AmlDealStatusChip status={row.dealStatus} dealType={row.dealType} testId={`aml-deal-status-${row.key}`} />;
+}
+
+// One party as a card, on a phone and in the Cards view (Woody, 24 November 2026:
+// "can we have a cards view of the AML checks? like we do with CRM").
+function AmlPartyCard({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDashboardRow) => void }) {
+  return (
+    <AmlCard testId={`aml-row-${row.key}`} onOpen={() => onOpen(row)}
+      title={row.signsAs || row.brandName}
+      sub={<>{roleWords(row.role)}{row.signsAs ? <> · {row.brandName}</> : null}</>}
+      chips={<StageChip row={row} />}
+      rows={[
+        ["Transaction", <div className="space-y-1"><DealCell row={row} /><DealStatusChip row={row} /></div>],
+        ["Checks", <DiligenceCell row={row} onOpen={onOpen} />],
+        ["Waiting on", row.waitingOn || "—"],
+        ["Last moved", moved(row.movedDays)],
+      ]}
+      footer={row.agents.length ? <>Agents: {row.agents.join(", ")}</> : null}
+    />
+  );
 }
 
 // The party's trail (20 November 2026, Woody: "minimise each section with the
@@ -265,6 +285,13 @@ export default function AmlDashboard() {
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
+  // Table or cards, as the CRM lists have it, remembered in this browser; a phone has cards.
+  const [view, setView] = useState<AmlListView>(() => storedAmlView("checks"));
+  const chooseView = (next: "table" | "card" | "board") => {
+    const picked: AmlListView = next === "table" ? "table" : "card";
+    setView(picked);
+    if (!isMobile) storeAmlView("checks", picked);
+  };
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: ["/api/aml-dashboard"], enabled: section === "checks" });
   const { data: roles } = useQuery<PolicyRoles>({ queryKey: ["/api/aml-policy"] });
   const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
@@ -367,6 +394,7 @@ export default function AmlDashboard() {
           <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
+          <div className="hidden md:block" data-testid="aml-view-toggle"><ViewToggle view={view} onToggle={chooseView} /></div>
           {/* Full width on a phone: at 56 it ran off the screen there. */}
           <div className="relative w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -387,23 +415,8 @@ export default function AmlDashboard() {
         <p className="text-sm text-destructive">The AML dashboard could not be read.</p>
       ) : !shown.length ? (
         <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
-      ) : isMobile ? (
-        <ul className="space-y-2" data-testid="aml-cards">
-          {shown.map(r => (
-            <li key={r.key}>
-              <button type="button" onClick={() => setOpen(r)} className="w-full text-left rounded-lg border bg-card p-3 space-y-1.5" data-testid={`aml-row-${r.key}`}>
-                <div className="flex items-start justify-between gap-2"><PartyCell row={r} /><StageChip row={r} /></div>
-                <div className="flex items-start justify-between gap-2 text-xs"><DealCell row={r} /><DealStatusChip row={r} /></div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  <LevelCell row={r} />
-                  <span><span className="text-muted-foreground">Waiting on</span> {r.waitingOn}</span>
-                  <span className="text-muted-foreground">{moved(r.movedDays)}</span>
-                </div>
-                {r.redFlags.length > 0 && <div className="text-xs"><Flags row={r} /></div>}
-              </button>
-            </li>
-          ))}
-        </ul>
+      ) : isMobile || view === "card" ? (
+        <AmlCardGrid items={shown} testId="aml-cards" render={r => <AmlPartyCard key={r.key} row={r} onOpen={setOpen} />} />
       ) : (
         // A scroll bar above the table as well as below it, and the heading row
         // stays in view while the rows scroll under it (Woody, 2026-11-20:

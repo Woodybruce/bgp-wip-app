@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Emails and wording", title: "One build for every AML screen",
+    text: "Every AML screen uses the same heading, To do box, steps and chips, and one rule words each step, so a company reads the same everywhere. Step 1 is now called The company (it was Who signs). The AML page's Transactions and Companies views have Table and Cards, as the CRM lists do." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A birth year one either side is not enough for adverse media",
     text: "A ComplyAdvantage adverse media, warning list or fitness profile that gives only a year of birth, one either side of the person's, is a possible namesake to check, not a red flag. Articles give an age, so the year is a guess: the Jethro Tull musician Ian Anderson matched a charity trustee born a year later. A public role or a sanctions list still counts it." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A longer company name is another company for a weak sanctions match",

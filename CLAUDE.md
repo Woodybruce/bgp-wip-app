@@ -5959,6 +5959,79 @@ the AML box, he answered "yes go ahead". Do not re-litigate. Rules (pure):
 - Checked in a browser against a local copy on 22 November 2026 (a sale with
   a joint agent, a letting, the board and its Policy pill, the client's page
   and the joint agent's page on an iPhone profile, three emails).
+- **Superseded in its look on 24 November 2026** (next section): the card's
+  heading leads with the company being checked, step 1 is **The company**,
+  the steps are the shared ones and the kind chip and status pill are gone.
+  The four steps, their test ids and the Next rule are unchanged.
+
+## One build for AML screens (Woody, 2026-11-24)
+
+Woody, on the client KYC window: "this is great it looks different to the
+transactions part though can we use this as the template and make them
+match?", then, shown a mock, "yes build and push", and while it was built:
+"make sure this is pushed across the app we dont want loads of things looking
+differently or built separately one build for AML" and "can we have a cards
+view of the AML checks? like we do with CRM". Do not re-litigate. Pieces:
+`client/src/components/aml-frame.tsx`; step rule: `shared/aml-steps.ts`; red
+flags: `client/src/components/aml-red-flags.tsx`. Tests:
+`server/aml-steps.test.ts` (in `npm test`), `qa/regression/aml-one-build.test.mjs`.
+
+- **One set of pieces** (`aml-frame.tsx`), used by every AML and KYC screen:
+  the Next box (`AmlNextBox`: bordered, the lead in bold, one button on the
+  right; it takes either rule's tones, `amlNextTone`), the step line
+  (`AmlStep`, `AmlStepIcon`: a green tick when done, red only for a red flag
+  or a rejection, otherwise the step's number; the name, then the line in
+  grey), the label and value list (`AmlFactList`, `AmlFact`), the company as
+  the register gives it (`CompanyFactsList`), the screening lines
+  (`AmlCheckLines`, `AmlScreeningHead`: Run again with the level of due
+  diligence beside it), the chips (`AmlStageChip`, `AmlLateChip`,
+  `KycStatusChip`, `DealStatusChip`, `AmlLevelChip`, `RedFlagChip`, one size,
+  `AML_CHIP_BASE`; one set of colours, `AML_STAGE_TONE`, `KYC_CHIP_TONE`) and
+  the card (`AmlCard`, `AmlCardGrid`). A new AML look goes there, never a
+  second copy on a screen.
+- **One rule for each step's line** (`shared/aml-steps.ts`):
+  `companyStepLine`, `screeningStepLine`, `sanctionsStepLine`,
+  `documentsStepLine`, `signOffStepLine`, each giving a state (done, todo,
+  flag) and plain words, and `pending` for a step not reached yet (the
+  sign-off waits for it: "After screening", "After the documents"). The
+  transaction's box and the client KYC window both feed it, so the same
+  company reads the same on both (the client window's Sign-off read "Ready"
+  before its documents were in; it now reads "After the documents"). Step
+  names are `AML_STEP_LABEL`: **The company** (or **The person**; it was Who
+  signs on transactions), Screening (Sanctions on a small letting),
+  Documents, Sign-off. Expired is to do again, not red.
+- **The transaction's party card** (`PartyAmlBox`): the heading is the
+  company being checked (`cp.kycName`: the company that signs, else the
+  brand), with the role, the brand (a link), BGP's client and its register
+  in grey under it; the pencil, the red flag count and a level that is not
+  standard stay beside it. The Next box always shows, "Cleared · until …"
+  included (the green status pill is gone). The steps sit under it with no
+  box round them. Inside The company the party lines (`DealPartyLines`'
+  `PartyRow`, also on a client's read-only Parties card) and the company's
+  facts are the shared label and value list, shown, not folded. The
+  transaction's own lines (red flags on the transaction, Agents, Solicitors)
+  are the shared steps in a card of their own.
+- **The client KYC window** (`client-kyc-dialog.tsx`) is the template and
+  uses the same pieces, the same red flag lists (`RedFlagLists`, with the
+  client file's set-aside and put-back addresses from `AmlUrls.redFlags`),
+  and the transaction's company facts. The server sends it the client
+  checks request and what is still owed (`documents.request`,
+  `documents.owing`) for its Documents line.
+- **Cards** (Woody's "like we do with CRM"): Transactions and Companies on
+  the AML page have **Table** and **Cards** on a computer (`ViewToggle`,
+  remembered per browser as `bgp_aml_view_checks` and
+  `bgp_aml_view_companies`, read in try/catch; the table stays the first
+  choice). A phone always has the cards, and the phone and the Cards view
+  draw the same card (`AmlPartyCard`, `KycCompanyCard`) in the CRM lists'
+  grid, 90 at a time with Show more. The AML page's party is named by the
+  company being checked too (`PartyCell`).
+- **The same chips elsewhere**: the CRM lists' KYC chip, the Companies and
+  KYC card's chips, the Companies view, the property page's AML on
+  transactions here, and the AML page's stage, Late and transaction status.
+- Checked in a browser against a local copy on 24 November 2026 (desktop and
+  an iPhone profile: the transaction's box, the client window, both Cards
+  views). Not changed: the Kick off AML step after New Deal (its "Before the
+  checks can start" box) and the AML file's printed report.
 
 ## The AML register, training, agents, EU list, overseas entities and five-year deletion (Woody, 2026-11-19)
 

@@ -15,7 +15,8 @@ import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { titleUseWords, type OwnershipChecks, type PropertyOwnershipView, type ProprietorView, type TitleView } from "@shared/property-ownership";
-import { AML_STAGE_LABEL, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { type AmlDashboardRow } from "@shared/aml-dashboard";
+import { AmlLateChip, AmlStageChip, RedFlagChip } from "@/components/aml-frame";
 import type { AmlDialogDeal } from "@/components/deal-aml-dialog";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"\}$/, "$1");
@@ -133,10 +134,14 @@ function TransactionsAml({ propertyId, onOpenAml }: { propertyId: string; onOpen
             <div key={first.dealId} className="flex flex-wrap items-start gap-2 rounded-md border border-border px-3 py-2 text-xs">
               <div className="min-w-0 flex-1 space-y-0.5">
                 <Link href={`/deals/${first.dealId}?section=parties`} className="font-semibold hover:underline">{first.dealRef != null ? `#${first.dealRef} ` : ""}{first.dealName}</Link>
+                {/* The company being checked first, then the shared chips: every AML screen's look (24 November 2026). */}
                 {rows.map(r => (
-                  <div key={r.key} className="text-muted-foreground">
-                    <span className="capitalize">{r.role}</span> {r.brandName}{r.signsAs ? ` (${r.signsAs})` : ""}: <span className={r.late ? "text-red-700 dark:text-red-400" : r.stage === "approved" ? "text-emerald-700 dark:text-emerald-400" : "text-foreground"}>{AML_STAGE_LABEL[r.stage] || r.stage}{r.late ? " · late" : ""}</span>
-                    {r.redFlags.length > 0 && <span className="text-red-700 dark:text-red-400"> · {r.redFlags.length} red flag{r.redFlags.length === 1 ? "" : "s"}</span>}
+                  <div key={r.key} className="flex flex-wrap items-center gap-1.5" data-testid={`ownership-aml-row-${r.key}`}>
+                    <span className="text-foreground">{r.signsAs || r.brandName}</span>
+                    <span className="text-muted-foreground">· <span className="capitalize">{r.role}</span>{r.signsAs ? ` · ${r.brandName}` : ""}</span>
+                    <AmlStageChip stage={r.stage} expiresAt={r.expiresAt} />
+                    {r.late && <AmlLateChip deadline={r.deadline} />}
+                    <RedFlagChip count={r.redFlags.length} />
                   </div>
                 ))}
               </div>

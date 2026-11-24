@@ -30,17 +30,23 @@ test('each party is four steps, each one line that opens its detail; nothing is 
     assert.match(box, new RegExp(`testId=\\{tid\\("${key}"\\)\\}`), key);
   }
   assert.match(box, /const tid = \(k: StepKey\) => `aml-step-\$\{cp\.role\}-\$\{k\}`;/);
-  assert.match(box, /\{open && <div className="space-y-2\.5 pb-3 pl-\[2\.6rem\] pr-2\.5" data-testid=\{`\$\{testId\}-detail`\}>\{children\}<\/div>\}/);
+  // The steps are the shared ones (aml-frame.tsx), in the client KYC window's look (24 November 2026).
+  const frame = read('client/src/components/aml-frame.tsx');
+  assert.match(frame, /\{open && <div className="space-y-3 pb-3 pl-7" data-testid=\{`\$\{testId\}-detail`\}>\{children\}<\/div>\}/);
+  assert.match(box, /<AmlStep id=\{sid\("signs"\)\} testId=\{tid\("signs"\)\} n=\{1\}/);
+  assert.doesNotMatch(box, /function StepRow\(/, 'no second copy of the step');
   // The detail each step opens is what the box showed before.
-  for (const piece of ['<PartyCompanyFacts data={data} companyId={cp.id} />', '<PartyPrechecks dealId={dealId} data={data} companyId={cp.id} />',
-    '<PartyLevel data={data} companyId={cp.id} />', '<PartyNotRequiredBox cp={cp} />', '<PartyDecisions dealId={dealId} data={data} companyId={cp.id}',
+  // The level of due diligence now sits beside Run again in the screening step (24 November 2026).
+  for (const piece of ['<PartyCompanyFacts data={data} companyId={cp.id} />', '<PartyPrechecks dealId={dealId} data={data} companyId={cp.id} level={cp.notRequired ? null : level} />',
+    '<PartyNotRequiredBox cp={cp} />', '<PartyDecisions dealId={dealId} data={data} companyId={cp.id}',
     '<DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />',
     '<AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />', '<PartyRedFlags dealId={dealId} data={data} companyId={cp.id} role={cp.role} only="flags" />',
     'part="people"', 'part="requests"', '<PartyRiskAssessment dealId={dealId} role={cp.role} />', '<SecondReadPanel dealId={dealId} role={cp.role}']) {
     assert.ok(box.includes(piece), piece);
   }
   // The Next line: a bold lead and a few words (shared/aml-box.ts).
-  assert.match(box, /<span className="font-semibold">\{step\.lead\}<\/span>\{step\.words \? <> · \{step\.words\}<\/> : null\}/);
+  assert.match(frame, /<span className="font-semibold">\{lead\}<\/span>\{words \? <> · \{words\}<\/> : null\}/);
+  assert.match(box, /<AmlNextBox tone=\{step\.tone\} lead=\{step\.lead\} words=\{step\.words\} action=\{nextAction\}/);
 });
 
 test('the officers can open everything, remembered per browser and never relied on', () => {
@@ -56,7 +62,8 @@ test('the AML checks page opens the trail on its own party; on a deal a party st
   // Folded unless it starts open, all are open, or the address names it (?full=<role>, 23 November 2026).
   assert.match(box, /const \[folded, setFolded\] = useState\(\(\) => \{\n\s+if \(startOpen \|\| openAll\.all\) return false;\n\s+try \{ return new URLSearchParams\(window\.location\.search\)\.get\("full"\) !== cp\.role; \}/);
   // One set of stage colours for the page and the box.
-  assert.match(page, /import \{ AML_STAGE_TONE, DealAmlStatusCard \} from "@\/components\/deal-aml-status";/);
+  assert.match(page, /import \{ DealAmlStatusCard \} from "@\/components\/deal-aml-status";/);
+  assert.match(page, /<AmlStageChip stage=\{row\.stage\} expiresAt=\{row\.expiresAt\} testId=\{`aml-stage-\$\{row\.key\}`\} \/>/);
   assert.doesNotMatch(page, /const STAGE_TONE/);
 });
 
@@ -89,8 +96,8 @@ test('a letting under £10,000 a month shows three steps, Who signs, Sanctions a
   // Its full view is the full checks: client checks and a full sign-off (23 November 2026).
   assert.match(box, /const sanctionsOnly = smallLetting && !fullOnSmall;/);
   assert.match(box, /\{simple \? \(/);
-  assert.match(box, /testId=\{`aml-step-\$\{cp\.role\}-sanctions`\} n=\{2\} label="Sanctions"/);
-  assert.match(box, /n=\{3\} label="Sign-off"/);
+  assert.match(box, /testId=\{`aml-step-\$\{cp\.role\}-sanctions`\} n=\{2\} label=\{AML_STEP_LABEL\.sanctions\}/);
+  assert.match(box, /n=\{3\} label=\{AML_STEP_LABEL\.signOff\}/);
   assert.match(box, /only=\{\["sanctions"\]\}/);
   assert.match(box, /\{fullView \? "Show the simple view" : "Show the full checks"\}/);
   const board = read('client/src/pages/aml-dashboard.tsx');

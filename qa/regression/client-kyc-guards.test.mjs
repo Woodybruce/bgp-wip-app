@@ -112,5 +112,6 @@ test("the CRM boards show each company's KYC and filter what is still to do", ()
   assert.match(hub, /\.\.\.kycChip\(kycByCompany\.get\(id\) \|\| \[\], new Date\(now\)\),/);
   const shared = read("shared/crm-hub.ts");
   assert.match(shared, /\{ key: "kyc", label: "KYC to do" \}/);
-  assert.match(read("client/src/components/crm-hub/company-row.tsx"), /data-testid=\{`crm-hub-kyc-\$\{row\.id\}`\}/);
+  // The shared KYC chip (aml-frame.tsx): one chip everywhere (24 November 2026).
+  assert.match(read("client/src/components/crm-hub/company-row.tsx"), /<KycStatusChip label=\{row\.kyc\.label\} tone=\{row\.kyc\.tone\} title=\{row\.kyc\.title\} testId=\{`crm-hub-kyc-\$\{row\.id\}`\} \/>/);
 });
