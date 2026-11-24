@@ -507,7 +507,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                             {pageTitle}
                           </button>
                         ) : (
-                          <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{pageTitle}</h1>
+                          linkedProperty && pageTitle === linkedProperty.name ? (
+                            <Link href={`/properties/${linkedProperty.id}`} className="min-w-0" title="Open property">
+                              <h1 className="text-xl font-bold truncate hover:underline hover:text-primary transition-colors" data-testid="text-deal-name">{pageTitle}</h1>
+                            </Link>
+                          ) : (
+                            <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{pageTitle}</h1>
+                          )
                         )}
                         {deal.status && (
                           <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{dealStatusLabel(deal.status, deal.dealType)}</Badge>
@@ -529,13 +535,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       </div>
                       <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
                         {linkedProperty && pageTitle !== linkedProperty.name && (
-                          <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
+                          <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 text-foreground underline decoration-dotted underline-offset-2 hover:text-primary" title="Open property" data-testid="deal-header-property">
                             <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
                           </Link>
                         )}
                         {counterparty ? (
                           <CompanyChip id={jointAgent ? null : counterparty.id} name={counterparty.name} domain={counterparty.domain}
-                            role={counterpartyLabel} size={16} className="hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`} testId="deal-counterparty" />
+                            role={counterpartyLabel} size={16} className="text-foreground [&_a]:underline [&_a]:decoration-dotted [&_a]:underline-offset-2 hover:text-primary" title={`Open ${counterpartyLabel.toLowerCase()}`} testId="deal-counterparty" />
                         ) : page ? (
                           <span className="text-xs italic">{counterpartyLabel} not set</span>
                         ) : null}
