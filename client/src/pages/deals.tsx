@@ -2519,7 +2519,10 @@ function SimplifiedCreateBody({
               ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the transaction set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
               : hotsUnitId
                 ? <>Upload the final agreed HOTs (PDF or Word): they are filed on the unit and the form fills itself.</>
-                : <>Upload the HOTs (PDF or Word) and the form fills itself; the transaction starts at HOTs.</>}
+                : place
+                  // Adding to a live transaction: a reading fills its blanks and never moves its stage.
+                  ? <>Upload the HOTs (PDF or Word) and they fill what the transaction has blank.</>
+                  : <>Upload the HOTs (PDF or Word) and the form fills itself; the transaction starts at HOTs.</>}
           </p>
         </div>
       )}
