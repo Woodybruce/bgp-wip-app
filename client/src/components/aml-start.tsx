@@ -10,11 +10,13 @@ import { FileText, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { HOTS_ACCEPT, hasFiles } from "@/components/deal-hots";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export interface AmlStart { note?: string; file?: File }
 
 export function AmlStartBar({ onTransaction, onCompany }: { onTransaction: (start: AmlStart) => void; onCompany: () => void }) {
   const input = useRef<HTMLInputElement>(null);
+  const phone = useIsMobile();
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -43,7 +45,10 @@ export function AmlStartBar({ onTransaction, onCompany }: { onTransaction: (star
             onFocus={() => setOpen(true)}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && typed.length >= 10) { e.preventDefault(); start({ note: typed }); } }}
-            placeholder={dragging ? "Drop the heads of terms to start the transaction" : "New transaction: describe it, or drop the heads of terms here"}
+            // A phone has no room for the long line, and nothing to drop.
+            placeholder={dragging ? "Drop the heads of terms to start the transaction"
+              : phone ? (open ? "Describe the transaction" : "New transaction")
+              : "New transaction: describe it, or drop the heads of terms here"}
             className={`min-h-0 resize-none border-0 bg-transparent px-1 py-1.5 text-sm shadow-none focus-visible:ring-0 ${open ? "" : "h-9 overflow-hidden"}`}
             aria-label="Describe a new transaction"
             data-testid="aml-new-transaction-text"

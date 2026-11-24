@@ -55,10 +55,17 @@ test('the app\'s own token reaches the engine from one place, for filing only', 
   const wrapper = code('server/document-filing.ts');
   assert.match(wrapper, /return fileRecordDocument\(pool, getAppGraphToken, doc\);/);
   assert.doesNotMatch(wrapper, /getValidMsToken|getOwnMsAccess|getDelegatedGraphTokenForUser|getMsTokenFor/);
-  // No other server file hands the filing a token, and the engine never reaches for the wrapper.
-  for (const f of readdirSync(new URL('../../server/', import.meta.url)).filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'document-filing.ts')) {
+  // No other server file hands the filing a token, and the engine never reaches
+  // for the wrapper. Model Studio's Save version files as the person saving, on
+  // their own Microsoft 365 (24 November 2026), never with the app's token.
+  for (const f of readdirSync(new URL('../../server/', import.meta.url)).filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts') && f !== 'document-filing.ts' && f !== 'models.ts')) {
     assert.doesNotMatch(code(`server/${f}`), /fileRecordDocument\(/, `server/${f} files with a token of its own`);
   }
+  const models = code('server/models.ts');
+  assert.equal([...models.matchAll(/fileRecordDocument\(/g)].length, 1);
+  assert.match(models, /const filed = await fileRecordDocument\(pool, async \(\) => own\.token, \{/);
+  assert.match(models, /userId: own\.userId, what: "Model version", account: own\.account,/);
+  assert.doesNotMatch(models, /getAppGraphToken|getValidMsToken/);
   for (const f of readdirSync(new URL('../../server/folders/', import.meta.url)).filter(f => f.endsWith('.ts'))) {
     assert.doesNotMatch(code(`server/folders/${f}`), /document-filing/, `server/folders/${f} reaches for the app's token`);
   }
@@ -66,7 +73,11 @@ test('the app\'s own token reaches the engine from one place, for filing only', 
 
 test('filing: the record\'s first live link, else its property\'s; no token asked for until there is a folder; every folder made and file put is logged; nothing replaced', () => {
   const filing = code('server/folders/filing.ts');
-  assert.match(filing, /WHERE record_type = \$1 AND record_id = \$2 AND removed_at IS NULL\n\s+ORDER BY position, linked_at, id LIMIT 1/);
+  assert.match(filing, /WHERE record_type = \$1 AND record_id = \$2 AND removed_at IS NULL\n\s+ORDER BY position, linked_at, id`/);
+  // Never into a folder shared with a client, or one inside it (24 November 2026).
+  assert.match(filing, /SELECT drive_id, cached_path FROM record_folders WHERE removed_at IS NULL AND shared_with_company_id IS NOT NULL/);
+  assert.match(filing, /if \(filingBlockedByShare\(\{ driveId: String\(row\.drive_id\), path, shared: !!row\.shared_with_company_id \}, shared\)\) continue;/);
+  assert.match(filing, /note: \(blocked \? notFiledSharedWords : notFiledWords\)\(record, record\.propertyName\)/);
   assert.match(filing, /if \(SHOWS_PROPERTY_FOLDERS\.includes\(record\.type\) && record\.propertyId\)/);
   const run = between(filing, 'export async function fileRecordDocument(', null);
   assert.ok(run.indexOf('if (!place.link) return') > -1 && run.indexOf('if (!place.link) return') < run.indexOf('await token()'), 'the folder is found before a token is asked for');
