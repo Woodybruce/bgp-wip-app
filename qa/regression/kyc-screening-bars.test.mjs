@@ -29,7 +29,14 @@ test('the bars: sanctions always, a public role at 60%, anything else (warning l
   assert.match(fn, /if \(dated && line!\.dobKnown\) return false;/);
   assert.match(rules, /flagged: matches\.filter\(m => providerMatchFlags\(m, line\)\)/);
   assert.match(fn, /if \(m\.unread \?\? !m\.profileId\) return true;/);
-  assert.match(fn, /if \(m\.birthYearAgrees === true\) return true;/);
+  // 24 November 2026: a year one either side, with no month, is only near (a namesake) unless it is a public role.
+  assert.match(fn, /if \(m\.birthYearAgrees === true && !\(m\.birthYearNear === true && kind !== "pep"\)\) return true;/);
+  // A company's weak sanctions match is a namesake unless it is the company's own name, word for word.
+  assert.match(rules, /return !sameCompanyName\(screened, m\.name\);/);
+  // A charity's trustee is one of its directors under a shorter name: screened once, with the director's date of birth.
+  const run = read('server/kyc-prechecks.ts');
+  assert.match(run, /\|\| \(s\.trustee && s\.person \? onePersonNamed\(s\.name, subjects\.filter\(x => x\.person && !x\.trustee\)\) : null\);/);
+  assert.match(read('server/comply-advantage.ts'), /const birthYearNear = agreeing\.length > 0 && agreeing\.every\(d => d\.year !== Number\(subject\.birthYear\)\);/);
   // The red flags, the card and KYC4U's note all split the matches the same way.
   for (const where of ['export function precheckRedFlags', 'export function precheckCardLines', 'export function precheckNote']) {
     const at = rules.indexOf(where);

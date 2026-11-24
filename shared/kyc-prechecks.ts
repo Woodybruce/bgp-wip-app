@@ -253,6 +253,25 @@ export function personNamesMatch(a: string, b: string): boolean {
   return (ta.length >= 2 && covers(tb, ta)) || (tb.length >= 2 && covers(ta, tb));
 }
 
+/**
+ * The one person already listed whom a name read elsewhere means: the charity
+ * trustee the Charity Commission lists as "IAN CRITCHLEY" is the director
+ * Companies House lists as "CRITCHLEY, Ian Martin" (24 November 2026: they
+ * were screened as two people, the trustee with no date of birth, and a
+ * police officer's PEP profile became a red flag). One name holds every word
+ * of the other and the surname agrees; two such people is no answer.
+ */
+export function onePersonNamed<T extends { name: string }>(name: string, people: T[]): T | null {
+  const surname = personNameParts(name).surname;
+  if (!surname.length) return null;
+  const hits = people.filter(p => {
+    if (!personNamesMatch(p.name, name)) return false;
+    const theirs = personNameParts(p.name).surname;
+    return surname.every(w => theirs.some(t => sameToken(t, w))) || theirs.every(w => surname.some(t => sameToken(t, w)));
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // ── Who did the identity check (Woody, 19 November 2026) ───────────────────
 // "this is email about jack barrat but its actually after woody bruce did the
 // check so its got confused jack hasnt done his yet": the agents are copied
@@ -403,14 +422,25 @@ const clip = (value: unknown, max: number): string => String(value ?? "").replac
 // enhanced). Every sentence must say nothing was found, or only restate the
 // register, for a finding to be dropped: anything else in it keeps it, so a
 // real finding is never lost.
-const NOTHING_FOUND = /\b(found|finds|identified|located)\s+no\b|\bno\s+(source|sources|evidence|record|records|indication|indications|information|mention|mentions|report|reports|result|results|link|links|connection|suggestion|credible)\b|\b(does|did|do)\s+not\s+(establish|show|indicate|suggest|appear|identify|find|reveal|confirm)\b|\bnot\s+(identified|found|listed|named|known)\s+(as|to\s+be)\b|\bthere\s+(is|was|are|were)\s+no\b|\bnothing\s+(was\s+)?(found|identified|suggest|indicat)|\bnone\s+(was\s+|were\s+)?(found|identified)\b|\b(could|can)\s*n[o']t\s+(find|identify|establish|confirm)\b|\bunable\s+to\s+(find|identify|establish|confirm|verify)\b|\bis\s+not\s+(a\s+)?(politically\s+exposed|pep\b|state[-\s]owned|government[-\s]owned)/i;
-const REGISTER_ONLY = /\b(companies\s+house|the\s+register|public\s+register|registry)\b.*\b(lists?|shows?|names?|records?)\b|\b(lists?|shows?|names?|records?)\b.*\b(as\s+(the\s+)?(company'?s\s+)?(active\s+)?(sole\s+)?(director|officer|secretary|member|person\s+with\s+significant\s+control|shareholder))\b|\b(available|public)\s+records?\s+(lists?|shows?|names?)\b|\bwas\s+incorporated\s+(on|in)\b/i;
+// "No public-role information" says nothing too (24 November 2026, LEGO's
+// check): up to three words may stand between "no" and what was not found.
+const NOTHING_FOUND = /\b(found|finds|identified|located)\s+no\b|\bno\s+(?!longer\b)(?:[\w'’-]+\s+){0,3}?(source|sources|evidence|record|records|indication|indications|information|mention|mentions|report|reports|result|results|link|links|connection|suggestion|credible)\b|\b(does|did|do)\s+not\s+(establish|show|indicate|suggest|appear|identify|find|reveal|confirm)\b|\bnot\s+(identified|found|listed|named|known)\s+(as|to\s+be)\b|\bthere\s+(is|was|are|were)\s+no\b|\bnothing\s+(was\s+)?(found|identified|suggest|indicat)|\bnone\s+(was\s+|were\s+)?(found|identified)\b|\b(could|can)\s*n[o']t\s+(find|identify|establish|confirm)\b|\bunable\s+to\s+(find|identify|establish|confirm|verify)\b|\bis\s+not\s+(a\s+)?(politically\s+exposed|pep\b|state[-\s]owned|government[-\s]owned)/i;
+const REGISTER_ONLY = /\b(companies\s+house|the\s+register|public\s+register|registry)\b.*\b(lists?|shows?|names?|records?)\b|\b(lists?|shows?|names?|records?)\b.*\b(as\s+(the\s+)?(company'?s\s+)?(active\s+)?(sole\s+)?(director|officer|secretary|member|person\s+with\s+significant\s+control|shareholder))\b|\b(available|public)\s+records?\s+(lists?|shows?|names?)\b|\bwas\s+incorporated\s+(on|in)\b|\bconfirms?\b.*\b(company\s+number|registered\s+(office|address)|incorporat\w*|company\s+status)\b|\bmatching\s+the\s+(queried|searched|named|given)\s+(company|entity|person)\b/i;
 const BUT_THEN = /\b(but|however|although|though|yet|whereas)\b(.*)$/i;
+// The summary is cut at 300 characters (checkWebAnswer). A last sentence cut
+// short that opens by saying nothing was found ("No qualifying publi") is read
+// as saying nothing; any other cut sentence keeps the finding.
+const WEB_SUMMARY_MAX = 300;
+const CUT_NEGATIVE = /^(no\s+(?!longer\b)[\w'’-]|nothing\b|none\b|there\s+(is|was|are|were)\s+no\b)/i;
 export function webFindingSaysNothing(summary: string | null | undefined): boolean {
-  const sentences = String(summary || "").split(/(?<=[.!?;])\s+/).map(t => t.trim()).filter(t => t.length > 2);
+  const text = String(summary || "");
+  const sentences = text.split(/(?<=[.!?;])\s+/).map(t => t.trim()).filter(t => t.length > 2);
   if (!sentences.length) return false;
+  const last = sentences[sentences.length - 1];
+  const cut = text.trim().length >= WEB_SUMMARY_MAX - 5 && !/[.!?;]$/.test(last) && last.length <= 40;
   let negative = false;
   for (const t of sentences) {
+    if (cut && t === last && sentences.length > 1 && CUT_NEGATIVE.test(t)) continue;
     const contrast = BUT_THEN.exec(t);
     // "No evidence of sanctions, but the director was convicted of fraud" says something.
     if (NOTHING_FOUND.test(t) && !(contrast && contrast[2].trim() && !NOTHING_FOUND.test(contrast[2]) && !REGISTER_ONLY.test(contrast[2]))) { negative = true; continue; }
@@ -434,7 +464,7 @@ export function checkWebAnswer(raw: unknown, citations: Array<{ url: string }>):
     for (const item of items) {
       const url = clip(item?.url, 500);
       const host = hostOf(url);
-      const summary = clip(item?.summary, 300);
+      const summary = clip(item?.summary, WEB_SUMMARY_MAX);
       if (!summary || webFindingSaysNothing(summary)) continue;
       if (!host || !cited.has(host)) { unsourced++; continue; }
       findings.push({
@@ -582,6 +612,9 @@ export interface ProviderMatch {
   // month when both give a month, else within a year (null when either is not
   // known). Since 19 November 2026.
   birthYearAgrees?: boolean | null;
+  // The profile gives only a year, one either side of the person's: the only
+  // way it agrees (24 November 2026; see providerMatchFlags).
+  birthYearNear?: boolean;
   // ComplyAdvantage said it matched but its profiles could not be read.
   unread?: boolean;
 }
@@ -1279,18 +1312,35 @@ export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "
   }
   // A match from before this rule with no profile behind it could not be read.
   if (m.unread ?? !m.profileId) return true;
-  if (m.birthYearAgrees === true) return true;
+  // A year one either side of the person's, with no month, is a possible
+  // namesake for adverse media and the like (24 November 2026: the Jethro Tull
+  // musician Ian Anderson, born 1947, raised against a charity trustee Ian
+  // Macfarlane Anderson, born November 1948). Articles give an age, so the
+  // year is a guess. A public role or a sanctions list still counts it.
+  if (m.birthYearAgrees === true && !(m.birthYearNear === true && kind !== "pep")) return true;
   if (dated && line!.dobKnown) return false;
   return m.score != null && m.score >= (kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
 }
 
 // ComplyAdvantage's own starting point for a sanctions match.
 export const COMPANY_SANCTIONS_BAR = 0.5;
-/** A company's sanctions profile whose name is not spelt as the company's (the legal form aside) and whose score is under 50%. */
+/**
+ * A company's sanctions profile under another name (the legal form aside)
+ * whose score is under 50%. Another name includes a longer one holding the
+ * company's (24 November 2026: Bluewater's landlord BLUECO LIMITED was a red
+ * flag on "blueco 22 midco", one of Chelsea's owners, at 2%).
+ */
 export function companySanctionsNamesake(m: ProviderMatch, screened: string): boolean {
   if ((m.unread ?? !m.profileId) || !m.name || m.birthYearAgrees === true) return false;
   if (m.score == null || m.score >= COMPANY_SANCTIONS_BAR) return false;
-  return !nameSpeltAsTheirs(screened, m.name, false);
+  return !sameCompanyName(screened, m.name);
+}
+
+/** The same company name, word for word in any order, the legal form aside. */
+export function sameCompanyName(a: string, b: string): boolean {
+  const x = [...new Set(nameTokens(a, true))].sort(), y = [...new Set(nameTokens(b, true))].sort();
+  if (!x.length || !y.length) return true;
+  return x.length === y.length && x.every((w, i) => w === y[i]);
 }
 
 // ── Adverse media on a name spelt differently (Woody, 21 November 2026:
@@ -1416,7 +1466,7 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
         name: line.name, via: "ComplyAdvantage", url: null,
         what: [providerKindWords(m.kind), m.name && m.name !== line.name ? `profile "${m.name}"` : "", m.source || "",
           m.score != null ? `match ${Math.round(m.score * 100)}%` : "no match score",
-          m.birthYearAgrees === false ? "birth year differs" : line.person && line.dobKnown && m.birthYearAgrees == null ? "no date of birth on the profile" : ""].filter(Boolean).join(", "),
+          m.birthYearAgrees === false ? "birth year differs" : m.birthYearAgrees === true && m.birthYearNear ? "the profile gives only a year, one either side of theirs" : line.person && line.dobKnown && m.birthYearAgrees == null ? "no date of birth on the profile" : ""].filter(Boolean).join(", "),
       });
     }
   }

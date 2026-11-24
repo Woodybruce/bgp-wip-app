@@ -215,6 +215,14 @@ test("each profile says whether its birth year agrees with the person's", () => 
   assert.equal(unknown.matches[0].details.birthYearAgrees, null, "no date on the profile: not known");
   const noYear = ca.matchesFromRisks([risk({ name: "Jane Doe", types: ["PEP_CLASS_2"], dob: ["1984"] })], { name: "Jane Doe" }, "person");
   assert.equal(noYear.matches[0].details.birthYearAgrees, null, "no birth year for the person: not known");
+  // 24 November 2026: a year alone, one either side of the person's, is marked as only near.
+  const tull = ca.matchesFromRisks([risk({ name: "ian anderson", types: ["ADVERSE-MEDIA-V2-OTHER-MINOR"], dob: ["1947"] })], { name: "ANDERSON, Ian Macfarlane", birthYear: 1948, birthMonth: 11 }, "person");
+  assert.equal(tull.matches[0].details.birthYearAgrees, true);
+  assert.equal(tull.matches[0].details.birthYearNear, true);
+  const sameYear = ca.matchesFromRisks([risk({ name: "ian anderson", types: ["ADVERSE-MEDIA-V2-OTHER-MINOR"], dob: ["1948", "1947"] })], { name: "ANDERSON, Ian Macfarlane", birthYear: 1948, birthMonth: 11 }, "person");
+  assert.equal(sameYear.matches[0].details.birthYearNear, false, "one of its years is the person's own");
+  const month = ca.matchesFromRisks([risk({ name: "ian anderson", types: ["ADVERSE-MEDIA-V2-OTHER-MINOR"], dob: ["1948-11-03"] })], { name: "ANDERSON, Ian Macfarlane", birthYear: 1948, birthMonth: 11 }, "person");
+  assert.equal(month.matches[0].details.birthYearNear, false);
 });
 
 test("a person goes to Mesh with their birth month and year and a UK nationality; Mesh refusing them screens the bare name", async () => {

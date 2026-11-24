@@ -393,6 +393,10 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
     const score = Number.isFinite(raw) && raw >= 0 ? (raw <= 1 ? raw : raw <= 100 ? raw / 100 : undefined) : undefined;
     const birthYearAgrees = kind === "person" && subject.birthYear && dobs.length
       ? dobs.some(d => profileDobAgrees(d, subject)) : null;
+    // Agrees only as a year one either side of the person's (24 November 2026):
+    // a possible namesake for adverse media (providerMatchFlags).
+    const agreeing = birthYearAgrees ? dobs.filter(d => profileDobAgrees(d, subject)) : [];
+    const birthYearNear = agreeing.length > 0 && agreeing.every(d => d.year !== Number(subject.birthYear));
     const kinds = kindsOf(indicators.aml_types);
     for (const k of kinds.length ? kinds : ["warning"]) {
       matches.push({
@@ -407,6 +411,7 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
           decision: risk.decision || null,
           datesOfBirth: dobYears,
           birthYearAgrees,
+          birthYearNear,
           kinds,
           media: k === "adverse_media" ? mediaItems(indicators.media) : [],
         },

@@ -12,6 +12,7 @@ import {
   precheckSanctionsMatch, sanctionsLine, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput,
   precheckCompany, precheckUnfinished, chStatusLive, roeListedOwners, withRoeListing, normaliseStoredPrecheck, ownersAbroadOf,
+  companySanctionsNamesake, onePersonNamed, sameCompanyName,
 } from "../shared/kyc-prechecks";
 import { partyRedFlags } from "../shared/kyc-red-flags";
 import { kycFinishedEmail, kycRequestEmail, kycSteps } from "../shared/kyc-request";
@@ -854,4 +855,59 @@ test("the old screening's own marks are no red flags; a mark a person set still 
   assert.deepEqual(partyRedFlags({ company: { aml_risk_level: "high", aml_pep_status: "review_required" } as any, latestInvestigation: null, requests: [], idChecks: [], recordHistory: mlro, precheck: null }).map(f => f.key).sort(), ["record:high_risk", "record:screening"]);
   // A sanctions match from a screening after the old one was switched off still counts.
   assert.deepEqual(partyRedFlags({ company: null, latestInvestigation: { sanctions_match: true, conducted_at: "2026-11-20T08:00:00.000Z" }, requests: [], idChecks: [], recordHistory: [], precheck: null }).map(f => f.key), ["record:sanctions"]);
+});
+
+// Woody, 24 November 2026: "did you get my message about comply advantage and these random red flags?" Read on
+// live: Bluewater's landlord BLUECO LIMITED flagged on Chelsea's owner "blueco 22 midco" at 2%; LEGO flagged on a
+// web result that found nothing; Fortis Green's trustees flagged on the Jethro Tull musician Ian Anderson (born
+// 1947, a year from the trustee's November 1948) and on a police officer's PEP profile "ian critchley", the trustee
+// having been screened with no date of birth because the charity register lists him without his middle name.
+test("the random red flags of 24 November: a longer company name, a web result that found nothing, a trustee's other name, a year either side", () => {
+  // A company: a weak sanctions match is a namesake unless it is the company's own name, word for word.
+  const blueco = caMatch({ name: "blueco 22 midco", kind: "sanctions", score: 0.02, profileId: "p-b1" });
+  assert.equal(sameCompanyName("BLUECO LIMITED", "blueco 22 midco"), false, "a longer name holding the company's is another company");
+  assert.equal(sameCompanyName("BLUECO LIMITED", "Blueco Ltd"), true, "the legal form aside");
+  assert.equal(companySanctionsNamesake(blueco, "BLUECO LIMITED"), true);
+  assert.equal(providerMatchFlags(blueco, { name: "BLUECO LIMITED", person: false, dobKnown: false }), false);
+  assert.equal(providerMatchFlags(caMatch({ name: "blueco ltd", kind: "sanctions", score: 0.02, profileId: "p-b2" }), { name: "BLUECO LIMITED", person: false, dobKnown: false }), true, "its own name stays a red flag whatever the score");
+  assert.equal(providerMatchFlags(caMatch({ name: "blueco 22 midco", kind: "sanctions", score: 0.6, profileId: "p-b3" }), { name: "BLUECO LIMITED", person: false, dobKnown: false }), true, "50% or more stays a red flag");
+  assert.equal(providerMatchFlags(caMatch({ name: "blueco 22", kind: "sanctions", score: 0.02, profileId: "p-b4" }), { name: "BLUECO, Peter", person: true, dobKnown: true }), true, "a person's sanctions match stays a red flag");
+  const run = result({ complyAdvantage: { ran: true, skipped: null, lines: [
+    { ...caLine("BLUECO LIMITED", [blueco, caMatch({ name: "blueco 22", kind: "sanctions", score: 0.02, profileId: "p-b5" })]), person: false, dobKnown: false },
+  ] } });
+  assert.deepEqual(precheckRedFlags(run, { sanctionsCurrent: true }).map(f => f.label), []);
+  assert.equal(precheckNamesakes(run).length, 2, "both listed as possible namesakes to check");
+
+  // LEGO: what the search returned says nothing was found, and the summary was cut at 300 characters.
+  const lego1 = "The register identifies former individual controllers Kjeld Kirk Kristiansen and Thomas Kirk Kristiansen and records their control as ceased. The public records reviewed did not indicate government or state ownership/control, or that a controller held a prominent public function. No qualifying publi";
+  const lego2 = "Confirms company number 00368236 and the registered office address in Slough, matching the queried company. No public-role information identified on the overview page.";
+  assert.equal(lego1.length >= 295, true);
+  assert.equal(webFindingSaysNothing(lego1), true);
+  assert.equal(webFindingSaysNothing(lego2), true);
+  // Never a real finding.
+  assert.equal(webFindingSaysNothing("No public-role information on the overview page, but a 2019 report names its director as a member of the Danish parliament."), false);
+  assert.equal(webFindingSaysNothing("She was appointed ambassador to Denmark in 2019."), false);
+  assert.equal(webFindingSaysNothing("Confirms company number 00368236. The director was convicted of fraud in 2015."), false);
+  assert.equal(webFindingSaysNothing("No longer a minister since 2022, having served as trade minister."), false, "no longer is not nothing found");
+  // A cut sentence that does not open by saying nothing was found keeps the finding.
+  const cutPositive = `${"The public records reviewed did not indicate government ownership. ".repeat(4)}The director was charged with`.slice(0, 300);
+  assert.equal(webFindingSaysNothing(cutPositive), false);
+
+  // Fortis Green: the charity register's trustee is the director Companies House names in full.
+  const directors = [{ name: "ANDERSON, Ian Macfarlane" }, { name: "CRITCHLEY, Ian Martin" }, { name: "HOSIER, Brian Michael" }];
+  assert.equal(onePersonNamed("IAN CRITCHLEY", directors)?.name, "CRITCHLEY, Ian Martin");
+  assert.equal(onePersonNamed("BRIAN MICHAEL HOSIER", directors)?.name, "HOSIER, Brian Michael");
+  assert.equal(onePersonNamed("IAN SMITH", directors), null, "another surname");
+  assert.equal(onePersonNamed("IAN CRITCHLEY", [...directors, { name: "CRITCHLEY, Ian John" }]), null, "two directors it could be: no answer");
+
+  // A year either side, with no month on the profile: a possible namesake for adverse media, still a red flag for a public role.
+  const dated = { person: true, dobKnown: true };
+  const tull = caMatch({ name: "ian anderson", kind: "adverse_media", score: 0.9, profileId: "p-ia", birthYearAgrees: true, birthYearNear: true });
+  assert.equal(providerMatchFlags(tull, dated), false);
+  assert.equal(providerMatchFlags({ ...tull, birthYearNear: undefined }, dated), true, "the same year stays a red flag");
+  assert.equal(providerMatchFlags({ ...tull, kind: "pep" }, dated), true, "a public role a year either side stays a red flag");
+  assert.equal(providerMatchFlags({ ...tull, kind: "sanctions" }, dated), true, "sanctions stay a red flag");
+  const fortis = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ ...caLine("ANDERSON, Ian Macfarlane", [tull]), ...dated }] } });
+  assert.deepEqual(precheckRedFlags(fortis, { sanctionsCurrent: true }).map(f => f.label), []);
+  assert.match(precheckNamesakes(fortis)[0].what, /only a year, one either side of theirs/);
 });

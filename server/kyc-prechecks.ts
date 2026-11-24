@@ -33,7 +33,7 @@ import { pool } from "./db";
 import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
   askInputFrom, checkWebAnswer, chooseScreened, foreignOnCompaniesHouse, gleifOwnerAbroad, gleifPartyLine, homeRegisterFrom, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
-  dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, normaliseStoredPrecheck, withRoeListing, nameTokens, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
+  dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, normaliseStoredPrecheck, withRoeListing, nameTokens, onePersonNamed, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
@@ -654,6 +654,7 @@ async function screenComplyAdvantage(subjects: Subject[]): Promise<KycPrecheckRe
           name: clean(m.name, 200), kind: clean(m.matchType, 40), source: m.listName ? clean(m.listName, 160) : null,
           score: typeof m.score === "number" ? m.score : null, profileId: d.profileId ? clean(d.profileId, 80) : null,
           birthYearAgrees: typeof d.birthYearAgrees === "boolean" ? d.birthYearAgrees : null, unread: !!d.unread,
+          ...(d.birthYearNear === true ? { birthYearNear: true } : {}),
           media: (Array.isArray(d.media) ? d.media : []).slice(0, 3).map((x: any) => ({ title: clean(x?.title, 200), url: x?.url ? clean(x.url, 500) : null, date: x?.date ? clean(x.date, 20) : null })),
         };
       }),
@@ -917,7 +918,11 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
   // fuller context, so the sanctions date check and the web search use them.
   const add = (s: Subject) => {
     if (!s.name) return;
-    const seen = subjects.find(x => subjectKey(x) === subjectKey(s));
+    // A charity's trustee is often one of its directors under a shorter name:
+    // one person, screened once with the date of birth Companies House gives
+    // (24 November 2026).
+    const seen = subjects.find(x => subjectKey(x) === subjectKey(s))
+      || (s.trustee && s.person ? onePersonNamed(s.name, subjects.filter(x => x.person && !x.trustee)) : null);
     if (!seen) { subjects.push(s); return; }
     if (!seen.role.split(", ").includes(s.role)) seen.role = `${seen.role}, ${s.role}`;
     if (!seen.dobYear && s.dobYear) { seen.dobYear = s.dobYear; seen.dobMonth = s.dobMonth ?? null; }
@@ -926,7 +931,9 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (s.abroad) seen.abroad = true;
     if (s.trustee) seen.trustee = true;
     if (s.trustPerson) seen.trustPerson = true;
-    if (s.context.length > seen.context.length) seen.context = s.context;
+    // A fuller context replaces a shorter one, but never one that carries the
+    // date of birth with one that does not (a trustee merged into a director).
+    if (s.context.length > seen.context.length && !(/\bborn\b/.test(seen.context) && !/\bborn\b/.test(s.context))) seen.context = s.context;
   };
   const where = companiesHouse ? `${companiesHouse.name} (Companies House ${companiesHouse.number})` : partyName;
   if (subjectKind === "individual") add({ name: personNameOfRecord(entity ? entity.name : company.name), role: "the party", person: true, dobYear: null, context: "a private individual dealing in UK commercial property" });

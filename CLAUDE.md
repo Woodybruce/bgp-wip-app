@@ -5061,6 +5061,14 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
   (`precheckSanctionsMatch`) reads the same judgement. This supersedes
   "Sanctions ... are never set aside on spelling" for a company's weak
   matches only. The decisions log records it.
+  **Another name includes a longer one** (later the same day, Woody: "did
+  you get my message about comply advantage and these random red flags?"):
+  Bluewater's landlord BLUECO LIMITED was a red flag on "blueco 22 midco" and
+  "blueco 22" (Chelsea's owners, Sanction Related, 2%) because "blueco" is in
+  both, which `nameSpeltAsTheirs` reads as spelt the same. The weak-match
+  test is now `sameCompanyName`: the company's own name, word for word in any
+  order, the legal form aside. Anything else under 50% is a namesake. Read on
+  stored checks, so no re-run is needed.
 
 ## Who is screened, and the date of birth decides (Woody, 2026-11-19)
 
@@ -5135,6 +5143,26 @@ chain walk keeps each owner's date of birth). Tests:
   differ. A person with no date of birth keeps the bars, a warning list at
   90% like anything else. A company, and every check from before this
   change, keeps the earlier rule, so its flags stand until **Run again**.
+- **A year either side is not enough for adverse media** (24 November 2026,
+  Woody's "random red flags"): Fortis Green's trustee Ian Macfarlane
+  Anderson, born November 1948, was a red flag on the Jethro Tull musician
+  Ian Anderson's adverse media profile, whose only birth date is a year one
+  either side (`profileDobAgrees` takes a year alone within a year). The
+  match now carries `birthYearNear` (`matchesFromRisks`: every agreeing date
+  on the profile is a year alone, not the person's own year), and for
+  adverse media, a warning list or fitness and probity such a match is a
+  possible namesake ("the profile gives only a year, one either side of
+  theirs"); a public role or a sanctions list still counts it. Stored checks
+  hold no profile years, so it applies from the next run.
+- **A charity trustee is the director of the same name** (same day): the
+  Charity Commission lists "IAN CRITCHLEY" and Companies House "CRITCHLEY,
+  Ian Martin", so they were screened as two people, the trustee with no date
+  of birth, and a police officer's PEP profile at 70% became a red flag.
+  `onePersonNamed` (`shared/kyc-prechecks.ts`) folds a trustee into the one
+  director or owner whose name holds every word of the trustee's, the
+  surname agreeing; two such people is no answer. A merged person keeps the
+  director's date of birth and context (`add` in `runPrecheck`). It applies
+  from the next run.
 - Not run against Mesh from a build machine (no keys here): the first run on
   live shows whether Mesh now keeps the date of birth (the customer record in
   Mesh, or the connection check's refusal line). Not built: Mesh's own
@@ -7392,6 +7420,16 @@ our system and check along side what KYC4U did to see if we get the same".
   (it read "a public figure", which is not the question asked; the flag's key
   is unchanged, so set-asides stand). LEGO carried the same kind of flag; its
   words were not read (that would have started a paid check on the landlord).
+  They were read on 24 November 2026 and slipped through: "No public-role
+  information identified" (a word between "no" and what was not found),
+  "Confirms company number ... matching the queried company" (the register
+  restated) and a last sentence cut at 300 characters ("No qualifying
+  publi"). `webFindingSaysNothing` now takes up to three words between "no"
+  and the thing ("no longer" is never nothing), reads "confirms company
+  number / registered office" and "matching the queried company" as the
+  register, and reads a cut last sentence of 40 characters or fewer that
+  opens with "No", "Nothing", "None" or "There is no" as saying nothing; any
+  other cut sentence keeps the finding.
   (2) Companies House writes 9999-12-31 for a date not set: the app read it
   as "identity verification statement removed on 31 Dec 9999" (Choux). It is
   no date now (`idvOf`, `idvState`).

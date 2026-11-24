@@ -40,13 +40,18 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A birth year one either side is not enough for adverse media",
+    text: "A ComplyAdvantage adverse media, warning list or fitness profile that gives only a year of birth, one either side of the person's, is a possible namesake to check, not a red flag. Articles give an age, so the year is a guess: the Jethro Tull musician Ian Anderson matched a charity trustee born a year later. A public role or a sanctions list still counts it." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A longer company name is another company for a weak sanctions match",
+    text: "For a company, a ComplyAdvantage sanctions profile scored under 50% is a possible namesake to check unless its name is the company's own, word for word (the legal form aside). A longer name holding the company's is another company: Chelsea's owner BlueCo 22 Midco matched Bluewater's landlord Blueco Limited at 2%." },
   { date: "2026-11-24", who: ["Woody"], topic: "Officers and sign-off", title: "Only a sign-off counts",
     text: "A KYC status counts only when it is a sign-off: approved, rejected, or a lapsed approval. \"In review\" or \"pending\" on a record reads as not signed off. What the old in-app screening marked by itself in September and October (enhanced due diligence, a possible PEP or sanctions match, a risk rating) is no red flag and stays in the KYC history. A mark a person set still counts." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "Flags from the old screening say what set them and what to do",
     text: "Every mark the old in-app screening wrote by itself in September and October (enhanced due diligence, a possible PEP or sanctions match, a risk rating) reads \"(old screening)\" and says why in plain words, such as an ownership chain three companies deep. To clear it, set the company that signs: BGP's checks then run, and if they find nothing it clears by itself.",
     changed: "24 November 2026: the old screening's marks are no red flags at all (see \"Only a sign-off counts\")." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A weak sanctions match under another company's name is a namesake",
-    text: "For a company, a ComplyAdvantage sanctions profile under a name spelt differently, scored under 50%, is listed as a possible namesake to check, not a red flag. It started with Blaydon Asset Management matched to Beltane Asset Management at 1%. A person's sanctions match stays a red flag however it is spelt." },
+    text: "For a company, a ComplyAdvantage sanctions profile under a name spelt differently, scored under 50%, is listed as a possible namesake to check, not a red flag. It started with Blaydon Asset Management matched to Beltane Asset Management at 1%. A person's sanctions match stays a red flag however it is spelt.",
+    changed: "24 November 2026: a longer name holding the company's counts as another name too (see \"A longer company name is another company for a weak sanctions match\")." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "Old automatic flags are set aside when BGP's newer check finds nothing",
     text: "A flag the old in-app screening set by itself (October 2026, no record of what matched) is set aside by the app once BGP's own latest check of that party finds no sanctions match, ComplyAdvantage red flag or public role. It is listed with the reason, and a new match brings it back.",
     changed: "24 November 2026: widened to every mark the old screening wrote, and BGP's checks must find no red flag at all (see \"Flags from the old screening say what set them and what to do\"); later that day the old screening's marks stopped being red flags at all (see \"Only a sign-off counts\")." },
