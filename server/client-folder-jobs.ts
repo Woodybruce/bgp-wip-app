@@ -24,11 +24,13 @@ import {
   stampClientRootUrl, stampPropertyRootUrl, nodeKey,
 } from "./account-folder-map";
 import {
-  matchExpectedTree, walkPhysicalTree, resolveClientRoot,
+  matchExpectedTree, walkPhysicalTree, resolveClientRoot, engineChildrenLister,
   type ChildrenLister, type PhysicalNode, type ResolvedRoot,
 } from "./account-folder-inventory";
 import { buildExpectedFolderTree, type ExpectedFolderNode } from "@shared/client-folder-tree";
-import { runChunked, type SharePointItemRef } from "./sharepoint-graph";
+import { SHAREPOINT_ROOT_FOLDER, runChunked, type SharePointItemRef } from "./sharepoint-graph";
+import { GraphError, bgpLibrary, createFolder, entryByPath, listChildren } from "./folders/graph";
+import { logFolderAction, type FolderActionEntry } from "./folders/links";
 
 const LEASE_MS = 15 * 60_000;
 const CREATE_PARALLELISM = 3;
@@ -159,6 +161,56 @@ export interface ClientFolderGraph {
   ensureRoot(clientName: string): Promise<SharePointItemRef>;
   listChildren: ChildrenLister;
   createFolder(driveId: string, parentItemId: string, name: string): Promise<{ success: boolean; item?: { id: string; webUrl: string | null }; error?: string }>;
+}
+
+// The job's Graph surface through the folder engine's one door to Microsoft
+// (server/folders/graph.ts), on the token the route gives it (the acting staff
+// member's, as before). Each folder made is a row of folder_actions. The
+// client root stays where the data room reads it ("BGP share drive/<client>")
+// until the data room moves (decision 6 of docs/folders-review-2026-11-20.md).
+export function engineClientFolderGraph(
+  token: string,
+  args: { companyId: string; companyName: string; userId: string | null; pool: Querier },
+): ClientFolderGraph {
+  const log = (entry: FolderActionEntry) => args.userId
+    ? logFolderAction(args.pool, { userId: args.userId, account: null }, { ...entry, detail: { via: "client_folder_job", companyId: args.companyId } })
+    : Promise.resolve();
+  const childNamed = async (driveId: string, parentId: string, name: string) =>
+    (await listChildren(token, driveId, parentId, { foldersOnly: true })).find(c => c.name === name) || null;
+  return {
+    resolveRoot: () => resolveClientRoot(args.companyId, args.companyName, token, { pool: args.pool }),
+    ensureRoot: async (clientName: string) => {
+      const lib = await bgpLibrary(token);
+      const parent = await entryByPath(token, lib.driveId, SHAREPOINT_ROOT_FOLDER);
+      if (!parent?.isFolder) throw new Error(`Could not find the ${SHAREPOINT_ROOT_FOLDER} folder`);
+      let root;
+      try {
+        root = await createFolder(token, lib.driveId, parent.itemId, clientName);
+        await log({ action: "create", driveId: lib.driveId, itemId: root.itemId, parentAfter: parent.itemId, nameAfter: clientName });
+      } catch (e: any) {
+        if (!(e instanceof GraphError && e.status === 409)) throw new Error(`Failed to create ${clientName} folder: ${e?.message}`);
+        root = await childNamed(lib.driveId, parent.itemId, clientName);
+        if (!root) throw new Error(`Created ${clientName} but could not resolve its item id`);
+      }
+      return { driveId: root.driveId, itemId: root.itemId, name: root.name, webUrl: root.webUrl, fullPath: "" };
+    },
+    listChildren: engineChildrenLister(token),
+    createFolder: async (driveId: string, parentItemId: string, name: string) => {
+      try {
+        const made = await createFolder(token, driveId, parentItemId, name);
+        await log({ action: "create", driveId, itemId: made.itemId, parentAfter: parentItemId, nameAfter: name });
+        return { success: true, item: { id: made.itemId, webUrl: made.webUrl } };
+      } catch (e: any) {
+        // Already there: success, with the folder that is there.
+        if (e instanceof GraphError && e.status === 409) {
+          const there = await childNamed(driveId, parentItemId, name).catch(() => null);
+          return { success: true, item: there ? { id: there.itemId, webUrl: there.webUrl } : undefined };
+        }
+        await log({ action: "create", driveId, parentAfter: parentItemId, nameAfter: name, ok: false, error: e?.message || "not made" });
+        return { success: false, error: e instanceof GraphError ? `${e.status}: ${e.message}` : e?.message || "Graph create failed" };
+      }
+    },
+  };
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────

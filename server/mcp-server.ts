@@ -18,11 +18,18 @@ import { ilike, or, eq, desc, sql, inArray } from "drizzle-orm";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
 import type { Express, Request, Response } from "express";
-import { getAppToken } from "./shared-mailbox";
-import {
-  browseSharePointFolder,
-  getSharePointDriveId,
-} from "./utils/sharepoint-operations";
+import { bgpLibrary, downloadFile, entryByPath, listChildren, searchDrive } from "./folders/graph";
+import { folderAtPath, folderErrorWords, libraryPath } from "./folders/by-path";
+
+// SharePoint for the MCP tools: read only, by path in the BGP library, on the
+// app's own token (no person is asking), through the folder engine's one door
+// to Microsoft (server/folders/graph.ts).
+async function mcpGraphToken(): Promise<string | null> {
+  const { getAppGraphToken } = await import("./microsoft");
+  return getAppGraphToken();
+}
+const mcpText = (text: string) => ({ content: [{ type: "text" as const, text }] });
+const sizeMB = (bytes: number | null) => Math.round((bytes || 0) / 1024 / 1024 * 100) / 100;
 
 function buildFuzzyOr(cols: any[], query: string) {
   const words = query.split(/\s+/).filter((w) => w.length >= 2);
@@ -551,58 +558,40 @@ function createBgpMcpServer(): McpServer {
 
   server.tool(
     "browse_sharepoint_folder",
-    "Browse the BGP SharePoint filing system. List files and subfolders at a given path. Use '/' or empty for the root of the BGP shared drive. Use folder paths like 'BGP share drive/Investment' to navigate deeper.",
+    "Browse the BGP SharePoint filing system. List files and subfolders at a given path in the BGP library. Use '/' or empty for the top of the library; the team's tree is 'BGP - Share Drive', so use paths like 'BGP - Share Drive/Investment' to go deeper.",
     {
       path: z
         .string()
         .optional()
         .default("/")
-        .describe("Folder path in SharePoint (e.g. '/' for root, 'BGP share drive/Investment' for investment folder)"),
+        .describe("Folder path in the BGP library (e.g. '/' for the top, 'BGP - Share Drive/Investment' for the investment folder)"),
     },
     async ({ path: folderPath }) => {
       try {
         const safePath = folderPath || "/";
         if (safePath.includes("sharepoint.com") || safePath.includes("onedrive.com") || safePath.includes("personal/")) {
-          return {
-            content: [
-              { type: "text" as const, text: "Only folder paths within the BGP shared drive are allowed (e.g. '/' or 'BGP share drive/Investment'). Direct SharePoint/OneDrive URLs are not supported via MCP." },
-            ],
-          };
+          return mcpText("Only folder paths within the BGP library are allowed (e.g. '/' or 'BGP - Share Drive/Investment'). Direct SharePoint/OneDrive URLs are not supported via MCP.");
         }
-        const token = await getAppToken();
-        const result = await browseSharePointFolder(safePath, token);
+        const parts = libraryPath(safePath);
+        if ("problem" in parts) return mcpText(parts.problem);
+        const token = await mcpGraphToken();
+        if (!token) return mcpText("SharePoint is not connected for the app.");
+        const lib = await bgpLibrary(token);
+        const folder = await folderAtPath(token, lib, parts.parts);
+        const items = await listChildren(token, folder.driveId, folder.itemId);
+        const folders = items.filter(i => i.isFolder);
+        const files = items.filter(i => !i.isFolder);
         const summary = {
           path: folderPath || "/",
-          folderCount: result.folders.length,
-          fileCount: result.files.length,
-          totalSizeMB: Math.round(result.totalSize / 1024 / 1024 * 100) / 100,
-          folders: result.folders.map((f: any) => ({
-            name: f.name,
-            childCount: f.childCount,
-            modified: f.modified,
-          })),
-          files: result.files.map((f: any) => ({
-            name: f.name,
-            sizeMB: Math.round(f.size / 1024 / 1024 * 100) / 100,
-            modified: f.modified,
-            type: f.mimeType,
-            webUrl: f.webUrl,
-          })),
+          folderCount: folders.length,
+          fileCount: files.length,
+          totalSizeMB: sizeMB(files.reduce((n, f) => n + (f.size || 0), 0)),
+          folders: folders.map(f => ({ name: f.name, childCount: f.childCount ?? 0, modified: f.modified })),
+          files: files.map(f => ({ name: f.name, sizeMB: sizeMB(f.size), modified: f.modified, type: f.mimeType, webUrl: f.webUrl })),
         };
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify(summary, null, 2) },
-          ],
-        };
+        return mcpText(JSON.stringify(summary, null, 2));
       } catch (err: any) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Error browsing SharePoint: ${err.message}`,
-            },
-          ],
-        };
+        return mcpText(`Error browsing SharePoint: ${folderErrorWords(err)}`);
       }
     }
   );
@@ -615,174 +604,60 @@ function createBgpMcpServer(): McpServer {
     },
     async ({ query }) => {
       try {
-        const token = await getAppToken();
-        const driveId = await getSharePointDriveId(token);
-        if (!driveId) {
-          return {
-            content: [
-              { type: "text" as const, text: "Could not access SharePoint drive." },
-            ],
-          };
-        }
-        const searchUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/search(q='${encodeURIComponent(query)}')`;
-        const resp = await fetch(searchUrl, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!resp.ok) {
-          return {
-            content: [
-              { type: "text" as const, text: `Search failed: ${await resp.text()}` },
-            ],
-          };
-        }
-        const data = await resp.json();
-        const results = (data.value || []).slice(0, 30).map((item: any) => ({
-          name: item.name,
-          path: item.parentReference?.path?.replace(/\/drive\/root:/, "") || "",
-          sizeMB: Math.round((item.size || 0) / 1024 / 1024 * 100) / 100,
-          modified: item.lastModifiedDateTime,
-          webUrl: item.webUrl,
-          type: item.file?.mimeType || (item.folder ? "folder" : "unknown"),
+        const token = await mcpGraphToken();
+        if (!token) return mcpText("SharePoint is not connected for the app.");
+        const lib = await bgpLibrary(token);
+        const found = await searchDrive(token, lib.driveId, query, 30);
+        const results = found.slice(0, 30).map(e => ({
+          name: e.name,
+          path: e.path,
+          sizeMB: sizeMB(e.size),
+          modified: e.modified,
+          webUrl: e.webUrl,
+          type: e.mimeType || (e.isFolder ? "folder" : "unknown"),
         }));
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                { query, resultCount: results.length, results },
-                null,
-                2
-              ),
-            },
-          ],
-        };
+        return mcpText(JSON.stringify({ query, resultCount: results.length, results }, null, 2));
       } catch (err: any) {
-        return {
-          content: [
-            { type: "text" as const, text: `Search error: ${err.message}` },
-          ],
-        };
+        return mcpText(`Search error: ${folderErrorWords(err)}`);
       }
     }
   );
 
   server.tool(
     "get_sharepoint_file_content",
-    "Get metadata and content of a file from the BGP SharePoint shared drive. Returns text content for plain text files (txt, csv, json, md, etc.) and metadata with webUrl link for binary files (Word, Excel, PDF, etc.).",
+    "Get metadata and content of a file in the BGP SharePoint library. Returns text content for plain text files (txt, csv, json, md, etc.) and metadata with a webUrl link for binary files (Word, Excel, PDF, etc.).",
     {
-      filePath: z.string().describe("File path in SharePoint (e.g. 'BGP share drive/Investment/Report.docx')"),
+      filePath: z.string().describe("File path in the BGP library (e.g. 'BGP - Share Drive/Investment/Report.docx')"),
     },
     async ({ filePath }) => {
       try {
         if (filePath.includes("sharepoint.com") || filePath.includes("onedrive.com") || filePath.includes("personal/")) {
-          return {
-            content: [
-              { type: "text" as const, text: "Only file paths within the BGP shared drive are allowed (e.g. 'BGP share drive/Investment/Report.docx'). Direct SharePoint/OneDrive URLs are not supported via MCP." },
-            ],
-          };
+          return mcpText("Only file paths within the BGP library are allowed (e.g. 'BGP - Share Drive/Investment/Report.docx'). Direct SharePoint/OneDrive URLs are not supported via MCP.");
         }
-        const token = await getAppToken();
-        const driveId = await getSharePointDriveId(token);
-        if (!driveId) {
-          return {
-            content: [
-              { type: "text" as const, text: "Could not access SharePoint drive." },
-            ],
-          };
-        }
-        const encoded = encodeURIComponent(filePath);
-        const metaResp = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (!metaResp.ok) {
-          return {
-            content: [
-              { type: "text" as const, text: `File not found: ${filePath}` },
-            ],
-          };
-        }
-        const meta = await metaResp.json();
-        const name = meta.name || filePath;
-        const ext = name.split(".").pop()?.toLowerCase() || "";
-
-        if (["xlsx", "xls", "docx", "doc", "pptx", "ppt"].includes(ext)) {
-          const previewResp = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${meta.id}/content`,
-            { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" }
-          );
-          if (!previewResp.ok) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify({
-                    file: name,
-                    sizeMB: Math.round((meta.size || 0) / 1024 / 1024 * 100) / 100,
-                    webUrl: meta.webUrl,
-                    note: "File found but content extraction requires download. Open it via the webUrl link.",
-                  }, null, 2),
-                },
-              ],
-            };
-          }
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  file: name,
-                  sizeMB: Math.round((meta.size || 0) / 1024 / 1024 * 100) / 100,
-                  webUrl: meta.webUrl,
-                  note: "Binary file — open via webUrl to view contents.",
-                }, null, 2),
-              },
-            ],
-          };
-        }
-
+        const parts = libraryPath(filePath);
+        if ("problem" in parts) return mcpText(parts.problem);
+        const token = await mcpGraphToken();
+        if (!token) return mcpText("SharePoint is not connected for the app.");
+        const lib = await bgpLibrary(token);
+        const meta = parts.parts.length ? await entryByPath(token, lib.driveId, parts.parts.join("/")) : null;
+        if (!meta) return mcpText(`File not found: ${filePath}`);
+        if (meta.isFolder) return mcpText(`${filePath} is a folder: list it with browse_sharepoint_folder.`);
+        const ext = meta.name.split(".").pop()?.toLowerCase() || "";
         if (["txt", "csv", "json", "md", "log", "xml", "html", "css", "js", "ts"].includes(ext)) {
-          const contentResp = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${meta.id}/content`,
-            { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" }
-          );
-          if (contentResp.ok) {
-            const text = await contentResp.text();
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify({
-                    file: name,
-                    content: text.slice(0, 50000),
-                    truncated: text.length > 50000,
-                  }, null, 2),
-                },
-              ],
-            };
-          }
+          const { bytes } = await downloadFile(token, meta.driveId, meta.itemId, 5 * 1024 * 1024);
+          const text = new TextDecoder().decode(bytes);
+          return mcpText(JSON.stringify({ file: meta.name, content: text.slice(0, 50000), truncated: text.length > 50000 }, null, 2));
         }
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                file: name,
-                sizeMB: Math.round((meta.size || 0) / 1024 / 1024 * 100) / 100,
-                modified: meta.lastModifiedDateTime,
-                webUrl: meta.webUrl,
-                type: meta.file?.mimeType || "unknown",
-              }, null, 2),
-            },
-          ],
-        };
+        const binary = ["xlsx", "xls", "docx", "doc", "pptx", "ppt"].includes(ext);
+        return mcpText(JSON.stringify({
+          file: meta.name,
+          sizeMB: sizeMB(meta.size),
+          ...(binary ? {} : { modified: meta.modified, type: meta.mimeType || "unknown" }),
+          webUrl: meta.webUrl,
+          ...(binary ? { note: "Binary file — open via webUrl to view contents." } : {}),
+        }, null, 2));
       } catch (err: any) {
-        return {
-          content: [
-            { type: "text" as const, text: `Error reading file: ${err.message}` },
-          ],
-        };
+        return mcpText(`Error reading file: ${folderErrorWords(err)}`);
       }
     }
   );

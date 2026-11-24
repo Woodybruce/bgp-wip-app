@@ -358,7 +358,9 @@ test("in chatbgp.ts the joint agent gate is the first thing each tool executor d
   };
   first("export async function executeCrmToolRaw(", "jointAgentToolGate(fnName, fnArgs, req)", ["isInternalStaffRequest", "search_app_guide", "isClientRequestUser"]);
   first("export async function handleCrmToolCall(", "isJointAgentChat(req)", ["isInternalStaffRequest", "isClientRequestUser"]);
-  first("  async function executeAnyTool(", "jointAgentToolGate(tcName, tcArgs, req)", ["isInternalStaffRequest", "isClientRequestUser", "msToken)"]);
+  // Since 24 November 2026 the folder tools run through executeCrmToolRaw (server/chatbgp-folder-tools.ts),
+  // so executeAnyTool no longer uses the Microsoft token: the client allow-list stands in for it here.
+  first("  async function executeAnyTool(", "jointAgentToolGate(tcName, tcArgs, req)", ["isInternalStaffRequest", "isClientRequestUser", "CLIENT_SAFE_TOOLS"]);
 });
 
 // ── ChatBGP in a conversation with a joint agent in it ─────────────────

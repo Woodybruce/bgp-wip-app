@@ -191,27 +191,34 @@ export function extractTenancyUnitsFromXlsxBuffer(buffer: Buffer): ExtractedTena
 }
 
 /**
- * Fetches one SharePoint file's bytes using the BGP shared drive. Uses the
- * path-based Graph endpoint so we don't need the driveItem id.
+ * Fetches one SharePoint file's bytes from the BGP library by its path (the
+ * folder and name a Stage 1 hit gives), through the folder engine.
  */
 async function downloadSharePointFileByPath(
+  token: string,
   driveId: string,
   fullPath: string,
-  token: string,
 ): Promise<Buffer | null> {
-  // Normalise: `/Documents/Islington Square/TS.xlsx` → `Documents/Islington%20Square/TS.xlsx`
-  const trimmed = fullPath.replace(/^\/+/, "");
-  const encoded = trimmed.split("/").map((seg) => encodeURIComponent(seg)).join("/");
-  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/content`;
+  const { libraryPath, folderErrorWords } = await import("./folders/by-path");
+  const { entryByPath, downloadFile } = await import("./folders/graph");
+  const p = libraryPath(fullPath);
+  if ("problem" in p || !p.parts.length) return null;
   try {
-    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) });
-    if (!resp.ok) {
-      console.warn(`[pathway-tenancy-extractor] download failed ${resp.status} for ${fullPath}`);
+    const bytes = await Promise.race([
+      (async () => {
+        const entry = await entryByPath(token, driveId, p.parts.join("/"));
+        if (!entry || entry.isFolder) return null;
+        return (await downloadFile(token, driveId, entry.itemId, 20 * 1024 * 1024)).bytes;
+      })(),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error("timed out")), 20000)),
+    ]);
+    if (!bytes) {
+      console.warn(`[pathway-tenancy-extractor] not found: ${fullPath}`);
       return null;
     }
-    return Buffer.from(await resp.arrayBuffer());
+    return Buffer.from(bytes);
   } catch (err: any) {
-    console.warn(`[pathway-tenancy-extractor] download error: ${err?.message}`);
+    console.warn(`[pathway-tenancy-extractor] download error: ${folderErrorWords(err)}`);
     return null;
   }
 }
@@ -229,12 +236,13 @@ export async function extractTenancyUnitsFromSharePointHits(
   const candidates = hits.filter((h) => h.name && looksLikeTenancySchedule(h.name, h.path));
   if (candidates.length === 0) return [];
 
-  const { getValidMsToken } = await import("./microsoft");
-  const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
-  const token = await getValidMsToken(req);
-  if (!token) return [];
-  const driveId = await getSharePointDriveId(token);
-  if (!driveId) return [];
+  // As the person running the pathway, on their own Microsoft 365.
+  const { ownMicrosoft } = await import("./folders/by-path");
+  const { bgpLibrary } = await import("./folders/graph");
+  const own = await ownMicrosoft(req);
+  if (!own) return [];
+  const lib = await bgpLibrary(own.token).catch(() => null);
+  if (!lib) return [];
 
   // Prefer most recently modified — newer schedules are more accurate.
   // Cap to 5 files per run to keep Stage 1 snappy.
@@ -242,7 +250,7 @@ export async function extractTenancyUnitsFromSharePointHits(
   const all: ExtractedTenancyUnit[] = [];
   for (const c of ordered) {
     const full = [c.path, c.name].filter(Boolean).join("/").replace(/\/+/g, "/");
-    const buffer = await downloadSharePointFileByPath(driveId, full, token);
+    const buffer = await downloadSharePointFileByPath(own.token, lib.driveId, full);
     if (!buffer) continue;
     try {
       const units = extractTenancyUnitsFromXlsxBuffer(buffer);

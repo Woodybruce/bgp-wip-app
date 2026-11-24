@@ -1,5 +1,6 @@
 // Design-oriented ChatBGP tools — pdf-lib for stitching existing brochure
-// pages, and Dropbox→SharePoint bridge for filing raw PDFs. The Claude
+// pages, and the Dropbox download that copy_dropbox_to_sharepoint files raw
+// PDFs with (server/chatbgp-folder-tools.ts). The Claude
 // HTML→PDF design path (server/why-buy-design.ts) handles fresh decks; the
 // Gamma integration was removed (Nov 2025) after repeated API
 // breakages and consistently underwhelming output vs the Claude path.
@@ -33,13 +34,11 @@ export interface CompileBrochureArgs {
   sources: BrochureSource[];
 }
 
+// A source PDF in SharePoint, through the folder engine's one door to
+// Microsoft, as the person asking (server/folders/graph.ts).
 async function fetchSharepointPdf(driveId: string, itemId: string, msToken: string): Promise<Buffer> {
-  const res = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`,
-    { headers: { Authorization: `Bearer ${msToken}` }, redirect: "follow" }
-  );
-  if (!res.ok) throw new Error(`SharePoint download failed: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+  const { downloadFile } = await import("./folders/graph");
+  return Buffer.from((await downloadFile(msToken, driveId, itemId, 200 * 1024 * 1024)).bytes);
 }
 
 async function getDropboxAccessToken(): Promise<string> {
@@ -75,7 +74,7 @@ async function getDropboxAccessToken(): Promise<string> {
   return accessToken;
 }
 
-async function fetchDropboxPdf(pathOrId: string): Promise<Buffer> {
+export async function fetchDropboxPdf(pathOrId: string): Promise<Buffer> {
   const accessToken = await getDropboxAccessToken();
   const res = await fetch("https://content.dropboxapi.com/2/files/download", {
     method: "POST",
@@ -104,9 +103,9 @@ export async function compileBrochureFromPdfs(args: CompileBrochureArgs, req: Re
           continue;
         }
         if (!msToken) {
-          const { getValidMsToken } = await import("./microsoft");
-          msToken = await getValidMsToken(req);
-          if (!msToken) return { error: "Microsoft 365 not connected — needed to fetch SharePoint source PDFs. Ask the user to connect SharePoint first." };
+          const { ownMicrosoft } = await import("./folders/by-path");
+          msToken = (await ownMicrosoft(req))?.token ?? null;
+          if (!msToken) return { error: "The person asking has not connected their own Microsoft 365, which reading the SharePoint source PDFs needs: ask them to connect it on the SharePoint page." };
         }
         buffer = await fetchSharepointPdf(src.sharepointDriveId, src.sharepointItemId, msToken);
       } else if (src.source === "dropbox") {
@@ -159,106 +158,6 @@ export async function compileBrochureFromPdfs(args: CompileBrochureArgs, req: Re
     chatMediaFilename: storageFilename,
     downloadMarkdown: `[Download ${displayName}](${downloadUrl})`,
     message: `Stitched ${out.getPageCount()} pages from ${args.sources.length - failures.length}/${args.sources.length} source brochures. Original design preserved.`,
-  };
-}
-
-// ─── Dropbox → SharePoint bridge ─────────────────────────────────────────────
-
-interface DropboxFileCopy {
-  dropboxPath: string;
-  renameTo?: string;
-}
-
-export interface CopyDropboxToSharepointArgs {
-  files: DropboxFileCopy[];
-  destinationFolderPath: string;
-}
-
-async function ensureSharepointFolder(driveId: string, folderPath: string, msToken: string): Promise<void> {
-  const segments = folderPath.split("/").filter(Boolean);
-  let currentPath = "";
-  for (const seg of segments) {
-    const parent = currentPath;
-    currentPath = currentPath ? `${currentPath}/${seg}` : seg;
-    const checkUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(currentPath).replace(/%2F/g, "/")}`;
-    const check = await fetch(checkUrl, { headers: { Authorization: `Bearer ${msToken}` } });
-    if (check.ok) continue;
-    const createUrl = parent
-      ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(parent).replace(/%2F/g, "/")}:/children`
-      : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-    await fetch(createUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: seg, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
-    });
-  }
-}
-
-export async function copyDropboxToSharepoint(args: CopyDropboxToSharepointArgs, req: Request): Promise<any> {
-  const { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } = await import("./microsoft");
-  const msToken = await getValidMsToken(req);
-  if (!msToken) return { error: "Microsoft 365 not connected. Ask the user to connect SharePoint first." };
-
-  const spSiteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, {
-    headers: { Authorization: `Bearer ${msToken}` },
-  });
-  if (!spSiteRes.ok) return { error: "Could not access BGP SharePoint site" };
-  const spSite = await spSiteRes.json();
-
-  const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${spSite.id}/drives`, {
-    headers: { Authorization: `Bearer ${msToken}` },
-  });
-  if (!drivesRes.ok) return { error: "Could not access SharePoint drives" };
-  const drivesData = await drivesRes.json();
-  const docLib = drivesData.value?.find((d: any) => d.name === "Documents" || d.name === "Shared Documents") || drivesData.value?.[0];
-  if (!docLib) return { error: "Could not find SharePoint document library" };
-  const driveId = docLib.id;
-
-  const folderPath = `BGP share drive/${args.destinationFolderPath.replace(/^\/+|\/+$/g, "")}`;
-  await ensureSharepointFolder(driveId, folderPath, msToken);
-
-  const uploaded: any[] = [];
-  const failed: any[] = [];
-
-  for (const file of args.files) {
-    try {
-      const buffer = await fetchDropboxPdf(file.dropboxPath);
-      const originalName = file.dropboxPath.split("/").pop() || "file.pdf";
-      const uploadName = file.renameTo || originalName;
-      const ext = uploadName.split(".").pop()?.toLowerCase() || "";
-      const mimeMap: Record<string, string> = {
-        pdf: "application/pdf",
-        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      };
-      const contentType = mimeMap[ext] || "application/octet-stream";
-      const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(folderPath).replace(/%2F/g, "/")}/${encodeURIComponent(uploadName)}:/content`;
-      const up = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${msToken}`, "Content-Type": contentType },
-        body: buffer,
-      });
-      if (!up.ok) {
-        const errText = await up.text();
-        failed.push({ dropboxPath: file.dropboxPath, error: `Upload failed: ${up.status} ${errText.slice(0, 200)}` });
-        continue;
-      }
-      const result = await up.json();
-      uploaded.push({ fileName: result.name, size: result.size, webUrl: result.webUrl });
-    } catch (err: any) {
-      failed.push({ dropboxPath: file.dropboxPath, error: err?.message || "copy failed" });
-    }
-  }
-
-  return {
-    success: uploaded.length > 0,
-    uploaded: uploaded.length,
-    failed: failed.length,
-    folder: args.destinationFolderPath,
-    files: uploaded,
-    failures: failed.length ? failed : undefined,
-    message: `Copied ${uploaded.length}/${args.files.length} files from Dropbox to SharePoint folder "${args.destinationFolderPath}".${failed.length ? ` ${failed.length} failed.` : ""}`,
   };
 }
 

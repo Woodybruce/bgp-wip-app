@@ -2684,12 +2684,10 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const companyName = String(companyQ.rows[0].name).trim().replace(/[\/\\<>:"|?*]/g, "_");
 
       const {
-        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore,
+        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore, engineClientFolderGraph,
       } = await import("./client-folder-jobs");
       const { resolveAccountView } = await import("./account-resolver");
       const { buildExpectedFolderTree } = await import("@shared/client-folder-tree");
-      const { createChildrenLister, resolveClientRoot } = await import("./account-folder-inventory");
-      const { resolveItemByPath, createFolderInItem } = await import("./sharepoint-graph");
 
       // A live run wins — double-clicks and concurrent POSTs are no-ops.
       const existing = await readClientFolderJobState(companyId, { pool }).catch(() => null);
@@ -2710,34 +2708,12 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         properties: view.properties.map(p => ({ propertyId: p.propertyId, name: p.name })),
       }).length;
 
-      const graph = {
-        resolveRoot: () => resolveClientRoot(companyId, companyName, token, { pool }),
-        ensureRoot: async (clientName: string) => {
-          const spInfo = await getSharePointDriveId(token);
-          if (!spInfo) throw new Error("Could not find BGP SharePoint site");
-          const created = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, clientName);
-          if (!created.success) throw new Error(`Failed to create ${clientName} folder: ${created.error}`);
-          const ref = await resolveItemByPath(token, spInfo.driveId, `${SHAREPOINT_ROOT_FOLDER}/${clientName}`);
-          if (!ref) throw new Error(`Created ${clientName} but could not resolve its item id`);
-          return ref;
-        },
-        listChildren: createChildrenLister(
-          async (url) => {
-            const pageRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!pageRes.ok) throw new Error(`Graph listing failed: ${pageRes.status}`);
-            return pageRes.json();
-          },
-          (driveId, itemId) =>
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
-        ),
-        createFolder: (driveId: string, parentItemId: string, name: string) =>
-          createFolderInItem(token, driveId, parentItemId, name),
-      };
-
       // Fire-and-forget, but durable: the runner persists per-node state as
       // it goes, so a process restart loses nothing — the next POST resumes.
-      // The token is this request's delegated token, never persisted.
+      // The token is this request's delegated token, never persisted; every
+      // Graph call goes through the folder engine (engineClientFolderGraph).
       const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      const graph = engineClientFolderGraph(token, { companyId, companyName, userId, pool });
       void runClientFolderJob(
         { companyId, companyName, userId },
         { store: pgClientFolderJobStore(pool as any, companyId), pool, graph },
