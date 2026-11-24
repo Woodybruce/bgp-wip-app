@@ -47,6 +47,7 @@ export function RecordFolderPicker({ open, onOpenChange, record, alt, startNew, 
       title={title || (startNew ? `New folder for ${target.name}` : `Add a folder to ${target.name}`)}
       description={startNew ? "Choose where it goes, from BGP - Share Drive or your OneDrive, then make it here." : "Find it by name, or browse to it. Tick several to link them together."}
       multiple
+      notTops
       onPick={linkAll}
       onPaste={async url => {
         await folderApi("POST", `/api/folders/${target.type}/${target.id}/links`, { url });

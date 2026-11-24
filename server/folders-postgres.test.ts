@@ -28,7 +28,8 @@ let db: pg.Pool;
 let admin: pg.Pool;
 
 // The folders SharePoint holds in this test, by item id.
-const items: Record<string, { name: string; folder?: boolean; path: string; webUrl: string } | number> = {
+const items: Record<string, { name: string; folder?: boolean; root?: boolean; path: string; webUrl: string } | number> = {
+  top: { name: "Documents", folder: true, root: true, path: "", webUrl: "https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/Shared%20Documents" },
   bluewater: { name: "Bluewater", folder: true, path: "BGP - Share Drive/National", webUrl: `${SITE}/National/Bluewater` },
   leases: { name: "Leases", folder: true, path: "BGP - Share Drive/National/Bluewater", webUrl: `${SITE}/National/Bluewater/Leases` },
   hots: { name: "Heads of Terms", folder: true, path: "BGP - Share Drive/National/Bluewater", webUrl: `${SITE}/National/Bluewater/Heads%20of%20Terms` },
@@ -41,7 +42,7 @@ const answer = (r: GraphRequest): GraphResponse => {
   const id = m ? (r.url.includes("/shares/") ? shares[m[1]] : m[1]) : null;
   const it = id ? items[id] : undefined;
   if (!it || typeof it === "number") return { status: typeof it === "number" ? it : 404, body: { error: {} }, location: null, retryAfter: null };
-  return { status: 200, body: { id, name: it.name, webUrl: it.webUrl, folder: it.folder ? { childCount: 1 } : undefined, file: it.folder ? undefined : {}, parentReference: { driveId: DRIVE, driveType: "documentLibrary", path: `/drives/${DRIVE}/root:/${it.path}` } }, location: null, retryAfter: null };
+  return { status: 200, body: { id, name: it.name, webUrl: it.webUrl, folder: it.folder ? { childCount: 1 } : undefined, file: it.folder ? undefined : {}, root: it.root ? {} : undefined, parentReference: { driveId: DRIVE, driveType: "documentLibrary", path: `/drives/${DRIVE}/root:/${it.path}` } }, location: null, retryAfter: null };
 };
 const shareOf = (url: string) => `u!${Buffer.from(url, "utf8").toString("base64").replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-")}`;
 
@@ -96,6 +97,7 @@ test("linking: by ids or a pasted address, the folder's name as the label, one l
   await assert.rejects(addFolderLink(db, p1, actor, { url: "https://evil.example.com/x" }), (e: any) => e.status === 400);
   await assert.rejects(addFolderLink(db, p1, actor, { driveId: DRIVE, itemId: "gone" }), (e: any) => e.status === 404);
   await assert.rejects(addFolderLink(db, p1, actor, { driveId: "../x", itemId: "hots" }), (e: any) => e.status === 400);
+  await assert.rejects(addFolderLink(db, p1, actor, { driveId: DRIVE, itemId: "top" }), (e: any) => e.status === 400 && /top of the library/.test(e.message));
   const positions = (await db.query(`SELECT label, position FROM record_folders WHERE record_id = 'p1' ORDER BY position`)).rows;
   assert.deepEqual(positions, [{ label: "Heads of Terms", position: 0 }, { label: "Leases 2026", position: 1 }]);
   const log = await actions();

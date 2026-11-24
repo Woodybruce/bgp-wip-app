@@ -9883,9 +9883,13 @@ team folders) are not.
   never reaches the browser), share (a link for anyone, falling back to people
   at BGP and saying so; or an invitation by email) and preview. The top of a
   library and `BGP - Share Drive` itself are never renamed, moved or deleted
-  from the app, a folder linked to a record is unlinked before it can be
-  deleted, and a name already there is never replaced (new folders fail;
-  uploads and copies get a number). Rules: `shared/folders.ts`.
+  from the app, nor linked to a record (`linkTopProblem`: the top of a
+  library or a OneDrive, or the whole of `BGP - Share Drive`; the server
+  refuses it and the picker, which opens there, does not offer it, so one
+  press cannot link the whole drive to a transaction), a folder linked to a
+  record is unlinked before it can be deleted, and a name already there is
+  never replaced (new folders fail; uploads and copies get a number). Rules:
+  `shared/folders.ts`.
 - **Screens** (`client/src/components/folders/`): `RecordFolders` (the strip
   of chips, Add folder, the open folder; a chip's menu has Open in SharePoint,
   Rename the label, Colour, Move up / down, Unlink and Also linked to),

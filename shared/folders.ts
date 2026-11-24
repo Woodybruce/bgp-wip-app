@@ -14,6 +14,23 @@ export const BGP_SHAREPOINT_SITE_URL = `https://${BGP_SHAREPOINT_HOST}/sites/BGP
 /** The team's own tree: the picker opens here (decision 2), and nothing new is made in "BGP share drive". */
 export const SHARE_DRIVE_NAME = "BGP - Share Drive";
 
+/**
+ * The top of a library or a OneDrive, and "BGP - Share Drive" itself, are
+ * never linked to a record: the picker opens on BGP - Share Drive, and one
+ * press would otherwise link the whole drive to a transaction. `library` is
+ * the BGP library's top, when known.
+ */
+export function linkTopProblem(
+  item: { name: string; driveId: string; driveKind: "library" | "onedrive"; isRoot: boolean; parentId: string | null },
+  library: { driveId: string; itemId: string } | null,
+): string | null {
+  if (item.isRoot) return `That is the top of ${item.driveKind === "onedrive" ? "a OneDrive" : "the library"}: open the folder you want and link that.`;
+  if (item.name === SHARE_DRIVE_NAME && library && item.driveId === library.driveId && item.parentId === library.itemId) {
+    return `That is the whole of ${SHARE_DRIVE_NAME}: open the folder you want and link that.`;
+  }
+  return null;
+}
+
 /** A SharePoint folder on BGP's own tenant: its SharePoint or a OneDrive. */
 export function bgpSharePointUrl(url: unknown): boolean {
   try {

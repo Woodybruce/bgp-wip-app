@@ -11,7 +11,7 @@ import type { AddressInfo } from "node:net";
 import {
   FOLDER_COLOURS, FOLDER_RECORD_TYPES, MIGRATION_COLUMNS, OLD_FOLDER_READERS, PROPERTY_FOLDER_TEMPLATE, UPLOAD_MAX_BYTES, UPLOAD_PIECE,
   UPLOAD_SESSION_ABOVE, contentRange, copyState, folderColourKey, folderDisplayPath, folderLabel, folderStatusFromGraph, folderTemplate,
-  folderUrlKey, inviteEmails, isFolderRecordType, isGraphId, itemNameProblem, legacyFolderKey, migrationApplyRefusal, migrationRowId,
+  folderUrlKey, inviteEmails, isFolderRecordType, isGraphId, itemNameProblem, legacyFolderKey, linkTopProblem, migrationApplyRefusal, migrationRowId,
   migrationStatus, moveLinkTo, needsUploadSession, parseContentRange, pathFromWebUrl, pieceProblem, driveKindOf, teamFolderPath, uploadPieces,
   uploadProblem,
 } from "../shared/folders";
@@ -96,6 +96,19 @@ test("a link's status from Graph, an address however it is spelled, and an old c
   assert.equal(folderStatusFromGraph(200), "ok");
   assert.equal(folderUrlKey("https://x.sharepoint.com/sites/BGP/Shared%20Documents/A/?web=1"), "https://x.sharepoint.com/sites/bgp/shared documents/a");
   assert.equal(legacyFolderKey("crm_deals.sharepoint_link", "d1", "", " https://x/y "), "crm_deals.sharepoint_link|d1||https://x/y");
+});
+
+test("a drive's top, or the whole of BGP - Share Drive, is never a record's folder", () => {
+  const lib = { driveId: DRIVE, itemId: "lib-root" };
+  const at = (o: Partial<Parameters<typeof linkTopProblem>[0]>) => linkTopProblem({ name: "Heads of Terms", driveId: DRIVE, driveKind: "library", isRoot: false, parentId: "x", ...o }, lib);
+  assert.equal(at({}), null);
+  assert.match(at({ name: "Documents", isRoot: true, parentId: null })!, /top of the library/);
+  assert.match(at({ name: "My OneDrive", driveKind: "onedrive", isRoot: true, parentId: null })!, /top of a OneDrive/);
+  assert.match(at({ name: "BGP - Share Drive", parentId: "lib-root" })!, /whole of BGP - Share Drive/);
+  // A folder of the same name lower down, in another drive, or with the library unknown, is a folder like any other.
+  assert.equal(at({ name: "BGP - Share Drive", parentId: "deeper" }), null);
+  assert.equal(at({ name: "BGP - Share Drive", parentId: "lib-root", driveId: "b!other" }), null);
+  assert.equal(linkTopProblem({ name: "BGP - Share Drive", driveId: DRIVE, driveKind: "library", isRoot: false, parentId: "lib-root" }, null), null);
 });
 
 test("moving a link up or down keeps the rest in their order", () => {

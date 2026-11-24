@@ -174,7 +174,12 @@ export async function entryByPath(token: string, driveId: string, path: string):
 
 /** The folder a pasted SharePoint or OneDrive address opens. */
 export async function openLink(token: string, url: string): Promise<DriveEntry> {
-  return driveEntry(await call(token, "GET", `/shares/${sharesId(url)}/driveItem?$select=${ITEM_SELECT}`));
+  return (await openLinkItem(token, url)).entry;
+}
+/** The same, with its folder and whether it is a drive's top (linking refuses a top). */
+export async function openLinkItem(token: string, url: string): Promise<{ entry: DriveEntry; parentId: string | null; isRoot: boolean }> {
+  const raw = await call(token, "GET", `/shares/${sharesId(url)}/driveItem?$select=${ITEM_SELECT}`);
+  return { entry: driveEntry(raw), parentId: raw?.parentReference?.id ? String(raw.parentReference.id) : null, isRoot: !!raw?.root };
 }
 
 /** A folder's contents, every page. */

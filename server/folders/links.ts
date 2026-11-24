@@ -7,11 +7,11 @@
 import { runChunked } from "../sharepoint-graph";
 import { normaliseFolderLinks } from "@shared/property-labels";
 import {
-  LEGACY_FOLDER_COLUMNS, SHOWS_PROPERTY_FOLDERS, bgpSharePointUrl, folderColourKey, folderLabel, folderStatusFromGraph,
-  folderUrlKey, isGraphId, legacyFolderKey, moveLinkTo,
+  LEGACY_FOLDER_COLUMNS, SHARE_DRIVE_NAME, SHOWS_PROPERTY_FOLDERS, bgpSharePointUrl, folderColourKey, folderLabel, folderStatusFromGraph,
+  folderUrlKey, isGraphId, legacyFolderKey, linkTopProblem, moveLinkTo,
   type DriveEntry, type FolderAction, type FolderLinkSource, type FolderLinkView, type FolderRecordRef, type RecordFoldersView,
 } from "@shared/folders";
-import { GraphError, getEntry, openLink } from "./graph";
+import { GraphError, bgpLibrary, getEntry, itemForChange, openLink, openLinkItem } from "./graph";
 import { recordNames, type Db, type FolderRecord } from "./access";
 
 /** Who acted, and whose Microsoft account Graph saw (null when no Graph call was made). */
@@ -249,20 +249,29 @@ export async function addFolderLink(
 ): Promise<FolderLinkView> {
   let entry: DriveEntry;
   let source: FolderLinkSource;
+  let place: { parentId: string | null; isRoot: boolean } | null = null;
   if (made) {
     entry = made;
     source = "created";
   } else if (typeof input.url === "string" && input.url.trim()) {
     const url = input.url.trim();
     if (!bgpSharePointUrl(url)) throw folderRefusal(400, "Paste a link to a folder in BGP's SharePoint or OneDrive.");
-    entry = await openLink(actor.token, url);
+    const it = await openLinkItem(actor.token, url);
+    entry = it.entry; place = it;
     source = "pasted";
   } else {
     if (!isGraphId(input.driveId) || !isGraphId(input.itemId)) throw folderRefusal(400, "Pick a folder.");
-    entry = await getEntry(actor.token, input.driveId, input.itemId);
+    const it = await itemForChange(actor.token, input.driveId, input.itemId);
+    entry = it.entry; place = it;
     source = "picked";
   }
   if (!entry.isFolder) throw folderRefusal(400, "That is a file, not a folder. Link the folder it is in.");
+  if (place) {
+    // A library's or a OneDrive's top, or the whole of BGP - Share Drive, is never a record's folder.
+    const library = entry.name === SHARE_DRIVE_NAME ? await bgpLibrary(actor.token).catch(() => null) : null;
+    const top = linkTopProblem({ name: entry.name, driveId: entry.driveId, driveKind: entry.driveKind, isRoot: place.isRoot, parentId: place.parentId }, library);
+    if (top) throw folderRefusal(400, top);
+  }
   const label = folderLabel(input.label) || folderLabel(entry.name) || "Folder";
   const colour = input.colour === undefined || input.colour === null || input.colour === "" ? null : folderColourKey(input.colour);
   if (input.colour && !colour) throw folderRefusal(400, "Pick one of the six colours.");

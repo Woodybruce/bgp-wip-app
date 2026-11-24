@@ -39,6 +39,8 @@ export interface FolderPickerProps {
   start?: DriveEntry[];
   /** A line above the buttons, e.g. a transaction's "put it on the property instead". */
   extra?: ReactNode;
+  /** Linking to a record: a library's or a OneDrive's top, and BGP - Share Drive itself, can't be chosen (the server refuses them too). */
+  notTops?: boolean;
   testId?: string;
 }
 
@@ -48,7 +50,7 @@ const libraryRoot = (p: FolderPlaces): DriveEntry | null => p.library ? {
 } : null;
 
 export function FolderPicker(props: FolderPickerProps) {
-  const { open, onOpenChange, title, description, multiple = false, onPick, create, onPaste, driveId, start, extra, testId = "folder-picker" } = props;
+  const { open, onOpenChange, title, description, multiple = false, onPick, create, onPaste, driveId, start, extra, notTops = false, testId = "folder-picker" } = props;
   const [tab, setTab] = useState<"browse" | "search">("browse");
   const [place, setPlace] = useState<Place>("share");
   const [stack, setStack] = useState<DriveEntry[]>([]);
@@ -119,6 +121,11 @@ export function FolderPicker(props: FolderPickerProps) {
   }, [tab, place, search.data, places.data, browse.data, driveId]);
 
   const key = (e: DriveEntry) => `${e.driveId}|${e.itemId}`;
+  const tops = useMemo(() => {
+    const p = places.data;
+    return new Set(p ? [libraryRoot(p), p.shareDrive, p.oneDrive].filter((e): e is DriveEntry => !!e).map(key) : []);
+  }, [places.data]);
+  const isTop = (e: DriveEntry | null) => !!e && notTops && tops.has(key(e));
   const toggle = (e: DriveEntry) => setSelected(prev => {
     const next = new Map(prev);
     if (next.has(key(e))) next.delete(key(e)); else next.set(key(e), e);
@@ -136,10 +143,12 @@ export function FolderPicker(props: FolderPickerProps) {
   };
 
   const picks = multiple ? [...selected.values()] : [];
-  const label = props.pickLabel ? props.pickLabel(picks.length, here)
+  const hereTop = picks.length === 0 && isTop(here);
+  const label = hereTop ? (multiple ? "Tick a folder, or open one" : "Open a folder")
+    : props.pickLabel ? props.pickLabel(picks.length, here)
     : multiple ? (picks.length ? `Link ${picks.length} folder${picks.length === 1 ? "" : "s"}` : here ? `Link this folder: ${here.name}` : "Link")
     : here ? `Use this folder: ${here.name}` : "Use this folder";
-  const canPick = !busy && (picks.length > 0 || (!!here && allowed(here)));
+  const canPick = !busy && (picks.length > 0 || (!!here && allowed(here) && !hereTop));
   const nameProblem = newOpen ? itemNameProblem(newName) : null;
 
   const footer = (
@@ -237,7 +246,7 @@ export function FolderPicker(props: FolderPickerProps) {
                 {rows.map(e => (
                   <li key={key(e)} className="flex items-center gap-2 px-2.5 py-1.5 min-h-[44px] sm:min-h-0" data-testid={`${testId}-row-${e.itemId}`}>
                     {multiple && (
-                      <Checkbox checked={selected.has(key(e))} onCheckedChange={() => toggle(e)} aria-label={`Tick ${e.name}`} data-testid={`${testId}-tick-${e.itemId}`} />
+                      <Checkbox checked={selected.has(key(e))} disabled={isTop(e)} onCheckedChange={() => toggle(e)} aria-label={isTop(e) ? `${e.name}: open it and link a folder inside` : `Tick ${e.name}`} data-testid={`${testId}-tick-${e.itemId}`} />
                     )}
                     <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => stepInto(e)} title={`Open ${e.name}`}>
                       <Folder className="w-4 h-4 shrink-0 text-muted-foreground" />

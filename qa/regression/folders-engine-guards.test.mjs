@@ -235,3 +235,14 @@ test('the staff component reads one record\'s folders, and a transaction offers 
     assert.doesNotMatch(text, /window\.(prompt|confirm|alert)\(|\b(prompt|confirm)\(/, `${f} uses a browser dialog`);
   }
 });
+
+test('a record never links a drive\'s top or the whole of BGP - Share Drive: the server refuses, the picker does not offer it', () => {
+  const links = read('server/folders/links.ts');
+  const add = links.slice(links.indexOf('export async function addFolderLink('), links.indexOf('export async function changeFolderLink('));
+  assert.match(add, /const top = linkTopProblem\(/);
+  assert.match(add, /if \(top\) throw folderRefusal\(400, top\);/);
+  assert.match(read('client/src/components/folders/record-folder-picker.tsx'), /\n\s+notTops\n/);
+  const picker = read('client/src/components/folders/folder-picker.tsx');
+  assert.match(picker, /const canPick = !busy && \(picks\.length > 0 \|\| \(!!here && allowed\(here\) && !hereTop\)\);/);
+  assert.match(picker, /disabled=\{isTop\(e\)\}/);
+});
