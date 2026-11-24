@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import type { DriveEntry, FolderLinkView, FolderRecordRef, FolderTemplateKey } from "@shared/folders";
+import { defaultFolderTemplate, type DriveEntry, type FolderLinkView, type FolderRecordRef, type FolderTemplateKey } from "@shared/folders";
 import { folderApi, refreshFolders } from "./folder-api";
 import { FolderPicker } from "./folder-picker";
 
@@ -57,7 +57,7 @@ export function RecordFolderPicker({ open, onOpenChange, record, alt, startNew, 
       }}
       create={{
         defaultName: target.name,
-        defaultTemplate: defaultTemplate || (target.type === "property" ? "property" : "empty"),
+        defaultTemplate: defaultTemplate || defaultFolderTemplate(target.type),
         startOpen: startNew,
         onCreate: async (where, name, template) => {
           const r = await folderApi<{ link: FolderLinkView; made: number; failed: string[] }>("POST", `/api/folders/${target.type}/${target.id}/create`, { driveId: where.driveId, parentId: where.itemId, name, template });

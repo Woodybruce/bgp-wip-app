@@ -17,6 +17,8 @@ import { findScheme, schemeKey, SCHEME_ESTATE_PATTERN } from "@shared/property-s
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
+// A scheme's folders are in Folders (server/folders/, record type "scheme"); the
+// old sharepoint_folder_url column is read there, read only, until it is moved over.
 export type SchemeRow = {
   id: string;
   property_id: string;
@@ -24,7 +26,6 @@ export type SchemeRow = {
   code: string | null;
   billing_entity_id: string | null;
   invoicing_email: string | null;
-  sharepoint_folder_url: string | null;
   plan_id: string | null;
   sort_order: number | null;
 };
@@ -48,7 +49,7 @@ export async function listSchemes(db: Queryable, propertyId: string): Promise<Sc
   const exists = (await db.query(`SELECT to_regclass('property_schemes') IS NOT NULL AS ok`)).rows[0]?.ok;
   if (!exists) return [];
   return (await db.query(
-    `SELECT id, property_id, name, code, billing_entity_id, invoicing_email, sharepoint_folder_url, plan_id, sort_order
+    `SELECT id, property_id, name, code, billing_entity_id, invoicing_email, plan_id, sort_order
        FROM property_schemes s WHERE s.property_id = $1
         AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = s.property_id AND ${schemeEstateSql("p")})
       ORDER BY sort_order NULLS LAST, name`,
@@ -57,7 +58,6 @@ export async function listSchemes(db: Queryable, propertyId: string): Promise<Sc
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const SHAREPOINT_URL_RE = /^https:\/\/brucegillinghampollardlimited(-my)?\.sharepoint\.com\//i;
 
 /** Validated scheme fields from a request body; throws a 400 on bad input. */
 export function schemeFields(body: any, { requireName }: { requireName: boolean }): Partial<SchemeRow> {
@@ -75,11 +75,6 @@ export function schemeFields(body: any, { requireName }: { requireName: boolean 
     const email = text(body.invoicingEmail);
     if (email && !EMAIL_RE.test(email)) throw bad("That invoicing email doesn't look right.");
     out.invoicing_email = email || null;
-  }
-  if ("sharepointFolderUrl" in (body || {})) {
-    const url = text(body.sharepointFolderUrl);
-    if (url && !SHAREPOINT_URL_RE.test(url)) throw bad("Paste a link to a folder in the BGP SharePoint or OneDrive.");
-    out.sharepoint_folder_url = url || null;
   }
   if ("planId" in (body || {})) out.plan_id = text(body.planId) || null;
   if ("sortOrder" in (body || {})) {
@@ -112,10 +107,10 @@ export async function ensureScheme(db: Queryable, propertyId: string, name: stri
   if (existing && schemeKey(existing.name) === schemeKey(name)) return { scheme: existing, created: false };
   const sort = (await db.query(`SELECT coalesce(max(sort_order), 0) + 1 AS next FROM property_schemes WHERE property_id = $1`, [propertyId])).rows[0]?.next ?? 1;
   const row = (await db.query(
-    `INSERT INTO property_schemes (property_id, name, code, billing_entity_id, invoicing_email, sharepoint_folder_url, plan_id, sort_order)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO property_schemes (property_id, name, code, billing_entity_id, invoicing_email, plan_id, sort_order)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
     [propertyId, name, extra.code ?? null, extra.billing_entity_id ?? null, extra.invoicing_email ?? null,
-      extra.sharepoint_folder_url ?? null, extra.plan_id ?? null, extra.sort_order ?? sort],
+      extra.plan_id ?? null, extra.sort_order ?? sort],
   )).rows[0];
   return { scheme: row, created: true };
 }
@@ -192,7 +187,7 @@ export function registerPropertySchemeRoutes(app: Express) {
         schemes: schemes.map(s => ({
           id: s.id, name: s.name, code: s.code, billingEntityId: s.billing_entity_id,
           billingEntityName: s.billing_entity_id ? entityName.get(s.billing_entity_id) || null : null,
-          invoicingEmail: s.invoicing_email, sharepointFolderUrl: s.sharepoint_folder_url, planId: s.plan_id,
+          invoicingEmail: s.invoicing_email, planId: s.plan_id,
           sortOrder: s.sort_order, unitCount: counts.get(s.id) || 0,
         })),
         unmatchedLabels: [...unmatched.values()].sort((a, b) => b.count - a.count),

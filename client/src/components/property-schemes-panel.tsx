@@ -1,10 +1,10 @@
 // Schemes editor on a property page (staff). An estate or centre split into
 // named schemes — Canary Wharf: Jubilee Place, Cabot Place, Crossrail
 // Place… — each with the landlord entity its invoices go to, the inbox
-// they're sent to, the landlord's own property code and its SharePoint
-// folder. Units carry the scheme name as their zone; renaming a scheme here
-// relabels them. Labels already on the schedule but not yet a scheme are
-// offered as one-click adds.
+// they're sent to, the landlord's own property code and its Folders (the
+// folder engine, BGP staff only). Units carry the scheme name as their zone;
+// renaming a scheme here relabels them. Labels already on the schedule but
+// not yet a scheme are offered as one-click adds.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
@@ -16,12 +16,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { InlineText } from "@/components/inline-edit";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { COMPANIES_BASIC_URL } from "@/components/brand-search-input";
-import { ExternalLink, Layers, Plus, Trash2 } from "lucide-react";
+import { RecordFolders } from "@/components/folders/record-folders";
+import { useIsFolderStaff } from "@/components/folders/record-folder-links";
+import { Layers, Plus, Trash2 } from "lucide-react";
 import { unitScheme } from "@shared/property-schemes";
 
 export type PropertySchemeRow = {
   id: string; name: string; code?: string | null; billingEntityId?: string | null; billingEntityName?: string | null;
-  invoicingEmail?: string | null; sharepointFolderUrl?: string | null; sortOrder?: number | null; unitCount?: number;
+  invoicingEmail?: string | null; sortOrder?: number | null; unitCount?: number;
 };
 
 export function usePropertySchemeList(propertyId: string | null | undefined) {
@@ -42,6 +44,8 @@ const microLabel = "text-[11px] font-semibold uppercase tracking-wider text-mute
 export function PropertySchemesPanel({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const { data, isLoading } = usePropertySchemeList(propertyId);
+  // A client login on the plan-led page sees this panel too: it never reads the folder engine.
+  const folderStaff = useIsFolderStaff();
   const [newName, setNewName] = useState("");
   const { data: companies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
@@ -127,13 +131,14 @@ export function PropertySchemesPanel({ propertyId }: { propertyId: string }) {
               <div className={microLabel}>Landlord code</div>
               <InlineText value={s.code || ""} onSave={(v) => save(s.id, { code: v })} label="Landlord property code" placeholder="e.g. Yardi 294" className="text-sm font-mono" />
             </div>
-            <div className="min-w-0">
-              <div className={`${microLabel} flex items-center gap-1`}>
-                SharePoint folder
-                {s.sharepointFolderUrl && <a href={s.sharepointFolderUrl} target="_blank" rel="noopener noreferrer" title="Open in SharePoint"><ExternalLink className="w-3 h-3" /></a>}
+            {/* The scheme's Folders (Woody, 24 November 2026; docs/folders-review-2026-11-20.md):
+                its own, then its property's; an old pasted link shows read only until it is moved over. */}
+            {folderStaff && (
+              <div className="min-w-0 sm:col-span-2" data-testid={`scheme-folders-${s.id}`}>
+                <div className={microLabel}>Folders</div>
+                <RecordFolders recordType="scheme" recordId={s.id} recordName={s.name} compact bare hideTitle />
               </div>
-              <InlineText value={s.sharepointFolderUrl || ""} display={s.sharepointFolderUrl ? "Linked" : ""} onSave={(v) => save(s.id, { sharepointFolderUrl: v })} label="SharePoint folder link" placeholder="Paste folder link" className="text-sm truncate block" />
-            </div>
+            )}
           </div>
         </div>
       ))}

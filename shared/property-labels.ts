@@ -22,9 +22,8 @@ export function bgpTeamsOnly(values: string[] | string | null | undefined): stri
 // 2026-09-28: "there is also a lease folder — can we allow for an investment
 // and London leasing folder?"). crm_properties.sharepoint_team_folders holds
 // {label: url}: a label naming a BGP team is that team's folder, any other
-// label ("Leases") is an extra folder with its own tab. The single
-// sharepoint_folder_url stays the default for team tabs without their own.
-export type PropertyFolderTab = { label: string; url: string | null; kind: "team" | "extra"; own: boolean };
+// label ("Leases") an extra folder. Folders (server/folders/) shows them read
+// only until they are moved over; the file finders still walk them.
 
 const bgpTeamName = (label: string) => FOLDER_TEAMS.find(t => t.toLowerCase() === label.trim().toLowerCase());
 
@@ -50,39 +49,11 @@ export function normaliseFolderLinks(raw: unknown): Record<string, string> {
   return out;
 }
 
-/** The Files tabs: the property's folder teams (or the viewer's team), then
- *  other teams with their own folder, then extra folders A–Z. Each tab opens
- *  its own folder, else a team tab falls back to the property's linked
- *  folder, else (url null) the BGP share drive/<team>/<property> path. */
-export function propertyFolderTabs(folderTeams: string[] | null | undefined, links: unknown, defaultUrl: string | null | undefined, fallbackTeam: string): PropertyFolderTab[] {
-  const linked = normaliseFolderLinks(links);
-  const fallback = String(defaultUrl || "").trim() || null;
-  const own = (label: string) => Object.entries(linked).find(([k]) => k.toLowerCase() === label.toLowerCase())?.[1] || null;
-  const teams = (folderTeams && folderTeams.length ? folderTeams : [fallbackTeam]).map(t => String(t || "").trim()).filter(Boolean);
-  const labels: string[] = [];
-  const add = (label: string) => { if (!labels.some(l => l.toLowerCase() === label.toLowerCase())) labels.push(label); };
-  teams.forEach(add);
-  FOLDER_TEAMS.filter(t => own(t)).forEach(add);
-  Object.keys(linked).filter(l => !bgpTeamName(l)).sort((a, b) => a.localeCompare(b)).forEach(add);
-  return labels.map(label => {
-    const url = own(label);
-    const kind = bgpTeamName(label) || teams.some(t => t.toLowerCase() === label.toLowerCase()) ? "team" : "extra";
-    return { label, url: url || (kind === "team" ? fallback : null), kind, own: !!url };
-  });
-}
-
 const folderKey = (url: string) => {
   let u = String(url || "").trim();
   try { u = decodeURIComponent(u); } catch { /* keep raw */ }
   return u.split("?")[0].replace(/\/+$/, "").toLowerCase();
 };
-
-/** True when `url` is `parent` or a folder inside it. */
-export function folderWithin(url: string | null | undefined, parent: string | null | undefined): boolean {
-  if (!url || !parent) return false;
-  const a = folderKey(url), b = folderKey(parent);
-  return !!a && !!b && (a === b || a.startsWith(`${b}/`));
-}
 
 /** Every distinct folder linked to the property, the default link first. */
 export function linkedFolderUrls(defaultUrl: string | null | undefined, links: unknown, more: readonly string[] = []): string[] {

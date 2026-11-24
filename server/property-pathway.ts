@@ -2441,9 +2441,11 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   }
 
   // 1b-2. SharePoint folder tree — NEVER auto-create in Stage 1 (would spawn
-  // a new folder every search, cluttering SharePoint). Only surface the
-  // folder if one already exists (either stored on the run, or discoverable
-  // at the expected Investment/{address} path).
+  // a new folder every search, cluttering SharePoint). Only a folder already
+  // stored on the run is used. The run's folders are its Folders (server/
+  // folders/, record type "pathway_run", on the run's page): nothing is looked
+  // for at "BGP share drive/Investment/<address>" any more (Woody, 24 November
+  // 2026; docs/folders-review-2026-11-20.md).
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
   if (run.sharepointFolderPath && run.sharepointFolderUrl) {
     folderTree = {
@@ -2451,30 +2453,6 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       webUrl: run.sharepointFolderUrl,
       children: STANDARD_FOLDER_TREE,
     };
-  } else {
-    try {
-      const { lookupSharePointFolderIfExists } = await import("./utils/sharepoint-operations");
-      const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-      const existing = await lookupSharePointFolderIfExists(
-        { folderName: propertyFolderName, parentPath: "Investment" },
-        req
-      );
-      if (existing) {
-        folderTree = {
-          root: existing.path,
-          webUrl: existing.webUrl,
-          children: STANDARD_FOLDER_TREE,
-        };
-        run.sharepointFolderPath = folderTree.root;
-        run.sharepointFolderUrl = folderTree.webUrl;
-        await updateRun(run.id, {
-          sharepointFolderPath: folderTree.root,
-          sharepointFolderUrl: folderTree.webUrl,
-        });
-      }
-    } catch (err: any) {
-      console.warn("[pathway stage1] Folder lookup (non-fatal):", err?.message);
-    }
   }
 
   // 1c. Email search via Microsoft Graph.

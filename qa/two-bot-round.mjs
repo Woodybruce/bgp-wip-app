@@ -5525,10 +5525,12 @@ async function markRound(page, cross) {
     // browser for clients — Set Up Folders + Upload buttons that 403
     // (M365 is sealed for client logins) and a per-team folder GET that
     // fired a 403 on every visit. Clients must get the jailed read-only
-    // Documents panel instead (same swap as the property page).
+    // Documents panel instead (same swap as the property page). Since
+    // 24 November 2026 the staff card is the company's Folders (the folder
+    // engine, /api/folders/, which the gateway refuses to client logins).
     const fired = [];
     const onResp = (r) => {
-      if (r.status() >= 400 && /\/api\/microsoft\/property-folders/.test(r.url())) fired.push(`${r.status()} ${r.url()}`);
+      if (r.status() >= 400 && /\/api\/(microsoft\/property-folders|folders\/)/.test(r.url())) fired.push(`${r.status()} ${r.url()}`);
     };
     page.on('response', onResp);
     try {
@@ -5536,9 +5538,8 @@ async function markRound(page, cross) {
       await page.waitForTimeout(4000);
     } finally { page.off('response', onResp); }
     if (fired.length) throw new Error(`client landlord profile fired staff folder reads: ${fired.join(', ')}`);
-    if (await page.locator('[data-testid="property-folders-panel"]').count()) throw new Error('client sees the staff SharePoint browser on the landlord profile');
-    if (await page.locator('[data-testid="button-setup-landlord-folders"]').count()) throw new Error('client sees the staff-only Set Up Folders button');
-    if (await page.locator('[data-testid="btn-upload-property-file"]').count()) throw new Error('client sees the staff-only Upload button');
+    if (await page.locator('[data-testid="record-folders"]').count()) throw new Error('client sees the staff Folders on the landlord profile');
+    if (await page.locator('[data-testid="folders-add"]').count()) throw new Error('client sees the staff-only Add folder button');
     if (!(await page.locator('[data-testid="client-property-folders-panel"]').count())) throw new Error('client lost the jailed Documents panel on the landlord profile');
   });
 

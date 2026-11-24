@@ -3,8 +3,9 @@
 // only, each on their own Microsoft 365, never at boot or on a timer: the
 // house pattern of Preview, Apply and Undo.
 //
-//   GET  /api/admin/folders/migration          the report: a row for each stored address and each old
-//                                              team-folder path, what it opens now; suggestions by name
+//   GET  /api/admin/folders/migration          the report: a row for each stored address, each old
+//                                              team-folder path and each company's folder in
+//                                              "BGP share drive/Companies", what it opens now; suggestions by name
 //   POST /api/admin/folders/migration/apply    { ids, previewedAt }: the rows the same admin ticked on that preview, within the hour
 //   POST /api/admin/folders/migration/undo     { batch }: a batch's links taken back out
 //   GET  /api/admin/folders/migration/runs     the runs, newest first
@@ -20,7 +21,8 @@ import {
   MIGRATION_COLUMNS, OLD_FOLDER_READERS, SHARE_DRIVE_NAME, bgpSharePointUrl, folderLabel, migrationApplyRefusal, migrationRowId,
   migrationStatus, teamFolderPath, type DriveEntry, type FolderRecordType, type MigrationColumn, type MigrationStatus,
 } from "@shared/folders";
-import { GraphError, bgpLibrary, entryByPath, openLink, searchFolders } from "./graph";
+import { COMPANIES_FOLDER_PATH, companyFolderKey } from "@shared/folders";
+import { GraphError, bgpLibrary, entryByPath, listChildren, openLink, searchFolders } from "./graph";
 import { folderRecord, type Db, type FolderStaff } from "./access";
 import { MIGRATION_RUNS_KEY, folderRefusal, logFolderAction } from "./links";
 
@@ -124,6 +126,46 @@ export function suggestionFits(folderName: string, recordName: string): boolean 
   return f.length >= 4 && recordName.trim().toLowerCase().startsWith(`${f} `);
 }
 
+/**
+ * The brand page's old place: the folders in "BGP share drive/Companies",
+ * listed once (every page), each offered to the company of exactly that name,
+ * as the old "Open <brand> folder on SharePoint" link found it. Read with the
+ * admin's own token; a place it cannot read is said, never hidden.
+ */
+export async function companiesPlaceRows(db: Db, token: string, live: Set<string>): Promise<{ rows: MigrationRow[]; unread: string[] }> {
+  let folders: DriveEntry[];
+  try {
+    const library = await bgpLibrary(token);
+    const place = await entryByPath(token, library.driveId, COMPANIES_FOLDER_PATH);
+    if (!place?.isFolder) return { rows: [], unread: [] };
+    folders = await listChildren(token, library.driveId, place.itemId, { foldersOnly: true });
+  } catch (e: any) {
+    return { rows: [], unread: [`${COMPANIES_FOLDER_PATH}: ${e?.message || "not read"}`] };
+  }
+  const byName = new Map<string, DriveEntry>();
+  for (const f of folders) if (companyFolderKey(f.name)) byName.set(companyFolderKey(f.name), f);
+  if (!byName.size) return { rows: [], unread: [] };
+  const unread: string[] = [];
+  const companies = (await db.query(
+    `SELECT id, name FROM crm_companies
+      WHERE merged_into_id IS NULL AND lower(btrim(regexp_replace(name, '\\s+', ' ', 'g'))) = ANY($1::text[])`,
+    [[...byName.keys()]],
+  ).catch((e: any) => { unread.push(`crm_companies: ${e?.message || "not read"}`); return { rows: [] as any[] }; })).rows;
+  const column: MigrationColumn = "crm_companies.name";
+  const rows = companies.flatMap((c: any): MigrationRow[] => {
+    const entry = byName.get(companyFolderKey(c.name));
+    if (!entry) return [];
+    const recordId = String(c.id);
+    const value = `${COMPANIES_FOLDER_PATH}/${entry.name}`;
+    return [{
+      column, recordType: "company", recordId, recordName: text(c.name), key: "", label: "", value, kind: "path",
+      id: migrationRowId(column, recordId, "", value), error: null, entry,
+      status: live.has(`company|${recordId}|${entry.driveId}|${entry.itemId}`) ? "linked" : "opens",
+    }];
+  });
+  return { rows, unread };
+}
+
 /** The report, read with the admin's own token. Nothing is written but the preview itself. */
 export async function buildMigrationPreview(db: Db, token: string, admin: FolderStaff & { account: string | null }): Promise<MigrationPreview> {
   const { sources, unread } = await readMigrationSources(db);
@@ -143,6 +185,10 @@ export async function buildMigrationPreview(db: Db, token: string, admin: Folder
       row.error = e?.message || null;
     }
   });
+
+  const companiesPlace = await companiesPlaceRows(db, token, live);
+  rows.push(...companiesPlace.rows);
+  unread.push(...companiesPlace.unread);
 
   // For records with nothing that opens: a folder of the same name in "BGP - Share Drive", shown as a suggestion only.
   const byRecord = new Map<string, MigrationRow[]>();

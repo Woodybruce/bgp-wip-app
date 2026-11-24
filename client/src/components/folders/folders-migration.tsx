@@ -82,7 +82,7 @@ export function FoldersMigrationSection() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base"><FolderOpen className="w-4 h-4" />Folders: moving the old links over</CardTitle>
         <CardDescription>
-          Preview opens every folder address the app stored before Folders (properties, their team folders, companies, transactions, schemes, Lease Advisory matters and Pathway runs) and each old team-folder path, as you, on your own Microsoft 365. Tick the ones that open and Apply within the hour: each becomes a folder in Folders, and Undo takes a batch back out. The old columns are not changed and are still read where the app read them. Nothing here runs by itself.
+          Preview opens every folder address the app stored before Folders (properties, their team folders, companies, transactions, schemes, Lease Advisory matters and Pathway runs), each old team-folder path and each company's folder in BGP share drive/Companies (the brand page's old link), as you, on your own Microsoft 365. Tick the ones that open and Apply within the hour: each becomes a folder in Folders, and Undo takes a batch back out. The old columns are not changed and are still read where the app read them. Nothing here runs by itself.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

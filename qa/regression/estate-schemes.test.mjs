@@ -172,7 +172,8 @@ test('scheme deal defaults fill only what the deal left blank', async () => {
   assert.deepEqual(schemeFields({ name: '  Jubilee   Place ', invoicingEmail: '', code: '294' }, { requireName: true }), { name: 'Jubilee Place', code: '294', invoicing_email: null });
   assert.throws(() => schemeFields({}, { requireName: true }), e => e.status === 400);
   assert.throws(() => schemeFields({ invoicingEmail: 'not an email' }, { requireName: false }), e => e.status === 400);
-  assert.throws(() => schemeFields({ sharepointFolderUrl: 'https://evil.example.com/x' }, { requireName: false }), e => e.status === 400);
+  // A scheme's folders are in Folders: the old pasted-link column is no longer written.
+  assert.deepEqual(schemeFields({ sharepointFolderUrl: 'https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/x' }, { requireName: false }), {});
 });
 
 test('renaming a scheme relabels every board on the property', async () => {

@@ -16,7 +16,7 @@ import { Pill } from "@/components/ui/pill";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { ClientPropertyFoldersPanel } from "@/pages/properties";
-import { FOLDER_COLOURS, folderLabel, type FolderLinkView, type FolderRecordRef, type RecordFoldersView } from "@shared/folders";
+import { FOLDER_COLOURS, folderLabel, type FolderLinkView, type FolderRecordRef, type FolderRecordType, type RecordFoldersView } from "@shared/folders";
 import { cn } from "@/lib/utils";
 import { FolderApiError, folderApi, recordFoldersKey, refreshFolders } from "./folder-api";
 import { FolderBrowser } from "./folder-browser";
@@ -26,7 +26,7 @@ import { FolderFollowMenuItem, FolderShareMenuItems, SharedLine, SharedMark, Sha
 
 export { RecordFolderPicker } from "./record-folder-picker";
 
-type RecordType = "property" | "deal";
+type RecordType = FolderRecordType;
 const colourOf = (key: string | null) => FOLDER_COLOURS.find(c => c.key === key) || null;
 const recordHref = (r: FolderRecordRef) => r.type === "property" ? `/properties/${r.id}` : r.type === "deal" ? `/deals/${r.id}` : r.type === "company" ? `/companies/${r.id}` : null;
 
@@ -42,6 +42,8 @@ export function RecordFolders(props: {
   bare?: boolean;
   /** Inside a card already titled Folders: the count and Add folder without a second title. */
   hideTitle?: boolean;
+  /** Where room is short (a scheme's row, the brand page's gallery): the chips only; a chip opens its folder in a window. */
+  compact?: boolean;
 }) {
   if (props.client) {
     const propertyId = props.recordType === "property" ? props.recordId : props.propertyId;
@@ -52,7 +54,7 @@ export function RecordFolders(props: {
   return <StaffRecordFolders {...props} />;
 }
 
-function StaffRecordFolders({ recordType, recordId, recordName, propertyId, propertyName, bare, hideTitle }: { recordType: RecordType; recordId: string; recordName: string; propertyId?: string | null; propertyName?: string | null; bare?: boolean; hideTitle?: boolean }) {
+function StaffRecordFolders({ recordType, recordId, recordName, propertyId, propertyName, bare, hideTitle, compact }: { recordType: RecordType; recordId: string; recordName: string; propertyId?: string | null; propertyName?: string | null; bare?: boolean; hideTitle?: boolean; compact?: boolean }) {
   const { toast } = useToast();
   const query = useQuery<RecordFoldersView, FolderApiError>({
     queryKey: recordFoldersKey(recordType, recordId),
@@ -64,7 +66,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
   const inherited = view?.inherited || [];
   const all = useMemo(() => [...own, ...inherited.flatMap(g => g.folders)], [view]);
   const [openId, setOpenId] = useState<string | null>(null);
-  const current = all.find(f => f.id === openId) || all.find(f => f.status === "ok" && f.itemId) || all[0] || null;
+  const current = compact ? all.find(f => f.id === openId) || null : all.find(f => f.id === openId) || all.find(f => f.status === "ok" && f.itemId) || all[0] || null;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [relabel, setRelabel] = useState<FolderLinkView | null>(null);
   const [unlink, setUnlink] = useState<FolderLinkView | null>(null);
@@ -157,6 +159,8 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
         <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading the folders…</div>
       ) : query.error ? (
         <p className="text-sm text-muted-foreground">{query.error.message}</p>
+      ) : all.length === 0 && compact ? (
+        <p className="text-xs text-muted-foreground" data-testid="folders-empty">No folders yet.</p>
       ) : all.length === 0 ? (
         <div className="py-6 text-center space-y-2" data-testid="folders-empty">
           <FolderOpen className="w-8 h-8 mx-auto text-muted-foreground/40" />
@@ -174,9 +178,15 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
               </span>
             ))}
           </div>
+          {current && !compact && <SharedLine link={current} />}
+          {current && !compact && <OpenFolder link={current} onUnlink={() => setUnlink(current)} />}
+        </>
+      )}
+      {compact && (
+        <FolderDialog open={!!current} onOpenChange={o => { if (!o) setOpenId(null); }} title={current?.label || "Folder"} description={current?.path || undefined} size="lg" testId="folders-open-dialog">
           {current && <SharedLine link={current} />}
           {current && <OpenFolder link={current} onUnlink={() => setUnlink(current)} />}
-        </>
+        </FolderDialog>
       )}
 
       <RecordFolderPicker

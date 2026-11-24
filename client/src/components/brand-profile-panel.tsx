@@ -22,8 +22,8 @@ import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useBrand } from "@/lib/brand-context";
-import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { BGP_SHAREPOINT_SITE_URL } from "@shared/folders";
+import { ClientPropertyFoldersPanel } from "@/pages/properties";
+import { RecordFolders } from "@/components/folders/record-folders";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList, MoreHorizontal } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
 import { CompanyInvoicingControls } from "@/components/company-invoicing-controls";
@@ -6792,15 +6792,10 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
 function LandlordSidebarBlock({
   companyId,
   companyName,
-  folderTeams,
-  sharepointFolderUrl,
 }: {
   companyId: string;
   companyName: string;
-  folderTeams: string[] | null | undefined;
-  sharepointFolderUrl: string | null | undefined;
 }) {
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [clientFoldersBusy, setClientFoldersBusy] = useState(false);
   const { toast: sbToast } = useToast();
   const { data: sbUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -6854,16 +6849,6 @@ function LandlordSidebarBlock({
   };
   return (
     <>
-      <SetUpFoldersDialog
-        propertyId={companyId}
-        propertyName={companyName}
-        folderTeams={folderTeams || []}
-        open={folderDialogOpen}
-        onOpenChange={setFolderDialogOpen}
-        entityType="landlord"
-      />
-
-
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
@@ -6883,28 +6868,15 @@ function LandlordSidebarBlock({
               {companyName} property tree
             </button>
             )}
-            {sbIsStaff && (
-            <button
-              type="button"
-              onClick={() => setFolderDialogOpen(true)}
-              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
-              data-testid="button-setup-landlord-folders"
-            >
-              <FolderTree className="w-3 h-3" /> Set Up Folders
-            </button>
-            )}
           </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
-          {/* Long folder trees (Landsec has 100+ property folders) scroll
-              inside the card instead of stretching the whole page. */}
+          {/* Staff: the company's Folders (Woody, 24 November 2026; docs/folders-review-2026-11-20.md),
+              its own links and its old folder address read only until it is moved over. A client
+              login: its data room, as before. Nothing until the sign-in is known. Long folders scroll inside the card. */}
           <div className="max-h-[420px] overflow-y-auto pr-1">
-            {sbIsStaff ? (
-              <PropertyFoldersPanel
-                propertyName={companyName}
-                folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
-                sharepointFolderUrl={sharepointFolderUrl || null}
-              />
+            {!sbUser ? null : sbIsStaff ? (
+              <RecordFolders recordType="company" recordId={companyId} recordName={companyName} bare />
             ) : (
               <ClientPropertyFoldersPanel propertyName="" />
             )}
@@ -7315,19 +7287,6 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   const stripImages = heroStrip ? companyStripImages(data.images || [], c.company_type) : [];
   const stripIds = new Set(stripImages.map((img: any) => img.id));
   const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || [])]);
-  // The brand's folder when it has files in it; otherwise BGP's own SharePoint
-  // site (it opened bgp.sharepoint.com, which is not BGP's).
-  const openSharePointFolder = () => {
-    fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
-      .then(r => r.json())
-      .then(d => {
-        const url = d.items?.[0]?.webUrl
-          ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
-          : BGP_SHAREPOINT_SITE_URL;
-        window.open(url, "_blank");
-      })
-      .catch(() => window.open(BGP_SHAREPOINT_SITE_URL, "_blank"));
-  };
   const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
   const shownAbove = stripImages.length;
   // A brand's page: the card spans the page, so the thumbnails are small and
@@ -7535,8 +7494,6 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
         <LandlordSidebarBlock
           companyId={companyId}
           companyName={c.name}
-          folderTeams={c.folder_teams}
-          sharepointFolderUrl={c.sharepoint_folder_url}
         />
       )}
       </div>}
@@ -7575,12 +7532,13 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
       {/* A brand's page, client login: the folder link is refused for client
           accounts, so it is not offered, and with no saved image there is no card. */}
       {/* A brand's page, staff, no saved image: one quiet line with what
-          fills the card and where the documents are, not an empty card. */}
+          fills the card, then the brand's Folders, not an empty card. */}
       {show("gallery") && brandPage && !sbIsClient && uniqueImages.length === 0 && (
         <BrandQuietBlock testId="brand-gallery-quiet">
           <BrandQuietLine testId="brand-gallery-empty">
-            No saved images yet · <BrandAddPhotos companyId={companyId} companyName={c.name} /> · <BrandImageRefreshButton companyId={companyId} link /> · <button type="button" onClick={openSharePointFolder}>Open SharePoint folder</button> · <Link href={`/image-studio?brand=${encodeURIComponent(c.name)}`} data-testid="link-open-image-studio">Open in Image Studio</Link>
+            No saved images yet · <BrandAddPhotos companyId={companyId} companyName={c.name} /> · <BrandImageRefreshButton companyId={companyId} link /> · <Link href={`/image-studio?brand=${encodeURIComponent(c.name)}`} data-testid="link-open-image-studio">Open in Image Studio</Link>
           </BrandQuietLine>
+          <RecordFolders recordType="company" recordId={companyId} recordName={c.name} compact bare />
         </BrandQuietBlock>
       )}
       {show("gallery") && !(brandPage && uniqueImages.length === 0) && <Card data-testid={brandPage ? "brand-documents-gallery" : undefined}>
@@ -7591,18 +7549,10 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
-          {/* SharePoint folder shortcut — brand only. Landlords get the
-              richer Folders panel rendered above, which lists subfolders
-              and lets the team set up structure. */}
-          {!isLandlord && !(brandPage && sbIsClient) && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-              onClick={openSharePointFolder}
-            >
-              <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
-            </button>
-          )}
+          {/* The company's Folders (Woody, 24 November 2026; docs/folders-review-2026-11-20.md),
+              BGP staff only, in place of the old "Open <brand> folder on SharePoint" link.
+              A landlord's are on its Files pill. */}
+          {!isLandlord && !sbIsClient && <RecordFolders recordType="company" recordId={companyId} recordName={c.name} compact bare />}
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               {!isLandlord && (

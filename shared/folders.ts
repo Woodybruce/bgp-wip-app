@@ -144,14 +144,37 @@ export function folderTreeOrder(paths: string[][]): string[][] {
 // team names are not offered here.
 export const PROPERTY_FOLDER_TEMPLATE: readonly string[] =
   (CLIENT_FOLDER_TREE.find(s => s.key === "03-properties")?.perProperty || []).map(p => p.label);
+/** Tom and Pete's Lease Advisory folders, as the old matter template made them under "BGP share drive/Lease Advisory". */
+export const LEASE_ADVISORY_FOLDER_TEMPLATE: readonly string[] = [
+  "Lease Documents", "Lease Documents/Current Lease", "Lease Documents/Supplements", "Lease Documents/Licences",
+  "Rent Review", "Rent Review/Comparable Evidence", "Rent Review/Valuation", "Rent Review/Representations", "Rent Review/Determination",
+  "Lease Renewal", "Lease Renewal/Section 25 Notice", "Lease Renewal/Counter Notice", "Lease Renewal/Heads of Terms",
+  "Dilapidations", "Dilapidations/Schedule", "Dilapidations/Costings", "Dilapidations/Scott Schedule",
+  "Service Charge", "Correspondence", "Legal",
+];
 export const FOLDER_TEMPLATES = [
   { key: "empty", label: "Empty folder", folders: [] as readonly string[] },
   { key: "property", label: "Property folder", folders: PROPERTY_FOLDER_TEMPLATE },
+  { key: "lease_advisory", label: "Lease Advisory folder", folders: LEASE_ADVISORY_FOLDER_TEMPLATE },
 ] as const;
 export type FolderTemplateKey = (typeof FOLDER_TEMPLATES)[number]["key"];
 export function folderTemplate(key: unknown): readonly string[] | null {
   if (key === undefined || key === null || key === "") return [];
   return FOLDER_TEMPLATES.find(t => t.key === key)?.folders ?? null;
+}
+/** What a new folder for a record starts as: a property's five folders, a Lease Advisory matter's folders, else empty. */
+export function defaultFolderTemplate(type: FolderRecordType): FolderTemplateKey {
+  return type === "property" ? "property" : type === "pla_matter" ? "lease_advisory" : "empty";
+}
+/** The templates in the order the picker offers them: the one it starts on first. */
+export function folderTemplatesInOrder(first?: FolderTemplateKey) {
+  return [...FOLDER_TEMPLATES].sort((a, b) => Number(b.key === first) - Number(a.key === first));
+}
+/** What a template puts inside the new folder, in words: its top folders, and whether they have folders of their own. */
+export function templateInsideWords(key: FolderTemplateKey): string {
+  const paths = folderTemplate(key) || [];
+  const top = paths.filter(p => !p.includes("/"));
+  return top.length ? `${top.join(", ")}${top.length < paths.length ? ", and the folders within them" : ""}` : "";
 }
 
 // ── Where a folder sits, for showing ────────────────────────────────────
@@ -206,7 +229,18 @@ export const LEGACY_FOLDER_COLUMNS = {
   propertyDefault: "crm_properties.sharepoint_folder_url",
   propertyTeams: "crm_properties.sharepoint_team_folders",
   dealLink: "crm_deals.sharepoint_link",
+  companyFolder: "crm_companies.sharepoint_folder_url",
+  schemeFolder: "property_schemes.sharepoint_folder_url",
+  plaMatterFolder: "pla_matters.sharepoint_folder_url",
+  pathwayRunFolder: "property_pathway_runs.sharepoint_folder_url",
 } as const;
+/** The one stored address a company, scheme, Lease Advisory matter or Pathway run holds, and the label its old-link chip takes. */
+export const LEGACY_RECORD_FOLDER: Partial<Record<FolderRecordType, { column: string; label: string }>> = {
+  company: { column: LEGACY_FOLDER_COLUMNS.companyFolder, label: "Linked folder" },
+  scheme: { column: LEGACY_FOLDER_COLUMNS.schemeFolder, label: "Linked folder" },
+  pla_matter: { column: LEGACY_FOLDER_COLUMNS.plaMatterFolder, label: "Linked folder" },
+  pathway_run: { column: LEGACY_FOLDER_COLUMNS.pathwayRunFolder, label: "Linked folder" },
+};
 /** One stored address of one record: what a migration run marks as moved. */
 export function legacyFolderKey(column: string, recordId: string, key: string, value: string): string {
   return `${column}|${recordId}|${key}|${String(value).trim()}`;
@@ -379,6 +413,7 @@ export const MIGRATION_COLUMNS = [
   { column: "property_schemes.sharepoint_folder_url", recordType: "scheme", what: "A scheme's folder" },
   { column: "pla_matters.sharepoint_folder_url", recordType: "pla_matter", what: "A Lease Advisory matter's folder" },
   { column: "property_pathway_runs.sharepoint_folder_url", recordType: "pathway_run", what: "A Property Pathway run's folder" },
+  { column: "crm_companies.name", recordType: "company", what: "A company's folder in BGP share drive/Companies, found by its name" },
 ] as const;
 export type MigrationColumn = (typeof MIGRATION_COLUMNS)[number]["column"];
 export type MigrationStatus = "opens" | "missing" | "not_folder" | "outside" | "no_access" | "linked" | "error";
@@ -389,6 +424,12 @@ export const MIGRATION_STATUS_WORDS: Record<MigrationStatus, string> = {
 /** The old team folders sat at this path in the BGP library: "BGP share drive/<team>/<name>". */
 export function teamFolderPath(team: string, name: string): string {
   return `BGP share drive/${String(team).trim()}/${String(name).trim()}`;
+}
+/** The brand page's old place: a folder named after the company in this folder of the BGP library (its old "Open <brand> folder on SharePoint" link). */
+export const COMPANIES_FOLDER_PATH = "BGP share drive/Companies";
+/** A company's name and a folder's, the same however they are spaced or capitalised (SharePoint names ignore case). */
+export function companyFolderKey(name: unknown): string {
+  return String(name ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 /** Graph's refusal as a row's status. */
 export function migrationStatus(status: number): MigrationStatus {
@@ -428,15 +469,18 @@ export const OLD_FOLDER_READERS: readonly { column: string; where: string; what:
   { column: "crm_properties.sharepoint_folder_url", where: "server/account-folder-map.ts", what: "the client-tree job writes it" },
   { column: "crm_properties.sharepoint_folder_url", where: "server/deal-page.ts", what: "sent with a transaction's property, no longer shown" },
   { column: "crm_properties.sharepoint_team_folders", where: "server/folders/links.ts, server/sharepoint-property-files.ts", what: "Folders (read only) and the finders" },
-  { column: "crm_properties.sharepoint_team_folders", where: "server/crm.ts", what: "the old team tabs' links on Property Pathway's Files" },
-  { column: "crm_properties.folder_teams", where: "client/src/pages/properties.tsx (PropertyFoldersPanel)", what: "the old team tabs on Property Pathway and a landlord's Files card" },
+  { column: "crm_properties.folder_teams", where: "client/src/pages/properties.tsx", what: "the Properties list's Folders column shows the old team folder trees as badges" },
   { column: "crm_properties.folder_teams", where: "server/deal-page.ts, server/property-merge.ts, server/chatbgp.ts", what: "sent with a transaction's property, merged, described to ChatBGP" },
+  { column: "crm_companies.sharepoint_folder_url", where: "server/folders/links.ts", what: "Folders shows it read only until it is moved over" },
   { column: "crm_companies.sharepoint_folder_url", where: "server/client-sharepoint.ts, server/account-folder-inventory.ts, server/account-folder-map.ts", what: "a client's data room root (decision 6)" },
-  { column: "crm_companies.folder_teams", where: "client/src/components/brand-profile-panel.tsx, server/brand-profile.ts", what: "a landlord's Files card (step 5)" },
+  { column: "crm_companies.folder_teams", where: "server/brand-profile.ts", what: "sent with a company's profile and taken by its save, no longer shown" },
   { column: "crm_deals.sharepoint_link", where: "server/folders/links.ts, client/src/pages/deals.tsx", what: "Folders (read only) and the Transactions table's hidden SharePoint column" },
-  { column: "property_schemes.sharepoint_folder_url", where: "server/property-schemes.ts, client/src/components/property-schemes-panel.tsx", what: "a scheme's folder link box (step 5)" },
-  { column: "pla_matters.sharepoint_folder_url", where: "server/pla-matters.ts, server/pla-folder-template.ts, client/src/pages/pla-matters.tsx", what: "a Lease Advisory matter's folder (step 5)" },
-  { column: "property_pathway_runs.sharepoint_folder_url", where: "server/property-pathway.ts, client/src/pages/property-pathway.tsx", what: "a Pathway run's folder (step 5)" },
+  { column: "property_schemes.sharepoint_folder_url", where: "server/folders/links.ts", what: "Folders shows it read only until it is moved over" },
+  { column: "pla_matters.sharepoint_folder_url", where: "server/folders/links.ts", what: "Folders shows it read only until it is moved over" },
+  { column: "pla_matters.sharepoint_folder_url", where: "server/pla-matters.ts", what: "sent with the matter, no longer shown" },
+  { column: "property_pathway_runs.sharepoint_folder_url", where: "server/folders/links.ts", what: "Folders shows it read only until it is moved over" },
+  { column: "property_pathway_runs.sharepoint_folder_url", where: "server/property-pathway.ts", what: "stage 1 keeps a stored folder, or one its SharePoint search found, and the run files documents there" },
+  { column: "property_pathway_runs.sharepoint_folder_url", where: "client/src/pages/property-pathway.tsx", what: "the Initial Search card's SharePoint link" },
 ];
 
 /** People to invite by email: at most 20 addresses, each plausible. */

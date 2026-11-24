@@ -13,6 +13,7 @@ import {
 } from "@shared/folders";
 import { GraphError, bgpLibrary, getEntry, itemForChange, openLink, openLinkItem } from "./graph";
 import { recordNames, type Db, type FolderRecord } from "./access";
+import { LEGACY_RECORD_FOLDER } from "@shared/folders";
 
 /** Who acted, and whose Microsoft account Graph saw (null when no Graph call was made). */
 export interface FolderActor { userId: string; account: string | null }
@@ -146,6 +147,12 @@ export async function legacyFolders(db: Db, record: FolderRecordRef, migrated?: 
   } else if (record.type === "deal") {
     const link = String((await db.query(`SELECT sharepoint_link FROM crm_deals WHERE id = $1`, [record.id])).rows[0]?.sharepoint_link || "").trim();
     if (/^https:\/\//i.test(link)) out.push({ column: LEGACY_FOLDER_COLUMNS.dealLink, key: "", label: "Transaction link", url: link });
+  } else if (LEGACY_RECORD_FOLDER[record.type]) {
+    // A company's, scheme's, Lease Advisory matter's or Pathway run's one stored address.
+    const { column, label } = LEGACY_RECORD_FOLDER[record.type]!;
+    const [table, field] = column.split(".");
+    const url = String((await db.query(`SELECT ${field} AS url FROM ${table} WHERE id = $1`, [record.id]).catch(() => ({ rows: [] as any[] }))).rows[0]?.url || "").trim();
+    if (/^https:\/\//i.test(url)) out.push({ column, key: "", label, url });
   }
   if (!out.length) return out;
   const moved = migrated || await migratedLegacyKeys(db);
