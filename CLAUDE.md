@@ -6189,6 +6189,14 @@ flags: `client/src/components/aml-red-flags.tsx`. Tests:
   draw the same card (`AmlPartyCard`, `KycCompanyCard`) in the CRM lists'
   grid, 90 at a time with Show more. The AML page's party is named by the
   company being checked too (`PartyCell`).
+- **Every card one height on a computer** (Woody, 24 November 2026: "can you
+  sort the cards so they all the same size and add scroll within as
+  required"): `AmlCard` is `md:h-72` (288px, which fitted about three live
+  cards in four: transactions measured 145 to 378px, companies 187 to 315px);
+  the title and the footer stay put, the rows scroll inside, and a fade shows
+  while more is below (worked out after each render, on scroll and on
+  resize). A phone keeps each card's own height: one column, and no scroll box
+  inside the page's. Guard in `qa/regression/aml-one-build.test.mjs`.
 - **The same chips elsewhere**: the CRM lists' KYC chip, the Companies and
   KYC card's chips, the Companies view, the property page's AML on
   transactions here, and the AML page's stage, Late and transaction status.
