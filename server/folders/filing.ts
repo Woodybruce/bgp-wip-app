@@ -12,7 +12,8 @@
 // Every folder made and every file put is a row of folder_actions.
 import { SHOWS_PROPERTY_FOLDERS, needsUploadSession, UPLOAD_PIECE, type DriveEntry, type FolderRecordRef, type FolderRecordType } from "@shared/folders";
 import {
-  NOT_FILED_NO_RECORD, NOT_FILED_NO_SIGN_IN, NOT_FILED_UNREAD, filingSubfolder, notFiledBecause, notFiledWords, safeFileName,
+  NOT_FILED_NO_RECORD, NOT_FILED_NO_SIGN_IN, NOT_FILED_UNREAD, filingBlockedByShare, filingSubfolder, notFiledBecause, notFiledSharedWords, notFiledWords, safeFileName,
+  type SharedPlace,
 } from "@shared/folders-filing";
 import { GraphError, cancelUploadSession, createFolder, driveEntry, graph, startUploadSession, uploadPiece, uploadSmall } from "./graph";
 import { folderRecord, type Db, type FolderRecord } from "./access";
@@ -25,26 +26,42 @@ export const APP_ACCOUNT = "app";
 export interface FilingLink { linkId: string; driveId: string; itemId: string; label: string; path: string | null; on: FolderRecordRef }
 export type FilingPlace = { record: FolderRecord; link: FilingLink } | { record: FolderRecord | null; link: null; note: string };
 
-async function firstLink(db: Db, type: FolderRecordType, id: string, on: FolderRecordRef): Promise<FilingLink | null> {
-  const row = (await db.query(
-    `SELECT id, drive_id, item_id, label, cached_path FROM record_folders
-      WHERE record_type = $1 AND record_id = $2 AND removed_at IS NULL
-      ORDER BY position, linked_at, id LIMIT 1`, [type, id],
-  )).rows[0];
-  return row ? { linkId: String(row.id), driveId: String(row.drive_id), itemId: String(row.item_id), label: String(row.label), path: row.cached_path || null, on } : null;
+// A folder shared with a client shows the client everything in it
+// (server/folders/share.ts), so the app files none of BGP's own documents
+// there, nor in a folder inside one (24 November 2026).
+async function sharedPlaces(db: Db): Promise<SharedPlace[]> {
+  return (await db.query(`SELECT drive_id, cached_path FROM record_folders WHERE removed_at IS NULL AND shared_with_company_id IS NOT NULL`)).rows
+    .map((r: any) => ({ driveId: String(r.drive_id), path: r.cached_path ? String(r.cached_path) : null }));
 }
 
-/** Where a record's documents go: its first link by position; with none, a transaction (or scheme, matter, run) takes its property's first. */
+async function firstLink(db: Db, type: FolderRecordType, id: string, on: FolderRecordRef, shared: SharedPlace[]): Promise<{ link: FilingLink | null; blocked: boolean }> {
+  const rows = (await db.query(
+    `SELECT id, drive_id, item_id, label, cached_path, shared_with_company_id FROM record_folders
+      WHERE record_type = $1 AND record_id = $2 AND removed_at IS NULL
+      ORDER BY position, linked_at, id`, [type, id],
+  )).rows;
+  for (const row of rows) {
+    const path = row.cached_path ? String(row.cached_path) : null;
+    if (filingBlockedByShare({ driveId: String(row.drive_id), path, shared: !!row.shared_with_company_id }, shared)) continue;
+    return { link: { linkId: String(row.id), driveId: String(row.drive_id), itemId: String(row.item_id), label: String(row.label), path, on }, blocked: false };
+  }
+  return { link: null, blocked: rows.length > 0 };
+}
+
+/** Where a record's documents go: its first link by position that no client can see; with none, a transaction (or scheme, matter, run) takes its property's first. */
 export async function filingPlace(db: Db, ref: { type: FolderRecordType; id: string }): Promise<FilingPlace> {
   const record = await folderRecord(db, ref.type, ref.id);
   if (!record) return { record: null, link: null, note: NOT_FILED_NO_RECORD };
-  const own = await firstLink(db, record.type, record.id, { type: record.type, id: record.id, name: record.name });
-  if (own) return { record, link: own };
+  const shared = await sharedPlaces(db);
+  const own = await firstLink(db, record.type, record.id, { type: record.type, id: record.id, name: record.name }, shared);
+  if (own.link) return { record, link: own.link };
+  let blocked = own.blocked;
   if (SHOWS_PROPERTY_FOLDERS.includes(record.type) && record.propertyId) {
-    const inherited = await firstLink(db, "property", record.propertyId, { type: "property", id: record.propertyId, name: record.propertyName || "" });
-    if (inherited) return { record, link: inherited };
+    const inherited = await firstLink(db, "property", record.propertyId, { type: "property", id: record.propertyId, name: record.propertyName || "" }, shared);
+    if (inherited.link) return { record, link: inherited.link };
+    blocked = blocked || inherited.blocked;
   }
-  return { record, link: null, note: notFiledWords(record, record.propertyName) };
+  return { record, link: null, note: (blocked ? notFiledSharedWords : notFiledWords)(record, record.propertyName) };
 }
 
 /** A file into a folder, as whoever the token is: up to 10 MB in one go, larger in pieces. A name already there gets a number, never replaced. */
@@ -85,10 +102,10 @@ async function childFolder(token: string, driveId: string, parentId: string, nam
   }
 }
 
-/** The app filed it, perhaps for someone who pressed something; Graph saw the app's own account. */
-function appActor(userId: string | null): FolderActor {
+/** The app filed it, perhaps for someone who pressed something; Graph saw the app's own account, or the person's when their own token filed it. */
+function appActor(userId: string | null, account?: string | null): FolderActor {
   // folder_actions.user_id takes null: a background filing has nobody behind it.
-  return { userId: userId as string, account: APP_ACCOUNT };
+  return { userId: userId as string, account: account || APP_ACCOUNT };
 }
 
 export interface FilingDocument {
@@ -101,6 +118,8 @@ export interface FilingDocument {
   userId?: string | null;
   /** What it is, for the log ("Targeting Brief"). */
   what?: string;
+  /** Whose Microsoft account the token is, when a person's own token files it (else the app's). */
+  account?: string | null;
 }
 export type FilingResult =
   | { filed: true; webUrl: string | null; driveId: string; itemId: string; name: string; path: string; folder: FilingLink }
@@ -123,7 +142,7 @@ export async function fileRecordDocument(db: Db, token: () => Promise<string | n
   const link = place.link;
   const signedIn = await token().catch(() => null);
   if (!signedIn) return { filed: false, note: NOT_FILED_NO_SIGN_IN };
-  const actor = appActor(doc.userId ?? null);
+  const actor = appActor(doc.userId ?? null, doc.account);
   const name = safeFileName(doc.name);
   const parts = filingSubfolder(doc.subfolder);
   const base = { recordType: doc.record.type, recordId: doc.record.id, driveId: link.driveId };

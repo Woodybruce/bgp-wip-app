@@ -262,8 +262,8 @@ test("on PostgreSQL: the first live link by position, a property's for a transac
     await pool.query(`CREATE TABLE property_pathway_runs (id varchar PRIMARY KEY, address text, property_id varchar)`);
     // The two tables exactly as the app makes them at boot.
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    const boot = [...index.matchAll(/`((?:CREATE TABLE IF NOT EXISTS (?:record_folders|folder_actions)|CREATE (?:UNIQUE )?INDEX IF NOT EXISTS record_folders_)[^`]*)`/g)].map(m => m[1]);
-    assert.equal(boot.length, 4);
+    const boot = [...index.matchAll(/`((?:CREATE TABLE IF NOT EXISTS (?:record_folders|folder_actions)|CREATE (?:UNIQUE )?INDEX IF NOT EXISTS record_folders_|ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS )[^`]*)`/g)].map(m => m[1]);
+    assert.equal(boot.length, 7, "record_folders, its two indexes, folder_actions and the three share columns");
     for (const sql of boot) await pool.query(sql);
     await pool.query(`INSERT INTO crm_properties VALUES ('p1', 'Bluewater Shopping Centre'), ('p2', 'Liverpool ONE')`);
     await pool.query(`INSERT INTO crm_deals VALUES ('d1', 'Gail''s · Unit 12', 'p1'), ('d2', 'No property', NULL)`);
@@ -297,9 +297,32 @@ test("on PostgreSQL: the first live link by position, a property's for a transac
       [null, "app", "upload", "pla_matter", "m1", "file-1", "first", "Brief.pdf", true],
     ]);
     assert.deepEqual(logged[0].detail.folderOn, { type: "property", id: "p1" });
+
+    // A folder shared with a client, or one inside it, is never filed into (24 November 2026).
+    await pool.query(`UPDATE record_folders SET shared_with_company_id = 'landsec', cached_path = 'BGP - Share Drive / National / Bluewater' WHERE item_id = 'first'`);
+    await pool.query(`UPDATE record_folders SET cached_path = 'BGP - Share Drive / National / Bluewater / Leases' WHERE item_id = 'later'`);
+    const shared = await filingPlace(pool, { type: "deal", id: "d1" });
+    assert.deepEqual([shared.link, shared.link ? "" : shared.note],
+      [null, "Not filed in SharePoint: the folders linked to Bluewater Shopping Centre are shared with a client. Link a folder only BGP uses first."]);
+    await pool.query(`UPDATE record_folders SET cached_path = 'BGP - Share Drive / Internal / Bluewater' WHERE item_id = 'later'`);
+    assert.equal((await filingPlace(pool, { type: "deal", id: "d1" })).link?.itemId, "later");
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA ${schema} CASCADE`);
     await admin.end();
   }
+});
+
+test("the app's own documents stay out of a folder shared with a client, and out of any folder inside one", async () => {
+  const { filingBlockedByShare } = await import("../shared/folders-filing");
+  const shared = [{ driveId: "b!lib", path: "BGP - Share Drive / National / Bluewater" }];
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: "BGP - Share Drive / Internal", shared: true }, []), true);
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: "BGP - Share Drive / National / Bluewater", shared: false }, shared), true);
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: "bgp - share drive / national / bluewater / Leases", shared: false }, shared), true);
+  // A name that only starts the same way is another folder.
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: "BGP - Share Drive / National / Bluewater Annex", shared: false }, shared), false);
+  assert.equal(filingBlockedByShare({ driveId: "b!other", path: "BGP - Share Drive / National / Bluewater", shared: false }, shared), false);
+  // No path to compare on a drive that holds a shared folder: kept out.
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: null, shared: false }, shared), true);
+  assert.equal(filingBlockedByShare({ driveId: "b!lib", path: null, shared: false }, []), false);
 });

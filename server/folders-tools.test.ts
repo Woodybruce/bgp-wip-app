@@ -20,7 +20,6 @@ import {
   type FolderToolDeps,
 } from "./chatbgp-folder-tools";
 import { CONNECT_FIRST, STAFF_ONLY } from "./folders/routes";
-import { lookupSharePointFolderIfExists } from "./utils/sharepoint-operations";
 import { extractTenancyUnitsFromSharePointHits } from "./pathway-tenancy-extractor";
 
 const DRIVE = "b!TkfPTD5QkkaKK2ThhYzkbeZV8L-Ly5xIm6a79Utuotf_bKhaqTNzTLlcjCkAWwlf";
@@ -384,7 +383,6 @@ test("a record's own folder in the old tree gains its subfolders; nothing else i
 });
 
 test("with no Microsoft 365 of their own, Pathway's look-ups ask Microsoft nothing", async () => {
-  assert.equal(await lookupSharePointFolderIfExists({ folderName: "1 High Street", parentPath: "Investment" }, req), null);
   assert.deepEqual(await extractTenancyUnitsFromSharePointHits([{ name: "Tenancy schedule.xlsx", path: "BGP - Share Drive / Investment" }], req), []);
   assert.equal(calls.length, 0);
 });

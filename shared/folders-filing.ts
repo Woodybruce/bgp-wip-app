@@ -38,6 +38,36 @@ export function notFiledWords(record: { type: FolderRecordType; name: string }, 
   const where = (SHOWS_PROPERTY_FOLDERS.includes(record.type) && propertyName?.trim()) || record.name.trim() || "its record";
   return `Not filed in SharePoint: link a folder to ${where} first.`;
 }
+/**
+ * Every folder linked to the record (and to its property) is shared with a
+ * client, or inside one that is: the app keeps BGP's own documents out of them.
+ */
+export function notFiledSharedWords(record: { type: FolderRecordType; name: string }, propertyName: string | null): string {
+  const where = (SHOWS_PROPERTY_FOLDERS.includes(record.type) && propertyName?.trim()) || record.name.trim() || "its record";
+  return `Not filed in SharePoint: the folders linked to ${where} are shared with a client. Link a folder only BGP uses first.`;
+}
+
+/** A folder shared with a client, as filing reads it: its drive and the path SharePoint last gave. */
+export interface SharedPlace { driveId: string; path: string | null }
+const pathKey = (p: string | null | undefined) => String(p ?? "").trim().replace(/\s*\/\s*/g, " / ").toLowerCase();
+
+/**
+ * Whether the app may not file its own documents in a linked folder: the
+ * folder is shared with a client, or lies inside one that is (a client sees
+ * everything below a folder shared with it). With no path to compare, a
+ * folder on a drive that holds a shared folder is kept out too.
+ */
+export function filingBlockedByShare(link: { driveId: string; path: string | null; shared: boolean }, shared: SharedPlace[]): boolean {
+  if (link.shared) return true;
+  const sameDrive = shared.filter(s => s.driveId === link.driveId);
+  if (!sameDrive.length) return false;
+  const mine = pathKey(link.path);
+  if (!mine) return true;
+  return sameDrive.some(s => {
+    const theirs = pathKey(s.path);
+    return !theirs || mine === theirs || mine.startsWith(`${theirs} / `);
+  });
+}
 export const NOT_FILED_NO_RECORD = "Not filed in SharePoint: the record it belongs to was not found.";
 export const NOT_FILED_NO_SIGN_IN = "Not filed in SharePoint: the app could not sign in to Microsoft 365.";
 export const NOT_FILED_UNREAD = "Not filed in SharePoint: the record's folders could not be read.";

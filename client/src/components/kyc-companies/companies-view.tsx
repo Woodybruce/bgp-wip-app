@@ -144,12 +144,13 @@ function KycCompanyCard({ row, onOpen, selected }: { row: KycCompanyRow; onOpen:
   );
 }
 
-export function KycCompaniesView({ isAdmin }: { isAdmin: boolean }) {
+export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: boolean; startAdding?: boolean }) {
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState<KycCompanyFilter>("all");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  // Add a company pressed on the Transactions view opens it here (24 November 2026).
+  const [adding, setAdding] = useState(startAdding);
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: [KYC_COMPANIES_KEY] });

@@ -4889,6 +4889,21 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   shared chips). Order: a late party first, then the most red flags, then
   the longest unmoved. The property page's AML on transactions here groups
   with the same rule.
+- **Start from the AML page** (Woody, 24 November 2026: "what about my add
+  new transaction text box and upload files box etc here?", then "and add new
+  company AML etc"). At the top of the Transactions view (folded away with the
+  top on scroll), `AmlStartBar` (`client/src/components/aml-start.tsx`):
+  **New transaction**, the Describe the transaction box's look (type the
+  transaction out and press Fill it in, or drop or choose its heads of terms),
+  opens New Transaction (`NewTransactionDialog` in `client/src/pages/deals.tsx`,
+  loaded only when used) with the words read by its Describe the transaction
+  box (`initialNote`: `initialText` and `autoRead` on its `NoteFill`) or the
+  file read by its Add heads of terms (`initialHotsFile`, read once when the
+  lists are in); saving is the form's own Create, then its Kick off AML step,
+  and closing it reads the board again. **Add a company** opens the Companies
+  view with its Add a company open (`startAdding` on `KycCompaniesView`), for
+  KYC with no transaction. Nothing is saved from the box itself. A party's own
+  KYC documents still go in its Documents step (Upload documents).
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
@@ -9843,42 +9858,51 @@ on screen, in a message or in a document.
 ## Folders: one engine (Woody, 2026-11-24) — docs/folders-review-2026-11-20.md
 
 Woody, on the folders review: "go ahead with the folder suggestion", which
-approved every recommendation in its section 5. Do not re-litigate: links by
-Microsoft's ids in a new table (decision 1); the picker opens at the top of
-`BGP - Share Drive` and the person chooses where (2); "New folder" is empty and
-"New property folder" makes the client tree's five property folders, and the
-templates keyed by retired team names are retired (3); a transaction shows its
-own folders, then its property's, and Add folder on a transaction links to it
-with a tick to put it on the property instead (4); six muted app colours on
-the chip, seen in the app only (5, a deliberate exception in `docs/DESIGN.md`
-§1); folder actions run as the person, with their own Microsoft 365, never a
-colleague's (7); the app's own picker, not Microsoft's (8); no client uploads
-yet (9). **Read the review before touching folders.** Steps 0 to 4 of its 4.9
-are built; step 5 (everything else onto the engine), decision 6 (Landsec's
-data room), 10 (the app's own Microsoft permissions) and 11 (the server-disk
-team folders) are not.
+approved every recommendation in its section 5, then "push and finish the
+build". Do not re-litigate: links by Microsoft's ids in a new table (decision
+1); the picker opens at the top of `BGP - Share Drive` and the person chooses
+where (2); "New folder" is empty and "New property folder" makes the client
+tree's five property folders, and the templates keyed by retired team names are
+retired (3); a transaction shows its own folders, then its property's, and Add
+folder on a transaction links to it with a tick to put it on the property
+instead (4); six muted app colours on the chip, seen in the app only (5, a
+deliberate exception in `docs/DESIGN.md` §1); BGP staff share chosen folders
+with a client (6); folder actions run as the person, with their own Microsoft
+365, never a colleague's (7); the app's own picker, not Microsoft's (8); no
+client uploads yet (9). **Read the review before touching folders.** Steps 0
+to 5 of its 4.9 and decision 6 are built (24 November 2026). Decisions 10 (the
+app's own Microsoft permissions) and 11 (the server-disk team folders) wait on
+Woody and BGP's Microsoft admin. **Nothing new is ever made in the old `BGP
+share drive` tree** (the client tree job still fills in a client's existing data room there: decision 6).
 
 - **The tables** (boot MIGRATIONS in `server/index.ts`, not in
   `shared/schema.ts`): `record_folders` (record type and id, Microsoft's drive
   and item ids, label, colour, position, the name, path and address SharePoint
   last gave, status, source `picked` / `created` / `pasted` /
   `migrated:<column>`, who linked it, `removed_at` for an unlink: rows are never
-  deleted) with one live link per folder per record (the partial unique index
+  deleted; `shared_with_company_id`, `shared_by`, `shared_at` for a share with a
+  client) with one live link per folder per record (the partial unique index
   `record_folders_live_uq`), and `folder_actions` (every action, failed ones
-  too: who, the Microsoft account Graph saw, the action, the record, the
-  item, names and parents before and after, detail). A property merge moves
-  its links (`server/property-merge.ts`); a company merge does not yet.
+  too: who, the Microsoft account Graph saw (`app` for the app's own filing),
+  the action, the record, the item, names and parents before and after,
+  detail). A property merge moves its links (`server/property-merge.ts`); a
+  company merge moves the merged company's links and shares to the keeper
+  (`server/folders/merge.ts`, called in `mergeCompanyInto` once the references
+  are repointed; a folder the keeper already links is unlinked on the merged
+  one, its share carried over). Undoing a merge leaves the folders on the
+  keeper.
 - **Records**: property, deal (a transaction), company, scheme, pla_matter
   and pathway_run (`FOLDER_RECORD_TYPES`, `folderRecord` in
-  `server/folders/access.ts`). Only the property and transaction pages draw
-  Folders today.
+  `server/folders/access.ts`).
 - **The one door to Microsoft** is `server/folders/graph.ts` (`graph()`,
-  stood in for by tests with `setGraphTransport`): graph.microsoft.com with the
-  person's own token; an upload session's or a copy monitor's address on BGP's
-  own SharePoint (`brucegillinghampollardlimited(-my).sharepoint.com`), which
-  Microsoft signs, with NO token and redirects not followed; anything else is
-  refused. Busy answers (429, 503) are waited out twice. Nothing else in
-  `server/folders/` calls fetch or names Graph.
+  stood in for by tests with `setGraphTransport`): graph.microsoft.com with a
+  token the caller hands in; an upload session's or a copy monitor's address on
+  BGP's own SharePoint (`brucegillinghampollardlimited(-my).sharepoint.com`),
+  which Microsoft signs, with NO token and redirects not followed; anything
+  else is refused. Busy answers (429, 503) are waited out twice. Nothing else
+  in `server/folders/` calls fetch or names Graph, and nothing in
+  `server/folders/` takes the app's token itself: the app's own work hands it
+  in from outside (`server/document-filing.ts`).
 - **Who**: BGP staff signed in as themselves (`folderStaff`: `contactViewer`;
   staff viewing as a client are refused). The client gateway refuses the whole
   of `/api/folders/` to client logins and joint agents (only
@@ -9889,13 +9913,26 @@ team folders) are not.
   before any token is asked for, and a person with no Microsoft 365 of their
   own gets 428 with `connect: true` ("Connect your own Microsoft 365 first, on
   the SharePoint page"). `getOwnMsAccess` in `server/microsoft.ts` gives their
-  own token and account, never a colleague's (the old `getValidMsToken`
-  fallback is not used by the engine).
+  own token and account, never a colleague's.
+- **No colleague's token anywhere a person acts on files** (decision 7): the
+  SharePoint page, the dashboard widget and the Excel add-in
+  (`/api/microsoft/files`, `files/folder`, `files/item`, `files/upload`,
+  `files/content`, `files/thumbnail`, through `ownFileToken`) and Image
+  Studio's PDF capture use the person's own Microsoft 365 or answer 428 with
+  `connect: true`, and the screens say to connect it on the SharePoint page.
+  Folder listings no longer ask Graph for thumbnails. The SharePoint page's
+  Team Folders list and its Set up are gone (retired team names, `BGP share
+  drive`), with `/api/microsoft/team-folders`, `team-folders/setup`,
+  `company-folder-templates`, `shared-folder-probe`, `sharepoint/debug`,
+  `sharepoint/sites`, `files/share-link`, `files/invite`, `startImageSync`,
+  `TEAM_FOLDERS`, `TEAM_FOLDER_TREES` and `COMPANY_FOLDER_TREES`.
 - **Routes** (`server/folders/routes.ts`): places, browse, search; a record's
   folders (`GET /api/folders/:recordType/:recordId`, its own then its
-  property's, refreshed from SharePoint after ten minutes); link (ids or a
-  pasted address), create (`empty` or `property` template) then link; label,
-  colour, order, unlink (`/api/folders/links/:id`). Inside a folder
+  property's, refreshed from SharePoint after ten minutes, with who each is
+  shared with); link (ids or a pasted address), create (`empty`, `property` or
+  `lease_advisory` template) then link; label, colour, order, unlink
+  (`/api/folders/links/:id`); share with a client (`GET`/`POST
+  /api/folders/links/:id/share`). Inside a folder
   (`/api/folders/items/:driveId/:itemId/...`): new folder, rename, move (the
   same library only), copy (to any folder; followed through
   `GET /api/folders/copies/:jobId`, kept in memory), delete (to the library's
@@ -9903,71 +9940,189 @@ team folders) are not.
   `upload-session` and `PUT /api/folders/uploads/:sessionId` pieces of whole
   320 KB blocks, in order, relayed by the server so Microsoft's signed address
   never reaches the browser), share (a link for anyone, falling back to people
-  at BGP and saying so; or an invitation by email) and preview. The top of a
+  at BGP and saying so; or an invitation by email), preview, and follow /
+  unfollow (Graph's own, so the picker's Followed list shows it). The top of a
   library and `BGP - Share Drive` itself are never renamed, moved or deleted
-  from the app, nor linked to a record (`linkTopProblem`: the top of a
-  library or a OneDrive, or the whole of `BGP - Share Drive`; the server
-  refuses it and the picker, which opens there, does not offer it, so one
+  from the app, nor linked to a record or shared with a client
+  (`linkTopProblem`: the top of a library or a OneDrive, or the whole of `BGP -
+  Share Drive`; the server refuses it and the pickers do not offer it, so one
   press cannot link the whole drive to a transaction), a folder linked to a
   record is unlinked before it can be deleted, and a name already there is
-  never replaced (new folders fail; uploads and copies get a number). Rules:
-  `shared/folders.ts`.
+  never replaced (new folders fail; uploads, copies and the app's own filing
+  get a number). Rules: `shared/folders.ts`.
+- **Templates** (`FOLDER_TEMPLATES`): `empty`, `property` (the client tree's
+  five property folders) and `lease_advisory` (Lease Documents, Rent Review,
+  Lease Renewal, Dilapidations, Service Charge, Correspondence and Legal, with
+  the folders within them: 20 paths). A new folder on a Lease Advisory matter
+  starts as `lease_advisory`, on a property as `property`, anything else
+  empty (`defaultFolderTemplate`); the picker lists the record's own first,
+  with what is inside it.
 - **Screens** (`client/src/components/folders/`): `RecordFolders` (the strip
   of chips, Add folder, the open folder; a chip's menu has Open in SharePoint,
-  Rename the label, Colour, Move up / down, Unlink and Also linked to),
-  `FolderPicker` (Search, Browse from `BGP - Share Drive`, My OneDrive or
-  Followed, New folder here, tick several, Paste a link instead),
-  `FolderBrowser` (filter, sort, list or grid, a menu on every row that can
-  always be seen, ticks for Move / Copy to / Delete together, New folder,
-  Upload and drop with progress) and `folder-actions.tsx` (the dialogs).
-  `FolderDialog` is a dialog on a computer and a sheet from the bottom on a
-  phone; no browser prompt or confirm anywhere. A client login gets its data
-  room through the same `RecordFolders` (`client`), before any engine read.
-- **Where**: the transaction page's Files pill (a joint agent still reads
-  "Documents are managed by the BGP team."), the plan-led property page's
-  **Folders** button (`button-property-folders`, with its brochures) and the
-  page as it was (its **Folders** card). **New property folder** replaces Set
-  Up Folders on the property page (More menu, and the classic header), and the
-  property set-up dialog's Files step and the Properties list's **Folders**
-  column (once Folder Tree, `InlineFolderTree`) use the same picker
-  (`record-folder-picker.tsx`); nothing new is made under `BGP share drive`
-  from these. The old folder tree route (`server/property-setup.ts`) and
-  `sharepoint-folder-picker.tsx` are deleted. The brochure, schedule and plan finders
-  (`server/sharepoint-property-files.ts`) also walk folders linked in Folders.
-- **Old links** (the property's `sharepoint_folder_url` and
-  `sharepoint_team_folders`, a transaction's `sharepoint_link`) show as chips
-  marked "old link", read only, until moved over (`legacyFolders` in
-  `server/folders/links.ts`); one a migration run moved is hidden until the run
-  is undone, and one that opens to a folder the record already links shows as
-  the link only.
+  Rename the label, Colour, Move up / down, Share with <client> / Stop sharing,
+  Follow / Stop following, Unlink and Also linked to; a shared chip has a
+  people mark and a "Shared with" line; `compact` draws the chips only and
+  opens a folder in a window), `FolderPicker` (Search, Browse from `BGP -
+  Share Drive`, My OneDrive or Followed, New folder here, tick several, Paste a
+  link instead), `FolderBrowser` (filter, sort, list or grid, a menu on every
+  row that can always be seen, ticks for Move / Copy to / Delete together, New
+  folder, Upload and drop with progress, Follow on a folder's row),
+  `folder-actions.tsx` (the dialogs), `folder-share.tsx` (the share menu items,
+  dialog and marks), `record-folder-links.tsx` (a read-only list) and
+  `client-shared-folders.tsx` (the client's shared folders). `FolderDialog` is
+  a dialog on a computer and a sheet from the bottom on a phone; no browser
+  prompt or confirm anywhere. A client login gets its data room through the
+  same `RecordFolders` (`client`), before any engine read.
+- **Where** (every page that showed folders, step 5): the transaction page's
+  Files pill (a joint agent still reads "Documents are managed by the BGP
+  team."); the plan-led property page's **Folders** button
+  (`button-property-folders`, with its brochures) and the page as it was (its
+  **Folders** card); **New property folder** in place of Set Up Folders (More
+  menu, and the classic header); the property set-up dialog's Files step and
+  the Properties list's **Folders** column (`InlineFolderTree`); a landlord's
+  **Files** pill (the company's Folders for BGP staff, its data room for a
+  client login, nothing until the sign-in is known; the **<company> property
+  tree** button stays, Set Up Folders and the team tabs are gone); a brand's,
+  agent firm's and lender's **Documents & gallery** (compact Folders, staff
+  only, in place of "Open <brand> folder on SharePoint"); each scheme on the
+  property's schemes panel (compact, record type `scheme`; the schemes routes
+  no longer read or write `property_schemes.sharepoint_folder_url`); a Lease
+  Advisory matter's **Folders** card (its header's folder buttons are gone);
+  a Pathway run's CRM & Folders card (stage 1 keeps a stored folder and no
+  longer searches `Investment/<address>`); and the ChatBGP page (a property
+  thread's Folders, read only, each opening in SharePoint, staff only). The
+  brochure, schedule and plan finders (`server/sharepoint-property-files.ts`)
+  also walk folders linked in Folders. Deleted with the move:
+  `PropertyFoldersPanel`, `SetUpFoldersDialog`, `PropertySharepointLink`, the
+  dead copies in `instructions.tsx` and `companies.tsx`,
+  `sharepoint-folder-picker.tsx`, `server/pla-folder-template.ts` and the
+  matter's apply-folder-template route, the property folder tree route
+  (`server/property-setup.ts`), `GET/PUT /api/crm/properties/:id/sharepoint-folders`,
+  and `/api/microsoft/property-folders` (both), `/company-folders` (both),
+  `/folders` and `/folder-templates`.
+- **Documents the app files** (`server/folders/filing.ts`, rules in
+  `shared/folders-filing.ts`): the Targeting Brief, Document Briefs, Lease
+  Advisory workbooks, the Pathway model and Why Buy go into their record's
+  first linked folder by position (a transaction, matter, scheme or run with
+  none: its property's first), inside their own sub-folder (Targeting Briefs,
+  Rent Review/Valuation, Rent Review/Comparable Evidence, Models, Why Buy Deck
+  and so on), made where missing, on the app's token
+  (`server/document-filing.ts`: `fileAppDocument`, `appFilingNote`). With no
+  folder linked the document stays in the app and the person sees "Not filed
+  in SharePoint: link a folder to <property> first." (the note on the
+  Targeting Brief goes to BGP staff only; Save HTML is refused before drawing).
+  A document made from an email to ChatBGP is attached to the reply and never
+  filed (it names no record). Each folder made and each upload is a
+  `folder_actions` row with `ms_account` `app`.
+- **Document Studio's File to SharePoint and Legal & DD's Create Project**
+  choose the place in `FolderPicker` and act as the person, on their own
+  Microsoft 365 (428 to connect). Create Project makes the analysis's folders
+  with `createFolderTree`, lists what was made and what was not, and links the
+  new folder to the analysis's transaction when it has one (`crm_deal_id`).
+  `GET /api/documents/sp-folders` is gone.
+- **Shared with a client** (decision 6; `shared/folder-share.ts`,
+  `server/folders/share.ts`): BGP staff share a folder linked to a property, a
+  transaction (through its property) or a company (with itself) with one
+  client company whose logins can open that record (the property's landlord or
+  a company linked to it, not merged away, with an active client login; never
+  any other company). Sharing re-reads the folder on the person's own
+  Microsoft 365: it must be a folder in BGP's library, never a drive's top or
+  `BGP - Share Drive`. Stopping needs no connection. Logged as `share_client` /
+  `unshare_client`. Scheme, Lease Advisory and Pathway folders are not
+  shareable. **The client reads it** on `/api/client/sharepoint/shared`,
+  `…/shared/:linkId/list?path=` and `…/shared/:linkId/content?path=`, with the
+  app's token, by the link id and names below it, never a drive or item id:
+  the link must be shared with the caller's company on a record it can open
+  (`isPropertyInScope`, `isDealInScope`, `schemeLimitedPropertyIdsOrNone`;
+  fails closed), the folder is read by its stored ids and an item counts only
+  when it lies below it (`insideSharedFolder`). A company's own folder never
+  shows to a login held to schemes; a joint agent's transaction page shows
+  none. Shared folders show in the client's property data room and on its
+  Files page, read only.
+- **Code that works by path, and ChatBGP's folder tools** (`server/folders/by-path.ts`):
+  a path a person gives starts inside `BGP - Share Drive` (`shareDrivePath`)
+  and the old `BGP share drive` is refused; a missing folder is made only
+  below one that must already exist (`keep`), and in the old tree only below
+  a record's own folder (an old Pathway run's). ChatBGP's folder tools are one
+  file, `server/chatbgp-folder-tools.ts`, which both tool paths run
+  (`FOLDER_TOOL_NAMES`): look in a folder, read a file, make a folder, move,
+  upload a chat file, copy from Dropbox, save an email attachment, and
+  `get_record_folders` / `link_record_folder` (a property's, transaction's or
+  company's folders, and linking one by a path or a pasted address). BGP staff
+  only (on `CLIENT_BLOCKED_TOOLS`), on their own Microsoft 365, never on an
+  automated run (reading a record's folders asks Microsoft nothing, so that
+  one runs there too); every change is logged with `via`. Email attachments,
+  the MLRO report (`<team>/AML/MLRO Reports/<transaction>`, kept out of record
+  folders, which can be shared with a client) and Model Studio's template
+  upload save through `saveToShareDrive`. Model Studio's assistant and Embed
+  Excel (its live copy in `Models/Live`), Pathway's file look-ups and the
+  design tools use the person's own token (428 to connect); the MCP server's
+  SharePoint tools and the news comps reader keep the app's token. The client
+  tree build and the folder inventory report use the person's own Microsoft
+  365 (428 to connect). The SharePoint page's upload with no folder open is
+  refused, never put in the old tree. Everything goes through `graph()`;
+  `server/utils/sharepoint-operations.ts` and `uploadFileToSharePoint` are
+  deleted.
+- **Model Studio's Save version** files the version under `Models` in the
+  run's property's folder by the filing rule above, on the person's own
+  Microsoft 365 (`fileRecordDocument` with their token and account); with no
+  property or no folder linked it stays in the app and the reply carries the
+  words (`sharepointNote`). No folder is made by name.
+- **Never into a folder shared with a client** (24 November 2026): the app's
+  own filing (`filingPlace`) skips a linked folder shared with a client, and
+  any folder inside one (`filingBlockedByShare` in `shared/folders-filing.ts`,
+  by drive and the stored path; a folder with no path on a drive that holds a
+  shared folder is skipped too), because a client sees everything below a
+  shared folder. When every linked folder is shared the words say "Not filed
+  in SharePoint: the folders linked to <property> are shared with a client.
+  Link a folder only BGP uses first."
+- **Old links** (a property's `sharepoint_folder_url` and
+  `sharepoint_team_folders`, a transaction's `sharepoint_link`, and the one
+  stored address of a company, scheme, Lease Advisory matter or Pathway run,
+  `LEGACY_RECORD_FOLDER`) show as chips marked "old link", read only, until
+  moved over (`legacyFolders` in `server/folders/links.ts`); one a migration
+  run moved is hidden until the run is undone, and one that opens to a folder
+  the record already links shows as the link only.
 - **The migration** (`server/folders/migration.ts`, Settings → **Folders:
   moving the old links over**, admins; `GET /api/admin/folders/migration`,
   `POST …/apply`, `POST …/undo`, `GET …/runs`): Preview opens every stored
   address and old team-folder path (`BGP share drive/<team>/<name>`) as the
   admin, on their own Microsoft 365, with a status (opens, not in SharePoint,
   a file, not BGP's SharePoint, no access, already in Folders, could not be
-  read) and, for records with nothing that opens, folders of the same name in
+  read), lists `BGP share drive/Companies` once and offers each folder to the
+  company of exactly that name (`companiesPlaceRows`, merged companies left
+  out), and, for records with nothing that opens, folders of the same name in
   `BGP - Share Drive` as suggestions only. Apply takes the rows the same admin
   ticked on that preview within the hour (`migrationApplyRefusal`), as links
   with source `migrated:<column>` in one logged batch
   (`system_settings.folders_migration:runs`); Undo unlinks a batch. Never at
-  boot or on a timer. The old columns are never written, and they are still
-  read where the app read them until Woody agrees to stop: the list is
-  `OLD_FOLDER_READERS` in `shared/folders.ts`, shown on the report.
-- **Tests**: `server/folders.test.ts` and `server/folders-postgres.test.ts`
-  (the SQL in a throwaway schema; needs `FOLDERS_DATABASE_URL` naming a local
-  database) in `npm test`; `qa/regression/folders-engine-guards.test.mjs` (the
-  gateway, the staff gate, own tokens only, the one door, the client fence,
-  bodies read after the staff check, the migration's admin gate) and
-  `qa/regression/property-setup-guards.test.mjs`. Not run against Microsoft
-  from a build machine: checked in a browser on a local copy with the folder
-  routes answered by stand-ins.
-- **Not built**: step 5 (the landlord Files card, the brand page, Lease
-  Advisory, Pathway, schemes, Document Studio, Legal & DD and the ChatBGP page
-  onto the component; ChatBGP's tools, the MCP tools and the client-tree job
-  onto the engine), so `PropertyFoldersPanel` and `SetUpFoldersDialog` stay for
-  Pathway and the landlord page; following a folder; client uploads; the data
-  room's fence (decision 6); a company merge moving links.
+  boot or on a timer. The old columns are never written by the engine, and
+  they are still read where the app read them until Woody agrees to stop: the
+  list is `OLD_FOLDER_READERS` in `shared/folders.ts`, shown on the report.
+- **Tests** (in `npm test`): `server/folders.test.ts`,
+  `server/folders-postgres.test.ts` (the SQL in a throwaway schema; needs
+  `FOLDERS_DATABASE_URL` naming a local database), `server/folders-filing.test.ts`,
+  `server/folders-share.test.ts` and `server/folders-pages.test.ts` (their SQL
+  parts need the same variable) and `server/folders-tools.test.ts`; guards (in `npm run qa:regression`):
+  `qa/regression/folders-engine-guards.test.mjs` (the gateway, the staff gate,
+  own tokens only, the one door, the client fence, bodies read after the staff
+  check, the migration's admin gate), `folders-filing-guards`,
+  `folders-share-guards`, `folders-pages-guards`, `folders-tools-guards` and
+  `property-setup-guards`. Not run against Microsoft from a build machine:
+  checked in a browser on a local copy with the folder routes answered by
+  stand-ins.
+- **Not built**: client uploads (decision 9); decisions 10 (narrowing the
+  app's own Microsoft permissions) and 11 (the team folders on the server's
+  disk), both waiting on Woody and BGP's Microsoft admin; a screen saying why
+  a Net Effective, ITZA or Devaluation workbook, the Pathway model or the Why
+  Buy deck was not filed; Legal & DD analyses carry no transaction yet, so
+  Create Project links none; Pathway stage 1 still writes the run's old
+  columns from SharePoint matches; `brand-profile.ts` still sends and saves
+  `folder_teams` and `sharepoint_folder_url`; ChatBGP's knowledge-folder
+  indexing, `import_wip_excel` by a share link and image import by SharePoint
+  ids still call Graph themselves; mail, calendar and HR documents still use
+  the older sign-in, which can fall back to a colleague's (decision 7 covers
+  folders, all of which are on the person's own).
 
 ## Document design preferences (the "house style" pattern)
 

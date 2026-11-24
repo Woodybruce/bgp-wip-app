@@ -9,7 +9,7 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { SHARE_DRIVE_NAME, isGraphId, safeFolderName, type DriveEntry } from "@shared/folders";
+import { isGraphId, type DriveEntry } from "@shared/folders";
 import { GraphError, bgpLibrary, previewUrl, replaceFileContent } from "./folders/graph";
 import { folderAtPath, folderErrorWords, ownMicrosoft, saveFileInto } from "./folders/by-path";
 import { logFolderAction } from "./folders/links";
@@ -1598,22 +1598,25 @@ export function setupModelsRoutes(app: Express) {
 
       let sharepointUrl: string | null = null;
       let sharepointDriveItemId: string | null = null;
+      let sharepointNote: string | null = null;
       try {
-        // A copy in BGP - Share Drive / Investment / <property> / Financial
-        // Model (made below Investment where missing), as the person saving, on
-        // their own Microsoft 365, through the folder engine. A run with no
-        // property is not mirrored: nothing new goes in "BGP share drive".
+        // A copy in the property's folder in Folders, under Models, as the
+        // person saving, on their own Microsoft 365 (server/folders/filing.ts:
+        // the property's first linked folder no client can see). With no
+        // folder linked, or no property, the version stays in the app: no
+        // folder is made by name anywhere (24 November 2026).
         const own = await ownMicrosoft(req);
-        const [prop] = own && run.propertyId ? await db.select().from(crmProperties).where(eq(crmProperties.id, run.propertyId)).limit(1) : [];
-        const propertyFolder = safeFolderName(prop?.name);
-        if (own && propertyFolder) {
-          const log = { db: pool, actor: { userId: own.userId, account: own.account }, detail: { via: "model_studio", runId } };
-          const lib = await bgpLibrary(own.token);
-          const folder = await folderAtPath(own.token, lib, [SHARE_DRIVE_NAME, "Investment", propertyFolder, "Financial Model"], { make: log, keep: 2 });
-          const fileName = `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}_v${nextVersion}.xlsx`;
-          const saved = await saveFileInto(own.token, folder, fileName, new Uint8Array(fs.readFileSync(versionedFilePath)), log);
-          sharepointUrl = saved.webUrl;
-          sharepointDriveItemId = saved.itemId;
+        if (own && run.propertyId) {
+          const { fileRecordDocument } = await import("./folders/filing");
+          const filed = await fileRecordDocument(pool, async () => own.token, {
+            record: { type: "property", id: run.propertyId }, subfolder: "Models",
+            name: `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}_v${nextVersion}.xlsx`,
+            bytes: new Uint8Array(fs.readFileSync(versionedFilePath)), userId: own.userId, what: "Model version", account: own.account,
+          });
+          if (filed.filed) {
+            sharepointUrl = filed.webUrl;
+            sharepointDriveItemId = filed.itemId;
+          } else sharepointNote = filed.note;
         }
       } catch (err: any) {
         console.warn(`[save-version] SharePoint mirror failed:`, err?.message);
@@ -1652,7 +1655,7 @@ export function setupModelsRoutes(app: Express) {
         ...(sharepointUrl ? { sharepointUrl, sharepointDriveItemId: sharepointDriveItemId || undefined } : {}),
       }).where(eq(excelModelRuns.id, runId));
 
-      res.json({ success: true, version, outputs: newOutputs });
+      res.json({ success: true, version, outputs: newOutputs, sharepointNote });
     } catch (err: any) {
       console.error("[save-version] error:", err?.message);
       res.status(500).json({ message: err?.message || "Failed to save version" });

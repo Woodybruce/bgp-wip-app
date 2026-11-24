@@ -156,53 +156,6 @@ function getRedirectUri(req: Request): string {
   return `${protocol}://${host}/api/microsoft/callback`;
 }
 
-export async function uploadFileToSharePoint(
-  fileBuffer: Buffer,
-  filename: string,
-  contentType: string,
-  folderPath?: string
-): Promise<{ id: string; name: string; webUrl: string }> {
-  const client = getMsalClient();
-  const tokenResult = await client.acquireTokenByClientCredential({
-    scopes: ["https://graph.microsoft.com/.default"],
-  });
-  if (!tokenResult?.accessToken) throw new Error("Failed to acquire SharePoint app token");
-  const token = tokenResult.accessToken;
-
-  const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-  const siteRes = await fetch(siteUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!siteRes.ok) throw new Error("Could not find BGP SharePoint site");
-  const site = await siteRes.json();
-
-  const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!drivesRes.ok) throw new Error("Could not list SharePoint drives");
-  const drives = await drivesRes.json();
-  const drive = drives.value?.[0];
-  if (!drive) throw new Error("No SharePoint drive found");
-
-  const targetFolder = folderPath || `${SHAREPOINT_ROOT_FOLDER}/ChatBGP Documents`;
-  const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${drive.id}/root:/${encodeURIComponent(targetFolder)}/${encodeURIComponent(filename)}:/content`;
-
-  const uploadRes = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": contentType,
-    },
-    body: fileBuffer,
-  });
-
-  if (!uploadRes.ok) {
-    const err = await uploadRes.text();
-    throw new Error(`SharePoint upload failed: ${err.slice(0, 200)}`);
-  }
-
-  const result = await uploadRes.json();
-  return { id: result.id, name: result.name, webUrl: result.webUrl };
-}
-
 
 async function saveMsalCache(userId: string, homeAccountId: string | null) {
   try {
@@ -2069,10 +2022,13 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   });
 
   app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    // As the person, on their own Microsoft 365, never a colleague's (decision 7 of docs/folders-review-2026-11-20.md).
+    const ownerId = req.session?.userId || (req as any).tokenUserId;
+    const own = ownerId ? await getOwnMsAccess(String(ownerId)).catch(() => null) : null;
+    if (!own) {
+      return res.status(428).json({ message: "Connect your own Microsoft 365 first, on the SharePoint page: folders are made as you, never as a colleague.", connect: true });
     }
+    const token = own.token;
     try {
       const { companyId } = req.body || {};
       if (!companyId) return res.status(400).json({ message: "companyId is required" });
@@ -2151,7 +2107,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       // Where does this upload land? A selected folder with missing IDs is a
       // 4xx — never a silent upload to the SharePoint root. No selection at
-      // all keeps the existing BGP-share-drive-root default.
+      // all is refused: nothing new goes in the old "BGP share drive".
       const dest = resolveUploadDestination({ driveId, folderId, folderPath });
       if (dest.kind === "error") {
         return res.status(dest.status).json({ message: dest.message });
@@ -2169,9 +2125,9 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       } else if (dest.kind === "drive-root") {
         uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
       } else {
-        const spInfo = await getSharePointDriveId(token);
-        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
+        // Nothing new goes in the old "BGP share drive" folder (folders
+        // review, 24 November 2026): a file goes into the folder open.
+        return res.status(400).json({ message: "Open the folder to put it in first: nothing new goes in the old BGP share drive folder." });
       }
 
       const uploadRes = await fetch(uploadUrl, {

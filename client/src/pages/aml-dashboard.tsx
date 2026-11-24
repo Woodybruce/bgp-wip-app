@@ -7,7 +7,7 @@
 // One line per transaction with each party's checks inside it (Woody,
 // 24 November 2026: "combine the 2 (normally) AML checks into just one
 // transaction board or line ... That way doesnt get too crowded").
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search } from "lucide-react";
@@ -31,6 +31,12 @@ import { KycCompaniesView } from "@/components/kyc-companies/companies-view";
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { queryClient } from "@/lib/queryClient";
+import { AmlStartBar, type AmlStart } from "@/components/aml-start";
+
+// New Transaction, loaded only when the New transaction box is used: the
+// Transactions page's own form (24 November 2026).
+const NewTransactionDialog = lazy(() => import("@/pages/deals").then(m => ({ default: m.NewTransactionDialog })));
 import { AML_BUCKETS, amlDealStatusWords, groupAmlByTransaction, leadParty, transactionBucketCounts, transactionMatches, type AmlBucket, type AmlDashboardRow, type AmlTransactionRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 
@@ -344,6 +350,10 @@ export default function AmlDashboard() {
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
+  // Started from the top of the page (Woody, 24 November 2026): a new
+  // transaction typed out or from its heads of terms, or a company to add.
+  const [startTx, setStartTx] = useState<AmlStart | null>(null);
+  const [addCompany, setAddCompany] = useState(false);
   // Table or cards, as the CRM lists have it, remembered in this browser; a phone has cards.
   const [view, setView] = useState<AmlListView>(() => storedAmlView("checks"));
   const chooseView = (next: "table" | "card" | "board") => {
@@ -356,6 +366,8 @@ export default function AmlDashboard() {
   const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
   const sections = SECTIONS.filter(x => (!x.officer || roles?.isOfficer) && (!x.admin || me?.isAdmin));
   const shownSection: Section = sections.some(x => x.key === section) ? section : "checks";
+  // Add a company opens the Companies view's own Add a company, once.
+  useEffect(() => { if (addCompany && shownSection === "companies") setAddCompany(false); }, [addCompany, shownSection]);
 
   // The view in the address, replaced (a pill change is never a Back step).
   useEffect(() => {
@@ -442,9 +454,10 @@ export default function AmlDashboard() {
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
       {shownSection === "checks" && !foldedTop && <MyRegisterReports />}
       {shownSection === "emails" && <KycEmailsAdmin />}
-      {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} />}
+      {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} startAdding={addCompany} />}
 
       {shownSection === "checks" && <>
+      {!foldedTop && <AmlStartBar onTransaction={setStartTx} onCompany={() => { setAddCompany(true); setSection("companies"); }} />}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where the checks stand">
           {AML_BUCKETS.map(b => (
@@ -509,6 +522,16 @@ export default function AmlDashboard() {
       </>}
 
       {open && <PartyTrail row={open} onClose={() => setOpen(null)} officer={!!roles?.isOfficer} />}
+      {startTx && (
+        <Suspense fallback={null}>
+          <NewTransactionDialog
+            open
+            onOpenChange={o => { if (!o) { setStartTx(null); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); } }}
+            initialNote={startTx.note || null}
+            initialHotsFile={startTx.file || null}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

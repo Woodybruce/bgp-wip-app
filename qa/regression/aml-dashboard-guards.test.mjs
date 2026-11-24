@@ -133,3 +133,25 @@ test('the board is one line per transaction, each party on a line of its own ins
   // The property page's AML on transactions here groups the same way.
   assert.match(read('client/src/components/property-page/ownership-card.tsx'), /const transactions = groupAmlByTransaction\(data\?\.rows \|\| \[\]\);/);
 });
+
+// Start from the AML page (Woody, 24 November 2026: "what about my add new
+// transaction text box and upload files box etc here?", "and add new company AML etc").
+test('the AML page starts a new transaction from words or heads of terms, and adds a company', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(page, /\{!foldedTop && <AmlStartBar onTransaction=\{setStartTx\} onCompany=\{\(\) => \{ setAddCompany\(true\); setSection\("companies"\); \}\} \/>\}/);
+  assert.match(page, /const NewTransactionDialog = lazy\(\(\) => import\("@\/pages\/deals"\)\.then\(m => \(\{ default: m\.NewTransactionDialog \}\)\)\);/);
+  assert.match(page, /initialNote=\{startTx\.note \|\| null\}/);
+  assert.match(page, /initialHotsFile=\{startTx\.file \|\| null\}/);
+  assert.match(page, /<KycCompaniesView isAdmin=\{!!me\?\.isAdmin\} startAdding=\{addCompany\} \/>/);
+  const bar = read('client/src/components/aml-start.tsx');
+  // The box keeps its own drops, and saves nothing itself.
+  assert.match(bar, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\);/);
+  assert.doesNotMatch(bar, /apiRequest|fetch\(/);
+  const deals = read('client/src/pages/deals.tsx');
+  assert.match(deals, /export function NewTransactionDialog\(/);
+  assert.match(deals, /initialText=\{!handover && initialNote \? initialNote : undefined\}/);
+  assert.match(deals, /autoRead=\{!handover && !!initialNote\}/);
+  assert.match(deals, /autoHotsFile=\{!handover && !isClientCreate \? initialHotsFile : null\}/);
+  assert.match(deals, /if \(!autoHotsFile \|\| autoHotsRead\.current\) return;/);
+  assert.match(read('client/src/components/kyc-companies/companies-view.tsx'), /const \[adding, setAdding\] = useState\(startAdding\);/);
+});

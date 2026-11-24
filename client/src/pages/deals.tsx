@@ -2053,10 +2053,13 @@ function SimplifiedCreateBody({
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
-  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null,
+  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null, autoHotsFile = null,
 }: {
   // The note's address, to open the property picker with it typed (2026-11-20).
   propertySeed?: { text: string; key: number } | null;
+  // Heads of terms handed in when the form opens (the AML page's New
+  // transaction box, 24 November 2026): read once, as Add heads of terms reads them.
+  autoHotsFile?: File | null;
   // A handover (Promote, the Heads of Terms' Convert): the property and unit
   // are the tracker unit's, shown as one line in place of the pickers.
   place?: { propertyName: string; unitName: string } | null;
@@ -2323,6 +2326,13 @@ function SimplifiedCreateBody({
       if (hotsInputRef.current) hotsInputRef.current.value = "";
     }
   };
+  const autoHotsRead = useRef(false);
+  useEffect(() => {
+    if (!autoHotsFile || autoHotsRead.current) return;
+    autoHotsRead.current = true;
+    void handleHotsFile(autoHotsFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoHotsFile]);
 
   // The landlord's or brand's name, for its billing entity box.
   const partyName = (id: string, fallback: string) => companies.find(c => c.id === id)?.name || fallback;
@@ -3127,6 +3137,52 @@ export function DealHandoverDialog({ open, onOpenChange, handover }: {
   );
 }
 
+/**
+ * New Transaction opened from the AML page (Woody, 24 November 2026: "what
+ * about my add new transaction text box and upload files box etc here?"): it
+ * loads the lists the form picks from, then opens with the words typed there
+ * read in, or the heads of terms dropped there read in. Saving it is the
+ * form's own Create, then its Kick off AML step.
+ */
+export function NewTransactionDialog({ open, onOpenChange, initialNote, initialHotsFile }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialNote?: string | null;
+  initialHotsFile?: File | null;
+}) {
+  const { toast } = useToast();
+  const properties = useQuery<CrmProperty[]>({ ...dealFormPropertiesQuery, enabled: open });
+  const companies = useQuery<CrmCompany[]>({ ...dealFormCompaniesQuery, enabled: open });
+  const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({ queryKey: ["/api/users"], enabled: open });
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({ queryKey: ["/api/property-units"], enabled: open });
+  useEffect(() => {
+    if (!open || !properties.isError) return;
+    toast({ title: "New transaction could not be opened", description: "Refresh the page and try again.", variant: "destructive" });
+    onOpenChange(false);
+  }, [open, properties.isError]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The companies are read before the heads of terms, so their parties match.
+  const ready = properties.isSuccess && (companies.isSuccess || companies.isError);
+  return (
+    <>
+    {open && !ready && (
+      <div className="fixed inset-x-0 bottom-6 z-50 mx-auto flex w-fit items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm shadow-md" role="status" data-testid="new-transaction-opening">
+        <Loader2 className="h-4 w-4 animate-spin" />Opening New transaction…
+      </div>
+    )}
+    <DealFormDialog
+      open={open && ready}
+      onOpenChange={onOpenChange}
+      properties={properties.data || []}
+      propertyUnits={propertyUnits}
+      companies={companies.data || []}
+      users={users}
+      initialNote={initialNote}
+      initialHotsFile={initialHotsFile}
+    />
+    </>
+  );
+}
+
 export function DealFormDialog({
   open,
   onOpenChange,
@@ -3137,6 +3193,8 @@ export function DealFormDialog({
   users,
   handover,
   prefill,
+  initialNote,
+  initialHotsFile,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3149,6 +3207,11 @@ export function DealFormDialog({
   // A new transaction started from a company (Transactions → AML → Companies,
   // 24 November 2026): that company filled in as landlord, tenant, seller or buyer.
   prefill?: Partial<Pick<DealFormData, "landlordId" | "tenantId" | "vendorId" | "purchaserId">>;
+  // Started from the AML page's New transaction box (24 November 2026): the
+  // words typed there, read into the form as Describe the transaction reads
+  // them, or the heads of terms dropped there, read as Add heads of terms reads them.
+  initialNote?: string | null;
+  initialHotsFile?: File | null;
 }) {
   const { toast } = useToast();
   // Search-or-create pickers for the full form — the "Show all fields" /
@@ -3852,6 +3915,8 @@ export function DealFormDialog({
             title="Describe the transaction"
             example="Letting of 55 Wells Street to Acme Ltd. Landlord is Wells Estates Ltd. 10 year lease. Rent £120k pax. 6 MRF"
             startOpen
+            initialText={!handover && initialNote ? initialNote : undefined}
+            autoRead={!handover && !!initialNote}
             autoApply
             onApply={applyDealNote}
             onRead={(data) => {
@@ -3912,6 +3977,7 @@ export function DealFormDialog({
               users={users}
               setForm={setForm}
               hideFees={isClientCreate}
+              autoHotsFile={!handover && !isClientCreate ? initialHotsFile : null}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}

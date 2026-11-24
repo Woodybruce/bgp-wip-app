@@ -398,9 +398,12 @@ router.get("/api/accounts/:id/folder-inventory", requireAuth, async (req: Reques
     if (folderInventoryDeniedForScope(scopeCompanyId)) {
       return res.status(403).json({ error: "Folder inventory reports are staff-only" });
     }
-    const { getValidMsToken } = await import("./microsoft");
-    const token = await getValidMsToken(req);
-    if (!token) return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    // As the person, on their own Microsoft 365, never a colleague's (decision 7 of docs/folders-review-2026-11-20.md).
+    const { getOwnMsAccess } = await import("./microsoft");
+    const ownerId = (req as any).session?.userId || (req as any).tokenUserId;
+    const own = ownerId ? await getOwnMsAccess(String(ownerId)).catch(() => null) : null;
+    if (!own) return res.status(428).json({ message: "Connect your own Microsoft 365 first, on the SharePoint page: folders are read as you, never as a colleague.", connect: true });
+    const token = own.token;
 
     const companyId = String(req.params.id);
     const q = await defaultPool();

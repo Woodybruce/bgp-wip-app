@@ -64,8 +64,8 @@ before(async () => {
   await db.query(`CREATE TABLE system_settings (key text PRIMARY KEY, value jsonb, updated_at timestamptz)`);
   // The two tables exactly as the app makes them at boot.
   const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const boot = [...index.matchAll(/`((?:CREATE TABLE IF NOT EXISTS (?:record_folders|folder_actions)|CREATE (?:UNIQUE )?INDEX IF NOT EXISTS record_folders_)[^`]*)`/g)].map(m => m[1]);
-  assert.equal(boot.length, 4, "record_folders, its two indexes and folder_actions");
+  const boot = [...index.matchAll(/`((?:CREATE TABLE IF NOT EXISTS (?:record_folders|folder_actions)|CREATE (?:UNIQUE )?INDEX IF NOT EXISTS record_folders_|ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS )[^`]*)`/g)].map(m => m[1]);
+  assert.equal(boot.length, 7, "record_folders, its two indexes, folder_actions and the three share columns");
   for (const sql of boot) await db.query(sql);
   await db.query(`INSERT INTO users VALUES ('u1', 'Victoria Broadhead', 'victoria@brucegillinghampollard.com')`);
   await db.query(`INSERT INTO crm_properties VALUES ('p1', 'Bluewater Shopping Centre', NULL, NULL), ('p2', 'Liverpool ONE', $1, $2)`,
