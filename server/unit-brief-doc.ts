@@ -1,7 +1,8 @@
 // Operator Targeting Brief renderer — branded one/two page PDF for a
 // letting tracker unit's targeting brief (e.g. Landsec instructions).
 // Persists into unit_marketing_files (Postgres file_storage) and files a
-// best-effort copy into the scheme's SharePoint folder tree.
+// copy in the folder linked to the unit's transaction or property in Folders
+// (server/folders/filing.ts); with none linked it is not filed in SharePoint.
 
 import fs from "fs";
 import path from "path";
@@ -37,11 +38,13 @@ function fmtDate(s?: string | null): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
-export async function generateBriefDocument(briefId: string): Promise<{
+export async function generateBriefDocument(briefId: string, opts: { userId?: string | null } = {}): Promise<{
   fileId: string;
   downloadUrl: string;
   fileName: string;
   sharepointUrl?: string;
+  /** Why it was not filed in SharePoint ("Not filed in SharePoint: link a folder to … first."). */
+  sharepointNote?: string;
 }> {
   const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, briefId)).limit(1);
   if (!brief) throw new Error("Brief not found");
@@ -253,29 +256,24 @@ export async function generateBriefDocument(briefId: string): Promise<{
     .set({ documentFileId: file.id, updatedAt: new Date() })
     .where(eq(unitBriefs.id, brief.id));
 
-  // Best-effort SharePoint filing into the scheme folder tree
-  let sharepointUrl: string | undefined;
-  try {
-    const { uploadFileToSharePoint } = await import("./microsoft");
-    const teamFolder = unit.location === "London" ? "London Leasing" : "National Leasing";
-    const schemeName = propertyName.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-    const candidates = [
-      `BGP share drive/${teamFolder}/${schemeName}/Targeting Briefs`,
-      `BGP share drive/${teamFolder}/${schemeName}`,
-      undefined, // helper default: BGP share drive/ChatBGP Documents
-    ];
-    for (const folderPath of candidates) {
-      try {
-        const upload = await uploadFileToSharePoint(buf, fileName, "application/pdf", folderPath);
-        sharepointUrl = upload.webUrl;
-        break;
-      } catch {}
-    }
-  } catch (err: any) {
-    console.warn("[unit-brief] SharePoint upload failed:", err?.message);
-  }
+  // Filed under "Targeting Briefs" in the folder linked to the unit's
+  // transaction, else its property's. With none linked it stays on the unit's
+  // files and the note says so.
+  const { fileAppDocument } = await import("./document-filing");
+  const filed = await fileAppDocument({
+    record: unit.dealId ? { type: "deal", id: unit.dealId } : { type: "property", id: brief.propertyId },
+    subfolder: "Targeting Briefs",
+    name: fileName,
+    bytes: buf,
+    userId: opts.userId ?? null,
+    what: "Targeting Brief",
+  });
+  if (!filed.filed) console.warn(`[unit-brief] ${filed.note}`);
 
-  return { fileId: file.id, downloadUrl: file.filePath, fileName, sharepointUrl };
+  return {
+    fileId: file.id, downloadUrl: file.filePath, fileName,
+    ...(filed.filed ? { sharepointUrl: filed.webUrl || undefined } : { sharepointNote: filed.note }),
+  };
 }
 
 const BRIEF_EXTRACT_PROMPT = `You are extracting a structured "operator targeting brief" from a client document (typically a landlord's leasing instruction to their agent, e.g. from Landsec).

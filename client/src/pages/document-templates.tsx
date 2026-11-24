@@ -73,6 +73,9 @@ import {
 
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import DocumentDesigner from "@/components/document-designer";
+import { FolderPicker } from "@/components/folders/folder-picker";
+import { folderApi } from "@/components/folders/folder-api";
+import type { DriveEntry } from "@shared/folders";
 
 interface TemplateField {
   id: string;
@@ -4271,6 +4274,15 @@ interface DDResult {
   recommendations: string[];
 }
 
+/** The DD project folder as SharePoint made it (POST /api/legal-dd/create-project). */
+interface DDProject {
+  folder: { name: string; path: string; webUrl: string | null };
+  made: number;
+  failed: string[];
+  linkedTo: { id: string; name: string } | null;
+  linkProblem: string | null;
+}
+
 function SeverityBadge({ severity }: { severity: string }) {
   if (severity === "red") return <Badge className="bg-red-500 text-white border-0 text-[10px]" data-testid="badge-severity-red"><ShieldAlert className="w-3 h-3 mr-1" />Red</Badge>;
   if (severity === "amber") return <Badge className="bg-amber-500 text-white border-0 text-[10px]" data-testid="badge-severity-amber"><Shield className="w-3 h-3 mr-1" />Amber</Badge>;
@@ -4323,8 +4335,8 @@ function LegalDDTab() {
   const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ fileId?: string; originalName: string; displayName: string; size: number; sourceArchive?: string; mimeType?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string }; enrichment?: any }>>([]);
   const [ddAnalysisId, setDdAnalysisId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
-  const [creatingProject, setCreatingProject] = useState(false);
-  const [projectCreated, setProjectCreated] = useState<string | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [projectCreated, setProjectCreated] = useState<DDProject | null>(null);
   const [activeDocIndex, setActiveDocIndex] = useState(0);
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [expandedDDFile, setExpandedDDFile] = useState<number | null>(null);
@@ -4538,25 +4550,20 @@ function LegalDDTab() {
     }
   };
 
-  const handleCreateProject = async () => {
+  // Made inside the folder chosen in the folder picker, as the person on their
+  // own Microsoft 365. A refusal (a folder of that name already there, no
+  // Microsoft 365 connected) stays in the picker so another place can be chosen.
+  const makeProject = async (where: DriveEntry) => {
     if (!ddResult) return;
-    setCreatingProject(true);
-    try {
-      const res = await fetch("/api/legal-dd/create-project", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        credentials: "include",
-        body: JSON.stringify({ dealName, team: ddTeam, folderMapping: ddResult.folderMapping }),
-      });
-      if (!res.ok) { let errMsg = "Failed to create project"; try { const t = await res.text(); errMsg = JSON.parse(t).message || errMsg; } catch {} throw new Error(errMsg); }
-      const data = await res.json();
-      setProjectCreated(data.projectPath);
-      toast({ title: "Project created", description: data.message });
-    } catch (err: any) {
-      toast({ title: "Failed to create project", description: err.message, variant: "destructive" });
-    } finally {
-      setCreatingProject(false);
-    }
+    const made = await folderApi<DDProject>("POST", "/api/legal-dd/create-project", {
+      dealName, folderMapping: ddResult.folderMapping, analysisId: ddAnalysisId, driveId: where.driveId, parentId: where.itemId,
+    });
+    setProjectCreated(made);
+    const inside = made.made - 1;
+    toast({
+      title: `${made.folder.name} made`,
+      description: `${inside} folder${inside === 1 ? "" : "s"} inside${made.failed.length ? `, ${made.failed.length} not made` : ""}${made.linkedTo ? `. Linked to ${made.linkedTo.name}.` : "."}`,
+    });
   };
 
   const currentAnalysis = legalResults?.[activeDocIndex];
@@ -5464,9 +5471,9 @@ function LegalDDTab() {
                         <FolderPlus className="w-4 h-4 text-primary" />
                         SharePoint Project Structure
                       </CardTitle>
-                      <CardDescription>Create the folder structure in SharePoint based on the DD analysis</CardDescription>
+                      <CardDescription>Choose where it goes in SharePoint: a project folder is made there with the folders below, as you, on your own Microsoft 365</CardDescription>
                     </div>
-                    {projectCreated && <Badge className="bg-green-500 text-white border-0"><CheckCircle className="w-3 h-3 mr-1" />Created</Badge>}
+                    {projectCreated && <Badge variant="outline"><CheckCircle className="w-3 h-3 mr-1" />Made</Badge>}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -5483,20 +5490,40 @@ function LegalDDTab() {
                   </div>
 
                   {projectCreated ? (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/30">
-                      <CheckCircle className="w-4 h-4 text-green-500" />
-                      <span className="text-sm">Project folders created at: <strong>{projectCreated}</strong></span>
+                    <div className="rounded-lg border border-border bg-card p-3 space-y-1.5 text-sm" data-testid="dd-project-made">
+                      <p>
+                        Made <strong>{projectCreated.folder.name}</strong> with {projectCreated.made - 1} folder{projectCreated.made - 1 === 1 ? "" : "s"} inside
+                        {projectCreated.folder.path ? <>, in <span className="break-words">{projectCreated.folder.path}</span></> : null}.
+                      </p>
+                      {projectCreated.linkedTo && <p className="text-xs text-muted-foreground">Linked to {projectCreated.linkedTo.name} in Folders.</p>}
+                      {projectCreated.linkProblem && <p className="text-xs text-muted-foreground">Not linked to the transaction: {projectCreated.linkProblem}</p>}
+                      {projectCreated.failed.length > 0 && (
+                        <div className="text-xs text-destructive" data-testid="dd-project-failed">
+                          <p>Not made:</p>
+                          <ul className="list-disc pl-4">{projectCreated.failed.map((f, i) => <li key={i} className="break-words">{f}</li>)}</ul>
+                        </div>
+                      )}
+                      {projectCreated.folder.webUrl && (
+                        <a href={projectCreated.folder.webUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                          <ExternalLink className="w-3 h-3" />Open in SharePoint
+                        </a>
+                      )}
                     </div>
                   ) : (
-                    <Button
-                      onClick={handleCreateProject}
-                      disabled={creatingProject}
-                      className="w-full"
-                      data-testid="button-create-project"
-                    >
-                      {creatingProject ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Creating in SharePoint...</> : <><FolderPlus className="w-4 h-4 mr-2" />Create Project in SharePoint</>}
+                    <Button onClick={() => setProjectPickerOpen(true)} className="w-full" data-testid="button-create-project">
+                      <FolderPlus className="w-4 h-4 mr-2" />Create Project in SharePoint
                     </Button>
                   )}
+                  <FolderPicker
+                    open={projectPickerOpen}
+                    onOpenChange={setProjectPickerOpen}
+                    title="Where should the project folder go?"
+                    description={`DD - ${dealName.trim() || "the transaction"} is made inside the folder you choose, with the folders above. It is made as you, on your own Microsoft 365.`}
+                    notTops
+                    pickLabel={(_count, here) => (here ? `Make it in ${here.name}` : "Make it here")}
+                    onPick={([where]) => makeProject(where)}
+                    testId="dd-project-picker"
+                  />
                 </CardContent>
               </Card>
 

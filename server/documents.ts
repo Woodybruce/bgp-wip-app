@@ -8,12 +8,20 @@
 //   • storage → file_storage (working copy) + SharePoint (canonical mirror, Graph)
 //
 // The artifact file is the source; the in-app view is a render of it, so they
-// can't drift. SharePoint (via uploadFileToSharePoint) is the canonical record.
+// can't drift. File to SharePoint puts a copy in the folder the person picks,
+// as them, through the folder engine (server/folders/); its address is kept.
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { saveFile, getFile, deleteFile } from "./file-storage";
 import { signDownloadToken, verifyDownloadToken } from "./utils/download-token";
+import { isGraphId } from "@shared/folders";
+import { safeFileName } from "@shared/folders-filing";
+import { folderStaff } from "./folders/access";
+import { GraphError, getEntry } from "./folders/graph";
+import { uploadToFolder } from "./folders/filing";
+import { logFolderAction } from "./folders/links";
+import { CONNECT_FIRST, STAFF_ONLY } from "./folders/routes";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
@@ -140,38 +148,6 @@ export async function renderPreview(docId: string, buffer: Buffer, fileName: str
     keys.push(key);
   }
   return keys;
-}
-
-// ── SharePoint mirror ────────────────────────────────────────────────────────
-async function mirrorToSharePoint(buffer: Buffer, fileName: string, contentType: string, folderPath: string) {
-  const { uploadFileToSharePoint } = await import("./microsoft");
-  return uploadFileToSharePoint(buffer, fileName, contentType, folderPath);
-}
-
-// List folders (for the folder picker) at a SharePoint path relative to the drive root.
-async function listSharePointFolders(relPath: string): Promise<Array<{ name: string; path: string }>> {
-  const { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, getAppGraphToken } = await import("./microsoft");
-  const token = await getAppGraphToken();
-  if (!token) throw new Error("Could not acquire SharePoint token");
-  const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${token}` } });
-  const site = await siteRes.json();
-  const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${token}` } });
-  const drive = (await drivesRes.json()).value?.[0];
-  const clean = (relPath || "").replace(/^\/+|\/+$/g, "");
-  const select = "name,folder";
-  const childrenUrl = clean
-    ? `https://graph.microsoft.com/v1.0/drives/${drive.id}/root:/${encodeURIComponent(clean).replace(/%2F/g, "/")}:/children?$select=${select}&$top=400`
-    : `https://graph.microsoft.com/v1.0/drives/${drive.id}/root/children?$select=${select}&$top=400`;
-  // Follow @odata.nextLink — folder pickers truncate silently past one page.
-  const { listAllChildren } = await import("./microsoft-graph-pagination");
-  const children = await listAllChildren(async (pageUrl) => {
-    const pageRes = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
-    if (!pageRes.ok) throw new Error(`Graph list failed: ${pageRes.status}`);
-    return pageRes.json();
-  }, childrenUrl);
-  return children
-    .filter((c: any) => !!c.folder)
-    .map((c: any) => ({ name: c.name, path: clean ? `${clean}/${c.name}` : c.name }));
 }
 
 function publicBase(req: any): string {
@@ -424,28 +400,46 @@ export function setupDocumentRoutes(app: Express) {
     } catch (e: any) { console.error("[documents] delete:", e?.message); res.status(500).json({ error: e?.message }); }
   });
 
-  // Mirror the file into a SharePoint folder.
+  // File a copy in SharePoint: in the folder the person picked in the folder
+  // picker (by Microsoft's ids), as them, on their own Microsoft 365, never a
+  // colleague's (server/folders/). A name already there gets a number. The
+  // copy's address is kept on the document.
   app.post("/api/documents/:id/mirror", requireAuth, async (req: Request, res: Response) => {
     try {
-      const folderPath = String(req.body?.folderPath || "").trim();
-      if (!folderPath) return res.status(400).json({ error: "folderPath required (e.g. 'BGP share drive/Investment')" });
-      const r = await pool.query(`SELECT storage_key, file_name, content_type FROM studio_documents WHERE id=$1`, [req.params.id]);
-      if (!r.rows[0]?.storage_key) return res.status(404).json({ error: "No file" });
+      const staff = await folderStaff(req, pool);
+      if (!staff) return res.status(403).json({ message: STAFF_ONLY });
+      const { getOwnMsAccess } = await import("./microsoft");
+      const ms = await getOwnMsAccess(staff.userId);
+      if (!ms) return res.status(428).json({ message: CONNECT_FIRST, connect: true });
+      const driveId = req.body?.driveId, itemId = req.body?.itemId;
+      if (!isGraphId(driveId) || !isGraphId(itemId)) return res.status(400).json({ message: "Pick the folder to file it in." });
+      const r = await pool.query(`SELECT storage_key, file_name FROM studio_documents WHERE id=$1`, [req.params.id]);
+      if (!r.rows[0]?.storage_key) return res.status(404).json({ message: "This document has no file yet." });
       const file = await getFile(r.rows[0].storage_key);
-      if (!file) return res.status(404).json({ error: "File missing" });
-      const up = await mirrorToSharePoint(file.data, r.rows[0].file_name, r.rows[0].content_type || file.contentType, folderPath);
+      if (!file) return res.status(404).json({ message: "The document's file is missing." });
+      const folder = await getEntry(ms.token, driveId, itemId);
+      if (!folder.isFolder) return res.status(400).json({ message: "That is a file, not a folder." });
+      const name = safeFileName(r.rows[0].file_name);
+      const actor = { userId: staff.userId, account: ms.account };
+      const logged = { action: "upload" as const, driveId, parentAfter: itemId, nameAfter: name, detail: { studioDocument: String(req.params.id), size: file.data.length } };
+      let up;
+      try {
+        up = await uploadToFolder(ms.token, driveId, itemId, name, file.data);
+      } catch (e: any) {
+        await logFolderAction(pool, actor, { ...logged, ok: false, error: e?.message || "failed" });
+        throw e;
+      }
+      await logFolderAction(pool, actor, { ...logged, itemId: up.itemId, nameAfter: up.name });
       await pool.query(`UPDATE studio_documents SET sharepoint_web_url=$2, sharepoint_item_id=$3, sharepoint_path=$4, updated_at=now() WHERE id=$1`,
-        [req.params.id, up.webUrl, up.id, `${folderPath}/${r.rows[0].file_name}`]);
-      res.json({ success: true, webUrl: up.webUrl });
-    } catch (e: any) { console.error("[documents] mirror:", e?.message); res.status(500).json({ error: e?.message }); }
-  });
-
-  // Browse SharePoint folders (for the folder picker). path relative to drive root.
-  app.get("/api/documents/sp-folders", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const folders = await listSharePointFolders(String(req.query.path || ""));
-      res.json(folders);
-    } catch (e: any) { console.error("[documents] sp-folders:", e?.message); res.status(500).json({ error: e?.message }); }
+        [req.params.id, up.webUrl, up.itemId, up.path]);
+      res.json({ success: true, webUrl: up.webUrl, path: up.path });
+    } catch (e: any) {
+      if (e instanceof GraphError) {
+        return res.status(e.status === 401 ? 403 : e.status === 429 ? 503 : e.status >= 500 && e.status !== 503 && e.status !== 507 ? 502 : e.status).json({ message: e.message });
+      }
+      console.error("[documents] mirror:", e?.message);
+      res.status(500).json({ message: "It could not be filed in SharePoint." });
+    }
   });
 
   // ── OnlyOffice in-app editing ──────────────────────────────────────────────

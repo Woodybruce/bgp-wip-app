@@ -5,6 +5,7 @@ import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } fr
 import { eq, desc, sql, and } from "drizzle-orm";
 import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest, getSharedMailboxConversation } from "./shared-mailbox";
 import { isAppAddress } from "@shared/app-mailbox";
+import { NOT_FILED_FROM_EMAIL } from "@shared/folders-filing";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
 import { ingestBytes } from "./universal-ingest";
@@ -474,7 +475,7 @@ DOCUMENT GENERATION: If the sender asks you to create, draft, write, prepare, or
 
 DELIVERY OPTIONS: The sender may specify how to deliver the document:
 - "email it back" / "send it to me" / "reply with it" → deliver: "email" (default)
-- "save to SharePoint" / "store it" / "put it in the folder" → deliver: "sharepoint"
+- "save to SharePoint" / "store it" / "put it in the folder" → deliver: "email". A document made from an email is attached to the reply and is not filed in SharePoint: say so in the reply, and that it can be put in a property's or transaction's folder from Folders in the app
 - "send it to [someone@email.com]" → deliver: "email", deliverTo: "someone@email.com"
 - "WhatsApp it" → deliver: "whatsapp"
 
@@ -827,15 +828,10 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
             const deliver = action.deliver || "email";
             let deliveryNote = `Document "${doc.name}" generated and attached as PDF`;
 
-            if (deliver === "sharepoint") {
-              try {
-                const { uploadFileToSharePoint } = await import("./microsoft");
-                await uploadFileToSharePoint(pdfBuffer, filename, "application/pdf");
-                deliveryNote += " and saved to SharePoint";
-              } catch (spErr: any) {
-                deliveryNote += ` (SharePoint save failed: ${spErr?.message})`;
-              }
-            }
+            // Documents are filed in a record's folder in Folders, never in the
+            // old "BGP share drive" tree; an email names no record, so the
+            // document goes back as the reply's attachment only.
+            if (deliver === "sharepoint") deliveryNote += ` (${NOT_FILED_FROM_EMAIL})`;
 
             if (deliver === "email" && action.deliverTo
                 && (action.deliverTo.toLowerCase() === from.toLowerCase() || action.deliverTo.toLowerCase().endsWith("@brucegillinghampollard.com"))) {

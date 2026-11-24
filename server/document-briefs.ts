@@ -42,7 +42,8 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { discoverImagery, getManifest, type ImageryKind } from "./property-imagery";
 import { imageStudioImages } from "@shared/schema";
-import { uploadFileToSharePoint, SHAREPOINT_ROOT_FOLDER } from "./microsoft";
+import type { FolderRecordType } from "@shared/folders";
+import { appFilingNote, fileAppDocument } from "./document-filing";
 import {
   composeLocationPlan,
   composeCompsChart,
@@ -933,8 +934,10 @@ export function registerDocumentBriefRoutes(app: Express): void {
 
   /**
    * Render-and-save as PDF: full loop — brief → Claude HTML → puppeteer
-   * PDF → SharePoint upload → URL. Replaces the browser-print step with
-   * server-side native PDF.
+   * PDF → filed in the record's folder (Folders) → URL. Replaces the
+   * browser-print step with server-side native PDF. The PDF is kept in
+   * Document Studio either way; with no folder linked it is not filed in
+   * SharePoint and the reply says so.
    */
   app.post("/api/document-briefs/:id/save-pdf", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -965,12 +968,15 @@ export function registerDocumentBriefRoutes(app: Express): void {
 
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
       const propertyName = property?.name || "Untitled";
-      const folder = pickSharePointFolderForBrief(brief.briefId, propertyName);
       const safeName = (brief.briefName).replace(/[<>:"/\\|?*]+/g, "-").slice(0, 100);
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `${safeName} — ${propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 60)} — ${dateStr}.pdf`;
 
-      const upload = await uploadFileToSharePoint(pdf, filename, "application/pdf", folder);
+      const filed = await fileAppDocument({
+        record: briefRecord(ctx), subfolder: briefSubfolder(brief.briefId), name: filename, bytes: pdf,
+        userId: signedInUser(req), what: brief.briefName,
+      });
+      const sharepointUrl = filed.filed ? filed.webUrl : null;
       // Also index into the Document Studio hub so briefs appear in the one library.
       let documentId: string | null = null;
       try {
@@ -978,10 +984,13 @@ export function registerDocumentBriefRoutes(app: Express): void {
         documentId = await indexBriefDocument({
           title: `${brief.briefName} — ${propertyName}`, project: propertyName, category: "brief",
           buffer: pdf, fileName: filename, contentType: "application/pdf",
-          sharepointWebUrl: upload.webUrl, sharepointPath: `${folder}/${filename}`,
+          sharepointWebUrl: sharepointUrl || undefined, sharepointPath: filed.filed ? filed.path : undefined,
         });
       } catch (e: any) { console.warn("[document-briefs] hub index failed:", e?.message); }
-      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId, documentId });
+      return res.json({
+        sharepointUrl, sharepointNote: filed.filed ? null : filed.note, path: filed.filed ? filed.path : null,
+        filename, briefId: brief.briefId, documentId,
+      });
     } catch (err: any) {
       console.error("[document-briefs] save-pdf error:", err);
       return res.status(500).json({ error: err?.message || "save-pdf failed" });
@@ -989,10 +998,11 @@ export function registerDocumentBriefRoutes(app: Express): void {
   });
 
   /**
-   * Render-and-save: render via Claude design, then upload the HTML
-   * to SharePoint inside the matter's folder (or the property's
-   * Lease Advisory folder when no matter). Returns the SharePoint URL
-   * so the UI can drop a link.
+   * Render-and-save: render via Claude design, then file the HTML in the
+   * folder linked to the matter (or transaction, Pathway run or property)
+   * in Folders. Returns the SharePoint URL so the UI can drop a link. With
+   * no folder linked there is nowhere to save it: that is said before
+   * anything is drawn.
    */
   app.post("/api/document-briefs/:id/save-html", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -1005,28 +1015,27 @@ export function registerDocumentBriefRoutes(app: Express): void {
         userId,
       };
       if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
+      const noFolder = await appFilingNote(briefRecord(ctx));
+      if (noFolder) return res.status(409).json({ error: noFolder });
 
       const brief = await runBrief(String(req.params.id), ctx);
       const briefPrompt = await buildClaudePromptFromBrief(brief);
       const html = await renderWithClaude(briefPrompt);
 
-      // Resolve property name for folder + filename
+      // Resolve property name for the filename
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
       const propertyName = property?.name || "Untitled";
 
-      // Pick the SharePoint folder per brief category
-      const folder = pickSharePointFolderForBrief(brief.briefId, propertyName);
       const safeName = (brief.briefName).replace(/[<>:"/\\|?*]+/g, "-").slice(0, 100);
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `${safeName} — ${propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 60)} — ${dateStr}.html`;
 
-      const upload = await uploadFileToSharePoint(
-        Buffer.from(html, "utf8"),
-        filename,
-        "text/html",
-        folder,
-      );
-      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId });
+      const filed = await fileAppDocument({
+        record: briefRecord(ctx), subfolder: briefSubfolder(brief.briefId), name: filename, bytes: Buffer.from(html, "utf8"),
+        userId: signedInUser(req), what: brief.briefName,
+      });
+      if (!filed.filed) return res.status(502).json({ error: filed.note });
+      return res.json({ sharepointUrl: filed.webUrl, path: filed.path, filename, briefId: brief.briefId });
     } catch (err: any) {
       console.error("[document-briefs] save-html error:", err);
       return res.status(500).json({ error: err?.message || "save failed" });
@@ -1314,24 +1323,35 @@ async function htmlToPdfBuffer(htmlInput: string, options?: { format?: "A4" | "L
 }
 
 /**
- * Pick the canonical SharePoint folder for a brief output, matching
- * Tom + Pete's existing folder taxonomy for Lease Advisory and the
- * Investment "Why Buy Deck" pattern.
+ * The record a brief's output is filed under in Folders: its Lease Advisory
+ * matter, else its transaction, else its Pathway run, else its property.
+ * A matter, transaction or run without a folder of its own uses its
+ * property's (server/folders/filing.ts).
  */
-function pickSharePointFolderForBrief(briefId: string, propertyName: string): string {
-  const cleanName = propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 200);
+function briefRecord(ctx: BriefContext): { type: FolderRecordType; id: string } {
+  if (ctx.matterId) return { type: "pla_matter", id: String(ctx.matterId) };
+  if (ctx.dealId) return { type: "deal", id: String(ctx.dealId) };
+  if (ctx.pathwayRunId) return { type: "pathway_run", id: String(ctx.pathwayRunId) };
+  return { type: "property", id: ctx.propertyId };
+}
+
+/**
+ * Where a brief's output goes inside its record's folder, matching Tom +
+ * Pete's folder taxonomy for Lease Advisory and the Investment "Why Buy
+ * Deck" pattern. Made where missing; "" files it in the folder itself.
+ */
+function briefSubfolder(briefId: string): string {
   switch (briefId) {
-    case "rent-review-representations":
-      return `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanName}/Rent Review/Representations`;
-    case "why-buy-memo":
-      return `${SHAREPOINT_ROOT_FOLDER}/Investment/${cleanName}/Why Buy Deck`;
-    case "brochure":
-      return `${SHAREPOINT_ROOT_FOLDER}/Marketing/${cleanName}/Brochure`;
-    case "heads-of-terms":
-      return `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanName}/Lease Renewal/Heads of Terms`;
-    case "market-report":
-      return `${SHAREPOINT_ROOT_FOLDER}/Reporting/${cleanName}/Market Reports`;
-    default:
-      return `${SHAREPOINT_ROOT_FOLDER}/Documents/${cleanName}`;
+    case "rent-review-representations": return "Rent Review/Representations";
+    case "why-buy-memo": return "Why Buy Deck";
+    case "brochure": return "Brochure";
+    case "heads-of-terms": return "Lease Renewal/Heads of Terms";
+    case "market-report": return "Market Reports";
+    default: return "";
   }
+}
+
+/** Who pressed it, for the folder log. */
+function signedInUser(req: Request): string | null {
+  return (req as any).session?.userId || (req as any).tokenUserId || null;
 }

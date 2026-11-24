@@ -301,7 +301,11 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || "The document could not be made");
       const data = await res.json();
       invalidate();
-      toast({ title: "Brief document made", description: data.sharepoint ? "Saved to the unit's files and SharePoint" : "Saved to the unit's files" });
+      toast({
+        title: "Brief document made",
+        description: data.sharepoint ? "Saved to the unit's files and SharePoint"
+          : data.sharepointNote ? `Saved to the unit's files. ${data.sharepointNote}` : "Saved to the unit's files",
+      });
       if (data.downloadUrl) window.open(data.downloadUrl, "_blank");
     } catch (e: any) {
       toast({ title: "The document could not be made", description: e.message, variant: "destructive" });

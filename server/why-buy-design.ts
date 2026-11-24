@@ -348,7 +348,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
 // Stage 9 fails loudly). Builds the brief, runs Claude with the
 // house-style preferences, saves the HTML to why_buy_designs (so the
 // in-app preview shows the same artefact), renders headless-Chrome
-// PDF, and uploads to SharePoint.
+// PDF, and files it in the run's (or its property's) folder in Folders.
 // ─────────────────────────────────────────────────────────────────────────
 export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string }> {
   const runId = args.runId;
@@ -395,21 +395,12 @@ export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ doc
   const pdfPath = path.join(OUT_DIR, fileName);
   fs.writeFileSync(pdfPath, pdfBuf);
 
-  let sharepointUrl: string | undefined;
-  try {
-    const { uploadFileToSharePoint } = await import("./microsoft");
-    const { db } = await import("./db");
-    const { propertyPathwayRuns } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
-    const folderPath = run?.sharepointFolderPath
-      ? `${run.sharepointFolderPath}/Why Buy Deck`
-      : `BGP share drive/Investment/${(run?.address || built.address || "Property").replace(/[\/\\:*?"<>|]/g, "-")}/Why Buy Deck`;
-    const upload = await uploadFileToSharePoint(pdfBuf, fileName, "application/pdf", folderPath);
-    sharepointUrl = upload.webUrl;
-  } catch (err: any) {
-    console.warn("[stage9-claude] SharePoint upload failed:", err?.message);
-  }
+  // Filed under "Why Buy Deck" in the folder linked to the Pathway run, else
+  // its property's (Folders). With none linked it stays in the app.
+  const { fileAppDocument } = await import("./document-filing");
+  const filed = await fileAppDocument({ record: { type: "pathway_run", id: runId }, subfolder: "Why Buy Deck", name: fileName, bytes: pdfBuf, what: "Why Buy deck" });
+  if (!filed.filed) console.warn(`[stage9-claude] ${filed.note}`);
+  const sharepointUrl = filed.filed ? filed.webUrl || undefined : undefined;
 
   return {
     documentUrl: `/uploads/why-buy/${fileName}`,

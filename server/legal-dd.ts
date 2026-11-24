@@ -9,6 +9,12 @@ import mammoth from "mammoth";
 import AdmZip from "adm-zip";
 import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "./db";
+import { isGraphId, itemNameProblem, safeFolderName } from "@shared/folders";
+import { DD_PROJECT_MAX_FOLDERS, ddProjectPaths } from "@shared/folders-filing";
+import { folderRecord, folderStaff } from "./folders/access";
+import { GraphError, createFolderTree } from "./folders/graph";
+import { addFolderLink, logFolderAction } from "./folders/links";
+import { CONNECT_FIRST, STAFF_ONLY } from "./folders/routes";
 
 const UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "legal-dd");
 
@@ -905,90 +911,61 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
+  // The DD project folder (Woody, 24 November 2026: "go ahead with the folder
+  // suggestion"; docs/folders-review-2026-11-20.md): made inside the folder
+  // the person chooses in the folder picker, as them on their own Microsoft
+  // 365 (never a colleague's), with the folders the analysis suggests inside.
+  // The reply says what was made and what was not; when the analysis is for a
+  // transaction the new folder is linked to it in Folders.
   app.post("/api/legal-dd/create-project", requireAuth, async (req: Request, res: Response) => {
-    const { getValidMsToken } = await import("./microsoft");
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    const { dealName, team, folderMapping } = req.body;
-    if (!dealName || !folderMapping || !Array.isArray(folderMapping)) {
-      return res.status(400).json({ message: "dealName and folderMapping are required" });
-    }
-
     try {
-      const spHost = "brucegillinghampollardlimited.sharepoint.com";
-      const spSitePath = "/sites/BGP";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${spHost}:${spSitePath}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!siteRes.ok) throw new Error("Failed to access SharePoint site");
-      const siteData = await siteRes.json();
+      const staff = await folderStaff(req, pool);
+      if (!staff) return res.status(403).json({ message: STAFF_ONLY });
+      const { getOwnMsAccess } = await import("./microsoft");
+      const ms = await getOwnMsAccess(staff.userId);
+      if (!ms) return res.status(428).json({ message: CONNECT_FIRST, connect: true });
 
-      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${siteData.id}/drives`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const drivesData = await drivesRes.json();
-      const drive = drivesData.value?.find((d: any) =>
-        d.name === "Documents" || d.name === "Shared Documents"
-      );
-      if (!drive) throw new Error("Could not find Documents drive");
-      const driveId = drive.id;
+      const { dealName, folderMapping, analysisId, driveId, parentId } = req.body || {};
+      if (!isGraphId(driveId) || !isGraphId(parentId)) return res.status(400).json({ message: "Choose where to make the project folder." });
+      const name = safeFolderName(`DD - ${String(dealName || "").trim()}`);
+      const problem = String(dealName || "").trim() ? itemNameProblem(name) : "Give the transaction a name first.";
+      if (problem) return res.status(400).json({ message: problem });
+      const { paths, dropped } = ddProjectPaths(folderMapping);
 
-      const teamFolder = `BGP share drive/${team || "Investment"}`;
-      const projectPath = `${teamFolder}/DD - ${dealName}`;
-
-      async function createFolderByPath(parentPath: string, folderName: string) {
-        let createUrl: string;
-        if (!parentPath || parentPath === "/") {
-          createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-        } else {
-          const cleanPath = parentPath.replace(/^\/+|\/+$/g, "");
-          createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, "/")}:/children`;
-        }
-
-        const response = await fetch(createUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: folderName,
-            folder: {},
-            "@microsoft.graph.conflictBehavior": "fail",
-          }),
-        });
-
-        return response.ok || response.status === 409;
+      // The transaction the analysis is for, when it names one.
+      const dealId: string | null = analysisId
+        ? (await pool.query(`SELECT crm_deal_id FROM data_room_analyses WHERE id = $1 AND user_id = $2`, [String(analysisId), staff.userId])).rows[0]?.crm_deal_id || null
+        : null;
+      const actor = { userId: staff.userId, account: ms.account };
+      const logged = { action: "create" as const, recordType: dealId ? "deal" : null, recordId: dealId, driveId, parentAfter: parentId, nameAfter: name };
+      let made;
+      try {
+        made = await createFolderTree(ms.token, driveId, parentId, name, paths);
+      } catch (e: any) {
+        await logFolderAction(pool, actor, { ...logged, ok: false, error: e?.message || "not made" });
+        throw e;
       }
+      const failed = [...made.failed, ...dropped.map(p => `${p}: not made (at most ${DD_PROJECT_MAX_FOLDERS} folders)`)];
+      await logFolderAction(pool, actor, { ...logged, itemId: made.root.itemId, detail: { template: "legal-dd", analysisId: analysisId || null, made: made.made, failed } });
 
-      await createFolderByPath(teamFolder, `DD - ${dealName}`);
-
-      const uniqueFolders = new Set<string>();
-      for (const mapping of folderMapping) {
-        const parts = mapping.targetFolder.split("/");
-        let current = projectPath;
-        for (const part of parts) {
-          const key = `${current}/${part}`;
-          if (!uniqueFolders.has(key)) {
-            uniqueFolders.add(key);
-            await createFolderByPath(current, part);
-          }
-          current = key;
+      let linkedTo: { id: string; name: string } | null = null;
+      let linkProblem: string | null = null;
+      const record = dealId ? await folderRecord(pool, "deal", String(dealId)) : null;
+      if (record) {
+        try {
+          await addFolderLink(pool, record, { ...actor, token: ms.token }, { label: name }, made.root);
+          linkedTo = { id: record.id, name: record.name };
+        } catch (e: any) {
+          linkProblem = e?.message || "It could not be linked to the transaction.";
         }
       }
-
-      res.json({
-        success: true,
-        projectPath,
-        foldersCreated: uniqueFolders.size + 1,
-        message: `Created DD project folder structure for "${dealName}" in SharePoint under ${teamFolder}/`,
-      });
-    } catch (err: any) {
-      console.error("Create project error:", err);
-      res.status(500).json({ message: err.message || "Failed to create project folders" });
+      res.json({ folder: { name: made.root.name, path: made.root.path, webUrl: made.root.webUrl }, made: made.made, failed, linkedTo, linkProblem });
+    } catch (e: any) {
+      if (e instanceof GraphError) {
+        return res.status(e.status === 401 ? 403 : e.status === 429 ? 503 : e.status >= 500 && e.status !== 503 && e.status !== 507 ? 502 : e.status).json({ message: e.message });
+      }
+      console.error("[legal-dd] create project:", e?.message);
+      res.status(500).json({ message: "The project folder could not be made." });
     }
   });
 }
