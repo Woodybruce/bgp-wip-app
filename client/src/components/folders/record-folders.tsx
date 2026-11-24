@@ -12,17 +12,18 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp, ExternalLink, FolderOpen, Loader2, MoreVertical, Pencil, Plus, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Pill } from "@/components/ui/pill";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { ClientPropertyFoldersPanel } from "@/pages/properties";
-import { FOLDER_COLOURS, folderLabel, type DriveEntry, type FolderLinkView, type FolderRecordRef, type FolderTemplateKey, type RecordFoldersView } from "@shared/folders";
+import { FOLDER_COLOURS, folderLabel, type FolderLinkView, type FolderRecordRef, type RecordFoldersView } from "@shared/folders";
 import { cn } from "@/lib/utils";
 import { FolderApiError, folderApi, recordFoldersKey, refreshFolders } from "./folder-api";
 import { FolderBrowser } from "./folder-browser";
 import { FolderDialog } from "./folder-dialog";
-import { FolderPicker } from "./folder-picker";
+import { RecordFolderPicker } from "./record-folder-picker";
+
+export { RecordFolderPicker } from "./record-folder-picker";
 
 type RecordType = "property" | "deal";
 const colourOf = (key: string | null) => FOLDER_COLOURS.find(c => c.key === key) || null;
@@ -38,6 +39,8 @@ export function RecordFolders(props: {
   propertyId?: string | null;
   propertyName?: string | null;
   bare?: boolean;
+  /** Inside a card already titled Folders: the count and Add folder without a second title. */
+  hideTitle?: boolean;
 }) {
   if (props.client) {
     const propertyId = props.recordType === "property" ? props.recordId : props.propertyId;
@@ -48,7 +51,7 @@ export function RecordFolders(props: {
   return <StaffRecordFolders {...props} />;
 }
 
-function StaffRecordFolders({ recordType, recordId, recordName, propertyId, propertyName, bare }: { recordType: RecordType; recordId: string; recordName: string; propertyId?: string | null; propertyName?: string | null; bare?: boolean }) {
+function StaffRecordFolders({ recordType, recordId, recordName, propertyId, propertyName, bare, hideTitle }: { recordType: RecordType; recordId: string; recordName: string; propertyId?: string | null; propertyName?: string | null; bare?: boolean; hideTitle?: boolean }) {
   const { toast } = useToast();
   const query = useQuery<RecordFoldersView, FolderApiError>({
     queryKey: recordFoldersKey(recordType, recordId),
@@ -134,8 +137,8 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
   return (
     <div className={bare ? "space-y-3" : "rounded-lg border border-border bg-card p-3 space-y-3"} data-testid="record-folders">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold">Folders</h3>
-        {all.length > 0 && <span className="font-mono tabular-nums text-xs text-muted-foreground">{all.length}</span>}
+        {!hideTitle && <h3 className="text-sm font-semibold">Folders</h3>}
+        {all.length > 0 && <span className="font-mono tabular-nums text-xs text-muted-foreground">{hideTitle ? `${all.length} folder${all.length === 1 ? "" : "s"}` : all.length}</span>}
         <Button type="button" size="sm" variant="outline" className="ml-auto h-7 text-xs" onClick={() => setPickerOpen(true)} data-testid="folders-add">
           <Plus className="w-3.5 h-3.5 mr-1" />Add folder
         </Button>
@@ -242,75 +245,5 @@ function LabelDialog({ link, onClose, onSave }: { link: FolderLinkView | null; o
     >
       <Input value={value} onChange={e => setValue(e.target.value)} className="h-9 text-sm" autoFocus data-testid="folders-label-input" />
     </FolderDialog>
-  );
-}
-
-/**
- * The picker wired to a record: link what is ticked (or the folder you are
- * in), make a new folder where you are and link it, or paste a link. A
- * transaction offers a tick to put it on its property instead (decision 4).
- */
-export function RecordFolderPicker({ open, onOpenChange, record, alt, startNew, defaultTemplate, title, onDone }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  record: FolderRecordRef;
-  alt?: FolderRecordRef | null;
-  startNew?: boolean;
-  defaultTemplate?: FolderTemplateKey;
-  title?: string;
-  /** After a folder was linked or made (the property set-up marks its step done). */
-  onDone?: () => void;
-}) {
-  const { toast } = useToast();
-  const [onAlt, setOnAlt] = useState(false);
-  useEffect(() => { if (open) setOnAlt(false); }, [open]);
-  const target = onAlt && alt ? alt : record;
-  const linkAll = async (folders: DriveEntry[]) => {
-    const failed: string[] = [];
-    let linked = 0;
-    for (const f of folders) {
-      try { await folderApi("POST", `/api/folders/${target.type}/${target.id}/links`, { driveId: f.driveId, itemId: f.itemId }); linked++; }
-      catch (e: any) { failed.push(`${f.name}: ${e?.message || "not linked"}`); }
-    }
-    await refreshFolders();
-    if (linked) { toast({ title: `${linked} folder${linked === 1 ? "" : "s"} linked`, description: `On ${target.name}.` }); onDone?.(); }
-    if (failed.length) throw new Error(failed.join(" "));
-  };
-  return (
-    <FolderPicker
-      open={open}
-      onOpenChange={onOpenChange}
-      title={title || (startNew ? `New folder for ${target.name}` : `Add a folder to ${target.name}`)}
-      description={startNew ? "Choose where it goes, from BGP - Share Drive or your OneDrive, then make it here." : "Find it by name, or browse to it. Tick several to link them together."}
-      multiple
-      onPick={linkAll}
-      onPaste={async url => {
-        await folderApi("POST", `/api/folders/${target.type}/${target.id}/links`, { url });
-        await refreshFolders();
-        toast({ title: "Folder linked", description: `On ${target.name}.` });
-        onDone?.();
-      }}
-      create={{
-        defaultName: target.name,
-        defaultTemplate: defaultTemplate || (target.type === "property" ? "property" : "empty"),
-        startOpen: startNew,
-        onCreate: async (where, name, template) => {
-          const r = await folderApi<{ link: FolderLinkView; made: number; failed: string[] }>("POST", `/api/folders/${target.type}/${target.id}/create`, { driveId: where.driveId, parentId: where.itemId, name, template });
-          await refreshFolders();
-          toast({
-            title: `${name} made and linked`,
-            description: `${r.made} folder${r.made === 1 ? "" : "s"} in ${where.name}${r.failed.length ? `; not made: ${r.failed.join("; ")}` : ""}.`,
-          });
-          onDone?.();
-        },
-      }}
-      extra={alt ? (
-        <label className="flex items-center gap-2 text-xs" data-testid="folders-on-property">
-          <Checkbox checked={onAlt} onCheckedChange={v => setOnAlt(v === true)} />
-          Put it on {alt.name} instead, so every transaction there shows it
-        </label>
-      ) : null}
-      testId="folder-picker"
-    />
   );
 }

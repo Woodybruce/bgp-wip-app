@@ -54,8 +54,9 @@ test("the Files step links and makes folders through the folder engine, the prop
   assert.match(d, /<RecordFolderPicker open=\{picker === "link"\}[^\n]*record=\{\{ type: "property", id: property\.id, name: property\.name \}\}[^\n]*onDone=\{\(\) => mark\("files"\)\}/);
   assert.match(d, /<RecordFolderPicker open=\{picker === "new"\}[^\n]*startNew defaultTemplate="property"[^\n]*onDone=\{\(\) => mark\("files"\)\}/);
   // The picker marks the step only after a folder was linked or made.
-  const r = read("client/src/components/folders/record-folders.tsx");
+  const r = read("client/src/components/folders/record-folder-picker.tsx");
   const picker = r.slice(r.indexOf("export function RecordFolderPicker("));
+  assert.match(read("client/src/components/folders/record-folders.tsx"), /export \{ RecordFolderPicker \} from "\.\/record-folder-picker";/);
   assert.match(picker, /if \(linked\) \{ toast\([^\n]*onDone\?\.\(\); \}/);
   assert.equal((picker.match(/onDone\?\.\(\)/g) || []).length, 3);
 });

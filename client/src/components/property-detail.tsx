@@ -1591,7 +1591,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     defaults true while it loads, so staff loads briefly
                     mounted the client panel and fired a doomed client-scoped
                     sharepoint fetch (403 on every staff property view). */}
-                {pdViewer ? <RecordFolders recordType="property" recordId={property.id} recordName={property.name} client={isClientViewer} bare /> : null}
+                {pdViewer ? <RecordFolders recordType="property" recordId={property.id} recordName={property.name} client={isClientViewer} bare hideTitle /> : null}
               </ReferenceSection>
               </PropertySection>}
 

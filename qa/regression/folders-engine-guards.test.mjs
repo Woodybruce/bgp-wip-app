@@ -222,7 +222,12 @@ test('the staff component reads one record\'s folders, and a transaction offers 
   const r = read('client/src/components/folders/record-folders.tsx');
   assert.match(r, /queryFn: \(\) => folderApi\("GET", `\/api\/folders\/\$\{recordType\}\/\$\{recordId\}`\)/);
   assert.match(r, /alt=\{recordType === "deal" && propertyId \? \{ type: "property", id: propertyId, name: propertyName \|\| "the property" \} : null\}/);
-  assert.match(r, /Put it on \{alt\.name\} instead, so every transaction there shows it/);
+  assert.match(read('client/src/components/folders/record-folder-picker.tsx'), /Put it on \{alt\.name\} instead, so every transaction there shows it/);
+  // The Properties list's Folders column makes a property folder through the same picker, never under "BGP share drive".
+  const list = read('client/src/pages/properties.tsx');
+  const column = list.slice(list.indexOf('function InlineFolderTree('), list.indexOf('export function addressToResult('));
+  assert.match(column, /<RecordFolderPicker[\s\S]*?startNew\n\s+defaultTemplate="property"/);
+  assert.doesNotMatch(column, /\/api\/microsoft\/property-folders/);
   // No browser prompt or confirm anywhere in the engine's screens.
   const dir = new URL('../../client/src/components/folders/', import.meta.url);
   for (const f of readdirSync(dir)) {

@@ -140,7 +140,7 @@ export function FolderBrowser({ root, testId = "folder-browser" }: { root: Folde
 
   return (
     <div
-      className={`relative space-y-2 rounded-md ${dragging ? "outline outline-2 outline-dashed outline-border outline-offset-2" : ""}`}
+      className={`relative space-y-2 rounded-md [container-type:inline-size] ${dragging ? "outline outline-2 outline-dashed outline-border outline-offset-2" : ""}`}
       data-testid={testId}
       onDragEnter={e => { if (hasFiles(e)) { e.preventDefault(); e.stopPropagation(); setDragging(true); } }}
       onDragOver={e => { if (hasFiles(e)) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; setDragging(true); } }}
@@ -217,8 +217,8 @@ export function FolderBrowser({ root, testId = "folder-browser" }: { root: Folde
             <li key={item.itemId} className="flex items-center gap-2 px-2.5 py-1.5 min-h-[44px] sm:min-h-[36px]" data-testid={`${testId}-row-${item.itemId}`}>
               <Checkbox checked={ticked.has(keyOf(item))} onCheckedChange={() => tick(item)} aria-label={`Tick ${item.name}`} data-testid={`${testId}-tick-${item.itemId}`} />
               <EntryName item={item} onOpen={() => setTrail(t => [...t, item])} />
-              <span className="hidden sm:inline font-mono tabular-nums text-[11px] text-muted-foreground w-16 text-right">{item.isFolder ? (item.childCount ?? "") : formatBytes(item.size)}</span>
-              <span className="hidden sm:inline font-mono tabular-nums text-[11px] text-muted-foreground w-16 text-right">{formatDay(item.modified)}</span>
+              <span className="hidden [@container(min-width:520px)]:inline font-mono tabular-nums text-[11px] text-muted-foreground w-16 text-right whitespace-nowrap">{item.isFolder ? (item.childCount ?? "") : formatBytes(item.size)}</span>
+              <span className="hidden [@container(min-width:420px)]:inline font-mono tabular-nums text-[11px] text-muted-foreground w-20 text-right whitespace-nowrap">{formatDay(item.modified)}</span>
               {menu(item)}
             </li>
           ))}
