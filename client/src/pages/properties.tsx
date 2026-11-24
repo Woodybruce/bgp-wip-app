@@ -2,6 +2,8 @@ import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { BGP_TEAMS, folderWithin, propertyFolderTabs } from "@shared/property-labels";
+import { BGP_SHAREPOINT_HOST } from "@shared/folders";
+import { bgpSharePointUrl } from "@shared/property-setup";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
@@ -1634,7 +1636,11 @@ export function SetUpFoldersDialog({
     enabled: open,
   });
 
-  const defaultTeam = currentUser?.team || null;
+  // Only the teams the server has a folder tree for (or a client team, which
+  // gets the leasing tree): the four leasing teams have none, and Create
+  // answered "Unknown team" for them (docs/folders-review-2026-11-20.md, 1.5).
+  const offeredTeams = TEAMS.filter((team) => team === "Landsec" || (templates || []).some((t) => t.team === team));
+  const defaultTeam = offeredTeams.includes(currentUser?.team) ? currentUser.team : null;
   const activeTeam = selectedTeam || defaultTeam;
 
   const activeTemplate = templates?.find((t) => t.team === activeTeam);
@@ -1726,7 +1732,7 @@ export function SetUpFoldersDialog({
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-2">Which team should this property be filed under?</p>
               <div className="grid grid-cols-2 gap-2">
-                {TEAMS.map((team) => (
+                {offeredTeams.map((team) => (
                   <button
                     key={team}
                     className={`text-left px-3 py-2 rounded-md border text-xs transition-colors ${
@@ -2307,12 +2313,16 @@ export function PropertySharepointLink({
     return (
       <div className="space-y-2 pt-1">
         <Input
-          placeholder="https://brucegillinghampollard.sharepoint.com/..."
+          placeholder={`https://${BGP_SHAREPOINT_HOST}/...`}
           value={urlInput}
           onChange={(e) => setUrlInput(e.target.value)}
           className="text-xs h-8"
           data-testid="input-property-sharepoint-url"
         />
+        {/* Only a folder in BGP's own SharePoint or OneDrive (it saved any text). */}
+        {urlInput.trim() && !bgpSharePointUrl(urlInput.trim()) && (
+          <p className="text-[11px] text-muted-foreground">Paste a link to a folder in BGP's SharePoint or OneDrive ({BGP_SHAREPOINT_HOST}).</p>
+        )}
         <div className="flex items-center gap-2">
           <Button
             size="sm"
@@ -2321,7 +2331,7 @@ export function PropertySharepointLink({
               onUpdate("sharepointFolderUrl", urlInput.trim() || null);
               setEditing(false);
             }}
-            disabled={!urlInput.trim()}
+            disabled={!urlInput.trim() || !bgpSharePointUrl(urlInput.trim())}
             data-testid="button-save-property-sharepoint-url"
           >
             Save

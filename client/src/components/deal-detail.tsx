@@ -909,7 +909,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-files-section">
                   {letting && <UnitFilesCard trackerId={letting.trackerId} unitName={letting.unitName} />}
                   <div className={sectionCard}>
-                    <h3 className="text-sm font-semibold mb-1.5">Property folder</h3>
+                    <h3 className="text-sm font-semibold mb-1.5">Folders</h3>
+                    {/* The transaction's own SharePoint link, shown until it moves to the folder engine. */}
+                    {!isClientDeal && String((deal as any).sharepointLink || "").trim() && (
+                      <p className="text-xs text-muted-foreground mb-2 break-words" data-testid="deal-own-sharepoint-link">
+                        This transaction's own link:{" "}
+                        {/^https:\/\//i.test(String((deal as any).sharepointLink).trim())
+                          ? <a href={String((deal as any).sharepointLink).trim()} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Open in SharePoint</a>
+                          : <span className="text-foreground">{String((deal as any).sharepointLink).trim()}</span>}
+                      </p>
+                    )}
                     {/* The deal's files live in its property's folder — the same
                         Files panel as the property page (browse / upload / share). */}
                     {linkedProperty && !isClientDeal && (
