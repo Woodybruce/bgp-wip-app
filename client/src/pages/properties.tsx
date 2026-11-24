@@ -2,7 +2,6 @@ import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { BGP_TEAMS, folderWithin, propertyFolderTabs } from "@shared/property-labels";
-import { BGP_SHAREPOINT_HOST, bgpSharePointUrl } from "@shared/folders";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
@@ -2269,111 +2268,6 @@ export function PropertyFoldersPanel({ propertyName, propertyId, folderTeams, sh
         </DialogContent>
       </Dialog>
     </Card>
-  );
-}
-
-export function PropertySharepointLink({
-  propertyId,
-  sharepointFolderUrl,
-  onUpdate,
-}: {
-  propertyId: string;
-  sharepointFolderUrl?: string | null;
-  onUpdate: (field: string, value: any) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [urlInput, setUrlInput] = useState(sharepointFolderUrl || "");
-
-  if (sharepointFolderUrl && !editing) {
-    return (
-      <div className="flex items-center gap-2 pt-1">
-        <a
-          href={sharepointFolderUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-          data-testid="link-property-sharepoint-url"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Open in SharePoint
-        </a>
-        <button
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => { setUrlInput(sharepointFolderUrl); setEditing(true); }}
-          data-testid="button-edit-property-sharepoint-url"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  if (editing) {
-    return (
-      <div className="space-y-2 pt-1">
-        <Input
-          placeholder={`https://${BGP_SHAREPOINT_HOST}/...`}
-          value={urlInput}
-          onChange={(e) => setUrlInput(e.target.value)}
-          className="text-xs h-8"
-          data-testid="input-property-sharepoint-url"
-        />
-        {/* Only a folder in BGP's own SharePoint or OneDrive (it saved any text). */}
-        {urlInput.trim() && !bgpSharePointUrl(urlInput.trim()) && (
-          <p className="text-[11px] text-muted-foreground">Paste a link to a folder in BGP's SharePoint or OneDrive ({BGP_SHAREPOINT_HOST}).</p>
-        )}
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => {
-              onUpdate("sharepointFolderUrl", urlInput.trim() || null);
-              setEditing(false);
-            }}
-            disabled={!urlInput.trim() || !bgpSharePointUrl(urlInput.trim())}
-            data-testid="button-save-property-sharepoint-url"
-          >
-            Save
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </Button>
-          {sharepointFolderUrl && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-destructive hover:text-destructive"
-              onClick={() => {
-                onUpdate("sharepointFolderUrl", null);
-                setEditing(false);
-                setUrlInput("");
-              }}
-              data-testid="button-remove-property-sharepoint-url"
-            >
-              Remove
-            </Button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="text-xs h-7 mt-1"
-      onClick={() => setEditing(true)}
-      data-testid="button-link-property-sharepoint"
-    >
-      <Link2 className="w-3 h-3 mr-1" />
-      Link SharePoint Folder
-    </Button>
   );
 }
 

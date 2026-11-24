@@ -76,7 +76,7 @@ import {
   XeroInvoiceSection,
   DealAuditLog,
 } from "@/pages/deals";
-import { PropertyFoldersPanel } from "@/pages/properties";
+import { RecordFolders } from "@/components/folders/record-folders";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus, type PartySlot } from "@/components/deal-aml-status";
@@ -908,30 +908,26 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               const files = (
                 <div className="grid grid-cols-1 gap-3 min-w-0" data-testid="deal-files-section">
                   {letting && <UnitFilesCard trackerId={letting.trackerId} unitName={letting.unitName} />}
-                  <div className={sectionCard}>
-                    <h3 className="text-sm font-semibold mb-1.5">Folders</h3>
-                    {/* The transaction's own SharePoint link, shown until it moves to the folder engine. */}
-                    {!isClientDeal && String((deal as any).sharepointLink || "").trim() && (
-                      <p className="text-xs text-muted-foreground mb-2 break-words" data-testid="deal-own-sharepoint-link">
-                        This transaction's own link:{" "}
-                        {/^https:\/\//i.test(String((deal as any).sharepointLink).trim())
-                          ? <a href={String((deal as any).sharepointLink).trim()} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Open in SharePoint</a>
-                          : <span className="text-foreground">{String((deal as any).sharepointLink).trim()}</span>}
-                      </p>
-                    )}
-                    {/* The deal's files live in its property's folder — the same
-                        Files panel as the property page (browse / upload / share). */}
-                    {linkedProperty && !isClientDeal && (
-                      <PropertyFoldersPanel
-                        propertyName={linkedProperty.name}
-                        propertyId={linkedProperty.id}
-                        folderTeams={linkedProperty.folderTeams as any}
-                        sharepointFolderUrl={linkedProperty.sharepointFolderUrl as any}
+                  {/* Folders (Woody, 24 November 2026; docs/folders-review-2026-11-20.md): the
+                      transaction's own folders, then its property's under "From <property>",
+                      and its old SharePoint link read only until it is moved over. A client
+                      login sees its data room for the property; a joint agent, as before, none.
+                      Nothing until the sign-in is known: a staff login is a client until then. */}
+                  {!ddUser ? null : jointAgent ? (
+                    <div className={sectionCard}><p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p></div>
+                  ) : (
+                    <div className={sectionCard}>
+                      <RecordFolders
+                        recordType="deal"
+                        recordId={id}
+                        recordName={pageTitle || deal.name || "this transaction"}
+                        client={isClientDeal}
+                        propertyId={linkedProperty?.id || null}
+                        propertyName={linkedProperty?.name || null}
+                        bare
                       />
-                    )}
-                    {isClientDeal && <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>}
-                    {!linkedProperty && !isClientDeal && <p className="text-xs text-muted-foreground italic">Link this transaction to a property to see its folders.</p>}
-                  </div>
+                    </div>
+                  )}
                 </div>
               );
 

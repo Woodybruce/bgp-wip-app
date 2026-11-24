@@ -6,7 +6,10 @@
 // areas schedule for marketing and add brochure and add plans"). One step at a
 // time, each one skippable; every step saves through the route the property
 // page already uses. Opens after a property is added (?setup=1) and from the
-// property page's More menu. Rules: shared/property-setup.ts.
+// property page's More menu. Rules: shared/property-setup.ts. The Files step is
+// the folder engine's picker (docs/folders-review-2026-11-20.md): a folder
+// found or browsed to in SharePoint or OneDrive, or a new property folder made
+// where the person chooses, linked to the property by Microsoft's ids.
 import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, ExternalLink, FolderOpen, FolderPlus, Loader2 } from "lucide-react";
@@ -19,8 +22,10 @@ import { InlineCompetitorAgent, addressToResult, resultToAddress } from "@/pages
 import { PropertyBrochuresPanel } from "@/components/property-brochures-panel";
 import { UploadPlanButton } from "@/components/property-plans-panel";
 import { PropertyOwnershipCard } from "@/components/property-page/ownership-card";
-import { ShareDriveFolderPicker, type PickedFolder } from "@/components/sharepoint-folder-picker";
+import { RecordFolderPicker } from "@/components/folders/record-folders";
+import { FolderApiError, folderApi, recordFoldersKey } from "@/components/folders/folder-api";
 import { SETUP_STEPS, type SetupStepKey } from "@shared/property-setup";
+import { PROPERTY_FOLDER_TEMPLATE, type RecordFoldersView } from "@shared/folders";
 import type { CrmCompany, CrmProperty } from "@shared/schema";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"(?:message|error)":"(.*)"\}$/, "$1");
@@ -68,30 +73,16 @@ export function PropertySetupDialog({ property, allCompanies, open, onOpenChange
     onError: (e) => toast({ title: "Address not saved", description: plain(e), variant: "destructive" }),
   });
 
-  // Files: an existing folder, or a new folder tree inside one.
-  const [picker, setPicker] = useState<"link" | "tree" | null>(null);
-  const [template, setTemplate] = useState<string>("");
-  const templates = useQuery<Array<{ team: string; folderCount: number; structure: string[] }>>({ queryKey: ["/api/microsoft/folder-templates"], enabled: open && openStep === "files" });
-  const linkFolder = useMutation({
-    mutationFn: async (f: PickedFolder) => {
-      if (!f.webUrl) throw new Error("SharePoint gave no address for that folder.");
-      return (await apiRequest("PUT", `/api/crm/properties/${property.id}`, { sharepointFolderUrl: f.webUrl })).json();
-    },
-    onSuccess: (_r, f) => { refresh(); setPicker(null); toast({ title: "Folder linked", description: f.path || f.name }); mark("files"); },
-    onError: (e) => toast({ title: "Folder not linked", description: plain(e), variant: "destructive" }),
+  // Files: an existing folder, or a new property folder made where the person
+  // chooses; both linked through the folder engine.
+  const [picker, setPicker] = useState<"link" | "new" | null>(null);
+  const folders = useQuery<RecordFoldersView, FolderApiError>({
+    queryKey: recordFoldersKey("property", property.id),
+    queryFn: () => folderApi("GET", `/api/folders/property/${property.id}`),
+    enabled: open,
+    retry: false,
   });
-  const makeTree = useMutation({
-    mutationFn: async (f: PickedFolder) => {
-      const structure = (templates.data || []).find(t => t.team === template)?.structure || [];
-      return (await apiRequest("POST", `/api/properties/${property.id}/folders/tree`, { driveId: f.driveId, parentId: f.id, structure })).json();
-    },
-    onSuccess: (r: any, f) => {
-      refresh(); setPicker(null);
-      toast({ title: "Folders made", description: `${r?.folders || 0} folder${r?.folders === 1 ? "" : "s"} in ${f.path || f.name} / ${r?.name || ""}${r?.errors?.length ? `; ${r.errors.length} not made` : ""}` });
-      mark("files");
-    },
-    onError: (e) => toast({ title: "Folders not made", description: plain(e), variant: "destructive" }),
-  });
+  const linked = folders.data?.folders || [];
 
   // Schedule: a tenancy or areas schedule in Excel, read into the tenancy schedule.
   const scheduleInput = useRef<HTMLInputElement>(null);
@@ -119,7 +110,7 @@ export function PropertySetupDialog({ property, allCompanies, open, onOpenChange
   const summaries: Record<SetupStepKey, string> = {
     address: address ? `${address}${p.postcode && !address.includes(p.postcode) ? `, ${p.postcode}` : ""}` : "No address yet",
     owner: "Who owns it at Land Registry",
-    files: p.sharepointFolderUrl ? "Linked to a folder" : "Not linked to a folder",
+    files: linked.length ? `${linked.length} folder${linked.length === 1 ? "" : "s"} linked` : "Not linked to a folder",
     agent: p.competitorAgentId || p.competitorAgent ? "Joint agent set" : "No joint agent",
     schedule: scheduleResult || "Tenancy or areas schedule (Excel)",
     brochure: "The marketing brochure (PDF)",
@@ -158,21 +149,29 @@ export function PropertySetupDialog({ property, allCompanies, open, onOpenChange
               )}
               {key === "files" && (
                 <>
-                  {p.sharepointFolderUrl && (
-                    <a href={p.sharepointFolderUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline"><ExternalLink className="w-3 h-3" />Open the linked folder</a>
+                  {linked.length > 0 && (
+                    <ul className="space-y-1" data-testid="setup-files-linked">
+                      {linked.map(f => (
+                        <li key={f.id} className="flex min-w-0 items-center gap-1.5 text-xs">
+                          <FolderOpen className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                          {f.webUrl
+                            ? <a href={f.webUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-w-0 items-center gap-1 text-primary hover:underline"><span className="truncate">{f.label}</span><ExternalLink className="w-3 h-3 shrink-0" /></a>
+                            : <span className="truncate">{f.label}</span>}
+                          {f.path && <span className="truncate text-muted-foreground">{f.path}</span>}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPicker("link")} data-testid="setup-files-existing"><FolderOpen className="w-3.5 h-3.5 mr-1" />Pick an existing folder</Button>
-                    <Button type="button" size="sm" variant="outline" className="h-7 text-xs" disabled={!template} title={template ? undefined : "Choose the folders to make first"} onClick={() => setPicker("tree")} data-testid="setup-files-new"><FolderPlus className="w-3.5 h-3.5 mr-1" />Create a new folder tree</Button>
-                    <select aria-label="Folders to make" className="h-7 rounded border border-border bg-background px-2 text-xs" value={template} onChange={e => setTemplate(e.target.value)} data-testid="setup-files-template">
-                      <option value="">Folders to make…</option>
-                      {(templates.data || []).map(t => <option key={t.team} value={t.team}>{t.team} ({t.folderCount} folders)</option>)}
-                    </select>
+                    <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPicker("new")} data-testid="setup-files-new"><FolderPlus className="w-3.5 h-3.5 mr-1" />Create a new property folder</Button>
                   </div>
-                  <ShareDriveFolderPicker open={picker === "link"} onOpenChange={o => setPicker(o ? "link" : null)} title={`The folder for ${property.name}`} onPick={f => linkFolder.mutate(f)} />
-                  <ShareDriveFolderPicker open={picker === "tree"} onOpenChange={o => setPicker(o ? "tree" : null)} title={`Where to make ${property.name}'s folders`}
-                    description={`A folder called ${property.name} is made in the folder you pick, with the ${template} folders inside it.`} pickLabel="Make them here" onPick={f => makeTree.mutate(f)} />
-                  {(linkFolder.isPending || makeTree.isPending) && <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />{makeTree.isPending ? "Making the folders…" : "Linking…"}</p>}
+                  <p className="text-[11px] text-muted-foreground">A new property folder is made where you choose, with {PROPERTY_FOLDER_TEMPLATE.length} folders inside: {PROPERTY_FOLDER_TEMPLATE.join(", ")}.</p>
+                  {folders.data && !folders.data.connected && (
+                    <p className="text-[11px] text-muted-foreground">Folder actions run as you: connect your own Microsoft 365 on the SharePoint page first.</p>
+                  )}
+                  <RecordFolderPicker open={picker === "link"} onOpenChange={o => setPicker(o ? "link" : null)} record={{ type: "property", id: property.id, name: property.name }} title={`The folder for ${property.name}`} onDone={() => mark("files")} />
+                  <RecordFolderPicker open={picker === "new"} onOpenChange={o => setPicker(o ? "new" : null)} record={{ type: "property", id: property.id, name: property.name }} startNew defaultTemplate="property" title={`New property folder for ${property.name}`} onDone={() => mark("files")} />
                 </>
               )}
               {key === "agent" && (

@@ -1,22 +1,22 @@
 // Setting up a new property (Woody, 23 November 2026). Source guards; the
-// rules are tested in server/property-setup.test.ts.
+// rules are tested in server/property-setup.test.ts. Its Files step is the
+// folder engine's picker since 24 November 2026
+// (docs/folders-review-2026-11-20.md): the old folder tree route and the
+// Share Drive picker it used are gone.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 const read = f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+const exists = f => existsSync(new URL(`../../${f}`, import.meta.url));
 
-test("the folder tree route is BGP staff's, on the person's own Microsoft 365, linking only BGP's SharePoint", () => {
-  const s = read("server/property-setup.ts");
-  const at = s.indexOf('router.post("/api/properties/:id/folders/tree"');
-  assert.ok(at > 0);
-  const route = s.slice(at);
-  assert.ok(route.indexOf("await staffMe(req)") < route.indexOf("getValidMsToken(req)"), "staff are checked before anything else");
-  assert.match(route, /folderTreePaths\(body\.structure \?\? \[\]\)/);
-  assert.match(route, /if \(webUrl && bgpSharePointUrl\(webUrl\)\)/);
-  // Folders are made in the folder the person picked, never at a fixed place.
-  assert.match(route, /createFolderInItem\(token, driveId, parentId, rootName\)/);
-  assert.doesNotMatch(route, /getSharePointDriveId|SHAREPOINT_ROOT_FOLDER|getAppToken/);
-  assert.match(read("server/index.ts"), /app\.use\(propertySetupRouter\);/);
+test("the old folder tree route and its picker are gone; the engine makes and links folders", () => {
+  assert.equal(exists("server/property-setup.ts"), false);
+  assert.equal(exists("client/src/components/sharepoint-folder-picker.tsx"), false);
+  const index = read("server/index.ts");
+  assert.doesNotMatch(index, /propertySetupRouter|\.\/property-setup"/);
+  // Nothing writes a property's folder as an address any more from set-up.
+  const d = read("client/src/components/property-page/property-setup.tsx");
+  assert.doesNotMatch(d, /sharepointFolderUrl|\/folders\/tree|\/api\/microsoft\/folder-templates|ShareDriveFolderPicker/);
 });
 
 test("set-up opens for BGP staff after a property is added and from the property's More menu", () => {
@@ -35,16 +35,27 @@ test("each step saves through the route the property page already uses", () => {
   const d = read("client/src/components/property-page/property-setup.tsx");
   assert.match(d, /SETUP_STEPS\.map/);
   assert.match(d, /apiRequest\("PUT", `\/api\/crm\/properties\/\$\{property\.id\}`, \{\n?\s*address: resultToAddress\(result\)/);
-  assert.match(d, /apiRequest\("PUT", `\/api\/crm\/properties\/\$\{property\.id\}`, \{ sharepointFolderUrl: f\.webUrl \}\)/);
-  assert.match(d, /apiRequest\("POST", `\/api\/properties\/\$\{property\.id\}\/folders\/tree`/);
   assert.match(d, /fetch\("\/api\/tenancy-schedule\/import-excel"/);
   assert.match(d, /<PropertyOwnershipCard propertyId=\{property\.id\} onOpenAml=\{\(\) => undefined\} showAml=\{false\} \/>/);
   assert.match(d, /<InlineCompetitorAgent /);
   assert.match(d, /<PropertyBrochuresPanel /);
   assert.match(d, /<UploadPlanButton /);
-  // The picker lists the person's own Share Drive, folders only.
-  const p = read("client/src/components/sharepoint-folder-picker.tsx");
-  assert.match(p, /\/api\/microsoft\/files/);
-  assert.match(p, /const SHARE_DRIVE = "BGP - Share Drive";/);
-  assert.match(p, /\.filter\(i => i\.folder\)/);
+});
+
+test("the Files step links and makes folders through the folder engine, the property folder template for a new one", () => {
+  const d = read("client/src/components/property-page/property-setup.tsx");
+  assert.match(d, /import \{ RecordFolderPicker \} from "@\/components\/folders\/record-folders";/);
+  // The summary reads the engine's view of the property, the same query key as the page.
+  assert.match(d, /queryKey: recordFoldersKey\("property", property\.id\)/);
+  assert.match(d, /folderApi\("GET", `\/api\/folders\/property\/\$\{property\.id\}`\)/);
+  // Pick an existing folder, or make a new property folder where the person chooses.
+  assert.match(d, /data-testid="setup-files-existing"/);
+  assert.match(d, /data-testid="setup-files-new"/);
+  assert.match(d, /<RecordFolderPicker open=\{picker === "link"\}[^\n]*record=\{\{ type: "property", id: property\.id, name: property\.name \}\}[^\n]*onDone=\{\(\) => mark\("files"\)\}/);
+  assert.match(d, /<RecordFolderPicker open=\{picker === "new"\}[^\n]*startNew defaultTemplate="property"[^\n]*onDone=\{\(\) => mark\("files"\)\}/);
+  // The picker marks the step only after a folder was linked or made.
+  const r = read("client/src/components/folders/record-folders.tsx");
+  const picker = r.slice(r.indexOf("export function RecordFolderPicker("));
+  assert.match(picker, /if \(linked\) \{ toast\([^\n]*onDone\?\.\(\); \}/);
+  assert.equal((picker.match(/onDone\?\.\(\)/g) || []).length, 3);
 });

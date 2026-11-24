@@ -133,3 +133,45 @@ test('the engine is mounted, and its two tables are made at boot', () => {
   assert.match(index, /CREATE INDEX IF NOT EXISTS record_folders_item_idx ON record_folders \(drive_id, item_id\)/);
   assert.match(index, /CREATE TABLE IF NOT EXISTS folder_actions \(/);
 });
+
+test('client mode: a client login (or staff viewing as one) gets its data room and never touches the engine', () => {
+  const r = read('client/src/components/folders/record-folders.tsx');
+  const top = r.slice(r.indexOf('export function RecordFolders('), r.indexOf('function StaffRecordFolders('));
+  // The client branch returns before the staff component (and every /api/folders/ read) is reached.
+  assert.match(top, /if \(props\.client\) \{[\s\S]*<ClientPropertyFoldersPanel [\s\S]*Documents are managed by the BGP team\.[\s\S]*\}\n\s+return <StaffRecordFolders \{\.\.\.props\} \/>;/);
+  assert.doesNotMatch(top, /use(Query|State|Effect|Memo)\(|folderApi|\/api\/folders/);
+  // The data room keeps its own reads and the test id the smoke suite waits for.
+  const pages = read('client/src/pages/properties.tsx');
+  const panel = pages.slice(pages.indexOf('export function ClientPropertyFoldersPanel('), pages.indexOf('export function LinkedDealsPanel('));
+  assert.match(panel, /data-testid="client-property-folders-panel"/);
+  assert.match(panel, /\/api\/client\/sharepoint\/root/);
+  assert.doesNotMatch(panel, /\/api\/folders\//);
+  assert.match(read('qa/smoke.mjs'), /client-property-folders-panel/);
+});
+
+test('both pages pass their client test, and wait for the sign-in before drawing folders', () => {
+  const property = read('client/src/components/property-detail.tsx');
+  const drawn = [...property.matchAll(/<RecordFolders [^\n]*\/>/g)].map(m => m[0]);
+  assert.equal(drawn.length, 2, 'the plan-led popover and the classic Folders card');
+  for (const d of drawn) assert.match(d, /recordType="property" recordId=\{property\.id\} recordName=\{property\.name\} client=\{isClientViewer\}/);
+  assert.equal((property.match(/\{pdViewer \? <RecordFolders /g) || []).length, 2);
+  assert.match(property, /aria-label="Property folders" data-testid="button-property-folders"/);
+  assert.doesNotMatch(property, /PropertyFoldersPanel|PropertySharepointLink|SetUpFoldersDialog/);
+  const deal = read('client/src/components/deal-detail.tsx');
+  assert.match(deal, /\{!ddUser \? null : jointAgent \? \(/);
+  assert.match(deal, /<RecordFolders\n\s+recordType="deal"\n\s+recordId=\{id\}[\s\S]*?client=\{isClientDeal\}\n\s+propertyId=\{linkedProperty\?\.id \|\| null\}/);
+  assert.doesNotMatch(deal, /PropertyFoldersPanel/);
+});
+
+test('the staff component reads one record\'s folders, and a transaction offers its property as the other place', () => {
+  const r = read('client/src/components/folders/record-folders.tsx');
+  assert.match(r, /queryFn: \(\) => folderApi\("GET", `\/api\/folders\/\$\{recordType\}\/\$\{recordId\}`\)/);
+  assert.match(r, /alt=\{recordType === "deal" && propertyId \? \{ type: "property", id: propertyId, name: propertyName \|\| "the property" \} : null\}/);
+  assert.match(r, /Put it on \{alt\.name\} instead, so every transaction there shows it/);
+  // No browser prompt or confirm anywhere in the engine's screens.
+  const dir = new URL('../../client/src/components/folders/', import.meta.url);
+  for (const f of readdirSync(dir)) {
+    const text = readFileSync(new URL(f, dir), 'utf8');
+    assert.doesNotMatch(text, /window\.(prompt|confirm|alert)\(|\b(prompt|confirm)\(/, `${f} uses a browser dialog`);
+  }
+});

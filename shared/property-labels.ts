@@ -85,9 +85,9 @@ export function folderWithin(url: string | null | undefined, parent: string | nu
 }
 
 /** Every distinct folder linked to the property, the default link first. */
-export function linkedFolderUrls(defaultUrl: string | null | undefined, links: unknown): string[] {
+export function linkedFolderUrls(defaultUrl: string | null | undefined, links: unknown, more: readonly string[] = []): string[] {
   const out: string[] = [];
-  for (const url of [String(defaultUrl || "").trim(), ...Object.values(normaliseFolderLinks(links))]) {
+  for (const url of [String(defaultUrl || "").trim(), ...Object.values(normaliseFolderLinks(links)), ...more.map(u => String(u || "").trim())]) {
     if (url && !out.some(u => folderKey(u) === folderKey(url))) out.push(url);
   }
   return out;

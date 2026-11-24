@@ -14,7 +14,7 @@ import {
   ChevronDown,
   X,
   ArrowLeft,
-  FolderTree,
+  FolderPlus,
   FileText,
   Loader2,
   FolderOpen,
@@ -113,10 +113,6 @@ import {
   InlineOwnerLink,
   InlineCompetitorAgent,
   InlineBillingEntity,
-  SetUpFoldersDialog,
-  PropertyFoldersPanel,
-  ClientPropertyFoldersPanel,
-  PropertySharepointLink,
   LinkedDealsPanel, TaggedConversationsPanel,
   ClientBoardPanel,
   LinkedContactsPanel,
@@ -124,6 +120,7 @@ import {
   LinkedLandRegistryPanel,
   type DealLink,
 } from "@/pages/properties";
+import { RecordFolderPicker, RecordFolders } from "@/components/folders/record-folders";
 
 // Compact collapsible card used by the heavy mid-page panels (leasing schedule,
 // tenancy, KYC, etc). Header is always rendered; body only mounts when open.
@@ -555,7 +552,8 @@ export function PropertyDetail({ id }: { id: string }) {
     }
   }, [property?.id, property?.name, property?.status]);
 
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  // New property folder (the folder engine, decision 3 of docs/folders-review-2026-11-20.md).
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
   const [streetViewExpanded, setStreetViewExpanded] = useState(false);
   // Sidebar + main sections all open by default so nothing is hidden from
@@ -730,13 +728,15 @@ export function PropertyDetail({ id }: { id: string }) {
 
   return (
     <div className="h-[calc(100vh-48px)] flex flex-col" data-testid={`property-detail-${id}`}>
-      <SetUpFoldersDialog
-        propertyId={id}
-        propertyName={property.name}
-        folderTeams={property.folderTeams}
-        open={folderDialogOpen}
-        onOpenChange={setFolderDialogOpen}
-      />
+      {!isClientViewer && (
+        <RecordFolderPicker
+          open={newFolderOpen}
+          onOpenChange={setNewFolderOpen}
+          record={{ type: "property", id: property.id, name: property.name }}
+          startNew
+          defaultTemplate="property"
+        />
+      )}
       <DealAmlDialog deal={amlDeal} reason="property" onClose={() => setAmlDeal(null)} />
       {property && !isClientViewer && setupOpen && <PropertySetupDialog property={property} allCompanies={allCompanies} open={setupOpen} onOpenChange={closeSetup} />}
 
@@ -863,14 +863,10 @@ export function PropertyDetail({ id }: { id: string }) {
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent align="end" className="w-[min(680px,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto p-3 space-y-3" data-testid="property-folders-dropdown">
-                      {isClientViewer ? (
-                        <ErrorBoundary compact name="Property folders">{pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null}</ErrorBoundary>
-                      ) : (<>
+                      {/* Wait for the sign-in: a staff login reads as a client until it is known. */}
                       <ErrorBoundary compact name="Property folders">
-                        <PropertyFoldersPanel propertyName={property.name} propertyId={property.id} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
-                        <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+                        {pdViewer ? <RecordFolders recordType="property" recordId={property.id} recordName={property.name} client={isClientViewer} bare /> : null}
                       </ErrorBoundary>
-                      </>)}
                       <ErrorBoundary compact name="Property brochures"><PropertyBrochuresPanel propertyId={property.id} /></ErrorBoundary>
                     </PopoverContent>
                   </Popover>
@@ -888,7 +884,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     {!isClientViewer && <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>}
                     {!isClientViewer && linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
                     {!isClientViewer && <DropdownMenuItem onClick={() => setSetupOpen(true)} data-testid="property-setup-open"><ListChecks className="w-3.5 h-3.5 mr-2" />Set up this property</DropdownMenuItem>}
-                    {!isClientViewer && <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>}
+                    {!isClientViewer && <DropdownMenuItem onClick={() => setNewFolderOpen(true)} data-testid="property-new-folder"><FolderPlus className="w-3.5 h-3.5 mr-2" />New property folder</DropdownMenuItem>}
                     {!isClientViewer && planLayout && <DropdownMenuItem onClick={() => switchLayout(false)} data-testid="property-layout-classic"><Layers className="w-3.5 h-3.5 mr-2" />Back to the current page</DropdownMenuItem>}
                     {!isClientViewer && <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>}
                   </DropdownMenuContent>
@@ -914,9 +910,9 @@ export function PropertyDetail({ id }: { id: string }) {
                     </Button>
                   </Link>
                 )}
-                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
-                  <FolderTree className="w-3.5 h-3.5" />
-                  <span className="hidden [@container(min-width:1000px)]:inline">Set Up Folders</span>
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setNewFolderOpen(true)} data-testid="button-new-property-folder" title="New property folder" aria-label="New property folder">
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  <span className="hidden [@container(min-width:1000px)]:inline">New property folder</span>
                 </Button>
                 <Button
                   variant="outline"
@@ -1585,24 +1581,17 @@ export function PropertyDetail({ id }: { id: string }) {
                   staff panel — restored per Woody, 2026-08-03. */}
               {!uiJointAgent && <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
-                title="Files"
+                title="Folders"
                 icon={FolderOpen}
                 open={sidebarSections.files}
                 onToggle={() => toggleSection("files")}
                 testId="toggle-files-section"
               >
-                {isClientViewer ? (
-                  // Wait for /api/auth/me before mounting: isClientViewer
-                  // defaults true while it loads, so staff loads briefly
-                  // mounted this panel and fired a doomed client-scoped
-                  // sharepoint fetch (403 on every staff property view).
-                  pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null
-                ) : (
-                  <>
-                    <PropertyFoldersPanel propertyName={property.name} propertyId={property.id} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
-                    <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
-                  </>
-                )}
+                {/* Wait for /api/auth/me before mounting: isClientViewer
+                    defaults true while it loads, so staff loads briefly
+                    mounted the client panel and fired a doomed client-scoped
+                    sharepoint fetch (403 on every staff property view). */}
+                {pdViewer ? <RecordFolders recordType="property" recordId={property.id} recordName={property.name} client={isClientViewer} bare /> : null}
               </ReferenceSection>
               </PropertySection>}
 

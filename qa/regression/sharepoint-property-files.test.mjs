@@ -46,13 +46,14 @@ function fakeGraph({ searchFails = false } = {}) {
   return { graph, calls };
 }
 
-function fakePool({ folderUrl = FOLDER_URL, index = [] } = {}) {
+function fakePool({ folderUrl = FOLDER_URL, index = [], engine = [] } = {}) {
   const queries = [];
   return {
     queries,
     query: async (sql, params) => {
       queries.push({ sql, params });
       if (/FROM crm_properties/.test(sql)) return { rows: [{ name: 'Royal Exchange', sharepoint_folder_url: folderUrl }] };
+      if (/FROM record_folders/.test(sql)) return { rows: engine.map(web_url => ({ web_url })) };
       if (/FROM knowledge_base/.test(sql)) return { rows: index };
       return { rows: [] };
     },
@@ -122,6 +123,20 @@ test('no linked folder: search only, and the folder is never walked', async () =
   assert.equal(out.linkedFolder, null);
   assert.deepEqual(out.candidates.map(c => c.name), [dec25.name, investment.name]);
   assert.equal(calls.some(c => c.path.startsWith('/shares/') || c.path.includes('/children')), false);
+});
+
+test('a folder linked in Folders (the folder engine) is walked too, once, when the old link is the same folder', async () => {
+  const { graph, calls } = fakeGraph();
+  const pool = fakePool({ folderUrl: null, engine: [FOLDER_URL] });
+  const out = await findPropertyFiles(pool, 'rex', 'schedule', 'leasing', { graph });
+  assert.equal(out.linkedFolder, FOLDER_URL);
+  assert.deepEqual(out.candidates.map(c => c.name), [ts.name, budget.name]);
+  const engineSql = pool.queries.find(q => /FROM record_folders/.test(q.sql));
+  assert.match(engineSql.sql, /record_type = 'property' AND record_id = \$1 AND removed_at IS NULL AND status <> 'missing'/);
+  assert.deepEqual(engineSql.params, ['rex']);
+  const both = await findPropertyFiles(fakePool({ engine: [FOLDER_URL] }), 'rex', 'schedule', 'leasing', { graph: fakeGraph().graph });
+  assert.deepEqual(both.linkedFolders, [FOLDER_URL]);
+  assert.ok(calls.some(c => c.path.startsWith('/shares/')));
 });
 
 test('a Graph failure becomes a plain warning, and the other sources still show', async () => {
