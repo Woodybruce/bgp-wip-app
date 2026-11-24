@@ -38,7 +38,7 @@ function refreshAfterDecision(dealId: string) {
 
 const todayLondon = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 
-function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, full, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; levelWords: string | null; edd?: boolean; full?: boolean; onClose: () => void }) {
+function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, full, fileNote, onClose }: { dealId: string; role: string; partyName: string; needsNote: boolean; levelWords: string | null; edd?: boolean; full?: boolean; fileNote?: string | null; onClose: () => void }) {
   const { toast } = useToast();
   const [note, setNote] = useState("");
   const short = (edd && note.trim().length < IN_HOUSE_EDD_NOTE_MIN) || (needsNote && note.trim().length < SIGN_OFF_NOTE_MIN);
@@ -63,15 +63,22 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, fu
               : <>{levelWords ? `${levelWords}. ` : ""}Cleared for three years{full ? ", for any transaction, not only lettings under £10,000 a month" : ""}.</>}
           </DialogDescription>
         </DialogHeader>
+        {fileNote && (
+          // A listed company (24 November 2026): the app writes what the file holds, kept with the sign-off.
+          <div className="space-y-1" data-testid={`aml-sign-off-file-note-${role}`}>
+            <p className="text-xs font-medium">Written from the file</p>
+            <p className="rounded-md border bg-muted/40 px-2.5 py-2 text-xs leading-relaxed">{fileNote}</p>
+          </div>
+        )}
         <div className="space-y-1.5">
-          <Label htmlFor={`aml-sign-off-note-${role}`}>What you relied on{needsNote ? "" : " (optional)"}</Label>
-          <Textarea id={`aml-sign-off-note-${role}`} value={note} onChange={e => setNote(e.target.value)} rows={3} maxLength={1000}
-            placeholder="For example: listed plc, register owners confirmed, ID seen in person on 12 Nov"
+          <Label htmlFor={`aml-sign-off-note-${role}`}>{fileNote && !needsNote ? "Anything to add (optional)" : `What you relied on${needsNote ? "" : " (optional)"}`}</Label>
+          <Textarea id={`aml-sign-off-note-${role}`} value={note} onChange={e => setNote(e.target.value)} rows={fileNote && !needsNote ? 2 : 3} maxLength={1000}
+            placeholder={fileNote ? "Anything the file doesn't show" : "For example: listed plc, register owners confirmed, ID seen in person on 12 Nov"}
             data-testid={`aml-sign-off-note-${role}`} />
           {edd ? (
             <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-edd-${role}`}>What was checked and why the risk is acceptable: each flag, where the money comes from, who is behind it. A couple of sentences.</p>
           ) : needsNote && (
-            <p className="text-[11px] text-muted-foreground">The client checks aren't finished: say what you relied on.</p>
+            <p className="text-[11px] text-muted-foreground">{fileNote ? "The client checks aren't finished: say why you're signing off before they are." : "The client checks aren't finished: say what you relied on."}</p>
           )}
         </div>
         <DialogFooter>
@@ -383,7 +390,7 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
       {!approved && !compact && blocked && mayPress && (
         <p className="text-[11px] text-muted-foreground" data-testid={`aml-sign-off-blocked-${role}`}>Sign off: {blocked}</p>
       )}
-      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote} edd={!!view?.edd} full={full}
+      {open === "sign-off" && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view?.needsNote} edd={!!view?.edd} full={full} fileNote={view?.fileNote || null}
         levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(null)} />}
       {open === "kyc4u" && <Kyc4uResultDialog dealId={dealId} role={role} partyName={partyName} onClose={() => setOpen(null)} />}
       {open === "not-required" && <NotRequiredDialog dealId={dealId} role={role} companyId={companyId} partyName={partyName} jointRule={data?.jointRule || null} onClose={() => setOpen(null)} />}
@@ -410,7 +417,7 @@ export function PartyDecisionButton({ dealId, data, companyId, role, partyName, 
         <Button type="button" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`aml-next-sign-off-${role}`}>
           <BadgeCheck className="w-3.5 h-3.5 mr-1" />{full ? "Sign off the full checks" : "Sign off"}
         </Button>
-        {open && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view.needsNote} edd={!!view.edd} full={full}
+        {open && <SignOffDialog dealId={dealId} role={role} partyName={partyName} needsNote={!!view.needsNote} edd={!!view.edd} full={full} fileNote={view.fileNote || null}
           levelWords={level && level.level !== "enhanced" ? DUE_DILIGENCE_LABEL[level.level] : null} onClose={() => setOpen(false)} />}
       </>
     );

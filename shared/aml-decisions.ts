@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Officers and sign-off", title: "The app writes the sign-off note for a listed company",
+    text: "For a company listed on a UK or EU regulated market, or owned through one company at each level by one, with no red flag, the Sign off box shows a note written from the file: listing, ownership chain, status, accounts, screening and the person instructing us. It is kept with the approval. A person still signs off, and still says why if the client checks are unfinished." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "More than one company can sign for a party",
     text: "When two companies, or a company and a person, sign for one party (joint landlords, a joint venture), the second is added with Another company signs too. Each is a customer: BGP's checks run on it, its owners give their identity check and proof of address, and its red flags count. The sign-off waits for its checks and approves each one; the party is cleared only while each is." },
   { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The risk assessment leads with a written view",

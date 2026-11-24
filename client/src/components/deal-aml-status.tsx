@@ -102,7 +102,8 @@ export interface DealAmlStatus {
     canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
     officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
     // full: on a letting under £10,000 a month, whether the full checks may be signed off (23 November 2026).
-    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; full?: { blocked: string | null; needsNote: boolean; edd?: boolean };
+    // fileNote: a listed company's sign-off note, written from the file (24 November 2026).
+    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; fileNote?: string | null; full?: { blocked: string | null; needsNote: boolean; edd?: boolean; fileNote?: string | null };
       // A private individual's date of birth and nationality (24 November 2026).
       person?: PersonDetailsView | null }>;
     // The officers' setting: BGP does enhanced due diligence itself (21 November 2026).

@@ -430,13 +430,14 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/sign-off", asy
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (BGP's contact for ${subject.accountName})` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
-    const line = `BGP sign-off on ${subject.entityName || subject.accountName}, ${subject.dealName}, by ${who}: ${relied}`;
+    // A listed company's note, written from the file (24 November 2026), kept with the approval.
+    const line = `BGP sign-off on ${subject.entityName || subject.accountName}, ${subject.dealName}, by ${who}: ${relied}${facts.fileNote ? `. Written from the file: ${facts.fileNote}` : ""}`;
     if (subject.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
       const r = await approveEntityKyc("trading_entity", subject.entityId, me.name, {
         reminderCompanyId: subject.brandId, notes: line, recheckYears: years,
         evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: null, role: "client", clientFile: subject.file?.id || null,
-          instruction: subject.file?.instruction || null, note: note || null, level, regime: subject.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+          instruction: subject.file?.instruction || null, note: note || null, fileNote: facts.fileNote || null, level, regime: subject.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company was not found." });
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");

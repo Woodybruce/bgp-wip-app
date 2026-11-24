@@ -10729,3 +10729,40 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   named The Crown Estate: the suggestion, recording it, the draft, saving
   it). Not run on live: #3965's landlord still has to be recorded as a
   public body by a person.
+
+## The sign-off note for a listed company (Woody, 2026-11-24)
+
+Woody asked whether a plc needs someone to sign it off or is automatic
+(answer: a BGP person always presses Sign off; the law makes the risk
+decision BGP's, with its reasons kept), then: "Yes do the sign off note".
+Do not re-litigate. Rules: `shared/sign-off-note.ts` (`listedSignOffNote`);
+server: `fileNoteFor` in `server/deal-party-aml.ts`. Tests:
+`server/sign-off-note.test.ts` (in `npm test`),
+`qa/regression/sign-off-note-guards.test.mjs`.
+
+- **When**: a company listed on a UK or EU regulated market (`listingSettled`),
+  or owned through one company at each level by one (`viaParent`), on the full
+  checks, with no red flag on the party or the transaction and every flag
+  record read. A market abroad (the officers weigh it), a red flag (enhanced:
+  the officers' own note), a sanctions-only letting (no note needed), a person,
+  a trust or a public body get none.
+- **What it says**, from BGP's latest checks and the people to check: the
+  listing and PSC exemption date, simplified (listed itself) or standard
+  (through a listed parent) due diligence, the ownership chain read at
+  Companies House, the status, the latest accounts, which screens ran with no
+  red flags (and any that did not run, never read as clear), the person
+  instructing us (their identity check, and their authority: a director at
+  Companies House, sent with the client checks, or not yet), whether the
+  client checks are finished, and what is still to come.
+- **Where**: `fileNote` on each party's sign-off view (`signOffView`, so the
+  transaction's AML status and the client KYC window both carry it), shown as
+  **Written from the file** in the transaction's Sign off box
+  (`aml-sign-off-file-note-<role>`, from the Sign-off step and the Next line)
+  and the client KYC window (`client-kyc-sign-off-file-note`).
+- **It never stands in for the person**: the server writes it again at
+  sign-off, never from the request, and keeps it in the approval's history
+  line ("Written from the file: ...") and its evidence (`bgpSignOff.fileNote`).
+  The sign-off rule is checked against the typed note only, so while the
+  client checks are unfinished the person signing still says why (the box
+  asks for it); once nothing is outstanding the sign-off needs no typing.
+- Checked in a browser on a local copy; not run on live.

@@ -41,7 +41,9 @@ export interface ClientFileView {
   flags: { live: KycRedFlag[]; setAside: SetAsideFlag[]; level: { level: "simplified" | "standard" | "enhanced"; why: string[]; toWeigh?: string[] } | null; unchecked: string[] };
   signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean;
     // A private individual's date of birth and nationality (24 November 2026).
-    person?: PersonDetailsView | null };
+    person?: PersonDetailsView | null;
+    // A listed company's sign-off note, written from the file (24 November 2026).
+    fileNote?: string | null };
   next: ClientKycNext;
   documents?: { done: boolean; request?: { status: ClientRequestStatus; who: string; sentAt: string | null } | null; owing?: number };
   // The company's sanctions-only switch (24 November 2026): the sanctions steps alone, nothing asked of the client.
@@ -288,7 +290,14 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                 {view.signOff.blocked && <p className="text-xs text-amber-800 dark:text-amber-300">{view.signOff.blocked}</p>}
                 {view.signOff.canSignOff ? (
                   <div className="space-y-2">
-                    {(view.signOff.needsNote || view.signOff.edd) && <Textarea value={note} onChange={e => setNote(e.target.value)} rows={3} placeholder={view.signOff.edd ? "What was checked, and why the risk is acceptable" : "A note: what was checked"} data-testid="client-kyc-sign-off-note" />}
+                    {view.signOff.fileNote && (
+                      <div className="space-y-1" data-testid="client-kyc-sign-off-file-note">
+                        <p className="text-xs font-medium">Written from the file</p>
+                        <p className="rounded-md border bg-muted/40 px-2.5 py-2 text-xs leading-relaxed">{view.signOff.fileNote}</p>
+                      </div>
+                    )}
+                    {(view.signOff.needsNote || view.signOff.edd) && <Textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+                      placeholder={view.signOff.edd ? "What was checked, and why the risk is acceptable" : view.signOff.fileNote ? "The client checks aren't finished: say why you're signing off before they are" : "A note: what was checked"} data-testid="client-kyc-sign-off-note" />}
                     <Button size="sm" disabled={!!view.signOff.blocked || signOff.isPending} onClick={() => signOff.mutate()} data-testid="client-kyc-sign-off">
                       {signOff.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Sign off {view.subject.name}
                     </Button>

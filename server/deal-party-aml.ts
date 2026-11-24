@@ -52,6 +52,7 @@ import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personVerifiedWords } 
 import { relianceInput, relianceWords } from "@shared/aml-reliance";
 import { sddNoteProblem, type SavedSddNote } from "@shared/aml-sdd";
 import { personDetailsInput, personDetailsWords, personDobNeeded, type PersonDetailsView } from "@shared/kyc-person-details";
+import { listedSignOffNote } from "@shared/sign-off-note";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -149,7 +150,7 @@ export interface KnownFacts {
 }
 
 /** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
-export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null; person: PersonDetailsView | null }> {
+export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null; person: PersonDetailsView | null; fileNote: string | null }> {
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
@@ -198,15 +199,20 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     ? await import("./kyc-person-details").then(m => m.readPersonDetails(party.brandId, party.entityId, db)).catch(() => null)
     : null;
   const dobNeeded = personDobNeeded({ kind, sanctionsOnly: party.regime === "sanctions_only", trust });
+  let requests: import("@shared/kyc-people").PeopleRequest[] = [];
   const people = await import("./kyc-people")
-    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
-      await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId })))
+    .then(async m => {
+      requests = await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId });
+      return m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, requests);
+    })
     .catch(() => null);
   // People that could not be read count as outstanding: a note is asked for.
   const outstanding = people ? people.outstanding : ["the people to check could not be read"];
   // Another firm's checks the officers rely on (reg 39) stand in for the client checks.
   const reliance = people?.reliance?.words || null;
   const finished = mainFinished && !outstanding.length;
+  const partyFlags = (flags?.parties?.[party.brandId] || []).length + (flags?.deal || []).length;
+  const fileNote = await fileNoteFor(party, { kind, trust, flags: partyFlags, unread: (flags?.unchecked || []).length > 0, people, requests, mainFinished }).catch(() => null);
   return {
     rejected: party.state.status === "rejected",
     current: verdict.approved ? { by: party.state.approvedBy, until: party.state.expiresAt ? new Date(party.state.expiresAt).toISOString() : null } : null,
@@ -244,11 +250,36 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     dobNeeded: dobNeeded && !personDetails,
     dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
     person: kind === "individual" ? { details: personDetails, needed: dobNeeded, words: personDetailsWords(personDetails) } : null,
+    fileNote,
   };
 }
 
+// The sign-off note for a listed company, or one owned through a listed
+// company, written from the file (Woody, 24 November 2026: "Yes do the sign
+// off note"). Read again here at sign-off, never taken from the request.
+async function fileNoteFor(party: AmlSubject, f: {
+  kind: string; trust: boolean; flags: number; unread: boolean;
+  people: import("@shared/kyc-people").PartyPeople | null; requests: import("@shared/kyc-people").PeopleRequest[]; mainFinished: boolean;
+}): Promise<string | null> {
+  if (f.kind !== "company" || f.trust || f.unread || f.flags > 0 || party.regime !== "full" || !f.people) return null;
+  const { latestPrecheck } = await import("./kyc-prechecks");
+  const stored = await latestPrecheck(party.brandId, party.entityId).catch(() => null);
+  if (!stored?.result?.companiesHouse?.listing) return null;
+  // The request to the person dealing with us for the company, the latest one not cancelled.
+  const main = [...f.requests].reverse().find(r => !r.person && !r.trustDocs && !r.cancelled && r.companyId === party.brandId) || null;
+  const acting = main ? f.people.people.find(p => p.roles.includes("acting")) || null : null;
+  return listedSignOffNote({
+    precheck: stored.result, redFlags: f.flags, sanctionsOnly: false, company: true,
+    acting: main ? {
+      name: acting?.name || main.recipientName || null, sentAt: main.sentAt, finished: f.mainFinished,
+      idState: acting?.id.state || null, authoritySent: main.files.some(x => x.docKey === "authority"),
+    } : null,
+    outstanding: f.mainFinished ? f.people.outstanding : [],
+  });
+}
+
 /** For the deal's AML card: may the party be signed off now, and is a note needed. edd: enhanced due diligence by BGP, the officers' to sign off. */
-export function signOffView(facts: Omit<SignOffFacts, "note"> & { person?: PersonDetailsView | null }): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; person: PersonDetailsView | null } {
+export function signOffView(facts: Omit<SignOffFacts, "note"> & { person?: PersonDetailsView | null; fileNote?: string | null }): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; person: PersonDetailsView | null; fileNote: string | null } {
   const edd = signOffEnhanced(facts) && signOffInHouse(facts);
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(Math.max(SIGN_OFF_NOTE_MIN, IN_HOUSE_EDD_NOTE_MIN)) }),
@@ -257,6 +288,8 @@ export function signOffView(facts: Omit<SignOffFacts, "note"> & { person?: Perso
     outstanding: facts.sanctionsOnly || facts.reliance ? [] : facts.clientChecksOutstanding || [],
     // A private individual's date of birth and nationality (24 November 2026).
     person: facts.person ?? null,
+    // Written from the file for a listed company (24 November 2026): shown in the Sign off box, kept with the approval.
+    fileNote: facts.fileNote ?? null,
   };
 }
 
@@ -450,14 +483,16 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
+      // A listed company's note, written from the file (24 November 2026): named here, kept in full below.
+      facts.fileNote ? "the note written from the file" : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (agent on the transaction)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
-    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}`;
+    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}${facts.fileNote ? `. Written from the file: ${facts.fileNote}` : ""}`;
     const before = party.state.status || "no checks";
     if (party.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
       const evidence = { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
-        level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } };
+        fileNote: facts.fileNote || null, level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } };
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
         reminderCompanyId: party.brandId, notes: line, recheckYears: years, evidence,
       });
