@@ -699,7 +699,7 @@ export async function chaseJointRequest(db: Db, row: TokenRow, by: { name: strin
   const expiresAt = new Date(Math.max(new Date(row.expires_at).getTime(), now.getTime() + TOKEN_TTL_DAYS * 86400000));
   const chases = request.jointAgent?.chases || [];
   const sent = await portal.sendKycEmail({
-    to: [row.contact_email], cc: request.cc,
+    to: [row.contact_email], cc: request.cc, test: !!row.is_test,
     build: sentFrom => jointAgentMissingEmail({
       recipientName: row.contact_name, firm: request.jointAgent?.firm || "your firm", partyName: request.partyName, partyRole: request.role,
       kind: request.kind, dealName: request.dealName, ref: request.ref, link: portal.kycLinkFor(row.token), expiresAt,
@@ -780,7 +780,7 @@ export async function chaseJointAgents(now = new Date(), db: Db = pool): Promise
       } else if (due === "stop") {
         await db.query(`UPDATE kyc_upload_tokens SET request = jsonb_set(request, '{jointAgent,chaseStoppedAt}', to_jsonb($2::text), true) WHERE token = $1`, [row.token, now.toISOString()]);
         const sent = await portal.sendKycEmail({
-          to: kycReplyAddresses(row, request.cc),
+          to: kycReplyAddresses(row, request.cc), test: !!row.is_test,
           build: sentFrom => jointAgentChaseStoppedEmail({
             firm: request.jointAgent?.firm || "The joint agent", partyName: request.partyName, dealName: request.dealName, ref: request.ref,
             dealLink: `${(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "")}/deals/${encodeURIComponent(String(row.deal_id))}`,

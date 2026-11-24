@@ -41,7 +41,7 @@ import { clientFileName, clientFileRole, clientSubjectEntity, recordIsOwnSubject
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords } from "@shared/kyc-request";
+import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords, kycCopyList, kycChecksRunningWords, KYC_CHECKS_UPDATED_WORDS, listMadeBeforeChecks } from "@shared/kyc-request";
 import { agentWords, jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 // AML emails come from BGP's own KYC mailbox (Woody, 2026-11-23: "the email
@@ -207,7 +207,7 @@ export function sameFirmDomain(a: string, b: string): boolean {
   return !!da && da === db && !FREE_MAIL.has(da);
 }
 
-export interface KycSendResult { ok: boolean; from: string | null; fellBack: boolean; error: string | null }
+export interface KycSendResult { ok: boolean; from: string | null; fellBack: boolean; error: string | null; cc?: string[] }
 
 // One door for every client checks email: from the KYC mailbox, else the
 // app's address, else the shared mailbox (the footer names whichever sent
@@ -245,11 +245,15 @@ export async function sendKycEmail(opts: {
   to: string[];
   cc?: string[];
   build: (sentFrom: string) => { subject: string; html: string };
+  // An admin's test, or an email about a test request: the AML officers are
+  // not copied on it (every other AML email copies them, kycCopyList).
+  test?: boolean;
 }): Promise<KycSendResult> {
   await primeAmlContact();
   const to = [...new Set(opts.to.map(cleanEmail).filter(isEmail))];
   if (!to.length) return { ok: false, from: null, fellBack: false, error: "No address to send to" };
-  const cc = [...new Set((opts.cc || []).map(cleanEmail).filter(isEmail))].filter(address => !to.includes(address));
+  const officers = opts.test ? [] : await import("./aml-authority").then(m => m.amlOfficerEmails()).catch(() => [] as string[]);
+  const cc = kycCopyList(to, opts.cc || [], officers);
   const logo = kycLogoBase64();
   const attachments: EmailAttachment[] = logo
     ? [{ name: "bgp-logo.png", contentType: "image/png", contentBytes: logo, isInline: true, contentId: KYC_LOGO_CID }]
@@ -257,9 +261,9 @@ export async function sendKycEmail(opts: {
   try {
     const sent = await sendFromFirstMailbox({ mailboxes: [KYC_MAILBOX], to, cc: cc.length ? cc : undefined, attachments, build: opts.build, appMailbox: false });
     const fellBack = cleanEmail(sent.from) !== cleanEmail(KYC_MAILBOX);
-    return { ok: true, from: sent.from, fellBack, error: fellBack ? (sent.refused[0]?.error || `${KYC_MAILBOX} was refused within the hour`) : null };
+    return { ok: true, from: sent.from, fellBack, error: fellBack ? (sent.refused[0]?.error || `${KYC_MAILBOX} was refused within the hour`) : null, cc };
   } catch (e: any) {
-    return { ok: false, from: null, fellBack: false, error: String(e?.message || e).slice(0, 300) };
+    return { ok: false, from: null, fellBack: false, error: String(e?.message || e).slice(0, 300), cc };
   }
 }
 
@@ -577,6 +581,10 @@ export const clientCheckBody = z.object({
     name: z.string().trim().min(2).max(120),
     email: z.string().trim().max(200),
   }).strict().nullish(),
+  // When BGP's checks before asking last finished, as the send window saw it
+  // (null: none had). A list made before a newer read of the register is
+  // refused (24 November 2026). Absent from a window loaded before then.
+  basedOn: z.string().max(40).nullable().optional(),
 }).strict();
 
 // Each party: its brand, the company that signs for it when the deal names
@@ -730,9 +738,24 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
   if (!needsIdCheck && !docs.includes("photo_id") && input.needsIdCheck) docs = ["photo_id", ...docs];
   if (!needsIdCheck && !docs.length) throw Object.assign(new Error("Ask for at least one thing: the identity check or a document."), { status: 400 });
 
+  // What to ask follows from what BGP's checks read on the register, so a
+  // list is never sent while they are still reading it, nor one made before
+  // their latest read (#4664, 24 November 2026: sent while the landlord's
+  // register was being read, the request asked the person acting for each
+  // owner's ID as documents and gave the owner no identity check of their own).
+  const prechecks = await import("./kyc-prechecks");
+  if (!trustDocs && prechecks.precheckRunning(party.companyId, party.entityId)) {
+    await prechecks.awaitPrecheck(party.companyId, 20_000, party.entityId).catch(() => null);
+    if (prechecks.precheckRunning(party.companyId, party.entityId)) {
+      throw Object.assign(new Error(kycChecksRunningWords(party.name)), { status: 409, code: "CHECKS_RUNNING" });
+    }
+  }
   // What BGP's checks before asking found (the agent's ticks decide what is
   // asked; this records why the rest was not, and the owners to confirm).
-  const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(party.companyId, party.entityId)).catch(() => null);
+  const pre = await prechecks.partyAskInput(party.companyId, party.entityId).catch(() => null);
+  if (!trustDocs && input.basedOn !== undefined && listMadeBeforeChecks(input.basedOn, pre?.ranAt || null)) {
+    throw Object.assign(new Error(KYC_CHECKS_UPDATED_WORDS), { status: 409, code: "CHECKS_UPDATED" });
+  }
   const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
   const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party.publicBody && input.kind === "company" });
   const confirmOwners = !trustDocs && input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
@@ -839,8 +862,8 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
   request.sendError = sent.ok ? (sent.fellBack ? `Sent from ${sent.from}: Microsoft would not send as ${KYC_MAILBOX}` : null) : sent.error;
   await saveRequest(token, request);
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
-    [party.companyId, trustDocs ? "trust_documents_requested" : "client_checks_sent", me.name || me.id, `${trustDocs ? "Trust documents asked for: " : ""}${sent.ok ? "Sent" : "Not sent"} ${viaAgent ? `through ${viaAgent.name} of ${viaAgent.firm} <${email}>, to pass on to ${contactName || party.name},` : `to ${input.name} <${email}>`} for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${cc.join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
-  return { token, ref, link, sent, idCheck: request.needsIdCheck, idCheckNote: request.idCheckNote, cc };
+    [party.companyId, trustDocs ? "trust_documents_requested" : "client_checks_sent", me.name || me.id, `${trustDocs ? "Trust documents asked for: " : ""}${sent.ok ? "Sent" : "Not sent"} ${viaAgent ? `through ${viaAgent.name} of ${viaAgent.firm} <${email}>, to pass on to ${contactName || party.name},` : `to ${input.name} <${email}>`} for ${found.deal.name} (ref ${ref})${sent.ok ? `, from ${sent.from}, copied to ${(sent.cc || cc).join(", ") || "nobody"}` : `: ${sent.error}`}`]).catch(() => {});
+  return { token, ref, link, sent, idCheck: request.needsIdCheck, idCheckNote: request.idCheckNote, cc: sent.cc || cc };
 }
 
 // ── A person's own request ──────────────────────────────────────────────────
@@ -1086,6 +1109,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
   const sent = await sendKycEmail({
     to: [passed ? passed.email : row.contact_email || ""],
     cc: passed ? [cleanEmail(row.contact_email), ...request.cc] : request.cc,
+    test: !!row.is_test,
     build: sentFrom => via && !passed
       ? kycViaAgentReminderEmail({
         ...common, sentFrom, recipientName: via.name, agentFirm: via.firm, partyRole: request.role,
@@ -1328,7 +1352,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
     const officers = row.is_test ? [] : await import("./aml-authority").then(m => m.amlOfficerEmails()).catch(() => [] as string[]);
     const to = [...new Set([...kycReplyAddresses(row, request.cc), ...officers.filter(e => cleanEmail(e).endsWith(STAFF_DOMAIN))])];
     const sent = await sendKycEmail({
-      to,
+      to, test: !!row.is_test,
       build: sentFrom => trustDocsReadyEmail({
         recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
         dealLink: linkForRow(row), sentFrom, test: !!row.is_test,
@@ -1349,7 +1373,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
     const letting = request.jointAgent?.rule === "letting" || request.jointAgent?.rule === "other";
     const missing = await import("./joint-agent-checks").then(m => m.gapsForToken(row.token, { you: false })).catch(() => [] as string[]);
     const sent = await sendKycEmail({
-      to: kycReplyAddresses(row, request.cc),
+      to: kycReplyAddresses(row, request.cc), test: !!row.is_test,
       build: sentFrom => jointAgentFinishedEmail({
         firm: request.jointAgent?.firm || "The joint agent", recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName,
         ref: request.ref, dealLink: linkForRow(row), files: progress.files.map(f => f.name), letting,
@@ -1385,7 +1409,7 @@ async function finishRequest(row: TokenRow): Promise<void> {
     : await loadDealRedFlags(row.deal_id, [row.company_id], row.trading_entity_id ? { [row.company_id]: row.trading_entity_id } : {}).then(r => r.parties[row.company_id!] || []).catch(() => []);
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
   const sent = await sendKycEmail({
-    to,
+    to, test: !!row.is_test,
     build: sentFrom => kycFinishedEmail({
       inHouse,
       recipientName: row.contact_name, partyName: request.partyName, dealName: request.dealName, ref: request.ref,
@@ -1532,7 +1556,9 @@ kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:compa
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
         const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
         const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody });
-        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, trustAsk };
+        // While BGP's checks are reading the register, the send window waits (24 November 2026).
+        const precheckRunning = !!(await import("./kyc-prechecks").then(m => m.precheckRunning(p.companyId, p.entityId)).catch(() => null));
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, precheckRunning, trustAsk };
       })),
       requests: await clientChecksForDeal(dealId, scope.client || undefined),
       people,
@@ -1671,7 +1697,7 @@ kycRequestRouter.post(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:comp
     const result = await createClientCheck(scope.dealId, parsed.data, me, scope.client ? { entityId: scope.client.entityId } : {});
     res.json(result);
   } catch (err: any) {
-    res.status(err?.status || 500).json({ message: err?.message || "Could not send the client checks" });
+    res.status(err?.status || 500).json({ message: err?.message || "Could not send the client checks", ...(err?.code ? { code: err.code } : {}) });
   }
 });
 
@@ -1914,7 +1940,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/pass-on", async (req: Request, res
     const person = !String(row.contact_name || "").trim() || !session ? name : row.contact_name;
     const link = kycLinkFor(row.token);
     const sent = await sendKycEmail({
-      to: [email], cc: [cleanEmail(row.contact_email), ...request.cc],
+      to: [email], cc: [cleanEmail(row.contact_email), ...request.cc], test: !!row.is_test,
       build: sentFrom => kycRequestEmail({
         recipientName: name, partyName: request.partyName, kind: request.kind, dealName: request.dealName, ref: request.ref, link,
         expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
@@ -2088,7 +2114,7 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
         needsIdCheck: true, docs: request.docs, note: request.note, agents: [agent], test: true, testBy: colleague ? (me.name || "A BGP admin") : null, askPep: true };
       sent = await sendKycEmail({
         to: [recipient.email],
-        cc,
+        cc, test: true,
         build: sentFrom => kind === "request"
           ? kycRequestEmail({ ...ctx, sentFrom })
           : kycReminderEmail({ ...ctx, sentFrom, progress: { idDone: true, docsDone: [request.docs[0]], pepAnswered: true } }),
@@ -2100,19 +2126,19 @@ kycRequestRouter.post("/api/admin/kyc-emails/test", adminOnly, async (req: Reque
       }
     } else if (kind === "finished") {
       sent = await sendKycEmail({
-        to: [email],
+        to: [email], test: true,
         build: sentFrom => kycFinishedEmail({ recipientName: SAMPLE.recipientName, partyName: SAMPLE.partyName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE, idState: "approved",
           files: [{ name: "ownership-structure.pdf", docKey: "ownership" }, { name: "passport.jpg", docKey: "owner_ids" }], missing: [], sentFrom, test: true, kind: "company", pep: "no", pepDetail: null }),
       });
     } else if (kind === "red_flag") {
       sent = await sendKycEmail({
-        to: [email],
+        to: [email], test: true,
         build: sentFrom => kycRedFlagEmail({ partyName: SAMPLE.partyName, recipientName: SAMPLE.recipientName, dealName: SAMPLE.dealName, ref: "7K2Q9M", dealLink: LINK_BASE,
           flags: SAMPLE_RED_FLAGS, sentFrom, test: true }),
       });
     } else {
       sent = await sendKycEmail({
-        to: [email],
+        to: [email], test: true,
         build: sentFrom => kycIdCheckEmail({ recipientName: me.name, partyName: SAMPLE.partyName, kind: "company", dealName: SAMPLE.dealName, link: `${LINK_BASE}/kyc-upload/sample`, agents: [agent], sentFrom, test: true }),
       });
     }

@@ -5,7 +5,7 @@
 // Shown while the client checks are on (clientChecks on the deal's KYC
 // status: their own switch since 18 November 2026, not in-app AML's);
 // otherwise KYC4U does the checks.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAmlUrls } from "@/lib/aml-scope";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, UserPlus } from "lucide-react";
@@ -20,7 +20,7 @@ import { FileThumbGrid } from "@/components/file-popout";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import {
-  KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText,
+  KYC_CHECKS_UPDATED_WORDS, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText,
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
@@ -35,6 +35,8 @@ interface Party {
   role: string; kind: KycPartyKind; contactId: string | null; contacts: PartyContact[]; defaultDocs: KycDocKey[];
   // What BGP's checks before asking found, for "ask only what is left".
   askInput: PrecheckAskInput | null; precheckRanAt: string | null;
+  // BGP's checks are reading the register now: the send window waits (24 November 2026).
+  precheckRunning?: boolean;
   // A trust (23 November 2026): its documents held and its trustees recorded.
   publicBody?: boolean;
   trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
@@ -84,6 +86,9 @@ export function useClientChecks(dealId: string | null | undefined, enabled = tru
       if (!res.ok) throw new Error(plain(await res.text()));
       return res.json();
     },
+    // Read again every few seconds while BGP's checks are reading a party's
+    // register, so People to check and what to ask follow when they finish.
+    refetchInterval: query => (query.state.data?.parties || []).some(p => p.precheckRunning) ? 3000 : false,
   });
 }
 
@@ -979,6 +984,13 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const party = data?.parties.find(p => p.companyId === companyId) || null;
   // The request names the company that signs when the deal sets one.
   const shownName = party?.name || partyName;
+  // What to ask follows from what BGP's checks read on the register: the
+  // window waits while they read it, and makes the list again when they
+  // finish (24 November 2026, #4664: sent while the landlord's register was
+  // being read, the owner got no identity check of their own).
+  const reading = !!party?.precheckRunning;
+  const seenRan = useRef<string | null | undefined>(undefined);
+  const [listUpdated, setListUpdated] = useState(false);
   // Through the party's own agent, to pass on to their client (23 November 2026).
   const [via, setVia] = useState(startViaAgent);
   const agentPeople = (agent?.contacts || []).filter(c => c.email);
@@ -1001,6 +1013,12 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(false);
   const [sent, setSent] = useState<null | { link: string; from: string | null; cc: string[]; error: string | null; fellBack: boolean; idCheckNote: string | null }>(null);
+  useEffect(() => {
+    if (!party) return;
+    const ran = party.precheckRanAt ?? null;
+    if (seenRan.current === undefined) { seenRan.current = ran; return; }
+    if (ran !== seenRan.current) { seenRan.current = ran; setDocs(null); setListUpdated(true); }
+  }, [party?.precheckRanAt]); // eslint-disable-line react-hooks/exhaustive-deps
   // After a send, the transaction's checks are read again as the dialog closes.
   const close = () => { if (sent) queryClient.invalidateQueries({ queryKey: keyFor(dealId) }); onClose(); };
 
@@ -1053,27 +1071,45 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
 
   const send = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", urls.clientChecks(dealId), via ? {
-        companyId, contactId: null, name: toName, email: "", mobile: null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null,
+      // basedOn: when BGP's checks last finished, as this list was made from them.
+      const basedOn = party?.precheckRanAt ?? null;
+      const body = via ? {
+        companyId, contactId: null, name: toName, email: "", mobile: null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null, basedOn,
         viaAgent: {
           firm: agentFirm.trim(), firmCompanyId: agent?.companyId && agentFirm.trim() === agent.firm ? agent.companyId : null,
           contactId: agentPicked?.id || null, name: toAgentName, email: toAgentEmail,
         },
       } : {
         companyId, contactId: usingOther ? null : pickedContact?.id || null, name: toName, email: toEmail,
-        mobile: toMobile || null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null,
+        mobile: toMobile || null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null, basedOn,
+      };
+      const res = await fetch(urls.clientChecks(dealId), {
+        method: "POST", credentials: "include", headers: { ...getAuthHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
-      return res.json();
+      const j = await res.json().catch(() => ({} as any));
+      if (!res.ok) throw Object.assign(new Error(j?.message || `Not sent (${res.status})`), { code: j?.code || null });
+      return j;
     },
     // The checks are read again when the dialog closes, not now: the button
     // that opened it goes once a request exists, and with it this confirmation.
     onSuccess: (r: any) => {
       setSent({ link: r.link, from: r.sent?.from || null, cc: r.cc || [], error: r.sent?.ok ? null : r.sent?.error || "The email was not sent", fellBack: !!r.sent?.fellBack, idCheckNote: r.idCheckNote || null });
     },
-    onError: (e) => toast({ title: "Not sent", description: plain(e), variant: "destructive" }),
+    onError: (e: any) => {
+      // BGP's checks read the register since the list was made, or are reading it now:
+      // read again, make the list afresh, and ask the person to check it.
+      if (e?.code === "CHECKS_UPDATED" || e?.code === "CHECKS_RUNNING") {
+        setDocs(null);
+        if (e.code === "CHECKS_UPDATED") setListUpdated(true);
+        queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
+        toast({ title: e.code === "CHECKS_UPDATED" ? "What to ask has changed" : "Still reading Companies House", description: plain(e) });
+        return;
+      }
+      toast({ title: "Not sent", description: plain(e), variant: "destructive" });
+    },
   });
 
-  const canSend = !!party && (via ? !agentMissing : !!toName && EMAIL_RE.test(toEmail)) && (wantId || chosenDocs.length > 0) && !send.isPending;
+  const canSend = !!party && !reading && (via ? !agentMissing : !!toName && EMAIL_RE.test(toEmail)) && (wantId || chosenDocs.length > 0) && !send.isPending;
   const copied = (data?.agents || []).map(a => a.name);
 
   return (
@@ -1196,7 +1232,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
               <Label>What to ask for</Label>
               {veriff ? (
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={wantId} onChange={e => { setIdCheck(e.target.checked); setDocs(null); }} />
+                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={wantId} disabled={reading} onChange={e => { setIdCheck(e.target.checked); setDocs(null); }} />
                   <span><strong>Identity check online</strong><span className="block text-xs text-muted-foreground">With Veriff: a photo of their passport or licence and a short selfie, about two minutes on their phone.</span></span>
                 </label>
               ) : (
@@ -1204,7 +1240,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
               )}
               {offeredDocs.map(key => (
                 <label key={key} className="flex items-start gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={chosenDocs.includes(key)} onChange={() => toggleDoc(key)} />
+                  <input type="checkbox" className="mt-0.5 h-4 w-4" checked={chosenDocs.includes(key)} disabled={reading} onChange={() => toggleDoc(key)} />
                   <span><strong>{KYC_DOCS[key].title}</strong><span className="block text-xs text-muted-foreground">{KYC_DOCS[key].detail}</span></span>
                 </label>
               ))}
@@ -1218,9 +1254,15 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
                 <p className="text-muted-foreground">Tick anything above to ask for it after all.</p>
               </div>
             )}
-            {!party.askInput && (
+            {reading ? (
+              <p className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" data-testid="client-checks-reading">
+                <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin" />Reading Companies House for {shownName}. What to ask follows from who it lists, so this waits until BGP's checks finish (usually under a minute).
+              </p>
+            ) : listUpdated ? (
+              <p className="text-xs text-amber-800 dark:text-amber-300" data-testid="client-checks-list-updated">{KYC_CHECKS_UPDATED_WORDS.replace(" and send again.", ".")}</p>
+            ) : !party.askInput ? (
               <p className="text-xs text-muted-foreground" data-testid="client-checks-no-precheck">BGP's checks before asking have not finished for {shownName} yet, so everything usual is ticked. They show on the transaction's AML card when done.</p>
-            )}
+            ) : null}
 
             <p className="text-xs text-muted-foreground">Every request also asks {KYC_PEP_QUESTION.title.toLowerCase()} (politically exposed persons). A yes comes back to you and the MLRO.</p>
 
@@ -1234,7 +1276,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
               <div><span className="text-muted-foreground">To:</span> {via
                 ? (toAgentEmail ? `${toAgentName ? `${toAgentName} ` : ""}<${toAgentEmail}>${agentFirm.trim() ? ` at ${agentFirm.trim()}` : ""}, to pass on` : "their agent above")
                 : <>{toName ? `${toName} ` : ""}{toEmail ? `<${toEmail}>` : "choose someone above"}</>}</div>
-              <div><span className="text-muted-foreground">Copied:</span> {copied.length ? `${copied.join(", ")} (the transaction's agents) and you` : "you (the transaction has no agents set)"}</div>
+              <div><span className="text-muted-foreground">Copied:</span> {copied.length ? `${copied.join(", ")} (the transaction's agents), you and the AML officers` : "you and the AML officers (the transaction has no agents set)"}</div>
             </div>
             {via && agentMissing && <p className="text-[11px] text-muted-foreground" data-testid="client-checks-agent-missing">{agentMissing}</p>}
 

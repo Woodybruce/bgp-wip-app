@@ -331,6 +331,36 @@ export function kycReplyAddresses(row: { is_test: boolean | null; contact_email:
   return row.is_test && !copied.length ? [row.contact_email || ""] : copied;
 }
 
+// Sending client checks waits for BGP's checks before asking: what to ask
+// follows from what they read on the register (24 November 2026, #4664).
+export const kycChecksRunningWords = (party: string): string =>
+  `BGP's checks are still reading Companies House for ${party}. What to ask follows from what they find: wait a minute and send again.`;
+export const KYC_CHECKS_UPDATED_WORDS = "BGP's checks have read Companies House since this window opened, so what to ask has changed. Check the list and send again.";
+/** Was a list made when BGP's checks last finished at `basedOn` (null: none
+ * had) out of date because a later run has finished since? */
+export function listMadeBeforeChecks(basedOn: string | null, latestRanAt: string | null): boolean {
+  const latest = latestRanAt ? Date.parse(latestRanAt) : NaN;
+  if (!Number.isFinite(latest)) return false;
+  const seen = basedOn ? Date.parse(basedOn) : NaN;
+  return !Number.isFinite(seen) || seen < latest;
+}
+
+// Who is copied on an AML email: the copy list it was given, then the AML
+// officers (the Nominated Officer and the Deputies), on every AML email that
+// goes out (Woody, 24 November 2026: "can you have layla, jack and I copied
+// in on all emails sent out for AML"). Each address once, never one the email
+// is sent to, and an officer only at BGP's own domain.
+export function kycCopyList(to: string[], cc: string[], officers: string[]): string[] {
+  const clean = (value: unknown) => String(value || "").trim().toLowerCase();
+  const valid = (value: string) => /^[^\s@<>()",;]+@[^\s@<>()",;]+\.[^\s@<>()",;]+$/.test(value);
+  const sentTo = new Set(to.map(clean));
+  const out: string[] = [];
+  for (const address of [...cc.map(clean), ...officers.map(clean).filter(a => a.endsWith("@brucegillinghampollard.com"))]) {
+    if (valid(address) && !sentTo.has(address) && !out.includes(address)) out.push(address);
+  }
+  return out;
+}
+
 export const KYC_LOGO_CID = "bgp-logo";
 const ACCENT = "#6E0C25", INK = "#1a1a1a", BODY = "#3d3d3d", MUTED = "#6b6b6b", RULE = "#e3ddd8", PAGE = "#f4f1ee";
 const FONT = "Arial,Helvetica,sans-serif";

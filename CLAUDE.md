@@ -4554,6 +4554,23 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   records `notAsked` (with reasons), `confirmOwners`, `ownerNames`,
   `ownersAnswer` and `precheckId`; the dialog lists what was not asked and the
   agent can tick anything back. With no finished run, the usual list is asked.
+- **Sending waits for the register** (Woody, 24 November 2026, on #4664: "I
+  clicked in the add people button before it had searched the companies?
+  should it wait"). The landlord's request went to Kenneth Tam three minutes
+  after BGP's checks read the register, with the list the send window had
+  made before they finished: a structure chart, "ID for each of those
+  owners" as documents and his own proof of address, and no identity check
+  of their own for the owner, Lee Chung Chan. Now the client checks list
+  carries `precheckRunning` per party and is read again every 3 seconds
+  while a run goes (`useClientChecks`), and the AML box re-reads it when a
+  run starts or finishes; the send window says it is reading Companies House
+  and holds its ticks and Send until the run finishes, then makes the list
+  afresh. The server (`createClientCheck`) waits up to 20 seconds for a run
+  going, then refuses (`CHECKS_RUNNING`), and refuses a list made before
+  the latest run (`basedOn`, `listMadeBeforeChecks`: `CHECKS_UPDATED`); the
+  window then re-reads and asks for the list to be checked again. A request
+  already sent is not changed: People to check shows each owner still to
+  check, with Send them a link.
 - **The nightly fix**: the nightly Companies House refresh (`runBatchReKyc`
   → `performAutoKyc`, 120 companies a night) wrote a `kyc_investigations` row
   with `sanctions_match = false` without screening anyone, so within 30 days
@@ -6978,7 +6995,20 @@ person who typed that message so fix that bug". Do not re-litigate.
 - **The note** is headed with `noteFrom`, the first name of
   `request.sentBy` (it was the first name on the contact list); with nobody
   named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
-- Tests in `server/kyc-request.test.ts`.
+- **The AML officers are copied on every AML email** (Woody, 24 November
+  2026: "can you have layla, jack and I copied in on all emails sent out for
+  AML"). `sendKycEmail`, the one door for AML emails, adds the Nominated
+  Officer and the Deputies (`amlOfficerEmails`, so today Jack, Layla and
+  Woody) to the copy list (`kycCopyList` in `shared/kyc-request.ts`: each
+  once, never someone the email is sent to, BGP addresses only): client
+  checks, a person's own link, reminders, pass-on, the joint agent's request
+  and chases, the Finished and red-flag notes, the trust documents note.
+  `test: true` (an admin's test, or an email about a test request,
+  `!!row.is_test`) copies nobody else. The send confirmation and the KYC
+  history line name everyone copied (`sent.cc`). A new AML email goes
+  through `sendKycEmail` and says whether it is a test.
+- Tests in `server/kyc-request.test.ts`, guards in
+  `qa/regression/kyc-client-checks.test.mjs`.
 
 ## Only a sign-off counts (Woody, 2026-11-24)
 

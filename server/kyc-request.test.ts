@@ -8,6 +8,7 @@ import {
   KYC_DATA_USE, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_TIMING, defaultKycDocs, isKycDocKey, isKycPepAnswer,
   kycFinishedEmail, kycIdCheckEmail, kycIdStateFor, kycRefFromSubject, kycReminderEmail, kycReplyAddresses, kycRequestEmail, kycSteps, kycUploadAllowed,
   kycPersonRoleWords, kycViaAgentIdWho, kycViaAgentReminderEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText, type KycEmailContext,
+  kycCopyList, listMadeBeforeChecks,
 } from "../shared/kyc-request";
 import { readFileSync } from "node:fs";
 import { reminderDue } from "./aml-portal";
@@ -369,6 +370,27 @@ test("clients are told to speak to the Nominated Officer alone, on every AML ema
   for (const [name, src] of [["aml-portal", portal], ["joint-agent-checks", joint]] as const) {
     assert.doesNotMatch(src, /agents: request\.agents|agents: agentList, askPep|agents, sentFrom/, name);
   }
-  assert.match(portal, /export async function sendKycEmail\([\s\S]{0,200}?await primeAmlContact\(\);/);
+  assert.match(portal, /export async function sendKycEmail\([\s\S]{0,600}?await primeAmlContact\(\);/);
   assert.match(portal, /export async function portalView\(row: TokenRow\): Promise<KycPortalView> \{\n  await primeAmlContact\(\);/);
+});
+
+test("the AML officers are copied on every AML email, once each, never someone it is sent to (Woody, 24 November 2026)", () => {
+  const officers = ["jack@brucegillinghampollard.com", "Layla@BruceGillinghamPollard.com", "woody@brucegillinghampollard.com"];
+  assert.deepEqual(kycCopyList(["client@example.com"], ["peter@brucegillinghampollard.com"], officers),
+    ["peter@brucegillinghampollard.com", "jack@brucegillinghampollard.com", "layla@brucegillinghampollard.com", "woody@brucegillinghampollard.com"]);
+  // An officer it is sent to is not copied as well; one already copied is not copied twice.
+  assert.deepEqual(kycCopyList(["jack@brucegillinghampollard.com"], ["woody@brucegillinghampollard.com"], officers),
+    ["woody@brucegillinghampollard.com", "layla@brucegillinghampollard.com"]);
+  // An officer address outside BGP is never copied on a client's email; a bad address is dropped.
+  assert.deepEqual(kycCopyList(["client@example.com"], ["not an address"], ["someone@gmail.com"]), []);
+  // A test copies nobody but the list it was given (the sender passes no officers).
+  assert.deepEqual(kycCopyList(["admin@brucegillinghampollard.com"], [], []), []);
+});
+
+test("a list made before BGP's checks last read the register is out of date (24 November 2026, #4664)", () => {
+  assert.equal(listMadeBeforeChecks(null, null), false, "no run at all: the usual list stands");
+  assert.equal(listMadeBeforeChecks(null, "2026-11-24T17:47:26.846Z"), true, "made before any run, sent after one finished");
+  assert.equal(listMadeBeforeChecks("2026-11-24T17:47:26.846Z", "2026-11-24T17:47:26.846Z"), false, "made from the latest run");
+  assert.equal(listMadeBeforeChecks("2026-11-20T09:00:00.000Z", "2026-11-24T17:47:26.846Z"), true, "made from an older run");
+  assert.equal(listMadeBeforeChecks("not a date", "2026-11-24T17:47:26.846Z"), true);
 });

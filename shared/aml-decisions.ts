@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Emails and wording", title: "Jack, Layla and Woody are copied on every AML email",
+    text: "Every AML email the app sends, to a client, another agent or BGP's own agents, copies the AML officers: the Nominated Officer and the Deputies (today Jack, Layla and Woody). The transaction's agents are still copied as before. An admin's test email copies nobody else." },
   { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The AML board shows one line per transaction",
     text: "Transactions, AML shows each transaction once, with each party's checks on a line inside it, so the board is not crowded. A transaction is on To do, In progress, Expiring or Closed, not checked when any of its parties is, and on Done only when every party is done. The counts are transactions." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "A private individual's date of birth on a small letting",

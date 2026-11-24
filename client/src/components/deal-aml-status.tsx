@@ -384,7 +384,14 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
     queryFn: async () => {
       const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load AML status");
-      return res.json();
+      const next: DealAmlStatus = await res.json();
+      // A run of BGP's checks started or finished since the last read: the
+      // people to check and the send window's list are read again (24
+      // November 2026, #4664: the list was made before the register was read).
+      const before = queryClient.getQueryData<DealAmlStatus>(["/api/kyc/deal", dealId, "status"]);
+      const runs = (s?: DealAmlStatus) => JSON.stringify(Object.entries(s?.prechecks || {}).map(([k, p]) => [k, p.state, p.ranAt || null]));
+      if (before && runs(before) !== runs(next)) queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "client-checks"] });
+      return next;
     },
   });
 }

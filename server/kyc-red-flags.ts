@@ -313,7 +313,7 @@ export async function alertRedFlags(token: string): Promise<{ sent: number }> {
   const linkBase = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => false);
   const sent = await sendKycEmail({
-    to,
+    to, test: !!row.is_test,
     build: sentFrom => kycRedFlagEmail({
       partyName: request.partyName, recipientName: row.contact_name, dealName: request.dealName, ref: request.ref,
       dealLink: row.is_test ? linkBase : `${linkBase}/deals/${encodeURIComponent(row.deal_id)}`,
