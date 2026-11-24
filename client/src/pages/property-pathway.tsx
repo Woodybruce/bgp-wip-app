@@ -16,7 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { OfficialCopyButton } from "@/components/official-copy-button";
-import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
+import { RecordFolders } from "@/components/folders/record-folders";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ChevronsUpDown, ArrowRight,
@@ -2443,25 +2443,15 @@ function statusTone(status: string): string {
 }
 
 /**
- * Linked-CRM + SharePoint folder tree on the pathway page. Surfaces the
- * CRM property the pathway is anchored to (auto-created at Stage 1 by
- * `ensureCrmPropertyLink` if no match was found) and renders its folder
- * tree using the same `PropertyFoldersPanel` the property detail page uses.
- *
- * Rules:
- *  - If `run.propertyId` is set → fetch that CRM record, render its
- *    folders. There's only ever one CRM property per building (the auto-
- *    create logic dedupes via crm_lookup), so we never spawn a second
- *    folder tree from the pathway.
- *  - If `run.propertyId` is null (only happens on a fresh run before
- *    Stage 1 has completed) → prompt the user to run Stage 1, which
- *    auto-creates the CRM + links it.
- *  - Folder tree itself is created on-demand via the existing
- *    SetUpFoldersDialog (POST /api/microsoft/property-folders) — same UX
- *    as the property detail page's "Set Up Folders" button.
+ * The CRM property the pathway is anchored to (auto-created at Stage 1 by
+ * `ensureCrmPropertyLink` if no match was found; "Wrong building?" or "Link
+ * to CRM" picks another) and the run's Folders (Woody, 24 November 2026;
+ * docs/folders-review-2026-11-20.md): its own, then its property's, with Add
+ * folder to find, browse to, make or paste one. One CRM property per
+ * building (crm_lookup dedupes), so the pathway never spawns a second
+ * property.
  */
 function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [relinkOpen, setRelinkOpen] = useState(false);
 
   const { data: property, isLoading } = useQuery<any>({
@@ -2478,100 +2468,46 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
     enabled: !!run.propertyId,
   });
 
-  if (!run.propertyId) {
-    return (
-      <>
-        <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
-        <Card>
-          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <FolderOpen className="w-4 h-4" /> CRM & Folders
-            </CardTitle>
-            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setRelinkOpen(true)}>
-              Link to CRM
-            </Button>
-          </CardHeader>
-          <CardContent className="text-[12px] text-muted-foreground">
-            <p>This investigation isn't linked to a CRM property yet.</p>
-            <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) — or click <strong>Link to CRM</strong> above to pick the right record manually.</p>
-          </CardContent>
-        </Card>
-      </>
-    );
-  }
-
-  if (isLoading || !property) {
-    return (
-      <Card>
-        <CardContent className="p-3 space-y-2">
-          <Skeleton className="h-5 w-48" />
-          <Skeleton className="h-20 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const folderTeams: string[] = property.folderTeams || [];
-  const hasFolderTree = folderTeams.length > 0;
-
   return (
     <>
-      <SetUpFoldersDialog
-        propertyId={property.id}
-        propertyName={property.name}
-        folderTeams={folderTeams}
-        open={folderDialogOpen}
-        onOpenChange={setFolderDialogOpen}
-      />
       <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
-      <Card>
+      <Card data-testid="pathway-folders">
         <CardHeader className="pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <CardTitle className="text-sm flex items-center gap-2 min-w-0 flex-wrap">
             <FolderOpen className="w-4 h-4 shrink-0" />
-            <Link href={`/properties/${property.id}`}>
-              <span className="text-primary hover:underline cursor-pointer inline-flex items-center gap-1 min-w-0">
-                <span className="truncate max-w-[14rem]">{property.name}</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </span>
-            </Link>
-            {!hasFolderTree && (
-              <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
-            )}
+            {!run.propertyId ? "CRM & Folders" : property ? (
+              <Link href={`/properties/${property.id}`}>
+                <span className="text-primary hover:underline cursor-pointer inline-flex items-center gap-1 min-w-0">
+                  <span className="truncate max-w-[14rem]">{property.name}</span>
+                  <ExternalLink className="w-3 h-3 shrink-0" />
+                </span>
+              </Link>
+            ) : isLoading ? <Skeleton className="h-5 w-48" /> : "CRM & Folders"}
           </CardTitle>
-          <div className="flex items-center gap-2 shrink-0">
+          {run.propertyId ? (
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+              className="h-7 text-[11px] text-muted-foreground hover:text-foreground shrink-0"
               onClick={() => setRelinkOpen(true)}
               title="Link this pathway to a different CRM property"
             >
               Wrong building?
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px] gap-1"
-              onClick={() => setFolderDialogOpen(true)}
-            >
-              <FolderOpen className="w-3 h-3" />
-              {hasFolderTree ? "Manage folders" : "Set up folders"}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          {hasFolderTree ? (
-            <PropertyFoldersPanel
-              propertyName={property.name}
-              propertyId={property.id}
-              folderTeams={folderTeams}
-              sharepointFolderUrl={property.sharepointFolderUrl}
-            />
           ) : (
-            <p className="text-[11px] text-muted-foreground">
-              No SharePoint folders set up for this building yet. Click <strong>Set up folders</strong> above to create the standard folder tree (Legal & Title, Due Diligence, KYC & AML, Comparables, etc.) — you can then save scraped planning PDFs and other investigation files into it.
-            </p>
+            <Button variant="outline" size="sm" className="h-7 text-[11px] shrink-0" onClick={() => setRelinkOpen(true)}>
+              Link to CRM
+            </Button>
           )}
+        </CardHeader>
+        <CardContent className="pt-0 space-y-2">
+          {!run.propertyId && (
+            <div className="text-[12px] text-muted-foreground">
+              <p>This investigation isn't linked to a CRM property yet.</p>
+              <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) — or click <strong>Link to CRM</strong> above to pick the right record manually.</p>
+            </div>
+          )}
+          <RecordFolders recordType="pathway_run" recordId={run.id} recordName={run.address} bare />
         </CardContent>
       </Card>
     </>

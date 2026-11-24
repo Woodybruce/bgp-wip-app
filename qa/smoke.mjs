@@ -300,7 +300,7 @@ console.log('── client (Mark, Landsec) ──');
     await page.getByTestId('button-property-folders').click();
     await page.locator('[data-testid="client-property-folders-panel"]').waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
     check('client property: jailed files panel (no staff panel)', await page.locator('[data-testid="client-property-folders-panel"]').count() > 0);
-    check('client property: no team-name folder tabs', await page.locator('[data-testid^="folder-team-tab-"]').count() === 0);
+    check('client property: no staff Folders', await page.locator('[data-testid="record-folders"]').count() === 0);
     await page.keyboard.press('Escape');
     await page.screenshot({ path: `${SHOTS}/client-property.png` }).catch(() => {});
 

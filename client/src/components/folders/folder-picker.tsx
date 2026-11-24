@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Pill } from "@/components/ui/pill";
-import { FOLDER_TEMPLATES, itemNameProblem, safeFolderName, type DriveEntry, type FolderPlaces, type FolderTemplateKey } from "@shared/folders";
+import { folderTemplatesInOrder, itemNameProblem, safeFolderName, templateInsideWords, type DriveEntry, type FolderPlaces, type FolderTemplateKey } from "@shared/folders";
 import { FolderDialog } from "./folder-dialog";
 import { FolderApiError, folderApi } from "./folder-api";
 
@@ -216,13 +216,13 @@ export function FolderPicker(props: FolderPickerProps) {
                 <div className="flex flex-wrap gap-2">
                   <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Folder name" className="h-9 text-sm flex-1 min-w-[10rem]" data-testid={`${testId}-new-name`} />
                   <select aria-label="What to make" className="h-9 rounded-md border border-border bg-background px-2 text-sm" value={newTemplate} onChange={e => setNewTemplate(e.target.value as FolderTemplateKey)} data-testid={`${testId}-new-template`}>
-                    {FOLDER_TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.key === "property" ? `${t.label} (${t.folders.length} folders inside)` : t.label}</option>)}
+                    {folderTemplatesInOrder(create.defaultTemplate).map(t => <option key={t.key} value={t.key}>{t.folders.length ? `${t.label} (${t.folders.length} folders inside)` : t.label}</option>)}
                   </select>
                   <Button type="button" size="sm" className="h-9" disabled={busy || !!nameProblem} onClick={() => run(() => create.onCreate(here, newName.trim(), newTemplate))} data-testid={`${testId}-create`}>
                     {busy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5 mr-1" />}Make it
                   </Button>
                 </div>
-                {newTemplate === "property" && <p className="text-[11px] text-muted-foreground">Inside it: {FOLDER_TEMPLATES.find(t => t.key === "property")!.folders.join(", ")}.</p>}
+                {templateInsideWords(newTemplate) && <p className="text-[11px] text-muted-foreground">Inside it: {templateInsideWords(newTemplate)}.</p>}
                 {nameProblem && newName.trim() ? <p className="text-[11px] text-destructive">{nameProblem}</p> : null}
               </div>
             ) : (

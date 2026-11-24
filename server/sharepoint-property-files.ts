@@ -18,7 +18,7 @@
 // logins.
 
 import { sharesId } from "./sharepoint-graph";
-import { folderLinkLabel, linkedFolderUrls, normaliseFolderLinks } from "../shared/property-labels";
+import { linkedFolderUrls } from "../shared/property-labels";
 import { estateCoreName } from "../shared/property-schemes";
 
 export type SpKind = "brochure" | "schedule" | "plan";
@@ -417,30 +417,6 @@ export async function findPropertyFiles(pool: any, propertyId: string, kind: SpK
   ]);
   const ranked = kind === "brochure" ? rankBrochureCandidates(merged, wanted) : kind === "plan" ? rankPlanCandidates(merged) : rankScheduleCandidates(merged);
   return { candidates: ranked.slice(0, kind === "plan" ? 60 : 40), linkedFolder: folderUrls[0] || null, linkedFolders: folderUrls, propertyName: property.name, warnings };
-}
-
-export type PropertyFolderLinks = { propertyName: string; defaultUrl: string | null; folders: Record<string, string> };
-
-/** The property's default linked folder and its per-team / extra folders. */
-export async function propertyFolderLinks(pool: any, propertyId: string): Promise<PropertyFolderLinks | null> {
-  const row = (await pool.query(`SELECT name, sharepoint_folder_url, sharepoint_team_folders FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
-  if (!row) return null;
-  return { propertyName: row.name, defaultUrl: row.sharepoint_folder_url || null, folders: normaliseFolderLinks(row.sharepoint_team_folders) };
-}
-
-/** Link one team's or extra folder, or unlink it when no url is given. Only
- *  BGP tenant SharePoint / OneDrive links are stored. */
-export async function setPropertyFolderLink(pool: any, propertyId: string, rawLabel: unknown, rawUrl: unknown): Promise<PropertyFolderLinks> {
-  const label = folderLinkLabel(rawLabel);
-  if (!label) throw Object.assign(new Error("Give the folder a name (up to 60 characters)."), { status: 400 });
-  const url = typeof rawUrl === "string" ? rawUrl.trim() : "";
-  if (url && !SHAREPOINT_URL_RE.test(url)) throw Object.assign(new Error("Paste a link to a folder in the BGP SharePoint or OneDrive."), { status: 400 });
-  const current = await propertyFolderLinks(pool, propertyId);
-  if (!current) throw Object.assign(new Error("Property not found"), { status: 404 });
-  const folders = Object.fromEntries(Object.entries(current.folders).filter(([k]) => k.toLowerCase() !== label.toLowerCase()));
-  if (url) folders[label] = url;
-  await pool.query(`UPDATE crm_properties SET sharepoint_team_folders = $2::jsonb, updated_at = now() WHERE id = $1`, [propertyId, Object.keys(folders).length ? JSON.stringify(folders) : null]);
-  return { ...current, folders };
 }
 
 export type SpFileRef = { driveId?: string | null; itemId?: string | null; webUrl?: string | null };
