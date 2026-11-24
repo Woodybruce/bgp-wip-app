@@ -411,7 +411,8 @@ test('the form: the box at the top, Create billing entity on the tenant, Add hea
   assert.match(page, /await hotsCall\("POST", `\/api\/unit-hots\/\$\{encodeURIComponent\(hotsUnitId\)\}\/final`, filing\);/);
   assert.match(page, /const patch: Record<string, any> = place \? \{\} : \{ status: "HOT" \};/, 'a handover stays at Solicitors when its HOTs are read');
   assert.match(page, /data-testid="deal-lease-terms"/);
-  assert.match(page, /\{!isEdit && !isClientCreate && !handover && \(\s+<Button/, 'no Show all fields on a handover');
+  // Nor once New Transaction is moved onto a live transaction (24 November 2026).
+  assert.match(page, /\{!isEdit && !isClientCreate && !handover && !linked && \(\s+<Button/, 'no Show all fields on a handover');
   // The save keeps a worded break and a total area with no floor areas.
   const toPayload = fn(DEALS, 'formToPayload');
   assert.match(toPayload, /breakOption: form\.breakOption\.trim\(\) \|\| null,/);

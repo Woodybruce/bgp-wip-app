@@ -151,6 +151,7 @@ import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
 import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, findCompanyByName, hotsParties, hotsPricePatch, isInvestmentDealType, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType, teamPatch } from "@/lib/deal-note";
 import { DealNoteReadPanel } from "@/components/deal-note-read";
+import { linkToTransaction, linkValueWords, type LinkDifference } from "@/lib/deal-link";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
@@ -2008,8 +2009,14 @@ function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: 
 
 // Sales and purchases already live on the property (Woody, 2026-11-20: three
 // deals were made for one purchase in a morning). Shown under the property on
-// New Deal for a sale or purchase, each opening its deal in a new tab.
-function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
+// New Deal for a sale or purchase, each opening its deal in a new tab, and for
+// BGP staff with Use this transaction (Woody, 2026-11-24: "Can you allow for
+// link to existing deal at this point? its easier"): the form moves onto it.
+function LiveInvestmentDeals({ propertyId, onUse, usingId = null }: {
+  propertyId: string;
+  onUse?: (deal: { id: string }) => void;
+  usingId?: string | null;
+}) {
   const { data = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/properties", propertyId, "deals"],
     queryFn: async () => {
@@ -2029,16 +2036,26 @@ function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
   if (!live.length) return null;
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs dark:border-amber-900 dark:bg-amber-950/20" data-testid="deal-live-investment-on-property">
-      <p className="font-medium text-amber-900 dark:text-amber-200">Already a live sale or purchase on this property: open it rather than adding another.</p>
-      <ul className="mt-1 space-y-0.5">
+      <p className="font-medium text-amber-900 dark:text-amber-200">
+        Already a live sale or purchase on this property: {onUse ? "use it rather than adding another." : "open it rather than adding another."}
+      </p>
+      <ul className="mt-1 space-y-1">
         {live.slice(0, 5).map((d: any) => {
           const code = legacyToCode(d.status);
           return (
-            <li key={d.id}>
-              <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
-                {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Transaction"}
-              </a>
-              <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
+            <li key={d.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="min-w-0 flex-1">
+                <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
+                  {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Transaction"}
+                </a>
+                <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
+              </span>
+              {onUse && (
+                <Button type="button" variant="outline" size="sm" className="h-7 bg-background text-xs" disabled={!!usingId}
+                  onClick={() => onUse({ id: String(d.id) })} data-testid={`deal-live-investment-use-${d.id}`}>
+                  {usingId === String(d.id) && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Use this transaction
+                </Button>
+              )}
             </li>
           );
         })}
@@ -2047,11 +2064,67 @@ function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
   );
 }
 
+// New Transaction moved onto a live transaction (Woody, 2026-11-24): which
+// one, what was filled in where it had nothing, and where the two differ, with
+// the other value to take (or the stage to move it on to) and Undo.
+function DealLinkBanner({ linked, names, onTake, onBack }: {
+  linked: { deal: CrmDeal; filled: Array<{ key: string; label: string }>; differs: LinkDifference[]; taken: string[] };
+  names: { company: (id: string) => string | undefined; unit: (id: string) => string | undefined };
+  onTake: (d: LinkDifference, take: boolean) => void;
+  onBack: () => void;
+}) {
+  const code = legacyToCode(linked.deal.status);
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm" data-testid="deal-link-banner">
+      <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+        <div className="min-w-0 flex-1 basis-56">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Adding to a live transaction</p>
+          <p className="break-words font-medium">
+            <a href={`/deals/${linked.deal.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid="deal-link-open">
+              {linked.deal.dealRef != null ? `#${linked.deal.dealRef} ` : ""}{linked.deal.name || "Transaction"}
+            </a>
+            <span className="font-normal text-muted-foreground"> · {linked.deal.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : linked.deal.status || "No status"}</span>
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={onBack} data-testid="deal-link-back">Back to a new transaction</Button>
+      </div>
+      <p className="text-xs" data-testid="deal-link-filled">
+        {linked.filled.length
+          ? <>Filled in where it had nothing: {linked.filled.map(f => f.label).join(", ")}.</>
+          : <>Nothing to fill in: it already holds what this form was given.</>}
+      </p>
+      {linked.differs.length > 0 && (
+        <div className="space-y-1.5" data-testid="deal-link-differs">
+          <p className="text-xs text-muted-foreground">It holds something else here, and keeps it unless you take the other:</p>
+          {linked.differs.map(d => {
+            const taken = linked.taken.includes(d.key);
+            const current = linkValueWords(d.field, d.current, names);
+            const offered = linkValueWords(d.field, d.offered, names);
+            return (
+              <div key={d.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs" data-testid={`deal-link-differ-${d.key}`}>
+                <span className="min-w-0 flex-1 basis-48 break-words">
+                  <span className="font-medium">{d.label}:</span>{" "}
+                  {taken
+                    ? <>{offered} <span className="text-muted-foreground">(was {current})</span></>
+                    : <>{current} <span className="text-muted-foreground">· this form has {offered}</span></>}
+                </span>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => onTake(d, !taken)} data-testid={`deal-link-take-${d.key}`}>
+                  {taken ? "Undo" : d.move ? `Move it to ${offered}` : offered.length > 28 ? "Use this form's" : `Use ${offered}`}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
-  onUnitPicked, liveLettingRow, onUseLiveDeal,
+  onUnitPicked, liveLettingRow, onUseLiveDeal, onUseLiveInvestment, usingLiveInvestment = null,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
   place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null, autoHotsFile = null,
 }: {
@@ -2094,6 +2167,9 @@ function SimplifiedCreateBody({
   onUnitPicked: (row: LettingUnitSearchRow) => void;
   liveLettingRow: LettingUnitSearchRow | null;
   onUseLiveDeal: (row: LettingUnitSearchRow) => void;
+  // A live sale or purchase on the property: the form moves onto it (BGP staff).
+  onUseLiveInvestment?: (deal: { id: string }) => void;
+  usingLiveInvestment?: string | null;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy fall
@@ -2449,8 +2525,8 @@ function SimplifiedCreateBody({
       )}
       {place && (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-testid="deal-handover-place">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Property and unit</span>
-          <div className="break-words">{place.propertyName} — {place.unitName}</div>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{place.unitName ? "Property and unit" : "Property"}</span>
+          <div className="break-words">{place.unitName ? `${place.propertyName} — ${place.unitName}` : place.propertyName}</div>
         </div>
       )}
       {!isSecondment && !place && (
@@ -2490,7 +2566,9 @@ function SimplifiedCreateBody({
             }
           }}
         />
-        {form.propertyId && isInvestmentDealType(form.dealType) && <div className="mt-1.5"><LiveInvestmentDeals propertyId={form.propertyId} /></div>}
+        {form.propertyId && isInvestmentDealType(form.dealType) && (
+          <div className="mt-1.5"><LiveInvestmentDeals propertyId={form.propertyId} onUse={onUseLiveInvestment} usingId={usingLiveInvestment} /></div>
+        )}
       </div>
       )}
 
@@ -3335,6 +3413,7 @@ export function DealFormDialog({
     setDealRead(null);
     setDealNoteBusy(null);
     setPropertySeed(null);
+    setLinked(null);
   }, [open, deal]);
 
   // A handover's fee split starts from the deal's own (the editor keeps BGP
@@ -3470,6 +3549,73 @@ export function DealFormDialog({
       return;
     }
     if (row.dealId) navigateTo(`/deals/${row.dealId}`);
+  };
+
+  // A live sale or purchase already on the property (Woody, 2026-11-24: "Can
+  // you allow for link to existing deal at this point? its easier"): the form
+  // moves onto that transaction. What it holds stays; its blanks fill from
+  // what this form was given (client/src/lib/deal-link.ts); where the two
+  // differ the person may take the other value. Saving is that transaction's
+  // own save, then Kick off AML. Back to a new transaction puts the form back.
+  type LinkedTransaction = {
+    deal: CrmDeal;
+    before: { form: DealFormData; feeRows: FeeAllocationEditorRow[]; feeAllocType: "percentage" | "fixed"; nameAutoFilled: boolean };
+    filled: Array<{ key: string; label: string }>;
+    differs: LinkDifference[];
+    restore: Record<string, Record<string, unknown>>;
+    taken: string[];
+  };
+  const [linked, setLinked] = useState<LinkedTransaction | null>(null);
+  const [linking, setLinking] = useState<string | null>(null);
+  useEffect(() => { if (!open) { setLinked(null); setLinking(null); } }, [open]);
+  const linkTo = async (target: { id: string }) => {
+    if (linking || linked) return;
+    setLinking(target.id);
+    try {
+      const existing = await queryClient.fetchQuery<CrmDeal>({ queryKey: ["/api/crm/deals", target.id], staleTime: 0 });
+      if (!existing?.id) throw new Error("It may have been deleted.");
+      let allocations: DealFeeAllocation[] = [];
+      try {
+        allocations = (await queryClient.fetchQuery<DealFeeAllocation[]>({ queryKey: ["/api/crm/deals", target.id, "fee-allocations"], staleTime: 0 })) || [];
+      } catch { /* the split stays as entered here */ }
+      const base: DealFormData = { ...emptyForm, team: freshForm().team };
+      const result = linkToTransaction(dealToForm(existing) as any, form as any, base as any);
+      const restore: LinkedTransaction["restore"] = {};
+      for (const d of result.differs) restore[d.key] = Object.fromEntries(Object.keys(d.patch).map(k => [k, (result.form as any)[k]]));
+      setLinked({ deal: existing, before: { form, feeRows, feeAllocType, nameAutoFilled }, filled: result.filled, differs: result.differs, restore, taken: [] });
+      setForm(result.form as DealFormData);
+      setNameAutoFilled(false);
+      setShowAllFields(false);
+      // The transaction's own fee split, when it has one; else the one entered here.
+      if (allocations.some(a => !a.isBgpHouse && a.agentName)) {
+        const fixed = allocations.some(a => !a.isBgpHouse && a.allocationType === "fixed");
+        setFeeAllocType(fixed ? "fixed" : "percentage");
+        setFeeRows(allocations.map(a => ({
+          agentName: a.agentName,
+          allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
+          percentage: a.percentage || 0,
+          fixedAmount: a.fixedAmount || 0,
+          isBgpHouse: !!a.isBgpHouse,
+        })));
+      }
+    } catch (e: any) {
+      toast({ title: "That transaction could not be opened", description: requestWords(e), variant: "destructive" });
+    } finally {
+      setLinking(null);
+    }
+  };
+  const unlink = () => {
+    if (!linked) return;
+    setForm(linked.before.form);
+    setFeeRows(linked.before.feeRows);
+    setFeeAllocType(linked.before.feeAllocType);
+    setNameAutoFilled(linked.before.nameAutoFilled);
+    setLinked(null);
+  };
+  const takeDifference = (d: LinkDifference, take: boolean) => {
+    if (!linked) return;
+    setForm(prev => ({ ...prev, ...(take ? d.patch : linked.restore[d.key]) } as DealFormData));
+    setLinked(l => l ? { ...l, taken: take ? [...l.taken.filter(k => k !== d.key), d.key] : l.taken.filter(k => k !== d.key) } : l);
   };
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
@@ -3634,6 +3780,15 @@ export function DealFormDialog({
         if (prop) finalForm.name = prop.name;
       }
       if (handover) return saveHandover(handover, finalForm);
+      if (linked) {
+        const linkedPayload = formToPayload(finalForm, "Moved on from New transaction");
+        delete linkedPayload.internalAgent; // the fee split's save keeps BGP Contact in step
+        const res = await apiRequest("PUT", `/api/crm/deals/${linked.deal.id}`, linkedPayload);
+        const warned = res.headers.get("X-AML-Warning");
+        const saved = linked.deal.dealRef != null ? `Saved to #${linked.deal.dealRef}` : "Saved";
+        await saveSplit(linked.deal.id, saved);
+        return { id: linked.deal.id, dealRef: linked.deal.dealRef ?? null, linked: true, amlWarning: warned ? decodeURIComponent(warned) : null };
+      }
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
       // BGP Contact comes from the fee split: on create the split's agent
       // rows are the contacts; on edit the form never writes them (the
@@ -3670,6 +3825,25 @@ export function DealFormDialog({
         }
         if (handover.kind === "hots" && data?.conversion) handover.onConverted(data.conversion);
         if (!showAmlStep(data?.id, data?.conversion?.dealRef ?? deal?.dealRef ?? null)) onOpenChange(false);
+        return;
+      }
+      if (data?.linked) {
+        toast({
+          title: data.dealRef != null ? `Transaction #${data.dealRef} updated` : "Transaction updated",
+          action: (
+            <ToastAction altText="View transaction" onClick={() => navigateTo(`/deals/${data.id}`)} data-testid="toast-view-deal">
+              View transaction →
+            </ToastAction>
+          ),
+        });
+        if (data.amlWarning) toast({ title: "Saved — AML follow-up needed", description: data.amlWarning, variant: "destructive" });
+        invalidateDealCaches();
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id, "audit-log"] });
+        if (form.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", form.propertyId, "deals"] });
+        if (!showAmlStep(data.id, data.dealRef)) onOpenChange(false);
         return;
       }
       toast({
@@ -3846,9 +4020,11 @@ export function DealFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : "New Transaction"}</DialogTitle>
+          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : linked ? `Add to transaction${linked.deal.dealRef != null ? ` #${linked.deal.dealRef}` : ""}` : "New Transaction"}</DialogTitle>
           <DialogDescription>
-            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "The client checks are switched off: the officers sign each party off on the transaction's AML.") : handover
+            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "The client checks are switched off: the officers sign each party off on the transaction's AML.") : linked
+              ? `${linked.deal.name || "This transaction"}: check what goes onto it, then save. Nothing changes until you do.`
+              : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the transaction, then save: it moves to Solicitors.`
               : isEdit ? "Update transaction details below." : "Fill in the details to create a new transaction."}
           </DialogDescription>
@@ -3902,6 +4078,17 @@ export function DealFormDialog({
           </div>
         ) : (
         <>
+        {linked && (
+          <DealLinkBanner
+            linked={linked}
+            names={{
+              company: (id) => companies.find(c => c.id === id)?.name,
+              unit: (id) => propertyUnits.find(u => u.id === id)?.unitName,
+            }}
+            onTake={takeDifference}
+            onBack={unlink}
+          />
+        )}
         {/* Type it and the form fills (Woody, 2026-11-17): the same note reader
             as the letting forms, read as an offer. BGP staff only; never on the
             edit form. Nothing is saved until the form is. */}
@@ -3933,8 +4120,12 @@ export function DealFormDialog({
             busy={dealNoteBusy}
             billing
             onUseType={(value) => setForm((prev: any) => named(withType(prev, value)))}
-            onPickProperty={(id) => setForm((prev: any) => named(withProperty(prev, id, dealRead)))}
-            onFindProperty={(text) => setPropertySeed({ text, key: Date.now() })}
+            onPickProperty={(id) => linked
+              ? toast({ title: "This transaction stays on its property", description: "Go back to a new transaction to use another." })
+              : setForm((prev: any) => named(withProperty(prev, id, dealRead)))}
+            onFindProperty={(text) => linked
+              ? toast({ title: "This transaction stays on its property", description: "Go back to a new transaction to use another." })
+              : setPropertySeed({ text, key: Date.now() })}
             onPickParty={(role, c) => setForm((prev: any) => named({ ...prev, ...partyPatch(prev, role, c) }))}
             onAddParty={(role, name, hit) => { void addNoteParty(role, name, hit); }}
             onBill={(role, companyId, number) => { void billNoteParty(role, companyId, number); }}
@@ -3987,6 +4178,8 @@ export function DealFormDialog({
               onUnitPicked={setPickedUnit}
               liveLettingRow={liveLettingRow}
               onUseLiveDeal={useLiveDeal}
+              onUseLiveInvestment={!isClientCreate && !handover && !linked ? (d) => { void linkTo(d); } : undefined}
+              usingLiveInvestment={linking}
               jointAgency={jointAgency}
               setJointAgency={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
               jointAgencyErrors={jointAgencyErrors}
@@ -3994,6 +4187,9 @@ export function DealFormDialog({
               place={handover ? {
                 propertyName: handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name || "Property",
                 unitName: handover.unit.unitName,
+              } : linked ? {
+                propertyName: properties.find(p => p.id === form.propertyId)?.name || "Property",
+                unitName: propertyUnits.find(u => u.id === form.unitId)?.unitName || "",
               } : null}
               hotsUnitId={handover?.kind === "promote" ? handover.unit.id : null}
               hotsOnFile={handover?.kind === "hots" ? (handover.finalFileName || "the final Heads of Terms") : null}
@@ -4581,7 +4777,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && !isClientCreate && !handover && (
+            {!isEdit && !isClientCreate && !handover && !linked && (
               <Button
                 type="button"
                 variant="ghost"
@@ -4607,7 +4803,7 @@ export function DealFormDialog({
               data-testid="button-save-deal"
             >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : "Create Transaction"}
+              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : linked ? `Save to${linked.deal.dealRef != null ? ` #${linked.deal.dealRef}` : " the transaction"}` : "Create Transaction"}
             </Button>
           </DialogFooter>
         </form>

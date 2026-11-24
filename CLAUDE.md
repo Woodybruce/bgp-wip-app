@@ -3421,6 +3421,26 @@ not showing". On live the reader had no vendor, purchaser or price; the club
 - **Already a live sale or purchase on this property** (`LiveInvestmentDeals`,
   from `GET /api/crm/properties/:id/deals`) lists them under Property on New
   Deal for a sale or purchase, each opening its deal.
+- **Use this transaction** on that notice (Woody, 2026-11-24: "Can you allow
+  for link to existing deal at this point? its easier"; BGP staff, New
+  Transaction only, not a handover). Rule: `client/src/lib/deal-link.ts`
+  (`linkToTransaction`; tests `server/deal-link.test.ts`, in `npm test`, and
+  `qa/regression/deal-link-guards.test.mjs`). The form moves onto that
+  transaction, read fresh: what it holds stays; its blanks fill from what New
+  Transaction was given (a field differs from New Transaction's own defaults,
+  so the Solicitors default and the person's team never count); a party comes
+  whole with its billing entity and company that signs, and the same party
+  only fills those two where blank; new comments are added to its own. Its
+  name, team, BGP Contact, property and AML check are never carried
+  (`KEPT`). Where the two differ the transaction's value stays and the
+  banner (`DealLinkBanner`) offers **Use** for the other, with Undo. The
+  stage is never moved by itself: a later stage (Negotiating, HOTs or
+  Solicitors only, never past) is offered as **Move it to HOTs**. The
+  property is fixed (`place`), Show all fields is not offered, the read
+  panel cannot move it to another property, and its own fee split is
+  loaded when it has one. **Back to a new transaction** puts the form as it
+  was. **Save to #<ref>** is its own save (`PUT /api/crm/deals/:id`, never
+  a POST), then its fee split, then Kick off AML.
 
 ## Heads of terms on the transaction page (Woody, 2026-11-23)
 
