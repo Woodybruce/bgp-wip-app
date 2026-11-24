@@ -66,10 +66,17 @@ test("screening, sanctions, risk and enhanced due diligence on the party's recor
     latestInvestigation: { sanctions_match: true, conducted_at: "2026-11-10T09:00:00Z" },
   }));
   assert.deepEqual(flags.map(f => f.kind), ["screening", "sanctions", "high_risk", "edd"]);
-  assert.equal(flags[0].label, "Screening found a possible PEP or sanctions match to review");
+  // Only the old in-app screening wrote review_required, and nobody at BGP set this risk (24 November 2026).
+  assert.equal(flags[0].label, "Possible PEP or sanctions match (old screening)");
+  assert.equal(flags[0].oldScreening, true);
   assert.equal(flags[1].label, "Possible match on the UK Sanctions List");
-  assert.equal(flags[2].label, "Risk rated high");
+  assert.equal(flags[1].oldScreening, undefined, "a screening from November is not the old one");
+  assert.equal(flags[2].label, "Risk rated high (old screening)");
   assert.match(flags[3].detail || "", /asset freeze/);
+  assert.equal(flags[3].oldScreening, undefined, "a reason in a person's own words");
+  // A risk the MLRO set on the record is theirs.
+  const mlro = partyRedFlags(facts({ company: { aml_risk_level: "High" }, recordHistory: [{ at: "2026-10-01T10:00:00Z", what: "risk=high", who: "Jack Barratt", action: "cdd_checklist_updated" }] }));
+  assert.equal(mlro[0].label, "Risk rated high");
   assert.equal(pepStatusLabel("pep_foreign"), "Recorded as a politically exposed person outside the UK");
   assert.equal(pepStatusLabel("rca"), "Recorded as a close associate of a politically exposed person");
   assert.equal(pepStatusLabel("pep"), "Recorded as a politically exposed person");

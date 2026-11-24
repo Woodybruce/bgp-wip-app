@@ -16,6 +16,45 @@
 // same approval every transaction reads, so a transaction with that company
 // is cleared when it comes.
 
+import { brandSignOffScope, entitySignOffScope } from "./party-kyc";
+
+// ── A sub company's KYC, as the CRM chip and the Companies view read it ─────
+//
+// Its own record (crm_entity_kyc); with none, the account's decision when the
+// sub company is the account's own legal company (the same Companies House
+// number) and the account was approved or rejected, as a transaction reads it
+// (partyKycState's sameLegalCompany). A bare "in review" the retired in-app
+// screening left on the account is not read (24 November 2026), as the AML
+// board does not.
+const chSql = (col: string) => {
+  const v = `regexp_replace(upper(COALESCE(${col}, '')), '\\s', '', 'g')`;
+  return `(CASE WHEN ${v} ~ '^[0-9]{1,7}$' THEN lpad(${v}, 8, '0') ELSE ${v} END)`;
+};
+
+/** Joins and columns for a sub company's KYC (alias e: crm_trading_entities; adds k, ob, obl). */
+export function subCompanyKycSql(e = "e"): { joins: string; columns: string } {
+  return {
+    joins: `LEFT JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = ${e}.id
+         LEFT JOIN crm_companies ob ON ob.id = ${e}.parent_company_id AND k.entity_id IS NULL
+               AND lower(COALESCE(ob.kyc_status, '')) IN ('approved', 'rejected')
+               AND ${chSql(`${e}.companies_house_number`)} <> '' AND ${chSql(`${e}.companies_house_number`)} = ${chSql("ob.companies_house_number")}
+         LEFT JOIN LATERAL (SELECT notes, created_at FROM kyc_audit_log WHERE company_id = ob.id AND action = 'kyc_approved'
+                             ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 1) obl ON ob.id IS NOT NULL`,
+    columns: `COALESCE(k.kyc_status, ob.kyc_status) AS kyc_status, COALESCE(k.expires_at, ob.kyc_expires_at) AS expires_at,
+              COALESCE(k.approved_at, ob.kyc_checked_at) AS approved_at,
+              k.evidence->'bgpSignOff'->>'regime' AS regime, k.evidence->'bgpSignOff'->>'at' AS signoff_at,
+              obl.notes AS acct_notes, obl.created_at AS acct_logged, (ob.id IS NOT NULL) AS from_account`,
+  };
+}
+
+/** The scope of an approval read by subCompanyKycSql: the sub company's own sign-off, or the account's approval line. */
+export function subCompanyScope(r: { kyc_status?: unknown; from_account?: unknown; acct_notes?: unknown; acct_logged?: unknown; approved_at?: unknown; regime?: unknown; signoff_at?: unknown }): "sanctions_only" | null {
+  if (String(r.kyc_status || "").toLowerCase() !== "approved") return null;
+  return r.from_account
+    ? brandSignOffScope({ notes: r.acct_notes, loggedAt: r.acct_logged, checkedAt: r.approved_at })
+    : entitySignOffScope({ regime: r.regime, signedOffAt: r.signoff_at, approvedAt: r.approved_at });
+}
+
 export const CLIENT_INSTRUCTIONS = [
   { key: "letting", label: "A leasing instruction" },
   { key: "sale", label: "A sale instruction" },
@@ -131,6 +170,9 @@ export function clientKycWords(s: ClientKycSummary): { label: string; tone: Clie
   if (!s.total) return { label: "No KYC", tone: "none", title };
   if (s.rejected) return { label: "KYC rejected", tone: "bad", title };
   if (done === s.total) return { label: s.expiring ? "KYC due soon" : "KYC cleared", tone: s.expiring ? "warn" : "ok", title };
+  // Every company signed off, some or all for the sanctions checks only: said as such, the
+  // same words on the CRM boards, the Companies view and the company page (24 November 2026).
+  if (s.sanctionsOnly && done + s.sanctionsOnly === s.total) return { label: done ? "Cleared, some sanctions only" : "Sanctions only", tone: "ok", title: `${title}. Sanctions checks only cover lettings under £10,000 a month, not a sale or a bigger letting.` };
   if (s.expired && !done) return { label: "KYC expired", tone: "bad", title };
   if (!done && !s.inProgress && !s.sanctionsOnly) return { label: s.expired ? "KYC expired" : "No KYC", tone: s.expired ? "bad" : "none", title };
   if (!done && s.inProgress && !s.sanctionsOnly) return { label: "KYC in progress", tone: "warn", title };
@@ -150,6 +192,8 @@ export interface ClientKycNextFacts {
   request: "none" | "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
   waitingOn: string[];              // people still owing their checks
   signOffBlocked: string | null;
+  // The company's sanctions-only switch is on: lettings under £10,000 a month, so nothing is asked of the client.
+  sanctionsChecks?: boolean;
 }
 
 export interface ClientKycNext {
@@ -169,6 +213,7 @@ export function clientKycNextStep(f: ClientKycNextFacts, fmt: (iso: string) => s
   if (f.precheck === "running") return step("wait", "Checking", "BGP's checks are running");
   if (f.precheck === "not_run") return step("act", "To do", "run BGP's checks", "run_checks");
   if (f.redFlags) return step("act", "Red flag", `${f.redFlags} to review: for the officers`, f.canDecide && !f.signOffBlocked ? "sign_off" : null);
+  if (f.sanctionsChecks) return f.signOffBlocked ? step("wait", "Not ready to sign off", f.signOffBlocked.replace(/\.$/, "")) : step("act", "Ready to sign off", "sanctions checks only", "sign_off");
   if (f.request === "none" || f.request === "cancelled" || f.request === "expired") {
     return f.whoToAsk ? step("act", "To do", `send the client checks to ${f.whoToAsk}`, "send_checks") : step("act", "To do", "pick who to ask", "pick_person");
   }

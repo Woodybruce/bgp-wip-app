@@ -36,7 +36,8 @@ test("the sign-off writes the approval every transaction reads, for the policy's
   assert.match(signOff, /UPDATE kyc_client_files SET closed_at = now\(\)/);
   // Only an ordinary company's checks need a sub company: a person, trust or public body is checked on its own record.
   assert.match(s, /if \(!e && !recordIsOwnSubject\(c\.aml_subject_type\)\) return null;/);
-  assert.match(s, /regime: "full"/);
+  // Full checks unless the company is set to sanctions checks only (the Companies view's switch, 24 November 2026).
+  assert.match(s, /regime: \(await companySanctionsOnly\(db, companyId\)\.catch\(\(\) => \(\{ on: false \}\)\)\)\.on \? "sanctions_only" : "full"/);
 });
 
 test("the client checks, people, documents, translation and owners abroad answer for a client file too", () => {

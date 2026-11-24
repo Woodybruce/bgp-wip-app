@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Kyc4uArchiveCard } from "@/components/kyc4u-archive-card";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Kyc4uArchiveCard, MatchToCompany } from "@/components/kyc4u-archive-card";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Loader2, ExternalLink, Bookmark, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Pill, PillCount } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -83,7 +84,7 @@ interface Kyc4uStatus {
   connectable?: boolean;
   site: string; requests: number; matched: number;
 }
-interface Kyc4uRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; companyId: string | null; companyName: string | null; modifiedAt: string | null; webUrl: string | null }
+interface Kyc4uRequest { listId: string; itemId: string; listName: string | null; title: string | null; status: string | null; entityName: string | null; companyId: string | null; companyName: string | null; modifiedAt: string | null; webUrl: string | null; fields?: Record<string, unknown> | null }
 
 const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
@@ -95,6 +96,7 @@ export default function Kyc4uPanel() {
   const { data: status, isLoading } = useQuery<Kyc4uStatus>({ queryKey: ["/api/kyc4u/status"] });
   const { data: requests = [] } = useQuery<Kyc4uRequest[]>({ queryKey: ["/api/kyc4u/requests"], enabled: !!status?.requests });
   const [search, setSearch] = useState("");
+  const [matching, setMatching] = useState<string | null>(null);
   const bookmarkRef = useRef<HTMLAnchorElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -123,15 +125,14 @@ export default function Kyc4uPanel() {
     queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/requests"] });
   };
 
+  // Folders no company holds, to match one by one (24 November 2026).
+  const [unmatchedOnly, setUnmatchedOnly] = useState(false);
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? requests.filter(r => [r.title, r.entityName, r.status, r.companyName].some(v => (v || "").toLowerCase().includes(q))) : requests;
-  }, [requests, search]);
-  const byStatus = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of requests) m.set(r.status || "No status", (m.get(r.status || "No status") || 0) + 1);
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [requests]);
+    const rows = unmatchedOnly ? requests.filter(r => !r.companyId && r.listId !== "manual") : requests;
+    return q ? rows.filter(r => [r.title, r.entityName, r.status, r.companyName].some(v => (v || "").toLowerCase().includes(q))) : rows;
+  }, [requests, search, unmatchedOnly]);
+  const unmatchedCount = useMemo(() => requests.filter(r => !r.companyId && r.listId !== "manual").length, [requests]);
 
   if (isLoading || !status) return <div className="p-6 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Loading KYC4U…</div>;
   const isAdmin = !!me?.isAdmin;
@@ -173,7 +174,8 @@ export default function Kyc4uPanel() {
         <section className="rounded-xl border bg-card p-4">
           <div className="flex flex-wrap items-center gap-2 justify-between">
             <div className="flex flex-wrap gap-1.5">
-              {byStatus.map(([s, n]) => <span key={s} className="text-[11px] rounded-full border px-2 py-0.5">{s} <span className="tabular-nums text-muted-foreground">{n}</span></span>)}
+              <Pill active={!unmatchedOnly} onClick={() => setUnmatchedOnly(false)} data-testid="kyc4u-requests-all">All<PillCount n={requests.length} active={!unmatchedOnly} /></Pill>
+              <Pill active={unmatchedOnly} onClick={() => setUnmatchedOnly(true)} data-testid="kyc4u-requests-unmatched">Not matched<PillCount n={unmatchedCount} active={unmatchedOnly} /></Pill>
             </div>
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search requests…" className="h-8 w-56" />
           </div>
@@ -189,15 +191,34 @@ export default function Kyc4uPanel() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map(r => (
-                  <tr key={`${r.listId}-${r.itemId}`} className="border-b last:border-0">
+                {shown.map(r => {
+                  const key = `${r.listId}-${r.itemId}`;
+                  return (
+                  <Fragment key={key}>
+                  <tr className="border-b last:border-0">
                     <td className="py-1.5 pr-3"><span className="font-medium">{r.title || r.entityName || "Untitled"}</span>{r.entityName && r.entityName !== r.title && <span className="block text-muted-foreground">{r.entityName}</span>}</td>
                     <td className="py-1.5 pr-3">{r.status || "—"}</td>
-                    <td className="py-1.5 pr-3">{r.companyId ? <Link href={`/companies/${r.companyId}`} className="text-primary hover:underline">{r.companyName}</Link> : <span className="text-muted-foreground">Not matched</span>}</td>
+                    <td className="py-1.5 pr-3">
+                      {r.companyId ? <Link href={`/companies/${r.companyId}`} className="text-primary hover:underline">{r.companyName}</Link> : <span className="text-muted-foreground">Not matched</span>}
+                      {/* A KYC4U folder no company holds (24 November 2026: the closed transactions not checked included
+                          companies KYC4U had checked): match it, and it shows on that company's KYC4U past checks. */}
+                      {isAdmin && r.listId !== "manual" && (
+                        <button type="button" className="ml-2 text-primary hover:underline" onClick={() => setMatching(matching === key ? null : key)} data-testid={`kyc4u-request-match-${r.itemId}`}>
+                          {matching === key ? "Close" : r.companyId ? "Change" : "Match"}
+                        </button>
+                      )}
+                    </td>
                     <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap text-muted-foreground">{when(r.modifiedAt)}</td>
                     <td className="py-1.5">{r.webUrl && <a href={r.webUrl} target="_blank" rel="noopener" className="text-muted-foreground hover:text-primary" aria-label="Open in KYC4U"><ExternalLink className="w-3.5 h-3.5" /></a>}</td>
                   </tr>
-                ))}
+                  {matching === key && (
+                    <tr className="border-b"><td colSpan={5}>
+                      <MatchToCompany folder={{ listId: r.listId, ref: r.itemId, entity: r.entityName, files: Number(r.fields?.Files) || 0 }} onDone={() => setMatching(null)} />
+                    </td></tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

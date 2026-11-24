@@ -28,9 +28,11 @@ function Names({ list, testId }: { list: Named[]; testId: string }) {
   );
 }
 
-export function CrmSelectBar({ kind, words, picked, onPick, shown, onDone }: {
-  kind: CrmHubKind; words: { one: string; many: string };
+export function CrmSelectBar({ kind, words, picked, onPick, shown, onDone, onDeleted }: {
+  // "kyc": the Companies view on Transactions → AML (24 November 2026), with the same rules.
+  kind: CrmHubKind | "kyc"; words: { one: string; many: string };
   picked: Set<string>; onPick: (next: Set<string>) => void; shown: Array<{ id: string; name: string }>; onDone: () => void;
+  onDeleted?: () => void;
 }) {
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -45,6 +47,7 @@ export function CrmSelectBar({ kind, words, picked, onPick, shown, onDone }: {
       queryClient.invalidateQueries({ queryKey: [CRM_HUB_KEY] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/engagement"] });
       invalidateBrandLists();
+      onDeleted?.();
     },
     onError: (e: any) => toast({ title: "Nothing was deleted", description: errorText(e), variant: "destructive" }),
   });

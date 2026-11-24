@@ -227,3 +227,12 @@ test("a sanctions-only party is signed off on the sanctions checks: other flags 
   // A trust keeps its own rules.
   assert.equal(signOffEnhanced({ ...base, trust: true }), true);
 });
+
+// Woody, 24 November 2026, on Coq d'Argent: the sign-off said "Press Run again on the card first" when the
+// party had no company that signs, so there was nothing to run.
+test("with no company that signs, the sign-off says to set it first, not to run the checks again", () => {
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true }))!, /^Set the company that signs first \(step 1\)/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, redFlags: 1 }))!, /^Set the company that signs first/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, sanctionsOnly: true }))!, /^Set the company that signs first/);
+  assert.match(signOffDenial(facts({ precheck: null }))!, /have not run for this party\. Press Run again/);
+});

@@ -413,11 +413,13 @@ function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role:
   );
 }
 
-function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId, whoDecides, factors }: {
+function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, testId, whoDecides, factors, old }: {
   dealId: string; role: string | null; flags: KycRedFlag[]; setAside: SetAsideFlag[]; canDecide: boolean;
   title: string; step: string; testId: string; whoDecides?: string;
   // The policy's higher-risk factors: amber, not red, and worded as factors.
   factors?: boolean;
+  // Flags the old in-app screening wrote by itself (24 November 2026): amber, with what to do.
+  old?: boolean;
 }) {
   const { toast } = useToast();
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -432,7 +434,7 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
   return (
     <div className="space-y-1.5" data-testid={testId}>
       {flags.length > 0 && (
-        <div className={`rounded-md border p-2.5 text-xs ${factors ? "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" : "border-red-300 bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200"}`} data-testid={`${testId}-live`}>
+        <div className={`rounded-md border p-2.5 text-xs ${factors || old ? "border-amber-300 bg-amber-50 text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" : "border-red-300 bg-red-50 text-red-900 dark:bg-red-950/20 dark:text-red-200"}`} data-testid={`${testId}-live`}>
           <div className="flex items-center gap-1.5 text-sm font-semibold"><Flag className="w-3.5 h-3.5 shrink-0" />{title}</div>
           <ul className="mt-1.5 space-y-1.5">
             {flags.map((f, i) => {
@@ -441,10 +443,10 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               return (
                 <li key={id} className="space-y-0.5" data-testid={`kyc-flag-${f.key}`}>
                   <div className="flex items-start gap-1.5">
-                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors ? "bg-amber-600" : "bg-red-600"}`} />
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors || old ? "bg-amber-600" : "bg-red-600"}`} />
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{f.label}</div>
-                      {f.detail && <div className={`${factors ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
+                      {f.detail && <div className={`${factors || old ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
                       {f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label)) ? (
                         <div className="mt-0.5 font-medium" data-testid={`kyc-flag-ofsi-${f.key}`}>If it is a true match: tell the Nominated Officer now. It is reported to OFSI as soon as practicable, and legal advice is taken before BGP acts further (AML policy J and 3.10).</div>
                       ) : null}
@@ -468,7 +470,7 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
               );
             })}
           </ul>
-          <p className="mt-1.5">{step}{canDecide ? (/aside/.test(step) ? "" : " Or, if one does not apply, set it aside with a comment.") : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
+          <p className={`mt-1.5${old ? " font-medium" : ""}`} data-testid={old ? `${testId}-todo` : undefined}>{step}{old ? "" : canDecide ? (/aside/.test(step) ? "" : " Or, if one does not apply, set it aside with a comment.") : ` ${whoDecides ? whoDecides.charAt(0).toUpperCase() + whoDecides.slice(1) : "The Nominated Officer or the Deputy"} can set one aside with a comment.`}</p>
         </div>
       )}
       {setAside.length > 0 && (
@@ -480,10 +482,11 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
           {asideOpen && (
             <ul className="mt-1.5 space-y-1.5">
               {setAside.map(({ flag, review }) => (
-                <li key={review.id} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
+                <li key={review.id || flag.key} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
                   <div className="text-foreground line-through decoration-muted-foreground/60">{flag.label}</div>
                   <div className="text-muted-foreground">Set aside{review.by ? ` by ${review.by}` : ""}{review.at ? `, ${precheckDay(review.at)}` : ""}: “{review.comment}”</div>
-                  {canDecide && (
+                  {/* Set aside by the app itself (id 0): a new match brings it back, nothing to put back by hand. */}
+                  {canDecide && review.id > 0 && (
                     <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={putBack.isPending} onClick={() => putBack.mutate(review.id)} data-testid={`kyc-flag-put-back-${flag.key}`}>Put back</button>
                   )}
                 </li>
@@ -497,6 +500,15 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
   );
 }
 
+// What to do about the old screening's flags, from where BGP's own checks stand on the party.
+function oldFlagStep(state: PartyPrecheck["state"] | null, officer: string, count: number): string {
+  const clears = count === 1 ? "this old flag clears by itself" : "these old flags clear by themselves";
+  if (state === "needs_company") return `What to do: set the company that signs (step 1). BGP's checks then run on it, and if they find nothing ${clears}.`;
+  if (state === "running") return `BGP's checks are running: if they find nothing, ${clears}.`;
+  if (state === "done") return `BGP's latest checks did not clear ${count === 1 ? "it" : "them"}: they found something of their own (above), or could not finish. ${officer} looks at both, or sets ${count === 1 ? "it" : "one"} aside with a comment.`;
+  return `What to do: run BGP's checks (step 2, Run again). If they find nothing, ${clears}.`;
+}
+
 // only: the box draws the red flags under Red flags and the policy's
 // higher-risk factors under Due diligence (20 November 2026).
 // sanctionsOnly: the simple view of a letting under £10,000 a month lists possible sanctions matches only.
@@ -508,18 +520,33 @@ function PartyRedFlags({ dealId, data, companyId, role, only, sanctionsOnly }: {
   // the officers do enhanced checks in-house.
   const officer = useAmlOfficerLabel();
   const inHouse = data.decisions?.inHouseEdd !== false;
+  // Flags the old in-app screening wrote by itself (Woody, 24 November 2026, on Coq d'Argent: "not clear why
+  // its been flagged and by what and how to get the right info what we need"): apart, with what to do.
+  const oldFlags = flags.filter(f => !f.factor && f.oldScreening);
   return (
     <>
       {only !== "factors" && <RedFlagList
         dealId={dealId}
         role={role}
-        flags={flags.filter(f => !f.factor)}
+        flags={flags.filter(f => !f.factor && !f.oldScreening)}
         setAside={aside.filter(a => !a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={who}
         title={`Red flag: raise with ${officer}`}
         step={`${officer} checks each one and signs the party off, or sets a flag aside with a comment.`}
         testId={`kyc-red-flags-${companyId}`}
+      />}
+      {only !== "factors" && <RedFlagList
+        dealId={dealId}
+        role={role}
+        old
+        flags={oldFlags}
+        setAside={[]}
+        canDecide={!!data.decisions?.canDecide}
+        whoDecides={who}
+        title={`${oldFlags.length === 1 ? "A flag" : `${oldFlags.length} flags`} from the old screening, switched off in October`}
+        step={oldFlagStep(data.prechecks?.[companyId]?.state || null, officer, oldFlags.length)}
+        testId={`kyc-old-flags-${companyId}`}
       />}
       {only !== "flags" && <RedFlagList
         dealId={dealId}
@@ -966,7 +993,15 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const unchecked = data.redFlags?.unchecked || [];
   const flagAside = aside.filter(a => !a.flag.factor).length;
   const screening: { state: StepState; text: ReactNode } | null = (() => {
-    if (flags.length) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">{plural(flags.length, "red flag")}: {shortReason(flags[0].label, 60)}</span> };
+    // Only the old screening's flags (24 November 2026): say so and what clears them.
+    if (flags.length && flags.every(f => f.oldScreening)) {
+      const next = companyMissing ? "checked once the company that signs is set"
+        : pre?.state === "running" ? "BGP's checks running now"
+        : pre?.state === "done" ? "not cleared by BGP's checks: look at them"
+        : "run BGP's checks to clear them";
+      return { state: companyMissing ? "todo" : pre?.state === "running" ? "wait" : "act", text: <span className="text-amber-800 dark:text-amber-300" data-testid={`aml-old-flags-summary-${cp.role}`}>{plural(flags.length, "flag")} from the old screening · {next}</span> };
+    }
+    if (flags.length) return { state: "flag", text: <span className="text-red-700 dark:text-red-400">{plural(flags.length, "red flag")}: {shortReason(flags.find(f => !f.oldScreening)?.label || flags[0].label, 60)}</span> };
     if (!pre || pre.state === "off") return data.redFlags ? { state: "done", text: "No red flags" } : null;
     if (pre.state === "needs_company") return { state: "todo", text: <span className="text-muted-foreground">After the company that signs is set</span> };
     if (pre.state === "running") return { state: "wait", text: "Running now" };

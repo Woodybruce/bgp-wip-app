@@ -39,6 +39,7 @@ import { DUE_DILIGENCE_LABEL, RECHECK_YEARS } from "@shared/aml-policy";
 import { kycVerdict, sameLegalCompany, signOffDenial, signOffEnhanced, signOffInHouse } from "@shared/party-kyc";
 import { partySubjectKind } from "@shared/deal-parties";
 import type { AmlSubject } from "./deal-party-aml";
+import { companySanctionsOnly } from "./kyc-companies";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -117,7 +118,8 @@ export async function loadClientSubject(db: Db, companyId: string, entityId: str
     dealId: null, dealName: clientFileName(c.name), role: "client",
     brandId: String(c.id), brandName: state.brandName || text(c.name),
     entityId: e ? String(e.id) : null, entityName: e ? text(e.name) : null,
-    sameCompany, state, regime: "full", fullOnSmall: false, jointRule: "other",
+    // The company's sanctions-only switch (24 November 2026): lettings under £10,000 a month only, the sanctions steps alone.
+    sameCompany, state, regime: (await companySanctionsOnly(db, companyId).catch(() => ({ on: false }))).on ? "sanctions_only" : "full", fullOnSmall: false, jointRule: "other",
     agents: { ids, names: [] },
     accountName: text(c.name), accountSubjectType: c.aml_subject_type || null,
     entityNumber: e?.companies_house_number || null, entityKind: e?.entity_kind || null, country: e?.country || null,
@@ -181,12 +183,15 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
   const contact = subject.file?.contactId
     ? (await pool.query(`SELECT id, name, email FROM crm_contacts WHERE id = $1 AND company_id = $2`, [subject.file.contactId, subject.brandId])).rows[0] || null
     : null;
-  const bucket = clientKycBucket({ status: subject.state.status, expiresAt: subject.state.expiresAt ? iso(subject.state.expiresAt) : null, scope: (subject.state as any).scope || null,
+  // On a sanctions-only company a sanctions-only sign-off is all it needs.
+  const bucket = clientKycBucket({ status: subject.state.status, expiresAt: subject.state.expiresAt ? iso(subject.state.expiresAt) : null, scope: subject.regime === "sanctions_only" ? null : (subject.state as any).scope || null,
     started: !!subject.file || !!stored || requests.length > 0 }, new Date());
+  const smallOnly = subject.regime === "sanctions_only";
   const nextFacts: ClientKycNextFacts = {
     rejected: subject.state.status === "rejected",
-    cleared: verdict.approved && bucket !== "sanctions_only" ? { until: subject.state.expiresAt ? iso(subject.state.expiresAt) : null } : null,
-    sanctionsOnly: bucket === "sanctions_only",
+    cleared: verdict.approved && (smallOnly || bucket !== "sanctions_only") ? { until: subject.state.expiresAt ? iso(subject.state.expiresAt) : null } : null,
+    sanctionsOnly: !smallOnly && bucket === "sanctions_only",
+    sanctionsChecks: smallOnly,
     precheck: running ? "running" : stored ? "done" : "not_run",
     redFlags: live.length,
     canDecide: officer,
@@ -222,6 +227,8 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     signOff: { ...view, canSignOff, canDecide: officer },
     // The documents are in once the client checks came back and nobody still owes theirs (or the company is cleared).
     documents: { done: bucket === "cleared" || bucket === "expiring" || (main?.status === "finished" && view.outstanding.length === 0) },
+    // The company's sanctions-only switch: the three sanctions steps, and nothing asked of the client.
+    sanctionsOnly: smallOnly,
     next: clientKycNextStep(nextFacts, fmt),
     xero: subject.xero,
     transactions: transactions.map((d: any) => ({ id: String(d.id), name: text(d.name) || "Untitled transaction", ref: d.deal_ref ?? null, status: d.status || null, role: d.role })),
@@ -403,13 +410,16 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/sign-off", asy
     if (edd && me.as !== "officer") return res.status(403).json({ message: "Enhanced due diligence is signed off by the Nominated Officer or a Deputy.", code: "SIGN_OFF_REFUSED" });
     const level = edd ? "enhanced" : facts.level && facts.level.level !== "enhanced" ? facts.level.level : "standard";
     const years = RECHECK_YEARS[level];
+    const smallOnly = subject.regime === "sanctions_only";
     const relied = [
-      DUE_DILIGENCE_LABEL[level].toLowerCase(),
+      smallOnly ? null : DUE_DILIGENCE_LABEL[level].toLowerCase(),
       level === "simplified" && facts.level?.why[0] ? `why: ${facts.level.why[0]}` : null,
       edd ? "done by BGP's officers" : null,
-      subject.file?.instructionLabel ? `client checks for ${subject.file.instructionLabel.toLowerCase()}, before any transaction` : "client checks before any transaction",
+      // The company's switch (24 November 2026): the brand's history line carries these words, which brandSignOffScope reads.
+      smallOnly ? "sanctions checks only (lettings under £10,000 a month)" : null,
+      subject.file?.instructionLabel ? `checks for ${subject.file.instructionLabel.toLowerCase()}, before any transaction` : "checks before any transaction",
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
-      facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
+      smallOnly ? null : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (BGP's contact for ${subject.accountName})` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
@@ -419,7 +429,7 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/sign-off", asy
       const r = await approveEntityKyc("trading_entity", subject.entityId, me.name, {
         reminderCompanyId: subject.brandId, notes: line, recheckYears: years,
         evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: null, role: "client", clientFile: subject.file?.id || null,
-          instruction: subject.file?.instruction || null, note: note || null, level, regime: "full", precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+          instruction: subject.file?.instruction || null, note: note || null, level, regime: subject.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company was not found." });
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");

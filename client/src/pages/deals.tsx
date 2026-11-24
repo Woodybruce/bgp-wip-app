@@ -3133,6 +3133,7 @@ export function DealFormDialog({
   companies,
   users,
   handover,
+  prefill,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3142,6 +3143,9 @@ export function DealFormDialog({
   companies: CrmCompany[];
   users: { id: number; name: string; email: string }[];
   handover?: DealHandover;
+  // A new transaction started from a company (Transactions → AML → Companies,
+  // 24 November 2026): that company filled in as landlord, tenant, seller or buyer.
+  prefill?: Partial<Pick<DealFormData, "landlordId" | "tenantId" | "vendorId" | "purchaserId">>;
 }) {
   const { toast } = useToast();
   // Search-or-create pickers for the full form — the "Show all fields" /
@@ -3249,7 +3253,7 @@ export function DealFormDialog({
     }
     const dealId = deal?.id ?? null;
     if (draftSessionRef.current?.dealId === dealId) return;
-    const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : freshForm();
+    const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : { ...freshForm(), ...(prefill || {}) };
     draftSessionRef.current = { dealId, source: JSON.stringify(start) };
     setForm(start);
     setChangeReason("");
@@ -6865,6 +6869,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
   const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
+  // ?new=1&landlordId= (or tenantId, vendorId, purchaserId): Add a transaction from a company.
+  const [createPrefill, setCreatePrefill] = useState(() => {
+    const out: Partial<Pick<DealFormData, "landlordId" | "tenantId" | "vendorId" | "purchaserId">> = {};
+    for (const k of ["landlordId", "tenantId", "vendorId", "purchaserId"] as const) { const v = urlParams.get(k); if (v && /^[\w-]{1,80}$/.test(v)) out[k] = v; }
+    return out;
+  });
   const [dealReportOpen, setDealReportOpen] = useState(false);
   const [jointAgencyRegisterOpen, setJointAgencyRegisterOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
@@ -9164,11 +9174,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         <>
           <DealFormDialog
             open={createOpen}
-            onOpenChange={setCreateOpen}
+            onOpenChange={o => { setCreateOpen(o); if (!o) setCreatePrefill({}); }}
             properties={properties}
             propertyUnits={propertyUnits}
             companies={companies}
             users={users}
+            prefill={createPrefill}
           />
 
 

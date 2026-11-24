@@ -180,6 +180,8 @@ test('the companies card lists the account and each company under it with its nu
     useRef: initial => ({ current: initial }), useEffect: () => {}, looksLikeSiteMenu: () => false,
     bucketOf: () => 'unchecked', BUCKET_ORDER: ['unchecked'], TONE: { unchecked: '', expired: '' }, tone: value => value,
     chip: 'chip', RELATION_LABEL: { self: 'Account', subsidiary: 'Subsidiary' },
+    // A company with checks, a file or a request under way reads In progress (24 November 2026).
+    clientStarted: () => false,
   });
   const card = render({ companyId: 'landlord' });
   assert.equal(card.type, 'Card');

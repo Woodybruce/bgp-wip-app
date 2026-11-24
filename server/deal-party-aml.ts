@@ -206,6 +206,7 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     higherRisk: isHigherRisk(brand),
     precheck: precheck.ranAt ? { ranAt: precheck.ranAt } : null,
     precheckRunning: precheck.running,
+    needsCompany: !party.entityId && kind === "company" && !["trust", "public_body"].includes(String(held?.aml_subject_type || "").trim().toLowerCase()),
     clientChecksFinished: finished,
     clientChecksOutstanding: mainFinished || trust ? outstanding : [],
     sanctionsOnly: party.regime === "sanctions_only",

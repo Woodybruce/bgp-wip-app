@@ -78,7 +78,10 @@ test("the CRM chip: all cleared, some of many, in progress, expired, rejected, n
   // Signed off for sanctions checks only is not cleared for a client: it does not cover a sale or a large letting.
   const small = clientKycSummary([{ status: "approved", expiresAt: inDays(400), scope: "sanctions_only" }], NOW);
   assert.equal(small.sanctionsOnly, 1);
-  assert.equal(clientKycWords(small).label, "KYC 0 of 1");
+  assert.equal(clientKycWords(small).label, "Sanctions only");
+  assert.match(clientKycWords(small).title, /not a sale or a bigger letting/);
+  assert.equal(clientKycWords(clientKycSummary([{ status: "approved", expiresAt: inDays(400), scope: "sanctions_only" }, { status: "approved", expiresAt: inDays(400) }], NOW)).label, "Cleared, some sanctions only");
+  assert.equal(clientKycWords(clientKycSummary([{ status: "approved", expiresAt: inDays(400), scope: "sanctions_only" }, { status: null, expiresAt: null }], NOW)).label, "KYC 0 of 2");
 });
 
 const base: ClientKycNextFacts = {

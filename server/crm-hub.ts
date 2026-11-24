@@ -14,14 +14,15 @@ import { isEngagementStaff } from "./crm-engagement";
 import { isPrivateEmailRecord, isPrivateMailboxAddress, PRIVATE_MAILBOX } from "./private-mail";
 import { closedStatusSqlList } from "@shared/letting-rules";
 import { requirementStateSql } from "@shared/requirement-live";
-import { clientKycSummary, clientKycWords } from "@shared/client-kyc";
-import { entitySignOffScope } from "@shared/party-kyc";
+import { clientKycSummary, clientKycWords, subCompanyKycSql, subCompanyScope } from "@shared/client-kyc";
 import {
   CRM_HUB_PEOPLE_SHOWN, LENDER_SUB_TYPES, LENDER_TYPES, LANDLORD_TYPES,
   agentLine, brandWhy, companyCity, companyIsKind, contactDates, isCrmClient, isCrmHubKind, landlordLine, lenderLine, lenderSubType,
   nextActionOf, rankPeople, shownDescription,
   type CrmHubKind, type CrmHubPerson, type CrmHubResponse, type CrmHubRow, type OpenActionLike, type RankablePerson,
 } from "@shared/crm-hub";
+
+const SUB_KYC = subCompanyKycSql("e");
 
 export type Queryable = { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> };
 type Actor = { id: string; name: string | null; email?: string; role?: string | null; is_active?: boolean; client_view_mode?: boolean };
@@ -201,17 +202,18 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
     // The KYC on the companies filed under each (24 November 2026): every sub
     // company's own approval, whether its checks were started, and the
     // record's own when it is a person, trust or public body.
-    side(q, "KYC", `SELECT e.parent_company_id AS company_id, k.kyc_status, k.expires_at, k.approved_at,
-             k.evidence->'bgpSignOff'->>'regime' AS regime, k.evidence->'bgpSignOff'->>'at' AS signoff_at,
+    side(q, "KYC", `SELECT e.parent_company_id AS company_id, ${SUB_KYC.columns},
              (EXISTS (SELECT 1 FROM kyc_client_files f WHERE f.trading_entity_id = e.id AND f.closed_at IS NULL)
                OR EXISTS (SELECT 1 FROM kyc_investigations i WHERE i.trading_entity_id = e.id AND i.result->>'kind' = 'precheck')) AS started
         FROM crm_trading_entities e
-        LEFT JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = e.id
+        ${SUB_KYC.joins}
        WHERE e.parent_company_id = ANY($1::text[])
       UNION ALL
-      SELECT c.id, c.kyc_status, c.kyc_expires_at, c.kyc_checked_at, NULL, NULL,
+      SELECT c.id, c.kyc_status, c.kyc_expires_at, c.kyc_checked_at, NULL, NULL, l.notes, l.created_at, true,
              EXISTS (SELECT 1 FROM kyc_client_files f WHERE f.company_id = c.id AND f.trading_entity_id IS NULL AND f.closed_at IS NULL)
         FROM crm_companies c
+        LEFT JOIN LATERAL (SELECT notes, created_at FROM kyc_audit_log WHERE company_id = c.id AND action = 'kyc_approved'
+                            ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 1) l ON true
        WHERE c.id = ANY($1::text[]) AND lower(COALESCE(c.aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [ids]),
   ]);
 
@@ -389,7 +391,7 @@ function kycChip(rows: any[], now: Date): { kyc?: CrmHubRow["kyc"] } {
   const list = rows.map(r => ({
     status: r.kyc_status || null,
     expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : null,
-    scope: String(r.kyc_status || "").toLowerCase() === "approved" ? entitySignOffScope({ regime: r.regime, signedOffAt: r.signoff_at, approvedAt: r.approved_at }) : null,
+    scope: subCompanyScope(r),
     started: !!r.started,
   }));
   const sum = clientKycSummary(list, now);

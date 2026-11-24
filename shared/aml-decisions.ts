@@ -40,6 +40,17 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "Flags from the old screening say what set them and what to do",
+    text: "Every mark the old in-app screening wrote by itself in September and October (enhanced due diligence, a possible PEP or sanctions match, a risk rating) reads \"(old screening)\" and says why in plain words, such as an ownership chain three companies deep. To clear it, set the company that signs: BGP's checks then run, and if they find nothing it clears by itself." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A weak sanctions match under another company's name is a namesake",
+    text: "For a company, a ComplyAdvantage sanctions profile under a name spelt differently, scored under 50%, is listed as a possible namesake to check, not a red flag. It started with Blaydon Asset Management matched to Beltane Asset Management at 1%. A person's sanctions match stays a red flag however it is spelt." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "Old automatic flags are set aside when BGP's newer check finds nothing",
+    text: "A flag the old in-app screening set by itself (October 2026, no record of what matched) is set aside by the app once BGP's own latest check of that party finds no sanctions match, ComplyAdvantage red flag or public role. It is listed with the reason, and a new match brings it back.",
+    changed: "24 November 2026: widened to every mark the old screening wrote, and BGP's checks must find no red flag at all (see \"Flags from the old screening say what set them and what to do\")." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "A company can be set to sanctions checks only",
+    text: "A company whose lettings are all under £10,000 a month gets the sanctions checks only, worked out from its transactions, and BGP can switch it either way on the Companies view. Its client checks then have three steps and its sign-off covers small lettings only. Each transaction still decides its own checks from its rent." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "Every company on a transaction is listed for KYC",
+    text: "Transactions → AML → Companies lists every landlord, tenant, seller and buyer on a transaction, and any company added there, with its contracting entities, their KYC and its transactions. The app suggests the group's companies from Companies House, Land Registry and GLEIF as prompts only: a person ticks each one, and nothing is checked until they ask." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "A client can be checked before any transaction",
     text: "BGP's client can be checked on its company page when BGP is instructed: a leasing or sale instruction, advice on a purchase, or a tenant BGP acts for to find sites. The steps are the transaction's and the sign-off is the same record, so a transaction with that company is cleared until its re-check date." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "Every company under a client can be checked",

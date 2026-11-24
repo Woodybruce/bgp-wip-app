@@ -774,7 +774,7 @@ test("Companies House's open-ended date, 9999-12-31, is no date (21 November 202
 
 // Woody, 23 November 2026, on BILLS RESTAURANTS LTD.: "why is it picking up adversea media on buffalow bills
 // restruants its a waste if time". Two warning-list profiles at 20%, neither spelt as the company.
-test("a company's warning-list profiles spelt differently are set aside; sanctions never are", () => {
+test("a company's warning-list profiles spelt differently are set aside; a weak sanctions one is a namesake to check", () => {
   const line = { ...caLine("BILLS RESTAURANTS LTD.", [
     caMatch({ name: "buffalo bill restaurant", kind: "warning", source: "Ireland Revenue Defaulters List", score: 0.2, profileId: "p-bb" }),
     caMatch({ name: "bilas tandoori spice night restaurant", kind: "warning", source: "United Kingdom Insolvency Service Disqualified Directors", score: 0.2, profileId: "p-bt" }),
@@ -783,7 +783,9 @@ test("a company's warning-list profiles spelt differently are set aside; sanctio
   ]), person: false };
   const split = splitProviderMatches(line as any);
   assert.deepEqual(split.variants.map(m => m.profileId), ["p-bb", "p-bt"]);
-  assert.deepEqual(split.flagged.map(m => m.profileId).sort(), ["p-own", "p-sx"], "its own name at 95%, and sanctions at any score");
+  // Since 24 November 2026 a company's sanctions profile under another name at under 50% is listed to check, never set aside.
+  assert.deepEqual(split.flagged.map(m => m.profileId).sort(), ["p-own"], "its own name at 95%");
+  assert.deepEqual(split.namesakes.map(m => m.profileId), ["p-sx"]);
   // A person's warning list is never set aside on spelling: the bars (or the date of birth) decide.
   const person = { ...caLine("Jane Doe", [caMatch({ name: "jayne dough", kind: "warning", score: 0.2, profileId: "p-jd" })]), person: true, dobKnown: false };
   const ps = splitProviderMatches(person as any);
@@ -905,4 +907,108 @@ test("an overseas entity's Registered status is live, and a company abroad on it
   assert.deepEqual(ownersAbroadOf(mixed), []);
   // An owner that is itself an overseas entity is followed on the register, not read as listed.
   assert.deepEqual(roeListedOwners({ ...hondo, owners: [{ ...tpg, registrationNumber: "OE001234" }] }), []);
+});
+
+// Woody, 24 November 2026, on Beltane Asset Management: "these red flags are still coming is it historic stuff or comply
+// advantage still not working properly? can we fix!!?". ComplyAdvantage had matched "blaydon asset management", on its
+// Sanction Related Entities list, at 1%; the other two flags were set on the record by the old in-app screening in October.
+test("a company's sanctions profile under another name with a weak score is a namesake, not a red flag", () => {
+  const line = { name: "Beltane Asset Management", person: false, ...caLine("Beltane Asset Management", [
+    caMatch({ name: "blaydon asset management", kind: "sanctions", source: "Sanction Related Entities", score: 0.01, profileId: "p-blaydon" }),
+  ]) };
+  assert.equal(providerMatchFlags(line.matches[0], line), false);
+  const split = splitProviderMatches(line as any);
+  assert.deepEqual(split.flagged, []);
+  assert.deepEqual(split.namesakes.map(m => m.profileId), ["p-blaydon"]);
+  assert.match(precheckNamesakes(result({ complyAdvantage: { ran: true, lines: [line as any], skipped: null } }))[0].what, /sanctions.*blaydon asset management.*match 1%/);
+  // Its own name, or a strong score, stays a red flag.
+  assert.equal(providerMatchFlags(caMatch({ name: "BELTANE ASSET MANAGEMENT LLP", kind: "sanctions", score: 0.01 }), line), true, "spelt as theirs");
+  assert.equal(providerMatchFlags(caMatch({ name: "blaydon asset management", kind: "sanctions", score: 0.5 }), line), true, "50% or more");
+  assert.equal(providerMatchFlags(caMatch({ name: "blaydon asset management", kind: "sanctions", score: null }), line), true, "no score: nothing says it is weak");
+  // A person's sanctions match stays a red flag however it is spelt (transliteration).
+  assert.equal(providerMatchFlags(caMatch({ name: "Jon Doh", kind: "sanctions", score: 0.01 }), { name: "Jane Doe", person: true }), true);
+  // The run's sanctions result reads the same judgement.
+  const run = result({ complyAdvantage: { ran: true, lines: [line as any], skipped: null } });
+  assert.equal(precheckSanctionsMatch(run), false);
+  assert.deepEqual(precheckRedFlags(run, { sanctionsCurrent: true }).filter(f => f.kind === "provider_screen"), []);
+});
+
+test("the old screening's own flags are set aside by the app once BGP's newer check finds nothing, and come back on a match", async () => {
+  const { applyFlagReviews } = await import("../shared/kyc-red-flags");
+  const history = [{ at: "2026-10-23T10:00:00.000Z", what: "Sanctions screening returned a match — EDD mandatory.", who: "automatic" }];
+  const company = { aml_pep_status: "review_required", aml_edd_required: true, aml_edd_reason: "Sanctions screening returned a match — EDD mandatory." } as any;
+  const oldRun = { sanctions_match: true, conducted_at: "2026-10-23T10:00:00.000Z" };
+  const clear = { result: result({ ranAt: "2026-11-24T06:02:30.000Z", complyAdvantage: { ran: true, lines: [], skipped: null } }), current: true };
+  const flags = partyRedFlags({ company, latestInvestigation: oldRun, requests: [], idChecks: [], recordHistory: history, precheck: clear });
+  const { live, setAside } = applyFlagReviews(flags, []);
+  assert.deepEqual(live.map(f => f.key), []);
+  assert.deepEqual(setAside.map(s => s.flag.key).sort(), ["record:edd", "record:sanctions", "record:screening"]);
+  assert.ok(setAside.every(s => s.review.id === 0 && s.review.by === "BGP's checks before asking"));
+  assert.match(setAside[0].review.comment, /^Set by the old in-app screening on 23 Oct 2026, which kept no record of what matched\. BGP's checks on 24 Nov 2026 screened 1 name against the UK Sanctions List, the US OFAC list, with ComplyAdvantage and a web search, and found nothing\.$/);
+  // A sanctions match in BGP's own run: the old flags count again.
+  const matched = { result: result({ sanctions: { ran: true, lists: ["the UK Sanctions List"], lines: [{ name: "ACME LIMITED", role: "the company", outcome: "possible", matches: [] }] as any, error: null } }), current: true };
+  assert.equal(applyFlagReviews(partyRedFlags({ company, latestInvestigation: oldRun, requests: [], idChecks: [], recordHistory: history, precheck: matched }), []).live.filter(f => f.key.startsWith("record:")).length, 3);
+  // A record field a person set (not the old screening's) is never set aside by the app.
+  const byHand = partyRedFlags({ company: { aml_edd_required: true, aml_edd_reason: "Complex structure" } as any, latestInvestigation: null, requests: [], idChecks: [], recordHistory: [{ at: "2026-10-23T10:00:00.000Z", what: "EDD required: complex structure", who: "Jack Barratt" }], precheck: clear });
+  assert.deepEqual(applyFlagReviews(byHand, []).live.map(f => f.key), ["record:edd"]);
+  // With no check of its own (a company party with no company that signs), nothing is set aside.
+  assert.equal(applyFlagReviews(partyRedFlags({ company, latestInvestigation: oldRun, requests: [], idChecks: [], recordHistory: history, precheck: null }), []).live.length, 3);
+});
+
+// Woody, 24 November 2026, on Coq d'Argent (#3492): "what do we do here? not cleare why its been flagged and by
+// what and how to get the right info what we need etc?". The old in-app screening wrote "UBO chain 3 levels deep —
+// complex structure, EDD recommended." on 27 September 2026, as an "edd_triggered" line by "automatic".
+test("the old screening's marks say what set them and why, and clear once BGP's own checks find nothing", async () => {
+  const { applyFlagReviews, oldEddWhy, oldScreeningMarks, OLD_SCREENING_TODO } = await import("../shared/kyc-red-flags");
+  const coq = { aml_edd_required: true, aml_edd_reason: "UBO chain 3 levels deep — complex structure, EDD recommended." } as any;
+  const history = [
+    { at: "2026-09-27T09:00:00.000Z", what: "UBO chain 3 levels deep — complex structure, EDD recommended.", who: "automatic", action: "edd_triggered" },
+    { at: "2026-09-23T09:49:53.000Z", what: "PEP tick came from the sanctions list, which is not a PEP list — PEP screening still needed", who: "system", action: "pep_tick_withdrawn" },
+  ];
+  // No company that signs: no check of its own, so the flag stays, saying where it came from and why.
+  const before = applyFlagReviews(partyRedFlags({ company: coq, latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: null }), []);
+  const edd = before.live.find(f => f.key === "record:edd")!;
+  assert.equal(edd.oldScreening, true);
+  assert.equal(edd.label, "Marked for enhanced due diligence (old screening)");
+  assert.equal(edd.source, "The old in-app screening");
+  assert.match(edd.detail!, /^Set automatically on 27 Sept? 2026 by the old in-app screening, switched off in October 2026, because the ownership chain is 3 companies deep\. Depth on its own is not a risk factor in BGP's AML policy/);
+  assert.ok(OLD_SCREENING_TODO.length > 0);
+  // BGP's own checks found nothing: set aside by the app, listed with the reason.
+  const clear = { result: result({ ranAt: "2026-11-24T09:00:00.000Z" }), current: true };
+  const after = applyFlagReviews(partyRedFlags({ company: coq, latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: clear }), []);
+  assert.deepEqual(after.live.map(f => f.key), []);
+  assert.equal(after.setAside[0].review.by, "BGP's checks before asking");
+  assert.match(after.setAside[0].review.comment, /^Set by the old in-app screening, switched off in October 2026\. BGP's checks on 24 Nov 2026 screened 1 name against .* and found nothing\.$/);
+  // BGP's checks raised something of their own: the old mark stays beside it for the officer.
+  const media = checkWebAnswer({ publicRole: { status: "none_found", findings: [] }, adverseMedia: { status: "found", findings: [{ summary: "Fined by the regulator for fraud.", url: "https://example.org/a", source: "Example" }] } }, [{ url: "https://example.org/a" }]);
+  const withMedia = { result: result({ web: { ran: true, skipped: null, lines: [{ name: "ACME LIMITED", role: "the company", person: false, ran: true, ...media }] } as any }), current: true };
+  assert.ok(precheckRedFlags(withMedia.result, { sanctionsCurrent: true }).length > 0, "the run has a red flag of its own");
+  const stays = applyFlagReviews(partyRedFlags({ company: coq, latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: withMedia }), []);
+  assert.ok(stays.live.some(f => f.key === "record:edd" && f.oldScreening));
+  // A check that could not read Companies House does not clear an ownership mark.
+  const unfinished = { result: result({ companiesHouse: null, notAtCompaniesHouse: "Companies House could not be read: 429 Too Many Requests" } as any), current: true };
+  assert.ok(applyFlagReviews(partyRedFlags({ company: coq, latestInvestigation: null, requests: [], idChecks: [], recordHistory: history, precheck: unfinished }), []).live.some(f => f.key === "record:edd"));
+
+  // Each of the old screening's reasons, in plain words.
+  assert.match(oldEddWhy("Adverse media identified during AI sweep — EDD recommended.")!, /AI web search reported bad news.*did not record what it found/);
+  assert.match(oldEddWhy("Sanctions screening returned a match — EDD mandatory.")!, /did not record which name or list matched/);
+  assert.match(oldEddWhy("Overall risk assessed as high (score 45) — EDD recommended.")!, /risk score came to 45/);
+  assert.match(oldEddWhy("UBO chain touches high-risk jurisdiction LB — EDD mandatory under MLR 2017 Reg 33 (FATF/HMT high-risk country).")!, /in Lebanon, a country it rated high risk/);
+  assert.match(oldEddWhy("Transaction value over £1m (£2,500,000) — EDD recommended for high-value transactions.")!, /worth over £1m/);
+  assert.equal(oldEddWhy("Registered overseas entity (Jersey) with no PSCs disclosed on the UK register"), null, "a person's own words");
+
+  // The PEP review status only the old screening wrote, and its risk rating, with no person's line on either.
+  const marks = oldScreeningMarks({ company: { aml_pep_status: "review_required", aml_risk_level: "critical" } as any, recordHistory: history, latestInvestigation: null });
+  assert.match(marks.pep!.detail, /when a name matched a sanctions or PEP list/);
+  assert.match(marks.risk!.detail, /from its own risk score\. No one at BGP is recorded as setting it/);
+  // A risk level the MLRO set on the record is theirs, and stays a red flag.
+  const set = oldScreeningMarks({ company: { aml_risk_level: "high" } as any, recordHistory: [{ at: "2026-10-01T10:00:00.000Z", what: "risk=high", who: "Jack Barratt", action: "cdd_checklist_updated" }], latestInvestigation: null });
+  assert.equal(set.risk, null);
+  const mlro = applyFlagReviews(partyRedFlags({ company: { aml_risk_level: "high" } as any, latestInvestigation: null, requests: [], idChecks: [],
+    recordHistory: [{ at: "2026-10-01T10:00:00.000Z", what: "risk=high", who: "Jack Barratt", action: "cdd_checklist_updated" }], precheck: clear }), []);
+  assert.deepEqual(mlro.live.map(f => [f.key, f.label, !!f.oldScreening]), [["record:high_risk", "Risk rated high", false]]);
+  // An old sanctions screening record from before November.
+  const sanc = oldScreeningMarks({ company: null, recordHistory: [], latestInvestigation: { sanctions_match: true, conducted_at: "2026-10-02T08:00:00.000Z" } });
+  assert.match(sanc.sanctions!.detail, /^From the old in-app screening, switched off in October 2026, on 2 Oct 2026\./);
+  assert.equal(oldScreeningMarks({ company: null, recordHistory: [], latestInvestigation: { sanctions_match: true, conducted_at: "2026-11-20T08:00:00.000Z" } }).sanctions, null);
 });

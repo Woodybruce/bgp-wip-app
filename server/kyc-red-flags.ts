@@ -65,18 +65,30 @@ export const reviewsForDeal = (rows: FlagReviewRow[], dealId: string): KycFlagRe
 export async function loadRecordHistory(db: Db, brandIds: string[]): Promise<Record<string, NonNullable<PartyRedFlagFacts["recordHistory"]>>> {
   const out: Record<string, NonNullable<PartyRedFlagFacts["recordHistory"]>> = {};
   if (!brandIds.length) return out;
+  // The latest lines for EACH company: a LIMIT across them all left most of the
+  // AML board's parties with no history (24 November 2026), so their old
+  // screening flags could not say what set them.
   const { rows } = await db.query(
-    `SELECT k.company_id, k.action, k.notes, k.created_at, COALESCE(u.name, k.performed_by) AS who
-       FROM kyc_audit_log k LEFT JOIN users u ON u.id::text = k.performed_by
-      WHERE k.company_id = ANY($1::varchar[])
-        AND k.action <> 'precheck'
-        AND (k.action ~* '(pep|risk|edd|sanction|screen|auto_decision)' OR k.notes ~* '(pep|risk rated|enhanced due diligence|edd|sanction)')
-      ORDER BY k.created_at DESC
-      LIMIT 200`, [brandIds]);
+    `SELECT company_id, action, notes, created_at, who FROM (
+       SELECT k.company_id, k.action, k.notes, k.created_at, COALESCE(u.name, k.performed_by) AS who,
+              row_number() OVER (PARTITION BY k.company_id ORDER BY k.created_at DESC NULLS LAST, k.id DESC) AS n
+         FROM kyc_audit_log k LEFT JOIN users u ON u.id::text = k.performed_by
+        WHERE k.company_id = ANY($1::varchar[])
+          AND k.action <> 'precheck'
+          -- A flag set aside or put back is the flag's own decision, shown with it: it never pushes
+          -- out the line that says what set the record (24 November 2026).
+          AND k.action NOT IN ('red_flag_set_aside', 'red_flag_put_back')
+          AND (k.action ~* '(pep|risk|edd|sanction|screen|auto_decision)' OR k.notes ~* '(pep|risk rated|risk=|enhanced due diligence|edd|sanction)')
+     ) x WHERE n <= 6
+     ORDER BY company_id, created_at DESC NULLS LAST`, [brandIds]);
   for (const r of rows) {
     const list = (out[r.company_id] ||= []);
-    if (list.length >= 4) continue;
-    list.push({ at: r.created_at ? new Date(r.created_at).toISOString() : null, what: String(r.notes || r.action || "").replace(/\s+/g, " ").trim().slice(0, 300), who: r.who ? String(r.who).slice(0, 80) : null });
+    list.push({
+      at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      what: String(r.notes || r.action || "").replace(/\s+/g, " ").trim().slice(0, 300),
+      who: r.who ? String(r.who).slice(0, 80) : null,
+      action: r.action ? String(r.action) : null,
+    });
   }
   return out;
 }

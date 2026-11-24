@@ -21,7 +21,11 @@ test('the bars: sanctions always, a public role at 60%, anything else (warning l
   const fn = rules.slice(rules.indexOf('export function providerMatchFlags'), rules.indexOf('/** A ComplyAdvantage line'));
   // Since later on 19 November 2026 a person screened with their date of birth is judged by it: only sanctions
   // whatever the score, and a profile with no date of birth is a possible namesake.
-  assert.match(fn, /if \(dated \? \/sanction\/\.test\(kind\) : ALWAYS_FLAG_KIND\.test\(kind\)\) return true;/);
+  assert.match(fn, /if \(dated \? \/sanction\/\.test\(kind\) : ALWAYS_FLAG_KIND\.test\(kind\)\) \{/);
+  // Woody, 24 November 2026 (Beltane Asset Management matched "blaydon asset management" at 1%): a company's sanctions
+  // profile under another name at under 50% is a namesake to check; a person's stays a red flag.
+  assert.match(fn, /if \(line\?\.name && !providerLineIsPerson\(\{ name: line\.name, person: line\.person \}\) && companySanctionsNamesake\(m, line\.name\)\) return false;\s*return true;/);
+  assert.match(rules, /export const COMPANY_SANCTIONS_BAR = 0\.5;/);
   assert.match(fn, /if \(dated && line!\.dobKnown\) return false;/);
   assert.match(rules, /flagged: matches\.filter\(m => providerMatchFlags\(m, line\)\)/);
   assert.match(fn, /if \(m\.unread \?\? !m\.profileId\) return true;/);
