@@ -35,7 +35,8 @@ import { Building2, AlertTriangle, CheckCircle2, AlertCircle, XCircle, ShieldChe
 import { approverWords } from "@shared/party-kyc";
 import { ClientKycDialog } from "@/components/client-kyc/client-kyc-dialog";
 import { CreateBillingEntityDialog } from "@/components/billing-entity-create";
-import { clientInstructionLabel } from "@shared/client-kyc";
+import { SuggestedCompanies } from "@/components/kyc-companies/suggested-companies";
+import { clientInstructionLabel, clientKycSummary, clientKycWords } from "@shared/client-kyc";
 import { looksLikeSiteMenu } from "@shared/brand-compliance-status";
 
 interface GroupEntityKyc {
@@ -134,14 +135,19 @@ const TONE = {
 // sanction only needs to be clear here and option to start full KYC".
 const SANCTIONS_ONLY_TITLE = "Signed off on a letting under £10,000 a month: the sanctions checks only. A sale, or a letting at £10,000 a month or more, needs the full checks.";
 
-function KycChip({ bucket, expiresAt, scope }: { bucket: Bucket; expiresAt?: string | null; scope?: "sanctions_only" | null }) {
+function KycChip({ bucket, expiresAt, scope, started }: { bucket: Bucket; expiresAt?: string | null; scope?: "sanctions_only" | null; started?: boolean }) {
   if (bucket === "current" && scope === "sanctions_only") return <span className={tone(TONE.current)} title={SANCTIONS_ONLY_TITLE} data-testid="entity-kyc-sanctions-only"><CheckCircle2 className="w-3 h-3" />Sanctions only · under £10k a month</span>;
-  if (bucket === "current") return <span className={tone(TONE.current)}><CheckCircle2 className="w-3 h-3" />KYC approved</span>;
+  if (bucket === "current") return <span className={tone(TONE.current)}><CheckCircle2 className="w-3 h-3" />Cleared</span>;
   if (bucket === "inReview") return <span className={tone(TONE.inReview)}><AlertCircle className="w-3 h-3" />In review</span>;
   if (bucket === "rejected") return <span className={tone(TONE.rejected)}><XCircle className="w-3 h-3" />Rejected</span>;
   if (bucket === "expired") return <span className={tone(TONE.expired)}><Clock className="w-3 h-3" />Expired{expiresAt ? ` ${fmtDate(expiresAt)}` : ""}</span>;
+  // Checks run, a client file open or a request sent with no decision yet: the CRM chip's "in progress" (24 November 2026).
+  if (started) return <span className={tone(TONE.inReview)} data-testid="entity-kyc-in-progress"><AlertCircle className="w-3 h-3" />In progress</span>;
   return <span className={chip}><ShieldCheck className="w-3 h-3" />No KYC</span>;
 }
+
+// The same test as the header's chip (clientKycSummary's started).
+const clientStarted = (e: GroupEntity) => !!(e.client && (e.client.checksAt || e.client.running || e.client.file || (e.client.request && e.client.request.status !== "not_sent")));
 
 const RELATION_LABEL: Record<GroupEntity["relation"], string> = {
   self: "Account",
@@ -312,6 +318,28 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
     },
     onSuccess: ({ linked, failed }) => { invalidate(); setPicked(new Set()); toast({ title: `${linked} linked to Xero`, description: failed.length ? failed.slice(0, 2).join("; ") : undefined, variant: failed.length && !linked ? "destructive" : undefined }); },
   });
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const removeMany = useMutation({
+    mutationFn: async (rows: GroupEntity[]) => {
+      const deleted: string[] = [];
+      const kept: string[] = [];
+      for (const r of rows) {
+        try { await apiRequest("DELETE", `/api/crm/trading-entities/${encodeURIComponent(r.client!.entityId!)}`); deleted.push(r.name); }
+        catch (e: any) {
+          const m = String(e?.message || e);
+          let why = m.replace(/^\d{3}:\s*/, "");
+          try { why = JSON.parse(m.slice(m.indexOf("{"))).error || why; } catch { /* plain text */ }
+          kept.push(`${r.name}: ${why}`);
+        }
+      }
+      return { deleted, kept };
+    },
+    onSuccess: ({ deleted, kept }) => {
+      invalidate(); setPicked(new Set()); setConfirmDelete(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard/companies"] });
+      toast({ title: deleted.length ? `${deleted.length} deleted` : "Nothing deleted", description: kept.length ? `Kept: ${kept.slice(0, 3).join("; ")}` : undefined, variant: kept.length && !deleted.length ? "destructive" : undefined });
+    },
+  });
   const addSelf = useMutation({
     mutationFn: async (e: GroupEntity) => apiRequest("POST", "/api/billing-entities", { brandId: companyId, companyNumber: e.companiesHouseNumber, xero: false }),
     onSuccess: (_r, e) => { invalidate(); toast({ title: "Added as a company to check", description: e.registeredName || e.name }); },
@@ -330,6 +358,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`account-entities-empty-${companyId}`}>
         <Building2 className="w-3.5 h-3.5" />No company filed under {data.accountName} to check yet.
         <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" onClick={() => setAdding(true)} data-testid="entities-add-company">Add a company</Button>
+        <SuggestedCompanies companyId={companyId} onAdded={invalidate} />
         <CreateBillingEntityDialog open={adding} onOpenChange={setAdding} brand={{ id: companyId, name: data.accountName }} initialQuery="" xero={false} testIdPrefix="entities-add"
           onCreated={() => { setAdding(false); invalidate(); }} onSavedWithoutXero={() => { setAdding(false); invalidate(); }} />
       </div>
@@ -348,24 +377,38 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
     [s.rejected, "rejected", TONE.rejected],
   ];
   const reviewing = review ? rows.find(r => r.key === review.key)?.e ?? null : null;
+  // The companies checked for KYC (the sub companies, or the record itself when a person,
+  // trust or public body), counted with the CRM chip's own words (24 November 2026).
+  const subjects = data.entities.filter(e => e.client);
+  const chipWords = subjects.length ? clientKycWords(clientKycSummary(subjects.map(e => ({
+    status: e.kyc?.status ?? null, expiresAt: e.kyc?.expiresAt ?? null, scope: e.kyc?.scope ?? null,
+    started: !!(e.client!.checksAt || e.client!.file || (e.client!.request && e.client!.request.status !== "not_sent")),
+  })), new Date())) : null;
+  const CHIP_TONE = { ok: TONE.current, warn: TONE.expired, bad: TONE.rejected, none: TONE.unchecked } as const;
   return (
     <Card data-testid={`account-entities-${companyId}`}>
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <Building2 className="w-3.5 h-3.5" /> Companies and KYC
-          <span className={tone(s.current === s.total ? TONE.current : TONE.expired)} data-testid="entities-current-summary">
-            <span className="font-mono tabular-nums">{s.current}</span> of <span className="font-mono tabular-nums">{s.total}</span> KYC approved
-          </span>
-          {bucketBadges.filter(([n]) => n > 0).map(([n, label, cls]) => (
-            <span key={label} className={tone(cls)}><span className="font-mono tabular-nums">{n}</span> {label}</span>
-          ))}
+          {chipWords ? (
+            <span className={tone(CHIP_TONE[chipWords.tone])} title={chipWords.title} data-testid="entities-current-summary">{chipWords.label}</span>
+          ) : (
+            <>
+              <span className={tone(s.current === s.total ? TONE.current : TONE.expired)} data-testid="entities-current-summary">
+                <span className="font-mono tabular-nums">{s.current}</span> of <span className="font-mono tabular-nums">{s.total}</span> cleared
+              </span>
+              {bucketBadges.filter(([n]) => n > 0).map(([n, label, cls]) => (
+                <span key={label} className={tone(cls)}><span className="font-mono tabular-nums">{n}</span> {label}</span>
+              ))}
+            </>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {/* Add a company to check, and check several at once (24 November 2026). */}
         <div className="flex flex-wrap items-center gap-1.5 pb-1.5" data-testid="entities-toolbar">
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAdding(true)} data-testid="entities-add-company">Add a company</Button>
-          {clientRows.length > 1 && (
+          {clientRows.length > 0 && (
             <Button size="sm" variant={selecting ? "secondary" : "ghost"} className="h-7 text-xs" onClick={() => { setSelecting(v => !v); setPicked(new Set()); }} data-testid="entities-select">
               {selecting ? "Done" : "Select"}
             </Button>
@@ -381,8 +424,25 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
                 onClick={() => linkXero.mutate(clientRows.filter(r => r.client!.entityId && picked.has(r.client!.entityId)))} data-testid="entities-link-xero">
                 Link to Xero{picked.size ? ` (${picked.size})` : ""}
               </Button>
+              {/* Delete ticked sub companies (24 November 2026: "Can we delete too select and delete"). The server keeps one that signs,
+                  pays or guarantees a transaction, or has AML records, and says why. */}
+              {confirmDelete ? (
+                <span className="inline-flex items-center gap-1 rounded-md border border-destructive/40 px-1.5 py-0.5 text-xs">
+                  Delete {picked.size} for good?
+                  <Button size="sm" variant="destructive" className="h-6 text-[11px] px-2" disabled={removeMany.isPending}
+                    onClick={() => removeMany.mutate(clientRows.filter(r => r.client!.entityId && picked.has(r.client!.entityId)))} data-testid="entities-delete-apply">
+                    {removeMany.isPending ? "Deleting…" : "Delete"}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 text-[11px] px-1.5" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+                </span>
+              ) : (
+                <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive" disabled={!picked.size} onClick={() => setConfirmDelete(true)} data-testid="entities-delete">
+                  Delete{picked.size ? ` ${picked.size}` : ""}
+                </Button>
+              )}
             </>
           )}
+          {!selecting && <SuggestedCompanies companyId={companyId} onAdded={invalidate} />}
         </div>
         {/* Name gets the width and wraps to two lines; the chips drop
             beneath it until the card is wide enough to sit them alongside —
@@ -441,7 +501,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
                     {e.kyc?.nextReviewAt && bucket === "current" && (
                       <span className="text-[11px] text-muted-foreground">review {fmtDate(e.kyc.nextReviewAt)}</span>
                     )}
-                    <KycChip bucket={bucket} expiresAt={e.kyc?.expiresAt} scope={e.kyc?.scope} />
+                    <KycChip bucket={bucket} expiresAt={e.kyc?.expiresAt} scope={e.kyc?.scope} started={clientStarted(e)} />
                   </span>
                 </button>
                 {e.entityId && !menuRead && <span className="pl-5"><EntityTransactions e={e} /></span>}

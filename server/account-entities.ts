@@ -17,6 +17,7 @@
 
 import { requireMlro } from "./aml-authority";
 import { entitySignOffScope } from "@shared/party-kyc";
+import { signedOffStatus } from "@shared/kyc-status";
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
@@ -54,6 +55,13 @@ export interface GroupEntity {
   tradingAs?: string;                      // brand name when the row is the brand's own legal entity
   /** The company's name at Companies House, when it is held (the account's own row reads "ANGELO, GORDON EUROPE LLP", not the CRM name). */
   registeredName?: string | null;
+  /**
+   * The sub company record (crm_trading_entities) folded into this company row because it
+   * carries the same Companies House number: the record a transaction signs with and the
+   * client KYC is about (24 November 2026: Land Securities Group PLC offered "Add to check"
+   * though it was already filed under Landsec).
+   */
+  tradingEntityId?: string | null;
   /**
    * The transactions whose AML checks this entity (Woody, 23 November 2026: "can we add some
    * links to these ie in review takes to that AML"): a trading entity where it is the
@@ -172,6 +180,7 @@ export function mergeEntityMentions(mentions: EntityMention[]): GroupEntity[] {
     entities.push({
       entityKind: company ? "company" : "trading_entity",
       entityId: canonical.entityId,
+      ...(company && tradingRow?.entityId ? { tradingEntityId: tradingRow.entityId } : {}),
       name: legalName || canonical.name,
       ...(legalName && legalName.toLowerCase() !== canonical.name.toLowerCase() ? { tradingAs: canonical.name } : {}),
       companiesHouseNumber: normCh(canonical.companiesHouseNumber) || chNumbers[0] || null,
@@ -321,10 +330,17 @@ export async function getAccountEntities(
   // 3. Layer KYC state on top.
   for (const entity of entities) {
     let kyc: GroupEntityKyc | null = null;
-    const row = entity.entityId ? kycByEntity.get(`${entity.entityKind}|${entity.entityId}`) : null;
+    // Only a sign-off counts (Woody, 24 November 2026: "Only sign off counts remove the old
+    // bit"): a record that holds no approval, rejection or lapsed approval is read as none.
+    // A sub company folded into a company row (the account's own legal company): its own
+    // sign-off first, then the account's, as the CRM chip and the Companies view read it.
+    const signed = (r: any) => (r && signedOffStatus(r.kyc_status) ? r : null);
+    const folded = entity.tradingEntityId ? signed(kycByEntity.get(`trading_entity|${entity.tradingEntityId}`)) : null;
+    const companyRow = entity.entityId ? signed(kycByEntity.get(`${entity.entityKind}|${entity.entityId}`)) : null;
+    const row = folded || companyRow;
     if (row) {
       kyc = {
-        status: row.kyc_status || "pending",
+        status: signedOffStatus(row.kyc_status)!,
         approvedBy: row.approved_by ?? null,
         approvedAt: iso(row.approved_at),
         expiresAt: iso(row.expires_at),
@@ -336,9 +352,9 @@ export async function getAccountEntities(
       };
     } else if (entity.entityKind === "company" && entity.entityId) {
       const live = companyById.get(entity.entityId);
-      if (live?.kyc_status) {
+      if (signedOffStatus(live?.kyc_status)) {
         kyc = {
-          status: live.kyc_status,
+          status: signedOffStatus(live.kyc_status)!,
           approvedBy: live.kyc_approved_by ?? null,
           approvedAt: null,
           expiresAt: iso(live.kyc_expires_at),
@@ -377,7 +393,8 @@ export async function getAccountEntities(
     if (!entity.entityId) continue;
     const mine = dealRows.filter((d: any) => entity.entityKind === "trading_entity"
       ? String(d.entity_id || "") === entity.entityId
-      : !d.entity_id && String(d.brand_id || "") === entity.entityId);
+      : (!d.entity_id && String(d.brand_id || "") === entity.entityId)
+        || (!!entity.tradingEntityId && String(d.entity_id || "") === entity.tradingEntityId));
     if (mine.length) entity.transactions = mine.slice(0, 8).map((d: any) => ({
       id: String(d.id), name: String(d.name || "Untitled transaction"), ref: d.deal_ref ?? null, status: d.status ?? null, role: String(d.role),
     }));
@@ -396,7 +413,8 @@ export async function getAccountEntities(
 // The client KYC on each sub company, and on a record that is itself a
 // person, trust or public body (24 November 2026). Batched: five reads.
 async function layerClientKyc(q: Querier, entities: GroupEntity[], companyIds: string[]): Promise<void> {
-  const tradingIds = entities.filter(e => e.entityKind === "trading_entity" && e.entityId).map(e => e.entityId!);
+  const subRecordOf = (e: GroupEntity) => e.entityKind === "trading_entity" ? e.entityId : (e.tradingEntityId || null);
+  const tradingIds = entities.map(subRecordOf).filter((id): id is string => !!id);
   const { rows: tradingRows } = tradingIds.length ? await q.query(
     `SELECT id, parent_company_id, entity_kind, country, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = ANY($1::text[])`, [tradingIds]) : { rows: [] as any[] };
   const { rows: selfRows } = companyIds.length ? await q.query(
@@ -405,9 +423,10 @@ async function layerClientKyc(q: Querier, entities: GroupEntity[], companyIds: s
   const subjects: Array<{ e: GroupEntity; companyId: string; entityId: string | null; row: any }> = [];
   for (const e of entities) {
     if (!e.entityId) continue;
-    if (e.entityKind === "trading_entity") {
-      const row = tradingRows.find((r: any) => String(r.id) === e.entityId);
-      if (row?.parent_company_id) subjects.push({ e, companyId: String(row.parent_company_id), entityId: e.entityId, row });
+    const subId = subRecordOf(e);
+    if (subId) {
+      const row = tradingRows.find((r: any) => String(r.id) === subId);
+      if (row?.parent_company_id) subjects.push({ e, companyId: String(row.parent_company_id), entityId: subId, row });
     } else if (ownSubjects.has(e.entityId)) {
       subjects.push({ e, companyId: e.entityId, entityId: null, row: null });
     }

@@ -11,6 +11,7 @@
 // person asks. The rules are here; the reads and writes are
 // server/property-ownership.ts and the card is
 // client/src/components/property-page/ownership-card.tsx.
+import { signedOffStatus } from "./kyc-status";
 import { legalNameKey } from "./deal-hots";
 import { sameCompaniesHouseNumber } from "./deal-parties";
 
@@ -242,14 +243,14 @@ export function titleUseWords(plan: TitleUsePlan, ctx: { titleNumber: string; ow
 
 /** A company's KYC in the transaction's words. */
 export function ownershipKycWords(state: { status?: string | null; expiresAt?: string | Date | null; approvedBy?: string | null } | null, now: Date = new Date()): OwnershipKyc {
-  const status = text(state?.status).toLowerCase() || null;
+  // Only a sign-off counts (24 November 2026): a stale "in review" reads as not signed off.
+  const status = signedOffStatus(state?.status);
   const until = state?.expiresAt ? new Date(state.expiresAt) : null;
   const day = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
   const expired = !!until && !Number.isNaN(until.getTime()) && until.getTime() < now.getTime();
   const words = status === "approved" && !expired ? `KYC approved${until && !Number.isNaN(until.getTime()) ? ` until ${day(until)}` : ""}`
     : status === "approved" || status === "expired" ? "KYC expired: check again"
     : status === "rejected" ? "KYC rejected by the officers"
-    : status === "in_review" ? "KYC in review"
     : "Not signed off yet";
   return { status, words, expiresAt: until && !Number.isNaN(until.getTime()) ? until.toISOString() : null, approvedBy: text(state?.approvedBy) || null };
 }

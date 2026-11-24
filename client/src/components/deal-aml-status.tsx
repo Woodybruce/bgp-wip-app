@@ -379,7 +379,7 @@ function FlagFacts({ flag }: { flag: KycRedFlag }) {
 function SetAsideDialog({ dealId, role, flag, onClose }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void }) {
   const { toast } = useToast();
   // An old automatic flag the current screening does not bear out comes with words to start from; the officer reads and edits them.
-  const [comment, setComment] = useState(flag.suggestion || "");
+  const [comment, setComment] = useState("");
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/red-flags/set-aside`, { role, key: flag.key, comment })).json(),
     onSuccess: () => { refreshAml(dealId); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
@@ -480,10 +480,11 @@ function RedFlagList({ dealId, role, flags, setAside, canDecide, title, step, te
           {asideOpen && (
             <ul className="mt-1.5 space-y-1.5">
               {setAside.map(({ flag, review }) => (
-                <li key={review.id} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
+                <li key={review.id || flag.key} className="space-y-0.5" data-testid={`kyc-flag-aside-${flag.key}`}>
                   <div className="text-foreground line-through decoration-muted-foreground/60">{flag.label}</div>
                   <div className="text-muted-foreground">Set aside{review.by ? ` by ${review.by}` : ""}{review.at ? `, ${precheckDay(review.at)}` : ""}: “{review.comment}”</div>
-                  {canDecide && (
+                  {/* Set aside by the app itself (id 0): a new match brings it back, nothing to put back by hand. */}
+                  {canDecide && review.id > 0 && (
                     <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={putBack.isPending} onClick={() => putBack.mutate(review.id)} data-testid={`kyc-flag-put-back-${flag.key}`}>Put back</button>
                   )}
                 </li>

@@ -82,16 +82,26 @@ function withGuarantorFlags(p: { brandId: string; deal: any }, prechecks: any[],
 
 // opts.dealId: one deal's rows, whatever its status (the deal's AML box reads
 // its parties' stage here, so the box and the dashboard say the same thing).
+/**
+ * The transactions the board covers: not withdrawn or archived, a closed one
+ * only while changed in the last AML_DASHBOARD_CLOSED_DAYS, and an investment
+ * deal only where its checks are due (amlBoardDealSql). The Companies view
+ * reads the same set (server/kyc-companies.ts).
+ */
+export function amlBoardScopeSql(alias: string): string {
+  const closedOnly = CLOSED_STATUSES.filter(c => !TERMINAL_STATUSES.includes(c));
+  const st = `lower(btrim(coalesce(${alias}.status, '')))`;
+  return `${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
+        AND (${st} NOT IN (${sqlList(closedOnly)}) OR ${alias}.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
+        AND ${amlBoardDealSql(alias)}`;
+}
+
 export async function loadAmlDashboard(me: { id: string; name: string }, now: Date = new Date(), opts: { dealId?: string; propertyId?: string } = {}): Promise<{ rows: AmlDashboardRow[]; unchecked: string[] }> {
   const partyCols = DEAL_PARTY_ROLES.flatMap(r => [`d.${DEAL_PARTY_COLUMNS[r].brand}`, `d.${DEAL_PARTY_COLUMNS[r].company}`]);
-  const closedOnly = CLOSED_STATUSES.filter(c => !TERMINAL_STATUSES.includes(c));
-  const st = `lower(btrim(coalesce(d.status, '')))`;
   // opts.propertyId: the board's own rows at one building (its Ownership & KYC tab, 23 November 2026).
   const which = opts.dealId
     ? `d.id = $1`
-    : `${st} NOT IN (${sqlList(TERMINAL_STATUSES)})
-        AND (${st} NOT IN (${sqlList(closedOnly)}) OR d.updated_at > now() - interval '${AML_DASHBOARD_CLOSED_DAYS} days')
-        AND ${amlBoardDealSql("d")}${opts.propertyId ? ` AND d.property_id = $1` : ""}`;
+    : `${amlBoardScopeSql("d")}${opts.propertyId ? ` AND d.property_id = $1` : ""}`;
   const deals = (await pool.query(
     `SELECT d.id, d.name, d.deal_ref, d.status, d.deal_type, d.team, d.updated_at, d.internal_agent_ids, d.internal_agent,
             d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
@@ -123,11 +133,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   };
   const none: any[] = [];
   const { loadPartyKyc } = await import("./deal-gates");
-  const { loadFlagReviews, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
+  const { loadFlagReviews, loadRecordHistory, reviewsForDeal, reviewsForParty } = await import("./kyc-red-flags");
   const { loadNotRequired } = await import("./aml-policy");
   // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors] = await Promise.all([
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors, recordHistory] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId, fullChecks: amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "full" }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
@@ -183,6 +193,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         ORDER BY deal_id, company_id, trading_entity_id, recorded_at DESC`, [dealIds])).rows, none),
     // A tenant's or buyer's guarantors (23 November 2026): their flags join the party's, as on the transaction.
     read("the guarantors", () => import("./deal-guarantors").then(m => m.guarantorRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
+    // The KYC records' own history, as the transaction's AML box reads it: what set each record flag (24 November 2026).
+    read("the KYC records' history", () => loadRecordHistory(pool, brandIds), {} as Awaited<ReturnType<typeof loadRecordHistory>>),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
@@ -214,6 +226,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const jointInAt = jointLive.map((t: any) => t.request?.jointAgent?.reliance?.agreedAt || (Number(t.files) > 0 ? t.last_used_at || t.created_at : null)).filter(Boolean).sort().pop() || null;
     const live = applyFlagReviews(withGuarantorFlags(p, prechecks, withPayerFlags(p, prechecks, partyRedFlags({
       company: companyRow,
+      recordHistory: recordHistory[p.brandId] || [],
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
       precheck: pre ? { result: pre.result, current: !!latest && String(latest.id) === String(pre.id) } : null,
       requests: partyTokens.map((t: any) => ({ ref: t.request?.ref || "", answers: t.request?.answers || null, ownersAnswer: t.request?.ownersAnswer || null, person: t.request?.person?.name || null })),

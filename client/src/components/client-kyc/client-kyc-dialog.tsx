@@ -36,6 +36,8 @@ export interface ClientFileView {
   signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean };
   next: ClientKycNext;
   documents?: { done: boolean };
+  // The company's sanctions-only switch (24 November 2026): the sanctions steps alone, nothing asked of the client.
+  sanctionsOnly?: boolean;
   xero: { id: string; name: string } | null;
   transactions: Array<{ id: string; name: string; ref: number | null; status: string | null; role: string }>;
 }
@@ -230,6 +232,9 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                   {view.next.action === "sign_off" && <Button size="sm" className="h-7" onClick={() => setOpenStep(4)}>Sign off</Button>}
                 </span>
               </div>
+              {view.sanctionsOnly && (
+                <p className="mb-2 text-xs text-muted-foreground" data-testid="client-kyc-sanctions-only">Sanctions checks only: for lettings under £10,000 a month. Nothing is asked of the client; the sign-off covers small lettings only.</p>
+              )}
               {view.file?.instructionLabel && (
                 <p className="mb-2 text-xs text-muted-foreground">{view.file.instructionLabel}{view.file.openedBy ? `, started by ${view.file.openedBy}` : ""}{view.file.openedAt ? ` on ${day(view.file.openedAt)}` : ""}.</p>
               )}
@@ -266,7 +271,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                 )}
               </Step>
 
-              <Step n={2} label="Screening" testId="client-kyc-step-screening" open={step(2)} onToggle={() => toggle(2)} done={!!pre?.ranAt && !live.length}
+              <Step n={2} label={view.sanctionsOnly ? "Sanctions" : "Screening"} testId="client-kyc-step-screening" open={step(2)} onToggle={() => toggle(2)} done={!!pre?.ranAt && !live.length}
                 summary={pre?.running ? "BGP's checks are running" : pre?.ranAt ? `Checked ${day(pre.ranAt)}${live.length ? ` · ${live.length} red flag${live.length === 1 ? "" : "s"}` : " · no red flags"}` : "Not run yet"}>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button size="sm" variant="outline" className="h-7" disabled={runChecks.isPending || !!pre?.running} onClick={() => runChecks.mutate(!!pre?.ranAt)} data-testid="client-kyc-run-checks">
@@ -274,7 +279,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                   </Button>
                   {view.flags.level && <span className="text-xs text-muted-foreground">Due diligence: <span className="font-medium text-foreground">{view.flags.level.level}</span>{view.flags.level.why[0] ? ` · ${view.flags.level.why[0]}` : ""}</span>}
                 </div>
-                {pre && pre.lines.length > 0 && <ul className="space-y-1">{pre.lines.map(l => <CheckLine key={l.key} line={l} />)}</ul>}
+                {pre && pre.lines.length > 0 && <ul className="space-y-1">{pre.lines.filter(l => !view.sanctionsOnly || l.key === "sanctions").map(l => <CheckLine key={l.key} line={l} />)}</ul>}
                 {live.length > 0 && (
                   <ul className="space-y-1.5" data-testid="client-kyc-flags">
                     {live.map(f => (
@@ -292,16 +297,16 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                 {view.flags.unchecked.length > 0 && <p className="text-xs text-amber-700">Could not read {view.flags.unchecked.join(", ")}.</p>}
               </Step>
 
-              <Step n={3} label="Documents" testId="client-kyc-step-documents" open={step(3)} onToggle={() => toggle(3)} done={!!view.documents?.done}
+              {!view.sanctionsOnly && <Step n={3} label="Documents" testId="client-kyc-step-documents" open={step(3)} onToggle={() => toggle(3)} done={!!view.documents?.done}
                 summary={view.signOff.outstanding.length ? `Still to come: ${view.signOff.outstanding.slice(0, 2).join("; ")}` : view.file?.contact ? `Who to ask: ${view.file.contact.name}` : "Send the client checks, or upload what you hold"}>
                 <div className="flex flex-wrap gap-2">
                   <SendClientChecksButton dealId={scopeKey} companyId={companyId} partyName={view.subject.name} label="Send client checks" />
                 </div>
                 <ClientChecksForParty dealId={scopeKey} companyId={companyId} canDecide={view.signOff.canDecide} />
                 <PartyDocumentsBox dealId={scopeKey} role="client" partyName={view.subject.name} canDecide={view.signOff.canDecide} />
-              </Step>
+              </Step>}
 
-              <Step n={4} label="Sign-off" testId="client-kyc-step-sign-off" open={step(4)} onToggle={() => toggle(4)} done={view.state.bucket === "cleared" || view.state.bucket === "expiring"}
+              <Step n={view.sanctionsOnly ? 3 : 4} label="Sign-off" testId="client-kyc-step-sign-off" open={step(4)} onToggle={() => toggle(4)} done={view.state.bucket === "cleared" || view.state.bucket === "expiring"}
                 summary={view.state.status === "approved" ? `Signed off${view.state.approvedBy ? ` by ${view.state.approvedBy}` : ""}${view.state.expiresAt ? `, until ${day(view.state.expiresAt)}` : ""}` : view.signOff.blocked ? "Not ready" : "Ready"}>
                 {view.signOff.blocked && <p className="text-xs text-amber-800 dark:text-amber-300">{view.signOff.blocked}</p>}
                 {view.signOff.canSignOff ? (

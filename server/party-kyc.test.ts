@@ -36,12 +36,24 @@ test("KYC4U's approvals read as KYC4U's, never the MLRO's (BGP's AML policy, Iss
 test("a party is judged on the company that signs when the deal names one", () => {
   // No company: the brand, as before.
   assert.deepEqual(partyKycState({ brand: brand(), company: null }).source, "brand");
-  // A company with its own check: that check, approved or not.
-  const own = partyKycState({ brand: brand(), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  // A company with its own sign-off: that sign-off, approved or rejected.
+  const own = partyKycState({ brand: brand(), company: company({ kyc: { status: "rejected", expiresAt: null, approvedBy: "Jack Barratt" } }) });
   assert.equal(own.source, "company");
-  assert.equal(own.status, "in_review");
+  assert.equal(own.status, "rejected");
   assert.equal(own.name, "The Test Bakery Operations Limited");
   assert.equal(own.brandName, "The Test Bakery");
+  // Only a sign-off counts (Woody, 24 November 2026): an old "in review" on the
+  // company, or on the brand, reads as no checks run.
+  const stale = partyKycState({ brand: brand(), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  assert.equal(stale.source, "company");
+  assert.equal(stale.status, null);
+  assert.equal(stale.approvedBy, null);
+  assert.equal(partyKycState({ brand: brand({ status: "in_review" }), company: null }).status, null);
+  assert.equal(partyKycState({ brand: brand({ status: "pending" }), company: null }).brandStatus, null);
+  // On the brand's own legal company the brand's sign-off stands over the old mark.
+  const ownCompany = partyKycState({ brand: brand({ companiesHouseNumber: "12345678" }), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  assert.equal(ownCompany.source, "same_company");
+  assert.equal(ownCompany.status, "approved");
   // No check of its own and a different legal company: no checks run, though the brand is approved.
   const other = partyKycState({ brand: brand(), company: company() });
   assert.equal(other.source, "company");
@@ -226,4 +238,13 @@ test("a sanctions-only party is signed off on the sanctions checks: other flags 
   assert.notEqual(signOffDenial({ ...base, sanctionsOnly: false, note: "x" }), null);
   // A trust keeps its own rules.
   assert.equal(signOffEnhanced({ ...base, trust: true }), true);
+});
+
+// Woody, 24 November 2026, on Coq d'Argent: the sign-off said "Press Run again on the card first" when the
+// party had no company that signs, so there was nothing to run.
+test("with no company that signs, the sign-off says to set it first, not to run the checks again", () => {
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true }))!, /^Set the company that signs first \(step 1\)/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, redFlags: 1 }))!, /^Set the company that signs first/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, sanctionsOnly: true }))!, /^Set the company that signs first/);
+  assert.match(signOffDenial(facts({ precheck: null }))!, /have not run for this party\. Press Run again/);
 });

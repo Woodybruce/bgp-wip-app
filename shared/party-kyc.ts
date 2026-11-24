@@ -12,6 +12,7 @@
 // the brand's own legal name). A brand the MLRO has rejected blocks whatever
 // company is named: a rejection is never stepped round by naming a company.
 
+import { signedOffStatus } from "./kyc-status";
 import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
 import { countryInSentence } from "./kyc-prechecks";
 
@@ -62,15 +63,24 @@ export function approverWords(by: string | null | undefined): string | null {
   return by.trim() === "KYC4U (MLRO)" ? "KYC4U" : by;
 }
 
+// Only a sign-off counts (Woody, 24 November 2026): a status that is not an
+// approval, a rejection or a lapsed approval reads as no checks run, with no
+// approver or dates.
+const NOT_SIGNED_OFF: KycFacts = { status: null, expiresAt: null, approvedBy: null, approvedAt: null, scope: null };
+
 export function partyKycState(input: PartyKycInput): PartyKycState {
   const { brand, company } = input;
-  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null, scope: brand.scope ?? null };
-  const about = { brandName: brand.name, brandStatus: brand.status };
+  const brandStatus = signedOffStatus(brand.status);
+  const brandFacts: KycFacts = brandStatus
+    ? { status: brandStatus, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null, scope: brand.scope ?? null }
+    : NOT_SIGNED_OFF;
+  const about = { brandName: brand.name, brandStatus };
   if (!company) return { name: brand.name, source: "brand", ...brandFacts, ...about };
-  if (brand.status === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
-  if (company.kyc) return { name: company.name, source: "company", ...company.kyc, approvedBy: approverWords(company.kyc.approvedBy), ...about };
+  if (brandStatus === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
+  const own = company.kyc && signedOffStatus(company.kyc.status) ? company.kyc : null;
+  if (own) return { name: company.name, source: "company", ...own, status: signedOffStatus(own.status), approvedBy: approverWords(own.approvedBy), ...about };
   if (sameLegalCompany(brand, company)) return { name: company.name, source: "same_company", ...brandFacts, ...about };
-  return { name: company.name, source: "company", status: null, expiresAt: null, approvedBy: null, approvedAt: null, ...about };
+  return { name: company.name, source: "company", ...NOT_SIGNED_OFF, ...about };
 }
 
 // ── A sign-off for sanctions checks only ────────────────────────────────────
@@ -143,6 +153,8 @@ export interface SignOffFacts {
   higherRisk: boolean;           // the brand's file reads as higher risk (high risk, EDD, a PEP result)
   precheck: { ranAt: string } | null;
   precheckRunning: boolean;
+  // A company party with no company that signs set: BGP's checks have nothing to run on yet (24 November 2026).
+  needsCompany?: boolean;
   clientChecksFinished: boolean; // the request to the person acting was finished and every person to check has sent what they owe
   // With the request finished: the people still to send something (19 November 2026).
   clientChecksOutstanding?: string[];
@@ -213,6 +225,9 @@ const SANCTIONS_MATCH_DENIAL = "A possible sanctions match stands: check whether
 /** Done by the officers in-house: their switch is on, or the party is a trust (never KYC4U since 23 November 2026). */
 export const signOffInHouse = (f: Pick<SignOffFacts, "inHouseEdd" | "trust">): boolean => !!f.inHouseEdd || !!f.trust;
 
+const NEEDS_COMPANY_DENIAL = "Set the company that signs first (step 1): BGP's checks run on it, not on the brand.";
+const notRunDenial = (f: Pick<SignOffFacts, "needsCompany">, words: string): string => f.needsCompany ? NEEDS_COMPANY_DENIAL : words;
+
 /** Why BGP may not sign the party off, or null when it may. */
 export function signOffDenial(input: SignOffFacts): string | null {
   const f: SignOffFacts = input.trust ? { ...input, inHouseEdd: true } : input;
@@ -231,7 +246,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
   if (f.sanctionsOnly && !f.trust) {
     if ((f.sanctionsFlags || 0) > 0) return SANCTIONS_MATCH_DENIAL;
     if (f.precheckRunning) return "The sanctions checks are still running. Sign off once they finish.";
-    if (!f.precheck) return "The sanctions checks have not run for this party. Press Run again first.";
+    if (!f.precheck) return notRunDenial(f, "The sanctions checks have not run for this party. Press Run again first.");
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `The sanctions checks are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again first.`;
     return guarantorChecksDenial(f.guarantorChecks);
   }
@@ -250,7 +265,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
   if (edd) {
     // Enhanced due diligence by BGP: the same freshness rules, then the officer's note.
     if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
-    if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
+    if (!f.precheck) return notRunDenial(f, "BGP's checks before asking have not run for this party. Press Run again on the card first.");
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
     const guarantorEdd = guarantorChecksDenial(f.guarantorChecks);
     if (guarantorEdd) return guarantorEdd;
@@ -264,7 +279,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
   if (f.higherRisk) return "This is a higher-risk file (high risk, enhanced due diligence or a public role): it goes to KYC4U.";
   if (f.ownersAbroad?.length) return `Owned through a company registered abroad (${f.ownersAbroad.join(", ")}): it goes to KYC4U, who find the people behind it; the Nominated Officer or a Deputy adds KYC4U's result.`;
   if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
-  if (!f.precheck) return "BGP's checks before asking have not run for this party. Press Run again on the card first.";
+  if (!f.precheck) return notRunDenial(f, "BGP's checks before asking have not run for this party. Press Run again on the card first.");
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }

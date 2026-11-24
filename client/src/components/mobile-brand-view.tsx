@@ -962,8 +962,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       {/* A CH number with no grade yet was a bare "COVENANT" heading —
           skeleton while it loads, then only a card with a grade
           (Woody, 2026-09-28). */}
-      {!isAgentFirm && (c as any).companies_house_number && covenantReport.isLoading && <Skeleton className="h-24 w-full rounded-xl" />}
-      {!isAgentFirm && !((c as any).companies_house_number && !covenantReport.data?.grade) && <Card>
+      {/* A landlord gets the desktop's own company checks card (covenant inside it), 24 November 2026: one version. */}
+      {isLandlord && <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />}
+      {!isLandlord && !isAgentFirm && (c as any).companies_house_number && covenantReport.isLoading && <Skeleton className="h-24 w-full rounded-xl" />}
+      {!isLandlord && !isAgentFirm && !((c as any).companies_house_number && !covenantReport.data?.grade) && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -984,7 +986,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       </Card>}
 
       {/* Compliance & KYC — same board as desktop (staff actions hide for clients inside) */}
-      <BrandComplianceCard companyId={companyId} company={c} />
+      {!isLandlord && <BrandComplianceCard companyId={companyId} company={c} />}
       {/* The account's companies (a landlord's SPVs) and their KYC, each with its KYC box and Xero link (24 November 2026). Staff only. */}
       {!isClientViewer && <AccountEntitiesPanel companyId={companyId} />}
       </div>}

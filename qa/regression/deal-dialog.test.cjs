@@ -8,7 +8,7 @@ assert.ok(dialog);
 let resetEffect;
 function visit(node) {
   if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect'
-      && node.arguments[0]?.getText(ast).includes('const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : freshForm();')) {
+      && node.arguments[0]?.getText(ast).includes('const start = handover ? handoverForm(deal, handover, handoverLandlordId) : deal ? dealToForm(deal) : { ...freshForm(), ...(prefill || {}) };')) {
     resetEffect = node.arguments[0];
   }
   ts.forEachChild(node, visit);
@@ -21,7 +21,7 @@ const { EMPTY_JOINT_AGENCY } = evaluate(find('client/src/components/joint-agency
 
 // A handover (Promote to Solicitors, the Heads of Terms' Convert, 2026-11-17)
 // opens the same dialog on the unit's deal through handoverForm.
-function setup({ handover } = {}) {
+function setup({ handover, prefill } = {}) {
   const state = { form: null, resets: 0, changeReason: '', learning: '', showAllFields: false, feeRows: [], feeAllocType: 'percentage', nameAutoFilled: false,
     pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false, noteBrandHint: 'stale',
     dealRead: 'stale', dealNoteBusy: 'stale', propertySeed: 'stale' };
@@ -30,6 +30,8 @@ function setup({ handover } = {}) {
     dealToForm: deal => ({ ...deal }),
     freshForm: () => ({ name: '', rentPa: '' }),
     handover,
+    // New Transaction opened from a company on the AML Companies view (24 November 2026).
+    prefill,
     handoverLandlordId: 'landlord-1',
     handoverForm: (deal, h, landlordId) => ({ ...(deal || {}), status: 'SOL', landlordId, from: h.kind }),
     setForm: value => { state.form = value; state.resets++; },
@@ -112,4 +114,15 @@ test('a handover starts from the unit\'s deal at Solicitors, keeps the deal\'s n
   orphan.render(true, undefined);
   assert.equal(orphan.state.form.status, 'SOL');
   assert.equal(orphan.state.nameAutoFilled, false);
+});
+
+test('a new transaction opened from a company starts with that company filled in', () => {
+  const { state, render } = setup({ prefill: { landlordId: 'company-1' } });
+  render(true, null);
+  assert.equal(state.form.landlordId, 'company-1');
+  assert.equal(state.form.name, '');
+  // Without one it starts empty, as before.
+  const plain = setup();
+  plain.render(true, null);
+  assert.equal(plain.state.form.landlordId, undefined);
 });

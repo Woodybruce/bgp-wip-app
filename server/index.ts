@@ -3202,6 +3202,11 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_client_files_company_idx ON kyc_client_files (company_id)`,
     `ALTER TABLE kyc_upload_tokens ALTER COLUMN deal_id DROP NOT NULL`,
     `ALTER TABLE kyc_upload_files ALTER COLUMN deal_id DROP NOT NULL`,
+    // The Companies view on Transactions → AML (Woody, 24 November 2026): a
+    // company added there with no transaction is listed, and each company has a
+    // sanctions-only switch (null = worked out from its lettings). Additive.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_listed_at timestamp`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_sanctions_only boolean`,
     // Companies registered abroad, checked in the app (Woody, 23 November
     // 2026: "No external ... to all happen in the app including translation").
     // A company that signs registered abroad: its country, its number on its
@@ -4597,6 +4602,8 @@ import dealHotsRouter from "./deal-hots";
 import dealPartyAmlRouter from "./deal-party-aml";
 import { kycDocumentsRouter } from "./kyc-documents";
 import { clientKycRouter } from "./client-kyc";
+import { kycCompaniesRouter } from "./kyc-companies";
+import { kycSuggestionsRouter } from "./kyc-suggestions";
 import { kycTranslationRouter } from "./kyc-translation";
 import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
@@ -5988,6 +5995,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycTranslationRouter);
   // Client KYC with no transaction: a company and its sub companies (BGP staff only, 24 November 2026).
   app.use(clientKycRouter);
+  app.use(kycCompaniesRouter);
+  app.use(kycSuggestionsRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);
   // BGP stops acting on a deal for AML reasons, and is released (21 November 2026).
@@ -7176,6 +7185,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         ];
         if (prod) {
           jobs.push(
+            // Land Registry's company ownership lists (CCOD, OCOD) — 00:20.
+            // Loads each month's new file by itself and removes owners it no
+            // longer lists (Woody, 2026-11-24: "we dont need a button just
+            // auto"); other nights one small request per list.
+            // HMLR_AUTO_UPDATE=off stops it.
+            { key: "hmlr-datasets", due: dailyAt(0, 20), run: () =>
+              import("./hmlr-fetch").then(m => m.autoUpdateHmlrDatasets())
+                .then(r => console.log(`[hmlr-datasets] ${r.map(x => `${x.dataset}: ${x.outcome}${x.file ? ` ${x.file}` : ""}${x.removed ? `, ${x.removed} removed` : ""}${x.why && x.outcome !== "up_to_date" ? ` (${x.why})` : ""}`).join("; ")}`)) },
             // Nightly KYC refresh — 01:00. 120/night so the parked backlog
             // clears in days; well inside CH rate limits.
             { key: "kyc-refresh", due: dailyAt(1), run: async () => {

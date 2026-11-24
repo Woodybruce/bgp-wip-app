@@ -5287,7 +5287,7 @@ export function brandKycChip(company: BrandProfile["company"], isClientViewer: b
   return kycState === "rejected" ? { label: "KYC rejected", cls: "bg-red-100 text-red-700 border-red-200" }
     : brandComplianceStatus(company, []).recordedApproval ? { label: "KYC approved", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" }
     : kycState === "approved" ? { label: "KYC needs review", cls: "bg-amber-100 text-amber-700 border-amber-200" }
-    : kycState === "in_review" ? { label: "KYC in review", cls: "bg-amber-100 text-amber-700 border-amber-200" }
+    // Only a sign-off counts (24 November 2026): a stale "in review" is no KYC.
     : isClientViewer ? null : { label: "No KYC", cls: "" };
 }
 

@@ -1055,7 +1055,12 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
 // true for a possible match on either list or with ComplyAdvantage, false
 // when every screen ran clear, null when the lists could not be screened.
 export function precheckSanctionsMatch(result: Pick<KycPrecheckResult, "sanctions" | "complyAdvantage"> & { companiesHouse?: KycPrecheckResult["companiesHouse"] }): boolean | null {
-  const provider = result.complyAdvantage.lines.some(l => l.status === "possible" && l.types.some(t => /sanction|warning/.test(t)))
+  // A ComplyAdvantage sanctions or warning-list match counts only when it is a red flag (not a possible namesake).
+  const provider = result.complyAdvantage.lines.some(l => {
+    if (l.status !== "possible" || !l.types.some(t => /sanction|warning/.test(t))) return false;
+    const split = splitProviderMatches(l);
+    return split.unjudged || split.flagged.some(m => /sanction|warning/.test(String(m.kind || "")));
+  })
     || !!result.companiesHouse?.owners.some(o => o.sanctioned);
   if (!result.sanctions.ran) return provider ? true : null;
   return provider || result.sanctions.lines.some(l => l.outcome === "possible");
@@ -1260,15 +1265,32 @@ export const PROVIDER_FLAG_BARS = { pep: 0.6, other: 0.9 } as const;
 // company one spelt differently is set aside (providerSpellingVariant).
 const ALWAYS_FLAG_KIND = /sanction/;
 
-export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "person" | "dobKnown">): boolean {
+export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "person" | "dobKnown"> & { name?: string }): boolean {
   const kind = String(m.kind || "");
   const dated = line?.person === true && typeof line.dobKnown === "boolean";
-  if (dated ? /sanction/.test(kind) : ALWAYS_FLAG_KIND.test(kind)) return true;
+  if (dated ? /sanction/.test(kind) : ALWAYS_FLAG_KIND.test(kind)) {
+    // A company's sanctions profile under another name with a weak score is a
+    // possible namesake to check (24 November 2026: ComplyAdvantage matched
+    // "blaydon asset management", on its Sanction Related Entities list, to
+    // Beltane Asset Management at 1%). A person's stays a red flag: names on
+    // sanctions lists are often transliterated.
+    if (line?.name && !providerLineIsPerson({ name: line.name, person: line.person }) && companySanctionsNamesake(m, line.name)) return false;
+    return true;
+  }
   // A match from before this rule with no profile behind it could not be read.
   if (m.unread ?? !m.profileId) return true;
   if (m.birthYearAgrees === true) return true;
   if (dated && line!.dobKnown) return false;
   return m.score != null && m.score >= (kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
+}
+
+// ComplyAdvantage's own starting point for a sanctions match.
+export const COMPANY_SANCTIONS_BAR = 0.5;
+/** A company's sanctions profile whose name is not spelt as the company's (the legal form aside) and whose score is under 50%. */
+export function companySanctionsNamesake(m: ProviderMatch, screened: string): boolean {
+  if ((m.unread ?? !m.profileId) || !m.name || m.birthYearAgrees === true) return false;
+  if (m.score == null || m.score >= COMPANY_SANCTIONS_BAR) return false;
+  return !nameSpeltAsTheirs(screened, m.name, false);
 }
 
 // ── Adverse media on a name spelt differently (Woody, 21 November 2026:

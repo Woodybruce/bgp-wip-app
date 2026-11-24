@@ -69,6 +69,6 @@ test("a company's KYC in the transaction's words", () => {
   const now = new Date("2026-11-23T12:00:00Z");
   assert.equal(ownershipKycWords({ status: "approved", expiresAt: "2029-11-23T00:00:00Z" }, now).words, "KYC approved until 23 Nov 2029");
   assert.equal(ownershipKycWords({ status: "approved", expiresAt: "2026-01-01T00:00:00Z" }, now).words, "KYC expired: check again");
-  assert.equal(ownershipKycWords({ status: "in_review" }, now).words, "KYC in review");
+  assert.equal(ownershipKycWords({ status: "in_review" }, now).words, "Not signed off yet");
   assert.equal(ownershipKycWords(null, now).words, "Not signed off yet");
 });

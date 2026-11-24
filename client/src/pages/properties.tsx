@@ -141,6 +141,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
+import { shownKycStatus } from "@shared/kyc-status";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -3520,7 +3521,8 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   };
 
   const kycData = property.proprietorKycData as any;
-  const kycStatus = property.proprietorKycStatus;
+  // Only a sign-off counts (24 November 2026): a stale "in review" or "pending" shows as not checked.
+  const kycStatus = shownKycStatus(property.proprietorKycStatus);
   const prof = kycData?.profile;
 
   const postcode = (property.address as any)?.postcode || (property as any).postcode || "";
@@ -3728,7 +3730,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
       } catch {}
       setScreening(false);
 
-      toast({ title: "KYC Complete", description: `${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs review" : "Failed"}` });
+      toast({ title: "KYC Complete", description: `${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "rejected" ? "Failed" : "Not signed off yet"}` });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -3770,9 +3772,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
 
   const getKycBadge = () => {
     if (kycStatus === "approved") return <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Passed</Badge>;
-    if (kycStatus === "in_review") return <Badge className="text-[10px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>;
     if (kycStatus === "rejected") return <Badge className="text-[10px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Failed</Badge>;
-    if (kycStatus === "pending") return <Badge variant="outline" className="text-[10px]">Pending</Badge>;
     if (kycStatus === "expired") return <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700">Expired</Badge>;
     return null;
   };
@@ -3792,7 +3792,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     if (property.proprietorCompanyNumber) lines.push(`Company Number: ${property.proprietorCompanyNumber}`);
     lines.push("");
     if (prof) {
-      lines.push(`KYC Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "in_review" ? "WARNING" : kycStatus === "rejected" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
+      lines.push(`KYC Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "rejected" ? "FAIL" : kycStatus?.toUpperCase() || "NOT CHECKED"}`);
       lines.push(`CH Status: ${prof.companyStatus}`);
       if (prof.companyType) lines.push(`Type: ${prof.companyType}`);
       const pscs = (kycData?.pscs || []).filter((p: any) => !p.ceasedOn);
@@ -3821,7 +3821,6 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
             Property KYC & Ownership
             {kycStatus === "approved" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
             {kycStatus === "rejected" && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-            {kycStatus === "in_review" && <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />}
           </h3>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </button>

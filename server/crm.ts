@@ -3220,6 +3220,24 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (kycRecords > 0) {
         return res.status(409).json({ error: `This company has ${kycRecords} KYC record${kycRecords === 1 ? "" : "s"} filed against it. It cannot be deleted.` });
       }
+      // The company that signs a transaction, pays for one or guarantees one, and
+      // any AML record about it (kept five years): checked by its own column, not
+      // the Xero contact columns above (24 November 2026, select and delete).
+      const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+      const signs = await pointing(`SELECT COUNT(*)::int AS n FROM crm_deals
+          WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1`);
+      if (signs > 0) return res.status(409).json({ error: `This company signs ${plural(signs, "transaction", "transactions")}. Change who signs first.` });
+      const pays = await pointing(`SELECT COUNT(*)::int AS n FROM crm_deals WHERE invoice_payer_entity_id = $1`);
+      if (pays > 0) return res.status(409).json({ error: `This company pays on ${plural(pays, "transaction", "transactions")}. Take it off there first.` });
+      const guarantees = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE trading_entity_id = $1 AND removed_at IS NULL`);
+      if (guarantees > 0) return res.status(409).json({ error: `This company guarantees ${plural(guarantees, "transaction", "transactions")}. Remove it as guarantor first.` });
+      const amlRecords = (await Promise.all([
+        pointing(`SELECT COUNT(*)::int AS n FROM kyc_documents WHERE trading_entity_id = $1`),
+        pointing(`SELECT COUNT(*)::int AS n FROM kyc_investigations WHERE trading_entity_id = $1`),
+        pointing(`SELECT COUNT(*)::int AS n FROM kyc_client_files WHERE trading_entity_id = $1`),
+        pointing(`SELECT COUNT(*)::int AS n FROM kyc_upload_tokens WHERE trading_entity_id = $1`),
+      ])).reduce((a, b) => a + b, 0);
+      if (amlRecords > 0) return res.status(409).json({ error: "This company has AML records (checks, documents or requests). They are kept for five years, so it cannot be deleted." });
       await pool.query(`DELETE FROM crm_trading_entities WHERE id = $1`, [req.params.id]);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

@@ -22,6 +22,7 @@ import { AmlRetentionBoard } from "@/components/aml-retention";
 import { AmlRulesBoard } from "@/components/aml-rules";
 import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
+import { KycCompaniesView } from "@/components/kyc-companies/companies-view";
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -66,9 +67,12 @@ const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b
 // Client check emails for admins (21 November 2026: the preview and test of
 // the emails BGP's own client checks send, moved here from the KYC4U page
 // when KYC4U went to Subscriptions & APIs).
-type Section = "checks" | "rules" | "updates" | "policy" | "reports" | "training" | "records" | "emails";
+type Section = "checks" | "companies" | "rules" | "updates" | "policy" | "reports" | "training" | "records" | "emails";
 const SECTIONS: Array<{ key: Section; label: string; officer?: boolean; admin?: boolean }> = [
-  { key: "checks", label: "Checks" },
+  // Each party on each transaction (the key stays "checks": links carry it).
+  { key: "checks", label: "Transactions" },
+  // One row per company: its contracting entities, their KYC, its transactions (Woody, 24 November 2026).
+  { key: "companies", label: "Companies" },
   // HMRC's rules in short, checked against HMRC every three months (22 November 2026).
   { key: "rules", label: "Rules" },
   // Every AML decision, who made it and when (Jack, 23 November 2026).
@@ -348,6 +352,7 @@ export default function AmlDashboard() {
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
       {shownSection === "checks" && !foldedTop && <MyRegisterReports />}
       {shownSection === "emails" && <KycEmailsAdmin />}
+      {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} />}
 
       {shownSection === "checks" && <>
       <div className="flex flex-wrap items-center gap-2">

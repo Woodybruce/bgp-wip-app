@@ -12,7 +12,7 @@
 // search finds it with a source to check (shared/kyc-prechecks.ts).
 
 import type { KycAnswers, KycOwnersReply } from "./kyc-request";
-import { flagKeyPart, precheckRedFlags, precheckSanctionsMatch, type KycPrecheckResult } from "./kyc-prechecks";
+import { flagKeyPart, precheckRedFlags, type KycPrecheckResult } from "./kyc-prechecks";
 import { policyFactorFlags } from "./aml-policy";
 
 export type KycRedFlagKind =
@@ -81,10 +81,6 @@ export interface KycRedFlag {
   // a sector, a super-prime sale), not a finding about the party. It counts
   // as a red flag does (enhanced due diligence); the screens list it apart.
   factor?: boolean;
-  // Words the officer can start the set-aside comment from, where the app can
-  // say why the flag may not apply (an old automatic flag the current screening
-  // does not bear out). The officer still reads and saves it.
-  suggestion?: string;
 }
 
 // ── Setting a flag aside ────────────────────────────────────────────────────
@@ -157,7 +153,7 @@ export interface PartyRedFlagFacts {
   // The KYC record's own history about its risk, PEP and enhanced due
   // diligence fields (the KYC audit lines), newest first: the facts behind
   // a flag read from the record.
-  recordHistory?: Array<{ at: string | null; what: string; who: string | null }>;
+  recordHistory?: Array<{ at: string | null; what: string; who: string | null; action?: string | null }>;
 }
 
 export interface DealRedFlagFacts {
@@ -216,33 +212,55 @@ export function pepStatusLabel(status: string | null | undefined): string | null
 }
 
 // The in-app screening wrote the record by itself until it was switched off
-// in October 2026; it noted "screening returned a match" and nothing about
-// what matched.
+// in October 2026 (server/kyc-orchestrator.ts, evaluateAutoEdd in
+// server/aml-ai.ts): its enhanced due diligence mark (an "edd_triggered" line
+// by "automatic", with its reason), its PEP review status (only it wrote
+// review_required), its risk rating (Clouseau's score; a person's change
+// writes "risk=" on the history) and its sanctions matches. None of them is a
+// red flag (Woody, 24 November 2026: "Only sign off counts remove the old
+// bit. The result are in the app"): they stay in the record's KYC history,
+// and only a sign-off decides a party. A mark a person set still counts.
 const IN_APP_SCREENING_OFF = "2026-11-01";
-const dayWords = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
+const OLD_SCREENING_WHO = /^(?:automatic|system|auto|the system)$/i;
+const beforeOff = (at: string | null | undefined) => !at || at.slice(0, 10) < IN_APP_SCREENING_OFF;
+const byOldScreening = (h: { at: string | null; who: string | null }) => OLD_SCREENING_WHO.test(String(h.who || "").trim()) && beforeOff(h.at);
+
+/** A reason for enhanced due diligence in the old screening's own words (evaluateAutoEdd's sentences). */
+export function oldScreeningEddReason(reason: unknown): boolean {
+  const r = String(reason ?? "").replace(/\s+/g, " ").trim();
+  return /^(Sanctions screening returned a match|PEP \/ Relative or Close Associate|Adverse media identified during AI sweep|UBO chain touches (high|medium)-risk jurisdiction|Transaction value over £1m|UBO chain \d+ levels deep|Overall risk assessed as high \(score)/i.test(r);
+}
 
 /**
- * The record's screening flag as the old in-app screening left it, when its
- * latest line about the screening is that screening's own automatic note:
- * when it was set, that it kept no record of the match, and what BGP's
- * checks since found. Null for a flag a person set.
+ * Which of the record's AML fields the old in-app screening wrote by itself.
+ * The latest history line about a field decides who set it; a field a person
+ * set (the MLRO form's "edd=", "pep=" or "risk=" line) is theirs.
  */
-export function oldAutomaticScreening(facts: Pick<PartyRedFlagFacts, "recordHistory" | "precheck">): { at: string | null; detail: string; suggestion: string | null } | null {
-  const line = (facts.recordHistory || []).find(h => /screening returned a match|sanctions screening|screening match/i.test(h.what));
-  if (!line || !/^(?:automatic|system|auto|the system)$/i.test(String(line.who || "").trim())) return null;
-  if (line.at && line.at.slice(0, 10) >= IN_APP_SCREENING_OFF) return null;
-  const set = dayWords(line.at);
-  let detail = `Set automatically${set ? ` on ${set}` : ""} by the old in-app screening, switched off in October 2026. It did not record which name or list matched.`;
-  let suggestion: string | null = null;
-  const result = facts.precheck?.current ? facts.precheck.result : null;
-  if (result && precheckSanctionsMatch(result) === false) {
-    const ran = dayWords(result.ranAt || null);
-    const names = result.sanctions.lines.length;
-    const lists = result.sanctions.lists.join(", ");
-    detail += ` BGP's checks${ran ? ` on ${ran}` : ""} screened ${names} name${names === 1 ? "" : "s"} against ${lists}: no match.`;
-    suggestion = `Old automatic flag from the in-app screening${set ? ` of ${set}` : ""}, which kept no record of what matched. BGP's checks${ran ? ` on ${ran}` : ""} screened ${names} name${names === 1 ? "" : "s"} against ${lists} and found no match.`;
+export function oldScreeningMarks(facts: Pick<PartyRedFlagFacts, "company" | "recordHistory" | "latestInvestigation">): { edd: boolean; pep: boolean; risk: boolean; sanctions: boolean } {
+  const history = facts.recordHistory || [];
+  const c = facts.company;
+  const latest = (test: (h: { what: string; action?: string | null }) => boolean) => history.find(h => test(h)) || null;
+  let edd = false;
+  if (c?.aml_edd_required) {
+    const reason = String(c.aml_edd_reason || "").trim();
+    const line = latest(h => h.action === "edd_triggered" || /\bedd=/i.test(h.what) || (!!reason && h.what === reason));
+    edd = line ? byOldScreening(line) : oldScreeningEddReason(reason);
   }
-  return { at: line.at, detail, suggestion };
+  let pep = false;
+  if (String(c?.aml_pep_status || "").trim().toLowerCase() === "review_required") {
+    // Only the old screening wrote review_required; a person's own "pep=" line says otherwise.
+    const line = latest(h => /\bpep=/i.test(h.what));
+    pep = !line || byOldScreening(line);
+  }
+  let risk = false;
+  if (highRisk(c?.aml_risk_level)) {
+    const line = latest(h => /\brisk=/i.test(h.what));
+    risk = !line || byOldScreening(line);
+  }
+  const inv = facts.latestInvestigation;
+  const invAt = iso(inv?.conducted_at);
+  const sanctions = !!(inv?.sanctions_match && !inv.precheck && invAt && beforeOff(invAt));
+  return { edd, pep, risk, sanctions };
 }
 
 export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
@@ -298,26 +316,22 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
   // The brand's KYC record: who wrote each field, and when, is in its history
   // (recordHistory, the KYC audit lines about it), shown as the flag's facts.
   const history = (facts.recordHistory || []).map(h => ({ label: h.at ? new Date(h.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "On the record", value: `${h.what}${h.who ? ` (${h.who})` : ""}` }));
-  // Written by the old in-app screening by itself, which kept no record of the
-  // name or list that matched (Woody, 23 November 2026: "this has picked up a
-  // red flag but its not clear why?"): the flag says so, and what BGP's
-  // checks found since.
-  const old = oldAutomaticScreening(facts);
+  // The old in-app screening's own marks are not red flags (Woody, 24 November
+  // 2026: "Only sign off counts remove the old bit. The result are in the
+  // app"): they stay in the record's history. A mark a person set still counts.
+  const old = oldScreeningMarks(facts);
   const pep = pepStatusLabel(facts.company?.aml_pep_status);
-  if (pep) flags.push({ kind: "screening", label: pep, detail: old?.detail || null, source: old ? "The old in-app screening" : "Screening and KYC record", at: old?.at || null, key: "record:screening", evidence: [`status:${keyPart(facts.company?.aml_pep_status)}`], facts: history, ...(old?.suggestion ? { suggestion: old.suggestion } : {}) });
-  if (facts.latestInvestigation?.sanctions_match && !facts.latestInvestigation.precheck) {
+  if (pep && !old.pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Screening and KYC record", at: null, key: "record:screening", evidence: [`status:${keyPart(facts.company?.aml_pep_status)}`], facts: history });
+  if (facts.latestInvestigation?.sanctions_match && !facts.latestInvestigation.precheck && !old.sanctions) {
     flags.push({ kind: "sanctions", label: "Possible match on the UK Sanctions List", detail: null, source: "Latest screening", at: iso(facts.latestInvestigation.conducted_at),
       key: "record:sanctions", evidence: [`at:${iso(facts.latestInvestigation.conducted_at) || "unknown"}`], facts: history });
   }
-  if (highRisk(facts.company?.aml_risk_level)) {
+  if (highRisk(facts.company?.aml_risk_level) && !old.risk) {
     flags.push({ kind: "high_risk", label: riskLabel(facts.company!.aml_risk_level!), detail: null, source: "KYC record", at: null, key: "record:high_risk", evidence: [`level:${keyPart(facts.company!.aml_risk_level)}`], facts: history });
   }
-  if (facts.company?.aml_edd_required) {
-    const reason = eddReason(facts.company.aml_edd_reason);
-    const automatic = !!old && /screening returned a match/i.test(String(facts.company.aml_edd_reason || ""));
-    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: automatic ? [reason, old!.detail].filter(Boolean).join(" ") : reason,
-      source: automatic ? "The old in-app screening" : "KYC record", at: automatic ? old!.at : null,
-      key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history, ...(automatic && old!.suggestion ? { suggestion: old!.suggestion } : {}) });
+  if (facts.company?.aml_edd_required && !old.edd) {
+    flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null,
+      key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history });
   }
   if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
   flags.push(...policyFactorFlags({ precheck: facts.precheck?.result || null, companyType: facts.company?.company_type, subjectType: facts.company?.aml_subject_type }));

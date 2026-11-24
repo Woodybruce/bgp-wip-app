@@ -4884,8 +4884,65 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   or list matched, so the flag says so in its detail, with what BGP's own
   checks found since (their sanctions result), names its source "The old
   in-app screening", and offers the officer the words to set it aside
-  (`suggestion`, filled into the set-aside box). It is never cleared by
-  itself.
+  (`suggestion`, filled into the set-aside box). **Superseded on 24 November
+  2026** (Woody, on Beltane Asset Management: "these red flags are still
+  coming is it historic stuff or comply advantage still not working
+  properly? can we fix!!?"): such a flag (the old screening's PEP status, its
+  automatic enhanced due diligence, and a "Possible match on the UK Sanctions
+  List" from a screening dated before 1 November 2026) is set aside by the
+  app (`supersededBy`, `oldScreeningCleared` in `shared/kyc-red-flags.ts`)
+  once BGP's own latest check of that party read the sanctions lists, matched
+  no one, and raised no sanctions, ComplyAdvantage or public role red flag.
+  `applyFlagReviews` lists it under set aside with "Set aside by BGP's checks
+  before asking" and the reason (review id 0: no Put back; a new match brings
+  it back), so the box, the board, the sign-off and the AML file all read the
+  same. A party with no check of its own (a company party with no company
+  that signs) keeps the flags. The record history behind a flag
+  (`loadRecordHistory`) leaves out set-aside and put-back lines: Woody's four
+  presses on Beltane had pushed out the line that explains the flag.
+  **Every mark the old screening wrote, said plainly** (Woody, the same day,
+  on Coq d'Argent #3492: "what do we do here? not cleare why its been
+  flagged and by what and how to get the right info what we need etc?"). The
+  retired screening (`server/kyc-orchestrator.ts`, `evaluateAutoEdd` in
+  `server/aml-ai.ts`) wrote, in September and October 2026: enhanced due
+  diligence with a reason and an `edd_triggered` line by "automatic" (on live
+  on 24 November: an ownership chain three to five companies deep, an AI
+  web search's "adverse media", a sanctions match, a risk score, a
+  high-risk country up the chain, a value over £1m; 59 parties); the PEP
+  status `review_required` (only it ever wrote that: a loose name match on a
+  sanctions or PEP list; 44); a risk rating from Clouseau's score (11); and
+  sanctions matches (84). `oldScreeningMarks` recognises each (a field whose
+  latest history line is by a person, such as the MLRO form's `risk=` or
+  `edd=`, is theirs and stays as it was), and `oldEddWhy` words each reason
+  ("the ownership chain is 3 companies deep. Depth on its own is not a risk
+  factor in BGP's AML policy ..."). The flag's label ends "(old screening)",
+  its detail says when, why and what BGP's checks found since, and it
+  carries `oldScreening`. The AML box lists such flags apart, in amber,
+  headed "A flag from the old screening, switched off in October", with what
+  to do from where BGP's checks stand (`oldFlagStep`: set the company that
+  signs; checks running; run them; or "did not clear them"), and the
+  Screening step reads "1 flag from the old screening · checked once the
+  company that signs is set". They still count (the party stays enhanced)
+  until BGP's checks clear them. **They clear only when BGP's latest checks
+  are the party's latest screening, read the sanctions lists with no match,
+  were not cut short (`precheckUnfinished`) and raised no red flag of their
+  own** (`oldScreeningCleared`, stricter than the first rule of the day).
+  The AML board now reads the same history (`loadRecordHistory` was a
+  200-line limit across all companies, so most board rows had none; it is six
+  lines per company, with each line's `action`). The sign-off with no company
+  that signs says "Set the company that signs first (step 1)" (`needsCompany`
+  on `SignOffFacts`), not "Press Run again". Tests:
+  `server/kyc-prechecks.test.ts`, `server/kyc-red-flags.test.ts`,
+  `server/party-kyc.test.ts`.
+  **Superseded later the same day: only a sign-off counts** (Woody: "Yes
+  build Only sign off counts remove the old bit / The result are in the
+  app"; see the section of that name). The old screening's marks are no red
+  flags at all: the "(old screening)" label, the amber box, the clearing
+  rule and the set-aside words (`oldAutomaticScreening`, `supersededBy`,
+  `oldScreeningCleared`, `oldEddWhy`, `oldFlagStep`, the flag's
+  `suggestion`) are gone. `oldScreeningMarks`, the six history lines per
+  company and the sign-off's "Set the company that signs first (step 1)"
+  stay.
 - **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
   `server/deal-party-aml.ts`; admins until an MLRO is appointed).
   `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
@@ -4991,6 +5048,19 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
   findings often leave the name out ("Member of the Ruritanian parliament").
 - For a person screened with a date of birth, the next section replaces
   these bars.
+
+- **A company's weak sanctions match under another name** (24 November
+  2026, Beltane Asset Management: ComplyAdvantage matched "blaydon asset
+  management", on its Sanction Related Entities list, at 1%): for a company,
+  a sanctions profile whose name is not spelt as the company's (the legal
+  form aside, `nameSpeltAsTheirs`) and scored under 50%
+  (`COMPANY_SANCTIONS_BAR`, ComplyAdvantage's own starting point) is a
+  possible namesake to check (`companySanctionsNamesake`), never a red flag;
+  a person's sanctions match stays a red flag however it is spelt, and so
+  does one with no score. The run's sanctions result
+  (`precheckSanctionsMatch`) reads the same judgement. This supersedes
+  "Sanctions ... are never set aside on spelling" for a company's weak
+  matches only. The decisions log records it.
 
 ## Who is screened, and the date of birth decides (Woody, 2026-11-19)
 
@@ -6120,6 +6190,118 @@ can and use those for xero invoicing too". Do not re-litigate. Rules:
   transactions only), the AML file for a client file, a check of the daily
   allowance before queuing, and persisting the bulk queue.
 
+## The Companies view on Transactions → AML (Woody, 2026-11-24)
+
+Woody: "We need a dashboard so it's easy to search and add a company ...
+Should auto populate with all the companies we have in the transactions list
+both brands and landlords ... we then should be able to add transactions
+within companies that link the 2", "if we put the top company in ... a
+suggestion of sub companies or linked companies? Not exhaustive but helpful
+prompts", "We don't want to do full aml though on smaller tenants ... Maybe
+just needs a switch to turn on sanctions only or off?", then, shown a mock-up,
+"Can we delete too select and delete / We also want the deals / transactions
+to also be in there so we can aml the transactions too as we currently do /
+Ok go ahead". Do not re-litigate. Rules: `shared/kyc-companies.ts`,
+`shared/kyc-suggestions.ts`; reads: `server/kyc-companies.ts`,
+`server/kyc-suggestions.ts`; screens:
+`client/src/components/kyc-companies/companies-view.tsx`,
+`client/src/components/kyc-companies/suggested-companies.tsx`. Tests:
+`server/kyc-companies.test.ts` (in `npm test`),
+`qa/regression/kyc-companies-guards.test.mjs`.
+
+- **The page**: the AML page's first pill is now **Transactions** (key
+  `checks`, it read Checks), and **Companies** (`?section=companies`) is
+  beside it. `GET /api/aml-dashboard/companies` (`loadKycCompanies`, BGP staff
+  signed in as themselves): one row per company, every party company on the
+  AML board's own rows (`loadAmlDashboard`, so the same transactions) plus any
+  company added there (`crm_companies.kyc_listed_at`, boot migration) or with
+  a client file open; merged and hidden companies left out. Each row: the
+  contracting entities (the CRM chip's own read: sub companies and the record
+  itself when a person, trust or public body), the KYC chip
+  (`kycCompanyChip`: "Not started" with no entity, else the CRM chip's words),
+  its transactions (each with the board's AML stage), people (private
+  mailbox left out) and agents (current tenant reps, the agent on an open
+  requirement, each transaction's side agent), the sanctions-only switch, the
+  Next line (`kycCompanyNext`) and KYC4U's past checks (folder count and the
+  latest date). Filters `KYC_COMPANY_FILTERS` with counts, one search
+  (`kycCompanyMatchesSearch`: company, website, entities and numbers,
+  transactions and Refs, agents, people).
+- **A company opens** (`CompanyKycWindow`): the company page's own
+  **Companies and KYC** card (`AccountEntitiesPanel`: never a second copy),
+  the checks setting, its transactions (each **AML** opens `DealAmlDialog`,
+  the transaction's own box) with **Add a transaction** (`/deals?new=1&
+  landlordId=` or `tenantId=`: New Transaction starts with it filled in,
+  `prefill` on `DealFormDialog`, cleared on close), people and agents, and
+  `Kyc4uStatusStrip` (KYC4U's past checks; admins record a past sign-off
+  there).
+- **Add a company**: `GET /api/aml-dashboard/companies/search` (the CRM by
+  name or website), `POST …/companies/list { companyId }`; not in the CRM,
+  it is made there first (`POST /api/crm/companies` as Landlord or Tenant):
+  the one way a company is added.
+- **Sanctions only on a company** (`crm_companies.kyc_sanctions_only`, boot
+  migration; `PUT /api/aml-dashboard/companies/:id/sanctions-only { on: true
+  | false | null }`, a KYC history line): null is worked out
+  (`kycSanctionsOnly`: every board transaction a letting under £10,000 a
+  month, by `amlRegime`); a trust never. A client file reads it
+  (`companySanctionsOnly`, `regime` on the subject): three steps, no client
+  checks, and a sign-off recorded as sanctions-only, so it clears small
+  lettings only. A transaction still decides its own checks from its rent.
+- **Suggested companies** (Companies and KYC card → **Suggest the group's
+  companies**; `GET /api/client-kyc/:companyId/suggestions`, BGP staff, read
+  only when pressed, kept six hours per company and read again when a
+  company is filed): Companies House (the top company's current officers'
+  other appointments, corporate officers first; a search by the start of its
+  name, `nameStems`, a stem of at least five letters; each strong
+  candidate's persons with significant control, owned by the company, one
+  filed under it, or one level down another candidate so owned), Land
+  Registry's lists in the app (titles under a name that starts the same way,
+  a range on the name index then the exact prefix) and GLEIF (the LEI's
+  direct children). `rankSuggestions` merges them by number, leaves out the
+  company, what is filed and dissolved companies, and keeps only what has a
+  tie (a name alone, or one shared director alone, is never suggested); each
+  has its reasons ("Owned or controlled by …", "Shares a director, …", "Owns
+  N titles in England and Wales", "Its name starts like the company's").
+  Ticked ones are filed through `POST /api/billing-entities` (`xero: false`;
+  abroad by name and country). Nothing is checked until someone presses KYC.
+- **The account's own legal company** (24 November 2026, from screenshots:
+  Land Securities Group PLC offered "Add to check" though it was filed under
+  Landsec, and its sub companies read "No KYC" beside "Checked 24 Nov"). A
+  sub company with the account's own Companies House number is folded into
+  the account's row on the card (`tradingEntityId` on `GroupEntity`), which
+  then carries its client KYC, its KYC button and the transactions it signs.
+  Its KYC is its own record; with none, the account's decision (approved or
+  rejected, with a sanctions-only approval said so), never a bare "in review"
+  the retired screening left: one reading for the card, the Companies view
+  and the CRM chip (`subCompanyKycSql`, `subCompanyScope` in
+  `shared/client-kyc.ts`), as a transaction reads it. A sub company with
+  checks, a file or a request under way reads "In progress", not "No KYC".
+  The add search counts an open client file as on the view.
+- **Select and delete**: admins on the view (`CrmSelectBar kind="kyc"`, the
+  CRM lists' bulk delete and its rules); on the Companies and KYC card,
+  **Select** then **Delete** for sub companies (`DELETE
+  /api/crm/trading-entities/:id`, which now also refuses one that signs, pays
+  or guarantees a transaction or has AML records: its old guard read the
+  Xero contact columns, which never hold an entity id).
+- **One word**: a KYC that is done reads **Cleared** on the card as on the
+  CRM chip and the view (it read "KYC approved").
+- **KYC4U's past checks** (Woody, the same day: "the closed deals not checked
+  have they been scanned and looked at being linked to all the KYC4U AMLS we
+  have?"). Read on live on 24 November 2026: 284 parties (165 companies)
+  were Closed, not checked; the app held KYC4U's 482 request folders but no
+  verdicts (the folder import read no status table) and no files (the kept
+  store was empty); 41 of those companies had a folder linked, 16 a folder
+  that looked like theirs but unlinked (Hammerson PLC, Canary Wharf Retail),
+  3 sat on duplicate CRM records (Sephora T1, Starbucks Hays, Sushi Tachi
+  T2), 105 had none (BGP's landlord clients: Landsec, The Crown Estate, The
+  Portman Estate). So a company with KYC4U folders and no result reads "KYC4U
+  checked it · record their result" first (`kycCompanyNext` with `kyc4u`),
+  and the KYC4U grid (Subscriptions & APIs → KYC4U) has **Not matched** and
+  **Match** on each request (`MatchToCompany`, the existing hand-set PATCH).
+  KYC4U's verdicts come in only through the bookmark on their status page or
+  an admin's **Record a past KYC4U sign-off**: nothing guesses them.
+- Not built: a lender's or agent's own KYC row; the CRM duplicate records
+  merged by themselves (Sephora T1 and the like: the CRM merge is a person's).
+
 ## Ownership & KYC on the property page, and the full checks on a small letting (Woody, 2026-11-23)
 
 Woody: "on the property boards details news should be folded into news and
@@ -6159,6 +6341,26 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   were loaded and when the monthly update last failed (live: 4.55 million rows;
   the June 2026 refresh failed because the Land Registry licence was not signed).
   A building owned by a person is not in those lists.
+- **The lists update by themselves** (Woody, 24 November 2026, once both
+  licences were agreed on use-land-property-data.service.gov.uk and the
+  `HMLR_API_KEY` on Railway checked: "we dont need a button just auto").
+  Rules `shared/hmlr-update.ts`, run `autoUpdateHmlrDatasets` in
+  `server/hmlr-fetch.ts`, job `hmlr-datasets` (00:20 London, production
+  only), tests `server/hmlr-update.test.ts` (in `npm test`). Each night, for
+  OCOD then CCOD, one request for the newest full file; a load only when no
+  finished load (`hmlr_ingest_runs`, status ok) took that file, so about once
+  a month per list, when HM Land Registry publishes. After a load that read
+  the whole list (a full file, and at least nine in ten of the titles held
+  before), the owner rows that load did not touch are deleted
+  (`ingest_run_id`), so a title sold on to a person or a second owner taken
+  off stops showing; the count goes in the run's notes. A load left
+  "running" over six hours by a restart is closed as interrupted, so the next
+  night tries again, and one list loads at a time (the admin
+  `POST /api/admin/hmlr/sync` included). `HMLR_AUTO_UPDATE=off` stops it.
+  There is no button. The May 2026 loads read every row and then stopped at
+  the file's closing "Row Count" line (fixed in September:
+  `relax_column_count_less`, and a row with no owner is skipped), so live had
+  no finished load and the card read "has not loaded since 22 Jun 2026".
 - **Use this owner** (`POST …/ownership/use { titleNumber, dataset, position }`):
   the owner is read again from the lists on the server, never from the request
   (`titleUsePlan`): the title goes on the property (`title_number`,
@@ -6384,6 +6586,52 @@ person who typed that message so fix that bug". Do not re-litigate.
   `request.sentBy` (it was the first name on the contact list); with nobody
   named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
 - Tests in `server/kyc-request.test.ts`.
+
+## Only a sign-off counts (Woody, 2026-11-24)
+
+Woody, once the old screening's flag on Coq d'Argent #3492 was explained:
+"Yes build Only sign off counts remove the old bit / The result are in the
+app". Do not re-litigate. Rules: `shared/kyc-status.ts` (`signedOffStatus`,
+`shownKycStatus`) and `oldScreeningMarks` in `shared/kyc-red-flags.ts`.
+Tests: `server/party-kyc.test.ts`, `server/kyc-red-flags.test.ts`,
+`server/kyc-prechecks.test.ts`, `server/client-kyc.test.ts`,
+`server/property-ownership.test.ts` (in `npm test`) and
+`server/account-entities.test.ts`.
+
+- **A KYC status is a sign-off or nothing.** `signedOffStatus` gives
+  approved, rejected or expired; anything else on a record ("in_review",
+  "pending": the in-app AML retired in October, the KYC4U mirror's "with
+  KYC4U", the old CDD form's bump, the property proprietor check) reads as
+  no checks run, with no approver or dates. Every reader goes through it:
+  `partyKycState` (the transaction's gate, AML box, AML board, AML file and
+  sign-off; on the brand's own legal company the brand's sign-off stands
+  over the company's old "in review"); the Companies and KYC card
+  (`getAccountEntities`: a record with no sign-off is read as none, so the
+  account's own approval stands over a stale `crm_entity_kyc` row); the CRM
+  chip and the Companies view (`subCompanyKycSql`); `clientKycBucket` ("in
+  review" is Not checked unless a check, file or request has started); the
+  property's Ownership & KYC words, the unit panel, the brand page's KYC
+  chip, the Transactions list's KYC mark and the property's proprietor
+  badge (`shownKycStatus`). The legacy trading entities list on the
+  company page no longer offers a hand-picked KYC flag (Pending, In
+  review, Passed ...): KYC is the sign-off on the Companies and KYC card.
+- **What the old in-app screening marked by itself is no red flag.**
+  `oldScreeningMarks` reads each mark's latest history line: written by the
+  old screening (`edd_triggered`, or a line by "automatic" or "system"
+  before 1 November 2026), or with no line at all a mark only it wrote (a
+  reason in its words, `oldScreeningEddReason`; a PEP status of
+  `review_required`; a risk rating), it is no flag; a mark whose latest line
+  is by a person (the MLRO form's `risk=`, `pep=`, `edd=` notes) still is.
+  A sanctions match from a screening dated before 1 November 2026 that was
+  not BGP's checks before asking is no flag. On live on 24 November 2026
+  that took 59 enhanced due diligence marks, 44 PEP reviews, 11 risk
+  ratings and 84 sanctions matches off the red flags, the enhanced level
+  and the AML board. The transaction's sign-off reads those fields as blank
+  (`oldMarks` on `DealRedFlags`, `server/deal-party-aml.ts`), so the file
+  is not higher risk for them.
+- **The results stay in the app**: no stored value was rewritten, and the
+  KYC history keeps every line (`loadRecordHistory` reads six lines per
+  company, with each line's action, to tell the two apart).
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 

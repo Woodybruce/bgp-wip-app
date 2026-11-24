@@ -46,7 +46,7 @@ function FolderFiles({ reqRef }: { reqRef: string }) {
 
 // Match a KYC4U request to a CRM company: the request's own hand-set match
 // (PATCH /api/kyc4u/requests/…), after which its kept files are filed there.
-function MatchToCompany({ folder, onDone }: { folder: ArchiveFolder; onDone: () => void }) {
+export function MatchToCompany({ folder, onDone }: { folder: Pick<ArchiveFolder, "listId" | "ref" | "entity" | "files">; onDone: () => void }) {
   const { toast } = useToast();
   const [term, setTerm] = useState(folder.entity || "");
   const [q, setQ] = useState(term);
@@ -69,7 +69,8 @@ function MatchToCompany({ folder, onDone }: { folder: ArchiveFolder; onDone: () 
     onSuccess: (c) => {
       queryClient.invalidateQueries({ queryKey: KEY });
       queryClient.invalidateQueries({ queryKey: ["/api/kyc4u/requests"] });
-      toast({ title: `${folder.ref} matched to ${c.name}`, description: `Its ${folder.files} file${folder.files === 1 ? "" : "s"} are filed on ${c.name}'s KYC record.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard/companies"] });
+      toast({ title: `${folder.ref} matched to ${c.name}`, description: folder.files ? `Its ${folder.files} file${folder.files === 1 ? "" : "s"} are filed on ${c.name}'s KYC record.` : `It shows under ${c.name}'s KYC4U past checks.` });
       onDone();
     },
     onError: (e: any) => toast({ title: "Not matched", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),

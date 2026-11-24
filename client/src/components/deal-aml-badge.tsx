@@ -22,6 +22,9 @@ export function computeDealAmlStatus(
   deal: Pick<CrmDeal, "landlordId" | "tenantId"> & {
     vendorId?: string | null;
     purchaserId?: string | null;
+    // The transaction's own flag, kept by the server with the AML gate's rule
+    // (the company that signs, not only the brand's record): 24 November 2026.
+    kycApproved?: boolean | null;
   },
   companyById: Map<string, AmlCheckCompany>,
 ): { status: AmlDealStatus; missing: { id: string; name: string; reason: string }[] } {
@@ -51,6 +54,8 @@ export function computeDealAmlStatus(
       missing.push({ id, name: c.name, reason: "expired" });
     }
   }
+  // Cleared on the transaction itself (its companies that sign are approved), and nothing expired since.
+  if (deal.kycApproved && !missing.some(m => m.reason === "expired")) return { status: "complete", missing: [] };
   return { status: missing.length === 0 ? "complete" : "incomplete", missing };
 }
 
