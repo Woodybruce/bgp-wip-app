@@ -156,6 +156,19 @@ export async function folderPlaces(token: string): Promise<FolderPlaces> {
   };
 }
 
+// ── Following (the picker's Followed list) ──────────────────────────────
+/** Follow a file or folder in SharePoint or OneDrive, as the person: it then shows under Followed. */
+export async function followItem(token: string, driveId: string, itemId: string): Promise<void> {
+  const res = await graph({ method: "POST", url: `/drives/${driveId}/items/${itemId}/follow`, token });
+  if (res.status >= 400) throw new GraphError(res.status);
+}
+
+/** Stop following it. One not followed (or gone) is not an error. */
+export async function unfollowItem(token: string, driveId: string, itemId: string): Promise<void> {
+  const res = await graph({ method: "POST", url: `/drives/${driveId}/items/${itemId}/unfollow`, token });
+  if (res.status >= 400 && res.status !== 404) throw new GraphError(res.status);
+}
+
 // ── Reading ─────────────────────────────────────────────────────────────
 /** One file or folder by its ids. */
 export async function getEntry(token: string, driveId: string, itemId: string): Promise<DriveEntry> {

@@ -13,10 +13,12 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { graphRequest } from "./shared-mailbox";
-import { resolveCompanyScope } from "./company-scope";
+import { isDealInScope, isPropertyInScope, resolveCompanyScope } from "./company-scope";
 import { listAllChildren } from "./microsoft-graph-pagination";
 import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
 import { getAccountFolderMap, resolveNodeFolder, nodeKey } from "./account-folder-map";
+import { clientSharedFolders, type ClientShareChecks, type ClientSharedLink } from "./folders/share";
+import { driveItemPath, insideSharedFolder, sharedPathParts, sharedRootProblem, type ClientSharedItem } from "@shared/folder-share";
 
 const router = Router();
 
@@ -277,6 +279,135 @@ router.get("/api/client/sharepoint/content", requireAuth, async (req, res) => {
     res.redirect(dl);
   } catch (e: any) {
     console.error("[client-sharepoint] content failed:", e?.message);
+    res.status(500).json({ message: "Couldn't download that file" });
+  }
+});
+
+// ── Folders BGP staff shared with the client ────────────────────────────
+// Woody, 24 November 2026 (decision 6 of docs/folders-review-2026-11-20.md):
+// a folder linked to a property, a transaction or the client's own company
+// record that BGP staff shared with the caller's company (server/folders/
+// share.ts). The client sees it and everything in it, read only, on the app's
+// token like the rest of the data room; a login held to named schemes (a
+// joint agent) sees those on properties at its schemes, never a company's. A
+// shared folder is addressed by its link id and a path of names below it: the
+// server reads it by the drive and item ids it stored, and only below it, so a
+// client never names a drive or item id. Any doubt answers no.
+const NOT_SHARED = "That folder isn't shared with you, or it isn't in SharePoint any more.";
+
+interface SharedRootRef { driveId: string; itemId: string; name: string; path: string; resolvedAt: number }
+const sharedRootCache = new Map<string, SharedRootRef>();
+const graphMissing = (e: any) => /Graph API (404|410)\b/.test(String(e?.message || ""));
+
+/** What a path below a shared folder names, read on the app's token and held below the folder; null when it is not there or not inside. */
+export async function sharedFolderItem(
+  link: { id: string; driveId: string; itemId: string },
+  parts: string[],
+  deps: SharePointDeps & { sharedCache?: Map<string, SharedRootRef> } = {},
+): Promise<{ itemId: string; name: string; isFolder: boolean } | null> {
+  const graphGet = deps.graphGet ?? graphRequest;
+  const cache = deps.sharedCache ?? sharedRootCache;
+  const now = deps.now ?? Date.now;
+  const key = `${link.id}|${link.driveId}|${link.itemId}`;
+  let root = cache.get(key);
+  if (!root || now() - root.resolvedAt >= ROOT_TTL_MS) {
+    const item = await graphGet(`/drives/${link.driveId}/items/${link.itemId}?$select=id,name,parentReference,folder,root`)
+      .catch((e: any) => (graphMissing(e) ? null : Promise.reject(e)));
+    if (!item || sharedRootProblem(item, link.driveId)) {
+      cache.delete(key);
+      return null;
+    }
+    root = { driveId: link.driveId, itemId: String(item.id), name: String(item.name), path: driveItemPath(item)!, resolvedAt: now() };
+    cache.set(key, root);
+  }
+  if (!parts.length) return { itemId: root.itemId, name: root.name, isFolder: true };
+  const item = await graphGet(`/drives/${root.driveId}/items/${root.itemId}:/${parts.map(encodeURIComponent).join("/")}?$select=id,name,parentReference,folder,file`)
+    .catch((e: any) => (graphMissing(e) ? null : Promise.reject(e)));
+  if (!item?.id || !insideSharedFolder(root, item)) return null;
+  return { itemId: String(item.id), name: String(item.name), isFolder: !!item.folder };
+}
+
+async function shareChecks(req: Request, scope: string): Promise<ClientShareChecks> {
+  const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+  const limit = await schemeLimitedPropertyIdsOrNone(req, "client-sharepoint");
+  return {
+    limited: limit !== null,
+    propertyInScope: async (propertyId) => {
+      if (limit !== null && !limit.includes(propertyId)) return false;
+      return isPropertyInScope(scope, propertyId);
+    },
+    dealInScope: (dealId) => isDealInScope(scope, dealId),
+  };
+}
+
+// The link, when it is shared with the caller's company and this login may open it.
+async function sharedLinkFor(req: Request, scope: string, linkId: string): Promise<ClientSharedLink | null> {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(linkId)) return null;
+  return (await clientSharedFolders(pool, scope, await shareChecks(req, scope), { linkId }))[0] || null;
+}
+
+// GET /api/client/sharepoint/shared[?propertyId=|?company=1] — the folders
+// shared with the caller's company: a property's (its own and its
+// transactions'), the company's own, or all of them.
+router.get("/api/client/sharepoint/shared", requireAuth, async (req, res) => {
+  try {
+    const scope = await requireClientScope(req, res);
+    if (!scope) return;
+    const propertyId = typeof req.query.propertyId === "string" && req.query.propertyId ? req.query.propertyId : null;
+    const links = await clientSharedFolders(pool, scope, await shareChecks(req, scope), { propertyId, companyOnly: !propertyId && req.query.company === "1" });
+    res.json({ folders: links.map(l => l.shown) });
+  } catch (e: any) {
+    console.error("[client-sharepoint] shared failed:", e?.message);
+    res.status(500).json({ message: "Couldn't read the folders shared with you" });
+  }
+});
+
+// GET /api/client/sharepoint/shared/:linkId/list?path= — a folder inside one.
+router.get("/api/client/sharepoint/shared/:linkId/list", requireAuth, async (req, res) => {
+  try {
+    const scope = await requireClientScope(req, res);
+    if (!scope) return;
+    const link = await sharedLinkFor(req, scope, String(req.params.linkId));
+    if (!link) return res.status(404).json({ message: NOT_SHARED });
+    const parts = sharedPathParts(req.query.path);
+    if (!parts) return res.status(400).json({ message: "That isn't a folder in what was shared with you." });
+    const target = await sharedFolderItem({ id: link.shown.id, driveId: link.driveId, itemId: link.itemId }, parts);
+    if (!target || !target.isFolder) return res.status(404).json({ message: NOT_SHARED });
+    const children = await listAllChildren(
+      (url) => graphRequest(url),
+      `/drives/${link.driveId}/items/${target.itemId}/children?$top=200&$orderby=name&$select=id,name,size,lastModifiedDateTime,folder,file`,
+    );
+    const items: ClientSharedItem[] = children.map((c: any) => ({
+      name: String(c.name || ""),
+      size: c.size ?? null,
+      lastModified: c.lastModifiedDateTime ?? null,
+      isFolder: !!c.folder,
+      childCount: c.folder?.childCount ?? null,
+    }));
+    res.json({ name: link.shown.label, items });
+  } catch (e: any) {
+    console.error("[client-sharepoint] shared list failed:", e?.message);
+    res.status(500).json({ message: "Couldn't list that folder" });
+  }
+});
+
+// GET /api/client/sharepoint/shared/:linkId/content?path= — download a file inside one.
+router.get("/api/client/sharepoint/shared/:linkId/content", requireAuth, async (req, res) => {
+  try {
+    const scope = await requireClientScope(req, res);
+    if (!scope) return;
+    const link = await sharedLinkFor(req, scope, String(req.params.linkId));
+    if (!link) return res.status(404).json({ message: NOT_SHARED });
+    const parts = sharedPathParts(req.query.path);
+    if (!parts || !parts.length) return res.status(400).json({ message: "Which file?" });
+    const target = await sharedFolderItem({ id: link.shown.id, driveId: link.driveId, itemId: link.itemId }, parts);
+    if (!target || target.isFolder) return res.status(404).json({ message: NOT_SHARED });
+    const meta = await graphRequest(`/drives/${link.driveId}/items/${target.itemId}?$select=id,name,@microsoft.graph.downloadUrl`);
+    const dl = meta?.["@microsoft.graph.downloadUrl"];
+    if (!dl) return res.status(404).json({ message: "No download available for that file" });
+    res.redirect(dl);
+  } catch (e: any) {
+    console.error("[client-sharepoint] shared content failed:", e?.message);
     res.status(500).json({ message: "Couldn't download that file" });
   }
 });

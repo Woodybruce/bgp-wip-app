@@ -154,6 +154,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { RecordFolderPicker } from "@/components/folders/record-folder-picker";
+import { ClientSharedFolders } from "@/components/folders/client-shared-folders";
 
 const GROUP_TABS = [
   { id: "all", label: "All" },
@@ -2365,7 +2366,12 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
             <FolderOpen className="w-4 h-4" />
             <h3 className="text-sm font-semibold">Documents</h3>
           </div>
-          <p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>
+          {/* Folders BGP shared with the client show even with no data room root linked. */}
+          <ClientSharedFolders
+            propertyId={propertyId}
+            company={!propertyId}
+            whenEmpty={<p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>}
+          />
         </CardContent>
       </Card>
     );
@@ -2467,6 +2473,9 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
             ))}
           </div>
         )}
+        <div className="mt-3 border-t border-border pt-3 empty:hidden">
+          <ClientSharedFolders propertyId={propertyId} company={!propertyId} />
+        </div>
       </CardContent>
     </Card>
   );
