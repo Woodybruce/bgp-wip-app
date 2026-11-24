@@ -162,6 +162,16 @@ export async function getEntry(token: string, driveId: string, itemId: string): 
   return driveEntry(await call(token, "GET", `/drives/${driveId}/items/${itemId}?$select=${ITEM_SELECT}`), driveId);
 }
 
+/** What sits at a path in a library ("BGP share drive/London Retail/Bluewater"), or null when nothing does. */
+export async function entryByPath(token: string, driveId: string, path: string): Promise<DriveEntry | null> {
+  const encoded = path.split("/").map(p => p.trim()).filter(Boolean).map(encodeURIComponent).join("/");
+  if (!encoded) return null;
+  const res = await graph({ method: "GET", url: `/drives/${driveId}/root:/${encoded}?$select=${ITEM_SELECT}`, token });
+  if (res.status === 404) return null;
+  if (res.status >= 400) throw new GraphError(res.status);
+  return driveEntry(res.body, driveId);
+}
+
 /** The folder a pasted SharePoint or OneDrive address opens. */
 export async function openLink(token: string, url: string): Promise<DriveEntry> {
   return driveEntry(await call(token, "GET", `/shares/${sharesId(url)}/driveItem?$select=${ITEM_SELECT}`));

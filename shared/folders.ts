@@ -348,6 +348,78 @@ export function copyState(status: number, body: any, location: string | null = n
   return { state: "running", percent, itemId: null, error: null };
 }
 
+// ── Moving the old links over (4.7 of the review: Preview, Apply, Undo) ──
+/** Every stored folder address or path the report reads, and the record it hangs on. */
+export const MIGRATION_COLUMNS = [
+  { column: "crm_properties.sharepoint_folder_url", recordType: "property", what: "A property's linked folder" },
+  { column: "crm_properties.sharepoint_team_folders", recordType: "property", what: "A property's team or extra folder" },
+  { column: "crm_properties.folder_teams", recordType: "property", what: "A property's team folder, found by its path" },
+  { column: "crm_companies.sharepoint_folder_url", recordType: "company", what: "A company's folder (a client's data room root)" },
+  { column: "crm_companies.folder_teams", recordType: "company", what: "A landlord's team folder, found by its path" },
+  { column: "crm_deals.sharepoint_link", recordType: "deal", what: "A transaction's SharePoint link" },
+  { column: "property_schemes.sharepoint_folder_url", recordType: "scheme", what: "A scheme's folder" },
+  { column: "pla_matters.sharepoint_folder_url", recordType: "pla_matter", what: "A Lease Advisory matter's folder" },
+  { column: "property_pathway_runs.sharepoint_folder_url", recordType: "pathway_run", what: "A Property Pathway run's folder" },
+] as const;
+export type MigrationColumn = (typeof MIGRATION_COLUMNS)[number]["column"];
+export type MigrationStatus = "opens" | "missing" | "not_folder" | "outside" | "no_access" | "linked" | "error";
+export const MIGRATION_STATUS_WORDS: Record<MigrationStatus, string> = {
+  opens: "Opens", missing: "Not in SharePoint", not_folder: "A file, not a folder", outside: "Not BGP's SharePoint",
+  no_access: "No access", linked: "Already in Folders", error: "Could not be read",
+};
+/** The old team folders sat at this path in the BGP library: "BGP share drive/<team>/<name>". */
+export function teamFolderPath(team: string, name: string): string {
+  return `BGP share drive/${String(team).trim()}/${String(name).trim()}`;
+}
+/** Graph's refusal as a row's status. */
+export function migrationStatus(status: number): MigrationStatus {
+  if (status === 404 || status === 410) return "missing";
+  if (status === 401 || status === 403) return "no_access";
+  return "error";
+}
+/** A row's id: the same stored address of the same record gets the same id in every preview. */
+export function migrationRowId(column: string, recordId: string, key: string, value: string): string {
+  const s = legacyFolderKey(column, recordId, key, value);
+  let a = 0x811c9dc5, b = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+  }
+  return `m${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
+}
+/** Apply takes the rows of the admin's own preview, within the hour. */
+export const MIGRATION_PREVIEW_MINUTES = 60;
+export function migrationApplyRefusal(preview: { previewedAt: string; previewedBy: string } | null, userId: string, previewedAt: unknown, now = Date.now()): string | null {
+  if (!preview) return "Preview first.";
+  if (preview.previewedBy !== userId) return "Apply the preview you made yourself: preview again.";
+  if (previewedAt !== preview.previewedAt) return "That preview has been replaced: preview again.";
+  if (now - new Date(preview.previewedAt).getTime() > MIGRATION_PREVIEW_MINUTES * 60_000) return "That preview is more than an hour old: preview again.";
+  return null;
+}
+/**
+ * Where the app still reads the old columns. They stay until Woody agrees to
+ * stop reading them (4.7); this list is what would change then.
+ */
+export const OLD_FOLDER_READERS: readonly { column: string; where: string; what: string }[] = [
+  { column: "crm_properties.sharepoint_folder_url", where: "server/folders/links.ts", what: "Folders shows it read only until it is moved over" },
+  { column: "crm_properties.sharepoint_folder_url", where: "server/sharepoint-property-files.ts", what: "the brochure, schedule and plan finders walk it (and folders in Folders)" },
+  { column: "crm_properties.sharepoint_folder_url", where: "server/client-sharepoint.ts", what: "a client's data room for the property (decision 6, its own step)" },
+  { column: "crm_properties.sharepoint_folder_url", where: "server/property-imagery.ts", what: "property photos from its folder" },
+  { column: "crm_properties.sharepoint_folder_url", where: "server/account-folder-map.ts", what: "the client-tree job writes it" },
+  { column: "crm_properties.sharepoint_folder_url", where: "server/deal-page.ts", what: "sent with a transaction's property, no longer shown" },
+  { column: "crm_properties.sharepoint_team_folders", where: "server/folders/links.ts, server/sharepoint-property-files.ts", what: "Folders (read only) and the finders" },
+  { column: "crm_properties.sharepoint_team_folders", where: "server/crm.ts", what: "the old team tabs' links on Property Pathway's Files" },
+  { column: "crm_properties.folder_teams", where: "client/src/pages/properties.tsx (PropertyFoldersPanel)", what: "the old team tabs on Property Pathway and a landlord's Files card" },
+  { column: "crm_properties.folder_teams", where: "server/deal-page.ts, server/property-merge.ts, server/chatbgp.ts", what: "sent with a transaction's property, merged, described to ChatBGP" },
+  { column: "crm_companies.sharepoint_folder_url", where: "server/client-sharepoint.ts, server/account-folder-inventory.ts, server/account-folder-map.ts", what: "a client's data room root (decision 6)" },
+  { column: "crm_companies.folder_teams", where: "client/src/components/brand-profile-panel.tsx, server/brand-profile.ts", what: "a landlord's Files card (step 5)" },
+  { column: "crm_deals.sharepoint_link", where: "server/folders/links.ts, client/src/pages/deals.tsx", what: "Folders (read only) and the Transactions table's hidden SharePoint column" },
+  { column: "property_schemes.sharepoint_folder_url", where: "server/property-schemes.ts, client/src/components/property-schemes-panel.tsx", what: "a scheme's folder link box (step 5)" },
+  { column: "pla_matters.sharepoint_folder_url", where: "server/pla-matters.ts, server/pla-folder-template.ts, client/src/pages/pla-matters.tsx", what: "a Lease Advisory matter's folder (step 5)" },
+  { column: "property_pathway_runs.sharepoint_folder_url", where: "server/property-pathway.ts, client/src/pages/property-pathway.tsx", what: "a Pathway run's folder (step 5)" },
+];
+
 /** People to invite by email: at most 20 addresses, each plausible. */
 export function inviteEmails(v: unknown): string[] | null {
   const list = (Array.isArray(v) ? v : String(v ?? "").split(/[\s,;]+/)).map(e => String(e ?? "").trim().toLowerCase()).filter(Boolean);

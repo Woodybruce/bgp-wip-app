@@ -9,11 +9,13 @@ import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import {
-  FOLDER_COLOURS, FOLDER_RECORD_TYPES, PROPERTY_FOLDER_TEMPLATE, UPLOAD_MAX_BYTES, UPLOAD_PIECE, UPLOAD_SESSION_ABOVE, contentRange, copyState,
-  folderColourKey, folderDisplayPath, folderLabel, folderStatusFromGraph, folderTemplate, folderUrlKey, inviteEmails, isFolderRecordType,
-  isGraphId, itemNameProblem, legacyFolderKey, moveLinkTo, needsUploadSession, parseContentRange, pathFromWebUrl, pieceProblem, driveKindOf,
-  uploadPieces, uploadProblem,
+  FOLDER_COLOURS, FOLDER_RECORD_TYPES, MIGRATION_COLUMNS, OLD_FOLDER_READERS, PROPERTY_FOLDER_TEMPLATE, UPLOAD_MAX_BYTES, UPLOAD_PIECE,
+  UPLOAD_SESSION_ABOVE, contentRange, copyState, folderColourKey, folderDisplayPath, folderLabel, folderStatusFromGraph, folderTemplate,
+  folderUrlKey, inviteEmails, isFolderRecordType, isGraphId, itemNameProblem, legacyFolderKey, migrationApplyRefusal, migrationRowId,
+  migrationStatus, moveLinkTo, needsUploadSession, parseContentRange, pathFromWebUrl, pieceProblem, driveKindOf, teamFolderPath, uploadPieces,
+  uploadProblem,
 } from "../shared/folders";
+import { suggestionFits } from "./folders/migration";
 import {
   GraphError, bgpLibrary, copyProgress, createFolderTree, deleteItem, driveEntry, forgetLibrary, graph, graphTarget, moveItem, previewUrl,
   renameItem, searchFolders, setGraphTransport, shareLink, startCopy, startUploadSession, uploadPiece, uploadSmall,
@@ -431,4 +433,28 @@ test("the routes inside a folder: the top of a library and linked folders are ke
   } finally {
     server.close();
   }
+});
+
+// ── Moving the old links over (4.7) ─────────────────────────────────────
+test("the migration report's rules: the old team path, a row's status and id, Apply on the admin's own fresh preview, suggestions by name", () => {
+  assert.equal(teamFolderPath("National Leasing", "Bluewater Shopping Centre"), "BGP share drive/National Leasing/Bluewater Shopping Centre");
+  assert.deepEqual([migrationStatus(404), migrationStatus(410), migrationStatus(403), migrationStatus(401), migrationStatus(500)], ["missing", "missing", "no_access", "no_access", "error"]);
+  const a = migrationRowId("crm_properties.sharepoint_folder_url", "p1", "", "https://x/a");
+  assert.equal(a, migrationRowId("crm_properties.sharepoint_folder_url", "p1", "", " https://x/a "), "the same stored address, the same row");
+  assert.notEqual(a, migrationRowId("crm_properties.sharepoint_folder_url", "p2", "", "https://x/a"));
+  assert.notEqual(a, migrationRowId("crm_properties.sharepoint_team_folders", "p1", "", "https://x/a"));
+  assert.match(a, /^m[0-9a-f]{16}$/);
+  const at = new Date("2026-11-24T10:00:00Z");
+  const preview = { previewedAt: at.toISOString(), previewedBy: "u1" };
+  assert.equal(migrationApplyRefusal(preview, "u1", at.toISOString(), at.getTime() + 59 * 60_000), null);
+  assert.match(migrationApplyRefusal(preview, "u1", at.toISOString(), at.getTime() + 61 * 60_000)!, /more than an hour/);
+  assert.match(migrationApplyRefusal(preview, "u2", at.toISOString(), at.getTime())!, /made yourself/);
+  assert.match(migrationApplyRefusal(preview, "u1", "2026-11-23T10:00:00.000Z", at.getTime())!, /replaced/);
+  assert.match(migrationApplyRefusal(null, "u1", at.toISOString())!, /Preview first/);
+  assert.equal(suggestionFits("Bluewater", "Bluewater"), true);
+  assert.equal(suggestionFits("The Royal Exchange", "Royal Exchange"), true);
+  assert.equal(suggestionFits("Bluewater", "Bluewater Shopping Centre"), true);
+  assert.equal(suggestionFits("Blue", "Bluewater Shopping Centre"), false);
+  assert.equal(suggestionFits("Leases", "Bluewater Shopping Centre"), false);
+  assert.ok(OLD_FOLDER_READERS.length > 0 && OLD_FOLDER_READERS.every(r => MIGRATION_COLUMNS.some(c => c.column === r.column)), "every reader names a column the report moves");
 });

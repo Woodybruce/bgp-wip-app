@@ -10,9 +10,12 @@ import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import pg from "pg";
+import express from "express";
+import type { AddressInfo } from "node:net";
 import { setGraphTransport, type GraphRequest, type GraphResponse } from "./folders/graph";
 import { folderRecord } from "./folders/access";
 import { MIGRATION_RUNS_KEY, addFolderLink, changeFolderLink, readRecordFolders, unlinkFolder } from "./folders/links";
+import { foldersMigrationRouter } from "./folders/migration";
 
 const databaseUrl = process.env.FOLDERS_DATABASE_URL;
 const skip = !databaseUrl ? "set FOLDERS_DATABASE_URL to a local PostgreSQL database to run the folder engine's SQL"
@@ -175,4 +178,107 @@ test("read again after ten minutes: the shown name and path follow SharePoint; a
   await db.query(`UPDATE record_folders SET checked_at = now() - interval '1 hour'`);
   view = await readRecordFolders(db, p1, { userId: "u1", token: "victoria-token" });
   assert.equal(view.folders.find(f => f.itemId === "hots")!.status, "missing");
+});
+
+test("the migration report: every old address and team path read as the admin, Apply on their own preview, Undo puts the old links back", { skip }, async () => {
+  // The other old columns, as the app has them.
+  await db.query(`ALTER TABLE crm_properties ADD COLUMN folder_teams text[]`);
+  await db.query(`ALTER TABLE crm_companies ADD COLUMN sharepoint_folder_url text, ADD COLUMN folder_teams text[]`);
+  await db.query(`ALTER TABLE property_schemes ADD COLUMN sharepoint_folder_url text`);
+  await db.query(`ALTER TABLE pla_matters ADD COLUMN sharepoint_folder_url text`);
+  await db.query(`ALTER TABLE property_pathway_runs ADD COLUMN sharepoint_folder_url text, ADD COLUMN sharepoint_folder_path text`);
+  await db.query(`INSERT INTO crm_properties (id, name, sharepoint_folder_url, folder_teams) VALUES ('p3', 'Trinity Leeds', $1, ARRAY['National Leasing'])`, [`${SITE}/National/Trinity`]);
+  await db.query(`INSERT INTO crm_companies (id, name, sharepoint_folder_url) VALUES ('c1', 'Landsec', 'https://example.com/landsec')`);
+  await db.query(`INSERT INTO property_schemes (id, name, property_id, sharepoint_folder_url) VALUES ('s1', 'Gunwharf', 'p1', $1)`, [`${SITE}/National/Bluewater/Plan.pdf`]);
+  items.trinity = { name: "Trinity", folder: true, path: "BGP - Share Drive/National", webUrl: `${SITE}/National/Trinity` };
+  shares[shareOf(`${SITE}/National/Trinity`)] = "trinity";
+  shares[shareOf(`${SITE}/National/Bluewater/Plan.pdf`)] = "plan";
+  const asked: GraphRequest[] = [];
+  setGraphTransport(async r => {
+    asked.push(r);
+    const reply = (status: number, body: any): GraphResponse => ({ status, body, location: null, retryAfter: null });
+    if (r.url.includes("/sites/brucegillinghampollardlimited.sharepoint.com:/sites/BGP")) return reply(200, { id: "site-1" });
+    if (r.url.includes("/sites/site-1/drives")) return reply(200, { value: [{ id: DRIVE, name: "Documents" }] });
+    if (r.url.includes(`/drives/${DRIVE}/root?`)) return reply(200, { id: "root-1" });
+    if (r.url.includes(`/drives/${DRIVE}/root:/`)) return reply(404, { error: {} });
+    if (r.url.includes("/root/search(q='Landsec')")) return reply(200, { value: [
+      { id: "landsec", name: "Landsec", folder: { childCount: 36 }, parentReference: { driveId: DRIVE, path: `/drives/${DRIVE}/root:/BGP - Share Drive/National/National` } },
+      { id: "landsec-old", name: "Landsec", folder: {}, parentReference: { driveId: DRIVE, path: `/drives/${DRIVE}/root:/BGP share drive` } },
+    ] });
+    if (r.url.includes("/root/search(")) return reply(200, { value: [] });
+    return answer(r);
+  });
+  let staff: { userId: string; name: string; email: string } | null = { userId: "u1", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com" };
+  const app = express();
+  app.use(express.json());
+  app.use(foldersMigrationRouter({
+    db, auth: (_req, _res, next) => next(), admin: (_req, _res, next) => next(),
+    staff: async () => staff, microsoft: async () => ({ token: "victoria-token", account: me.account }),
+  }));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const send = async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(base + path, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  try {
+    const preview = (await send("GET", "/api/admin/folders/migration")).body;
+    const rowOf = (column: string, recordId: string, key = "") => preview.rows.find((r: any) => r.column === column && r.recordId === recordId && r.key === key);
+    assert.equal(rowOf("crm_properties.sharepoint_folder_url", "p3").status, "opens");
+    assert.equal(rowOf("crm_properties.sharepoint_folder_url", "p3").entry.itemId, "trinity");
+    assert.equal(rowOf("crm_properties.sharepoint_folder_url", "p2").status, "missing");
+    assert.equal(rowOf("crm_properties.sharepoint_team_folders", "p2", "Leases").status, "linked", "already in Folders on that record");
+    assert.equal(rowOf("crm_properties.sharepoint_team_folders", "p2", "Investment").status, "missing");
+    const path = rowOf("crm_properties.folder_teams", "p3", "National Leasing");
+    assert.deepEqual([path.value, path.kind, path.status], ["BGP share drive/National Leasing/Trinity Leeds", "path", "missing"]);
+    assert.equal(rowOf("crm_companies.sharepoint_folder_url", "c1").status, "outside");
+    assert.ok(!asked.some(r => r.url.includes("example.com") || r.url.includes(shareOf("https://example.com/landsec"))), "an address outside BGP's SharePoint is never opened");
+    assert.equal(rowOf("crm_deals.sharepoint_link", "d1").status, "opens");
+    assert.equal(rowOf("property_schemes.sharepoint_folder_url", "s1").status, "not_folder");
+    assert.equal(preview.rows.filter((r: any) => r.recordId === "d2").length, 0, "text that is not an address is not a row");
+    assert.ok(asked.every(r => r.token === "victoria-token"), "every address is opened as the admin");
+    // A folder of the same name in BGP - Share Drive, for a record nothing of whose opens: a suggestion only.
+    assert.deepEqual(preview.suggestions.map((s: any) => [s.recordId, s.entry.itemId, s.entry.path]), [["c1", "landsec", "BGP - Share Drive / National / National / Landsec"]]);
+    assert.equal(preview.readers.length > 0, true);
+
+    // Apply: the admin's own preview, within the hour, the ticked rows that open.
+    const ids = [rowOf("crm_properties.sharepoint_folder_url", "p3").id, rowOf("crm_deals.sharepoint_link", "d1").id, rowOf("crm_properties.sharepoint_folder_url", "p2").id];
+    staff = { userId: "u2", name: "Someone else", email: "someone@brucegillinghampollard.com" };
+    assert.equal((await send("POST", "/api/admin/folders/migration/apply", { ids, previewedAt: preview.previewedAt })).status, 409);
+    staff = { userId: "u1", name: "Victoria Broadhead", email: "victoria@brucegillinghampollard.com" };
+    assert.equal((await send("POST", "/api/admin/folders/migration/apply", { ids, previewedAt: "2026-01-01T00:00:00.000Z" })).status, 409);
+    const applied = (await send("POST", "/api/admin/folders/migration/apply", { ids, previewedAt: preview.previewedAt })).body;
+    assert.deepEqual([applied.linked, applied.already, applied.skipped.map((s: any) => s.why)], [2, 0, ["It does not open to a folder."]]);
+    const made = (await db.query(`SELECT record_type, record_id, item_id, label, source FROM record_folders WHERE source LIKE 'migrated:%' AND removed_at IS NULL ORDER BY record_id`)).rows;
+    assert.deepEqual(made.map(r => [r.record_type, r.record_id, r.item_id, r.label, r.source]), [
+      ["deal", "d1", "bluewater", "Bluewater", "migrated:crm_deals.sharepoint_link"],
+      ["property", "p3", "trinity", "Trinity", "migrated:crm_properties.sharepoint_folder_url"],
+    ]);
+    const logged = (await db.query(`SELECT action, ms_account, detail FROM folder_actions WHERE detail->>'batch' = $1`, [applied.batch])).rows;
+    assert.deepEqual(logged.map(l => [l.action, l.ms_account]), [["link", me.account], ["link", me.account]]);
+    // The transaction's old link no longer shows beside its new one; the old column is untouched.
+    const d1 = (await folderRecord(db, "deal", "d1"))!;
+    let view = await readRecordFolders(db, d1, { userId: "u1", token: null });
+    assert.deepEqual(view.folders.map(f => [f.label, f.legacy]), [["Leases", false], ["Bluewater", false]]);
+    assert.equal((await db.query(`SELECT sharepoint_link FROM crm_deals WHERE id = 'd1'`)).rows[0].sharepoint_link, `${SITE}/National/Bluewater`);
+    // Applied again: nothing new, and nothing recorded for an undo.
+    assert.equal((await send("POST", "/api/admin/folders/migration/apply", { ids, previewedAt: preview.previewedAt })).body.already, 2);
+
+    // Undo: the batch's links come out, and the old link shows again.
+    const undone = (await send("POST", "/api/admin/folders/migration/undo", { batch: applied.batch })).body;
+    assert.equal(undone.removed, 2);
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM record_folders WHERE source LIKE 'migrated:%' AND removed_at IS NULL`)).rows[0].n, 0);
+    view = await readRecordFolders(db, d1, { userId: "u1", token: null });
+    assert.deepEqual(view.folders.map(f => [f.label, f.legacy]), [["Leases", false], ["Transaction link", true]]);
+    assert.equal((await send("POST", "/api/admin/folders/migration/undo", { batch: applied.batch })).status, 409);
+    const runs = (await send("GET", "/api/admin/folders/migration/runs")).body.runs;
+    assert.deepEqual(runs.filter((r: any) => r.batch === applied.batch).map((r: any) => [r.rows.length, !!r.undoneAt]), [[2, true]]);
+
+    // Not staff signed in as themselves: refused before anything is read.
+    staff = null;
+    assert.equal((await send("GET", "/api/admin/folders/migration")).status, 403);
+  } finally {
+    server.close();
+    setGraphTransport(async r => answer(r));
+  }
 });

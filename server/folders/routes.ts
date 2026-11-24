@@ -366,8 +366,14 @@ export function foldersRouter(deps: FolderRouteDeps): Router {
   return router;
 }
 
-/** The router the app mounts, on the app's database and the person's own Microsoft 365. */
+/** The router the app mounts, on the app's database and the person's own Microsoft 365: the engine, and the admins' migration report. */
 export async function appFoldersRouter(): Promise<Router> {
-  const [{ pool }, { requireAuth }, { getOwnMsAccess }] = await Promise.all([import("../db"), import("../auth"), import("../microsoft")]);
-  return foldersRouter({ db: pool, auth: requireAuth, staff: req => folderStaff(req, pool), microsoft: userId => getOwnMsAccess(userId) });
+  const [{ pool }, { requireAuth, requireAdmin }, { getOwnMsAccess }, { foldersMigrationRouter }] = await Promise.all([
+    import("../db"), import("../auth"), import("../microsoft"), import("./migration"),
+  ]);
+  const deps = { db: pool, auth: requireAuth, staff: (req: Request) => folderStaff(req, pool), microsoft: (userId: string) => getOwnMsAccess(userId) };
+  const router = Router();
+  router.use(foldersRouter(deps));
+  router.use(foldersMigrationRouter({ ...deps, admin: requireAdmin }));
+  return router;
 }

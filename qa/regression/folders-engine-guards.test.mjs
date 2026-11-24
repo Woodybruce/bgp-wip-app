@@ -70,6 +70,7 @@ const ROUTES = [
   ['PATCH', '/api/folders/links/l1'], ['DELETE', '/api/folders/links/l1'],
   ['POST', '/api/folders/items/d/i/rename'], ['DELETE', '/api/folders/items/d/i'], ['POST', '/api/folders/items/d/i/upload'],
   ['PUT', '/api/folders/uploads/s1'], ['GET', '/api/folders/copies/j1'], ['POST', '/api/folders/items/d/i/share'],
+  ['GET', '/api/admin/folders/migration'], ['POST', '/api/admin/folders/migration/apply'],
   ['GET', '/API/Folders/property/p1'], ['GET', '/api/folders//property/p1'],
 ];
 
@@ -85,7 +86,7 @@ test('a client login and a joint agent are refused every folder route at the gat
     for (const [method, target] of ROUTES) assert.equal(await send(target, method), 403, `${role || 'client'}: ${method} ${target}`);
   }
   who.client = false; who.role = null;
-  for (const [method, target] of ROUTES.slice(0, 15)) assert.equal(await send(target, method), 200, `staff: ${method} ${target}`);
+  for (const [method, target] of ROUTES.slice(0, 17)) assert.equal(await send(target, method), 200, `staff: ${method} ${target}`);
 });
 
 const routes = read('server/folders/routes.ts');
@@ -108,7 +109,7 @@ test('folder actions use the person\'s own Microsoft 365: no colleague\'s token,
     const text = readFileSync(new URL(f, dir), 'utf8').replace(/\/\/[^\n]*/g, '');
     assert.doesNotMatch(text, /getValidMsToken|getAppToken|getAppGraphToken|graphRequest|uploadFileToSharePoint|msal_token_cache|getMsTokenFor/, `${f} reaches for another token`);
   }
-  assert.match(routes, /microsoft: userId => getOwnMsAccess\(userId\)/);
+  assert.match(routes, /microsoft: \(userId: string\) => getOwnMsAccess\(userId\)/);
   const ms = read('server/microsoft.ts');
   const own = ms.slice(ms.indexOf('export async function getOwnMsAccess('), ms.indexOf('function getRedirectUri('));
   assert.doesNotMatch(own, /FROM msal_token_cache mt|ORDER BY mt\.updated_at/, 'no colleague fallback');
@@ -155,6 +156,27 @@ test('the six folder colours are design tokens, light and dark, and the browser\
   // A drop on an open folder is its own: the app-wide Drop to import never sees it.
   assert.match(browser, /onDrop = \(e: DragEvent\) => \{\n\s+if \(!hasFiles\(e\)\) return;\n\s+e\.preventDefault\(\); e\.stopPropagation\(\);/);
   assert.match(browser, /driveId=\{here\.driveId\}\n\s+start=\{stack\}/, 'a move picks only in the same library');
+});
+
+test('the migration report is admins\' only, on their own Microsoft 365, never at boot or on a timer', () => {
+  const m = read('server/folders/migration.ts');
+  const registrations = [...m.matchAll(/router\.(get|post|patch|put|delete)\("(\/api\/[^"]+)",\s*([^\n]+)/g)];
+  assert.equal(registrations.length, 4);
+  for (const [, method, path, rest] of registrations) {
+    assert.ok(path.startsWith('/api/admin/folders/migration'), `${method} ${path}`);
+    assert.match(rest, /^auth, admin, handle\((true|false), /, `${method} ${path} is admins' only`);
+  }
+  const gate = m.slice(m.indexOf('const handle = '), m.indexOf('router.get("/api/admin/folders/migration"'));
+  assert.ok(gate.indexOf('await deps.staff(req)') < gate.indexOf('deps.microsoft('), 'signed in as themselves before any token');
+  assert.match(m, /router\.get\("\/api\/admin\/folders\/migration", auth, admin, handle\(true,/);
+  assert.doesNotMatch(m, /setInterval|setTimeout|getValidMsToken|getAppToken/);
+  // Nothing outside the routes runs it: not at boot, not on a timer.
+  for (const f of ['server/index.ts', 'server/routes.ts']) assert.doesNotMatch(read(f), /buildMigrationPreview|applyMigration|undoMigration/);
+  assert.match(read('server/folders/routes.ts'), /router\.use\(foldersMigrationRouter\(\{ \.\.\.deps, admin: requireAdmin \}\)\);/);
+  // Apply takes only the same admin's preview, within the hour; the old columns are never written.
+  assert.match(m, /const refusal = migrationApplyRefusal\(/);
+  assert.doesNotMatch(m, /UPDATE (crm_properties|crm_companies|crm_deals|property_schemes|pla_matters|property_pathway_runs)/);
+  assert.match(m, /const source = `migrated:\$\{row\.column\}`;/);
 });
 
 test('the engine is mounted, and its two tables are made at boot', () => {
