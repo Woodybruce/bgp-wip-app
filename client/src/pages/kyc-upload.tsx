@@ -252,7 +252,7 @@ function OwnerLinksCard({ n, token, people, onView }: {
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-base leading-snug">{KYC_OWNER_LINKS_TITLE}</h3>
           <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
-            Each owner does their own identity check and proof of address, on their own page. Send them their link, or give us their email and we'll send it.
+            Each owner does their own identity check and proof of address, on their own page. Send them their link, or give us their email and we'll send it. You can also upload a recent bill or bank statement in their name for them.
           </p>
           <ul className="mt-3 space-y-3">
             {people.map(person => <OwnerLinkRow key={person.key} token={token} person={person} onView={onView} />)}
@@ -266,6 +266,31 @@ function OwnerLinksCard({ n, token, people, onView }: {
 function OwnerLinkRow({ token, person, onView }: { token: string; person: NonNullable<KycPortalView["people"]>[number]; onView: (view: KycPortalView) => void }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const proofInput = useRef<HTMLInputElement>(null);
+  // Their proof of address, sent from here (24 November 2026): it counts for
+  // them once it reads as theirs. They still do their own identity check.
+  const sendProof = async (file: File | undefined) => {
+    if (!file) return;
+    setSending(true);
+    setMessage(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("docKey", "proof_of_address");
+      form.append("forKey", person.key);
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/file`, { method: "POST", body: form });
+      const body = await readJson(res);
+      if (!res.ok) { setMessage(body.message || "The upload didn't work. Please try again."); return; }
+      onView(body);
+      setMessage(`${file.name} sent for ${person.name}. We read it to check it's in their name and recent.`);
+    } catch {
+      setMessage("The upload didn't work. Please check your connection and try again.");
+    } finally {
+      setSending(false);
+      if (proofInput.current) proofInput.current.value = "";
+    }
+  };
   const [link, setLink] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -302,6 +327,24 @@ function OwnerLinkRow({ token, person, onView }: { token: string; person: NonNul
           : person.linked ? <span className="text-sm text-muted-foreground">Link given</span> : null}
       </div>
       {person.detail && <p className="mt-0.5 text-xs text-muted-foreground">{person.detail[0].toUpperCase() + person.detail.slice(1)}</p>}
+      {!person.done && person.address && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" data-testid={`kyc-owner-address-${person.key.replace(/\s+/g, "-")}`}>
+          {person.address.done ? (
+            <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-4 h-4" />Proof of address in</span>
+          ) : person.address.reading ? (
+            <span className="text-muted-foreground">Proof of address sent: being read</span>
+          ) : (
+            <>
+              {person.address.notPassed && <span className="text-amber-800">The proof of address sent didn't pass: send a recent bill or statement in their name.</span>}
+              <input ref={proofInput} type="file" accept={ACCEPT} className="hidden" onChange={e => sendProof(e.target.files?.[0])} />
+              <button type="button" className="inline-flex items-center gap-1 underline text-muted-foreground hover:text-foreground disabled:opacity-60" disabled={sending}
+                onClick={() => proofInput.current?.click()} data-testid={`kyc-owner-proof-${person.key.replace(/\s+/g, "-")}`}>
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}Upload their proof of address
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {!person.done && (
         <div className="mt-2 space-y-2">
           <div className="flex flex-col gap-2 sm:flex-row">

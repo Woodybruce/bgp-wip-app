@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "ID and documents", title: "Anyone on the transaction can send a proof of address",
+    text: "A proof of address can be sent by anyone with a link on the transaction, such as the person acting for an owner. The law asks that it is genuine, recent, an accepted kind and in the person's own name, not who hands it over. It is read and counts for the person it names. Each person still does their own identity check." },
   { date: "2026-11-24", who: ["Woody"], topic: "Officers and sign-off", title: "The app writes the sign-off note for a listed company",
     text: "For a company listed on a UK or EU regulated market, or owned through one company at each level by one, with no red flag, the Sign off box shows a note written from the file: listing, ownership chain, status, accounts, screening and the person instructing us. It is kept with the approval. A person still signs off, and still says why if the client checks are unfinished." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "More than one company can sign for a party",

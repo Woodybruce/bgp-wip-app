@@ -70,6 +70,8 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
           documentId,
           reading: documentId ? request.addressProofs?.[documentId] || null : null,
           accepted: documentId ? request.addressAccepted?.[documentId] || null : null,
+          // Who the sender said it is for (24 November 2026): a hint, never proof.
+          forKey: documentId ? request.addressProofFor?.[documentId] || null : null,
         };
       }),
     };

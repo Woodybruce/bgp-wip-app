@@ -5605,6 +5605,25 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+- **Anyone on the transaction may send a proof of address** (Woody,
+  24 November 2026: "Let's allow others to drop proof of address? Is that
+  technical? Or legal": technical; the law asks that it is genuine, recent,
+  an accepted kind and in the person's name, not who hands it over). A proof
+  of address sent on any link on the party counts for the person it names,
+  read and checked as on their own link (`others` in `partyPeople`), and
+  their row on People to check says where it came in ("sent on Kenneth Tam's
+  link", `proof.elsewhere`, beside the link's reference). On the person acting's page
+  each owner has **Upload their proof of address** (`kyc-owner-proof-<key>`)
+  beside sending their link: `POST /api/kyc-upload/:token/file` with
+  `forKey`, taken only for a proof of address, on the person acting's own
+  request, naming one of the party's people, and kept as
+  `request.addressProofFor[documentId]`. The hint never makes a bill count:
+  it shows a bill sent for someone on their row whether or not it passed, so
+  an officer can Read again or Accept it for them, and an acceptance counts
+  only for the person it was sent for. The page says whether each owner's
+  proof is in, being read, or did not pass. They still do their own identity
+  check. Tests: `server/kyc-people.test.ts`,
+  `qa/regression/kyc-proof-for-others-guards.test.mjs`.
 - **More than one private individual on one side** (Jack, 20 November 2026:
   "sometimes it is private individuals who havent set up a company yet ...
   I want to be able to start checks on more that one private indiviaul").

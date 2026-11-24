@@ -744,6 +744,7 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
           {counts ? "Proof of address" : "Proof of address to check"} ({proof.ref}):{" "}
           {proof.url ? <a href={proof.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" data-testid={`person-address-file-${testKey}`}>{proof.summary}</a> : proof.summary}
           {proof.accepted ? <span className="text-muted-foreground"> · accepted by {proof.accepted.by}: {proof.accepted.note}</span> : null}
+          {proof.elsewhere ? <span className="text-muted-foreground" data-testid={`person-address-elsewhere-${testKey}`}> · sent {proof.elsewhere}</span> : null}
         </span>
       </div>
       {!counts && proof.reasons.length > 0 && (

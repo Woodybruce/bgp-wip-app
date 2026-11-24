@@ -136,6 +136,13 @@ export interface KycRequestDetails {
   // completes it is contact_name once named. passedOn: the people at the
   // party the agent sent it to from the page.
   viaAgent?: KycViaAgent | null;
+  // A proof of address sent on this link for someone else on the party, by
+  // the KYC document's id: the person's key (24 November 2026, Woody: "Let's
+  // allow others to drop proof of address"). A hint only: it counts for them
+  // only when it reads as theirs (shared/kyc-people.ts).
+  addressProofFor?: Record<string, string>;
+  // The proof of address readings, by the KYC document's id (server/kyc-address-proof.ts).
+  addressProofs?: Record<string, unknown>;
 }
 
 export interface KycViaAgent {
@@ -531,9 +538,17 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     // A guarantor, and the owners of a company that guarantees, are passed on the same way (23 November 2026).
     const owners = (found?.people || []).filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner") || p.roles.includes("signer") || p.roles.includes("signer_owner")) && !personNamesMatch(p.name, row.contact_name || ""));
     if (owners.length) {
+      // A proof of address sent here for an owner (24 November 2026): in, being read, or sent and not passed.
+      const sentFor = Object.entries(request.addressProofFor || {});
       people = owners.map(p => {
         const ownLink = !!p.own && !p.own.isMain;
-        return { key: p.key, name: p.name, detail: p.ownerDetail, done: !p.outstanding.length, linked: ownLink || !p.outstanding.length, emailedAt: ownLink ? p.own!.sentAt : null };
+        const mine = sentFor.filter(([, k]) => k === p.key).map(([docId]) => docId);
+        const address = p.address.notNeeded ? null : {
+          done: p.address.done,
+          reading: !p.address.done && mine.some(docId => !request.addressProofs?.[docId]),
+          notPassed: !p.address.done && mine.length > 0 && mine.every(docId => !!request.addressProofs?.[docId]),
+        };
+        return { key: p.key, name: p.name, detail: p.ownerDetail, done: !p.outstanding.length, linked: ownLink || !p.outstanding.length, emailedAt: ownLink ? p.own!.sentAt : null, address };
       });
     }
   }
@@ -1810,7 +1825,27 @@ kycRequestRouter.post("/api/kyc-upload/:token/file", portalUpload, async (req: R
     if (count >= KYC_MAX_FILES_PER_REQUEST) return res.status(409).json({ message: "That's the most files this link takes. Please email anything else to your contact." });
     const key = String(req.body?.docKey || "");
     const docKey = isKycDocKey(key) ? key : null;
-    await fileClientDocument(row, { name: file.originalname, mime: file.mimetype, buffer: file.buffer }, docKey, "Uploaded on the client checks page");
+    // A proof of address for someone else on these checks (24 November 2026):
+    // the person acting uploads an owner's bill. It must name one of the
+    // party's people; it counts for them only once it reads as theirs.
+    const askedFor = String(req.body?.forKey || "").trim().slice(0, 200);
+    let forPerson: { key: string; name: string } | null = null;
+    if (askedFor) {
+      if (docKey !== "proof_of_address" || isJointRequest(row.request) || row.request!.person) return res.status(400).json({ message: "Upload that on your own steps." });
+      const found = await partyPeopleForRow(row).catch(() => null);
+      const person = found?.people.find(p => p.key === askedFor) || null;
+      if (!person) return res.status(400).json({ message: "That person isn't on these checks." });
+      forPerson = { key: person.key, name: person.name };
+    }
+    const documentId = await fileClientDocument(row, { name: file.originalname, mime: file.mimetype, buffer: file.buffer }, docKey,
+      forPerson ? `Uploaded on the client checks page as ${forPerson.name}'s proof of address` : "Uploaded on the client checks page");
+    if (forPerson && documentId) {
+      await pool.query(
+        `UPDATE kyc_upload_tokens
+            SET request = jsonb_set(COALESCE(request, '{}'::jsonb), '{addressProofFor}',
+                                    COALESCE(request->'addressProofFor', '{}'::jsonb) || jsonb_build_object($2::text, $3::text))
+          WHERE token = $1`, [row.token, documentId, forPerson.key]);
+    }
     res.json(await portalView((await tokenRow(row.token))!));
   } catch (err: any) {
     console.error(`[kyc] upload failed: ${err?.message}`);

@@ -1241,7 +1241,10 @@ export interface KycPortalView {
   person?: { roles: KycPersonRole[]; words: string } | null;
   // The owners the person acting passes a link of their own to: done when
   // they have nothing left to send, linked when they have a link.
-  people?: Array<{ key: string; name: string; detail: string | null; done: boolean; linked: boolean; emailedAt: string | null }> | null;
+  // address: their proof of address, which anyone with this link may send for them (24 November 2026);
+  // null when none is asked of them.
+  people?: Array<{ key: string; name: string; detail: string | null; done: boolean; linked: boolean; emailedAt: string | null;
+    address?: { done: boolean; reading: boolean; notPassed: boolean } | null }> | null;
   note: string | null;
   noteFrom?: string | null;
   agents: KycAgent[];

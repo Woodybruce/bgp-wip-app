@@ -93,6 +93,10 @@ export interface PeopleRequest {
     documentId?: string | null;
     reading?: AddressProofReading | null;
     accepted?: AddressProofAcceptance | null;
+    // Who the sender said a proof of address is for (24 November 2026: the
+    // person acting uploads an owner's bill). A hint only: it counts for a
+    // person only when it reads as theirs.
+    forKey?: string | null;
   }>;
 }
 
@@ -190,6 +194,8 @@ export interface KycPartyPerson {
       token: string; ref: string; documentId: string | null; fileName: string; url: string | null; uploadedAt: string;
       read: boolean; ok: boolean; summary: string; reasons: string[]; address: string | null;
       accepted: AddressProofAcceptance | null;
+      // Sent on someone else's link: "on Kenneth Tam's link" (24 November 2026); the proof's ref says which.
+      elsewhere?: string | null;
     } | null;
   };
   sanctions: PersonSanctions;
@@ -400,12 +406,28 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     // A proof of address counts only when it reads as theirs, in date and of
     // a kind the policy accepts, or an officer accepted it (Woody, 20 November
     // 2026: "is the app checking its actually for that person and acceptable?").
-    const proofs = mine.flatMap(r => r.files.filter(f => f.docKey === "proof_of_address").map(f => {
+    // Anyone on the transaction may send it (Woody, 24 November 2026: "Let's
+    // allow others to drop proof of address"; nothing in the law says who
+    // hands it over): one sent on someone else's link for this party counts
+    // for the person it names, read and checked the same way. An officer's
+    // acceptance counts only for the person the proof was sent for.
+    const proofs = mine.flatMap(r => r.files.filter(f => f.docKey === "proof_of_address" && !(f.forKey && f.forKey !== personKey(d.name))).map(f => {
       const check = checkAddressProof(f.reading || null, d.name, f.uploadedAt);
-      return { r, f, check, counts: check.ok || !!f.accepted };
+      return { r, f, check, counts: check.ok || !!f.accepted, sentFor: false, elsewhere: null as string | null };
     }));
-    const counting = proofs.find(x => x.counts) || null;
-    const shown = counting || proofs[proofs.length - 1] || null;
+    // One sent for them (the person acting uploads an owner's bill) is shown
+    // on their row whether or not it passed, so an officer can read it again
+    // or accept it for them; one that only names them counts once it passes.
+    const myKey = personKey(d.name);
+    const others = input.requests.filter(r => r.companyId === input.companyId && !r.trustDocs && !own(r)).flatMap(r =>
+      r.files.filter(f => f.docKey === "proof_of_address" && (f.forKey === myKey || !!f.reading)).map(f => {
+        const check = checkAddressProof(f.reading || null, d.name, f.uploadedAt);
+        const sentFor = f.forKey === myKey;
+        return { r, f, check, counts: check.ok || (sentFor && !!f.accepted), sentFor, elsewhere: `on ${personDisplayName(r.recipientName || "someone else")}'s link` as string | null };
+      }))
+      .filter(x => x.counts || x.sentFor);
+    const counting = proofs.find(x => x.counts) || others.find(x => x.counts) || null;
+    const shown = counting || proofs[proofs.length - 1] || others[others.length - 1] || null;
     // The person dealing with us for a company gives no proof of address unless
     // they are also an owner (or a guarantor): HMRC asks for their identity and
     // their authority to act (MLR 2017 reg 28(10)), and policy Issue 4 asks for
@@ -418,7 +440,10 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       proof: shown ? {
         token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
         read: !!shown.f.reading?.read, ok: shown.check.ok, summary: shown.check.summary, reasons: shown.check.reasons,
-        address: shown.f.reading?.address || null, accepted: shown.f.accepted || null,
+        address: shown.f.reading?.address || null,
+        // An acceptance counts only for the person the proof was sent for.
+        accepted: shown.elsewhere && !shown.sentFor ? null : shown.f.accepted || null,
+        ...(shown.elsewhere ? { elsewhere: shown.elsewhere } : {}),
       } : null,
     };
 
