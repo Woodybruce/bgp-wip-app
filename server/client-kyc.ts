@@ -21,6 +21,7 @@
 //   POST /api/client-kyc/:companyId/subjects/:entity/sign-off       { note }
 //   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/set-aside { key, comment } (the officers)
 //   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/put-back  { reviewId } (the officers)
+//   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/suggest   { key } (the officers: the app's draft of the reason)
 //   POST /api/client-kyc/:companyId/checks                         { entityIds, again? }: BGP's checks on many sub companies, one at a time
 //   GET  /api/client-kyc/:companyId/checks                         where that run is
 //
@@ -474,6 +475,25 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/set-
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
     console.error("[client-kyc] set aside failed:", err?.message);
     res.status(500).json({ message: "The red flag could not be set aside." });
+  }
+});
+
+// The app's draft of the reason for setting a flag aside (server/flag-set-aside.ts). Saves nothing.
+clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/suggest", async (req: Request, res: Response) => {
+  try {
+    const { decider } = await import("./deal-party-aml");
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const subject = await clientSubjectFor(req, res);
+    if (!subject) return;
+    const key = text(req.body?.key).slice(0, 300);
+    if (!key) return res.status(400).json({ message: "Which red flag?" });
+    const { suggestSetAside } = await import("./flag-set-aside");
+    res.json(await suggestSetAside({ dealId: null, brandId: subject.brandId, entityId: subject.entityId, key }));
+  } catch (err: any) {
+    if (err?.name === "SuggestRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[client-kyc] suggest failed:", err?.message);
+    res.status(500).json({ message: "The app could not draft a reason." });
   }
 });
 

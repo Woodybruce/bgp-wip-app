@@ -6,8 +6,10 @@
 //   GET  /api/properties/:id/ownership        who owns the building at Land Registry, the roles, the owner's checks
 //   POST /api/properties/:id/ownership/use    { titleNumber, dataset, position }: record the title, set the empty
 //                                              roles, file the owner under the Owner (what the AML box offers)
-//   POST /api/properties/:id/ownership/check  { entityId, again }: BGP's checks before asking on that company,
-//                                              only when a person presses for them
+//   GET  /api/properties/:id/ownership?title=WM757813   the same, with that title looked up (a person typed it)
+//
+// The KYC on a company filed here is the shared client KYC window (one build
+// for AML, 24 November 2026): BGP's checks start only when a person opens it.
 //
 // BGP staff signed in as themselves only. Free data only: the Land Registry
 // company ownership lists loaded in the app (hmlr_proprietors, CCOD and OCOD);
@@ -16,11 +18,11 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { propertyLookupIdentity } from "@shared/property-lookup-identity";
 import {
-  OWNERSHIP_ROLES, addressNumberAndStreet, ownershipKycWords, sameRegisteredCompany, titleFit, titleUsePlan,
-  type LandRegistryProprietor, type OwnershipChecks, type OwnershipCompanyRef, type OwnershipKyc, type PropertyOwnershipView,
+  OWNERSHIP_ROLES, addressNamesBuilding, addressNumberAndStreet, buildingSearchTerm, countryWords, isUnitLease, ownershipKycWords, postTown,
+  sameRegisteredCompany, titleFit, titleUsePlan, unnumberedStreet,
+  type LandRegistryProprietor, type OwnershipCompanyRef, type OwnershipKyc, type PropertyOwnershipView,
   type ProprietorView, type TitleView,
 } from "@shared/property-ownership";
-import { isPrecheckResult, precheckCardLines, precheckRedFlags, precheckUnfinished, KYC_PRECHECK_FRESH_DAYS } from "@shared/kyc-prechecks";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -132,33 +134,33 @@ async function crmCandidates(db: Db, proprietors: LandRegistryProprietor[]): Pro
   };
 }
 
-async function checksFor(ownerId: string, entityId: string): Promise<OwnershipChecks> {
-  const { latestPrecheck, precheckRunning } = await import("./kyc-prechecks");
-  const running = !!precheckRunning(ownerId, entityId);
-  const stored = await latestPrecheck(ownerId, entityId).catch(() => null);
-  if (!stored || !isPrecheckResult(stored.result)) return { running, ranAt: null, unfinished: null, sanctions: null, redFlags: [], lines: [] };
-  const result = stored.result;
-  const fresh = Date.now() - Date.parse(stored.ranAt) < KYC_PRECHECK_FRESH_DAYS * 86_400_000;
-  const possible = result.sanctions.lines.some(l => l.outcome === "possible");
-  const screened = result.sanctions.lines.length > 0;
-  return {
-    running,
-    ranAt: stored.ranAt,
-    unfinished: precheckUnfinished(result),
-    sanctions: possible ? "possible" : screened ? "clear" : "not_screened",
-    redFlags: precheckRedFlags(result, { sanctionsCurrent: fresh }).map(f => f.label),
-    lines: precheckCardLines(result).map(l => ({ label: l.label, state: l.state, detail: l.detail })),
-  };
-}
-
 async function kycFor(db: Db, ownerId: string, entityId: string): Promise<OwnershipKyc> {
   const { loadPartyKyc } = await import("./deal-gates");
   const state = (await loadPartyKyc(db as any, [{ role: "owner", brandId: ownerId, entityId, fullChecks: true }]).catch(() => ({} as Record<string, any>)))["owner"];
   return ownershipKycWords(state || null);
 }
 
-/** The Ownership & KYC view of one property. */
-export async function loadPropertyOwnership(propertyId: string, db: Db = pool, opts: { withChecks?: boolean } = {}): Promise<PropertyOwnershipView | null> {
+// The titles a wider search reads: by the building's own name in its town, and freeholds on its street.
+const LIKE = (v: string) => `%${v.replace(/[\\%_]/g, "")}%`;
+async function titlesBeyondPostcode(db: Db, q: { name: string | null; street: string | null; town: string | null; outcode: string | null }): Promise<{ byName: any[]; byStreet: any[] }> {
+  const near = `(($2::text IS NOT NULL AND postcode_normalised IS NOT NULL AND length(postcode_normalised) > 3 AND left(postcode_normalised, length(postcode_normalised) - 3) = $2)
+                 OR ($3::text IS NOT NULL AND lower(property_address) LIKE $3))`;
+  const town = q.town ? LIKE(q.town.toLowerCase()) : null;
+  if (!q.outcode && !town) return { byName: [], byStreet: [] };
+  const [byName, byStreet] = await Promise.all([
+    q.name ? db.query(`SELECT ${PROPRIETOR_COLUMNS} FROM hmlr_proprietors WHERE lower(property_address) LIKE $1 AND ${near} ORDER BY title_number, dataset, proprietor_position LIMIT 300`,
+      [LIKE(q.name), q.outcode, town]).then(r => r.rows).catch(() => [] as any[]) : Promise.resolve([] as any[]),
+    q.street ? db.query(`SELECT ${PROPRIETOR_COLUMNS} FROM hmlr_proprietors WHERE lower(property_address) LIKE $1 AND lower(tenure) = 'freehold' AND ${near} ORDER BY title_number, dataset, proprietor_position LIMIT 200`,
+      [LIKE(q.street.toLowerCase()), q.outcode, town]).then(r => r.rows).catch(() => [] as any[]) : Promise.resolve([] as any[]),
+  ]);
+  return { byName, byStreet };
+}
+
+const isFreehold = (t: { tenure: string | null }) => /^free/i.test(t.tenure || "");
+const isLeasehold = (t: { tenure: string | null }) => /^lease/i.test(t.tenure || "");
+
+/** The Ownership & KYC view of one property. `typedTitle`: a title number a person typed, looked up too. */
+export async function loadPropertyOwnership(propertyId: string, db: Db = pool, opts: { withChecks?: boolean; typedTitle?: string | null } = {}): Promise<PropertyOwnershipView | null> {
   const p = await readProperty(db, propertyId);
   if (!p) return null;
   const { postcode } = propertyLookupIdentity({ postcode: p.postcode, address: p.address });
@@ -182,49 +184,102 @@ export async function loadPropertyOwnership(propertyId: string, db: Db = pool, o
     const fit = onRecord ? "record" as const : titleFit(t.propertyAddress, { name: p.name, number: place?.number || null, street: place?.street || null });
     return { t, onRecord, fit };
   });
-  const freeholdFirst = (a: TitleRow, b: TitleRow) => Number(/^lease/i.test(a.tenure || "")) - Number(/^lease/i.test(b.tenure || "")) || a.titleNumber.localeCompare(b.titleNumber);
+  // A lease of a unit here is a tenant's (Touchwood's shops), listed apart and never offered as the Long leaseholder.
+  const unitLease = (t: TitleRow) => isLeasehold(t) && isUnitLease(t.propertyAddress);
+  const tenureRank = (t: TitleRow) => (isFreehold(t) ? 0 : isLeasehold(t) ? 1 : 2);
   const order = { record: 0, address: 1, name: 2, postcode: 3 } as const;
-  const here = fits.filter(f => f.fit).sort((a, b) => order[a.fit!] - order[b.fit!] || freeholdFirst(a.t, b.t)).slice(0, 20);
-  const nearby = here.length ? [] : fits.filter(f => !f.fit).map(f => f.t).sort(freeholdFirst).slice(0, 12);
+  const fitted = fits.filter(f => f.fit);
+  const here = fitted.filter(f => f.onRecord || !unitLease(f.t))
+    .sort((a, b) => tenureRank(a.t) - tenureRank(b.t) || Number(b.onRecord) - Number(a.onRecord) || order[a.fit!] - order[b.fit!] || a.t.titleNumber.localeCompare(b.t.titleNumber))
+    .slice(0, 20);
+  const units: TitleRow[] = fitted.filter(f => !f.onRecord && unitLease(f.t)).map(f => f.t);
+  const nearby = fitted.length ? [] : fits.filter(f => !f.fit).map(f => f.t).sort((a, b) => tenureRank(a) - tenureRank(b) || a.titleNumber.localeCompare(b.titleNumber)).slice(0, 12);
+
+  // No freehold among the building's titles: look beyond its postcode (Touchwood, 24 November 2026).
+  let freeholds: PropertyOwnershipView["freeholds"] = null;
+  const candidates: Array<{ t: TitleRow; fit: "elsewhere" | "street" }> = [];
+  if (landRegistry.available && !here.some(f => isFreehold(f.t))) {
+    const firstAddressPart = text(typeof p.address === "string" ? p.address : (p.address as any)?.street || "").split(",")[0];
+    const searched = {
+      name: buildingSearchTerm(p.name) || buildingSearchTerm(firstAddressPart),
+      street: unnumberedStreet(p.address) || place?.street || null,
+      town: postTown(p.address, p.name),
+    };
+    const outcode = postcode ? postcode.replace(/\s+/g, "").toUpperCase().slice(0, -3) || null : null;
+    const seen = new Set([...grouped.map(t => t.titleNumber)]);
+    const wider = await titlesBeyondPostcode(db, { ...searched, outcode });
+    for (const t of groupTitles(wider.byName)) {
+      if (seen.has(t.titleNumber) || !addressNamesBuilding(t.propertyAddress, searched.name!, null)) continue;
+      seen.add(t.titleNumber);
+      if (isFreehold(t)) candidates.push({ t, fit: "elsewhere" });
+      else if (unitLease(t)) units.push(t);
+    }
+    for (const t of groupTitles(wider.byStreet)) {
+      if (seen.has(t.titleNumber)) continue;
+      seen.add(t.titleNumber);
+      candidates.push({ t, fit: "street" });
+    }
+    freeholds = { searched, titles: [] };
+  }
+
+  // A title number a person typed (from the lease's register, or the map).
+  const typedNumber = text(opts.typedTitle).toUpperCase().replace(/\s+/g, "") || null;
+  let typed: TitleRow | null = null;
+  if (landRegistry.available && typedNumber) {
+    typed = groupTitles((await db.query(`SELECT ${PROPRIETOR_COLUMNS} FROM hmlr_proprietors WHERE title_number = $1 ORDER BY dataset, proprietor_position`, [typedNumber])
+      .catch(() => ({ rows: [] as any[] }))).rows)[0] || null;
+  }
 
   const roleIds = OWNERSHIP_ROLES.map(r => ({ ...r, id: text((p as any)[r.column]) || null }));
   const roleCompanies = (await db.query(
     `SELECT id, name, companies_house_number, kyc_status, kyc_expires_at, kyc_approved_by FROM crm_companies WHERE id = ANY($1::varchar[])`,
     [[...new Set(roleIds.map(r => r.id).filter(Boolean))]])).rows;
-  const ownerRow = roleCompanies.find((c: any) => c.id === p.landlord_id) || null;
-  const owner: OwnershipCompanyRef | null = ownerRow ? { id: String(ownerRow.id), name: text(ownerRow.name), companiesHouseNumber: tidyNumber(ownerRow.companies_house_number) } : null;
+  const ref = (row: any): OwnershipCompanyRef | null => (row ? { id: String(row.id), name: text(row.name), companiesHouseNumber: tidyNumber(row.companies_house_number) } : null);
+  const owner = ref(roleCompanies.find((c: any) => c.id === p.landlord_id));
+  const longLeaseholder = ref(roleCompanies.find((c: any) => c.id === p.long_leaseholder_id));
+  const freeholder = ref(roleCompanies.find((c: any) => c.id === p.freeholder_id));
+  // Whom a title's owner is filed under for the AML: the Long leaseholder for a head lease; for a freehold, the
+  // Freeholder when the building is held on a long lease (Touchwood), else the Owner.
+  const accountFor = (t: TitleRow, onRecord: boolean) => (isLeasehold(t) ? longLeaseholder
+    : p.long_leaseholder_id && !onRecord && isFreehold(t) ? freeholder : owner);
 
-  const allProprietors = [...here.map(f => f.t), ...nearby].flatMap(t => t.proprietors);
+  const cappedCandidates = candidates.sort((a, b) => (a.fit === b.fit ? a.t.titleNumber.localeCompare(b.t.titleNumber) : a.fit === "elsewhere" ? -1 : 1)).slice(0, 12);
+  const allProprietors = [...here.map(f => f.t), ...nearby, ...cappedCandidates.map(c => c.t), ...(typed ? [typed] : [])].flatMap(t => t.proprietors);
   const cands = await crmCandidates(db, allProprietors);
   const roles = { freeholderId: text(p.freeholder_id) || null, longLeaseholderId: text(p.long_leaseholder_id) || null };
 
-  const proprietorView = async (t: TitleRow, onRecord: boolean, pr: LandRegistryProprietor): Promise<ProprietorView> => {
+  const proprietorView = async (t: TitleRow, onRecord: boolean, pr: LandRegistryProprietor, unit: boolean): Promise<ProprietorView> => {
+    if (unit) return { ...pr, account: null, filed: null, isAccount: false, crm: null, elsewhere: null, use: null, kyc: null };
+    const account = accountFor(t, onRecord);
     const fitsIt = (c: { name: string; number: string | null }) => sameRegisteredCompany({ name: pr.name, number: pr.number }, { name: c.name, number: c.number });
-    const filedRow = owner ? cands.entities.find(e => e.parentId === owner.id && fitsIt(e)) : undefined;
-    const isOwner = !!owner && sameRegisteredCompany({ name: pr.name, number: pr.number }, { name: ownerRow.name, number: owner.companiesHouseNumber });
+    const filedRow = account ? cands.entities.find(e => e.parentId === account.id && fitsIt(e)) : undefined;
+    const isAccount = !!account && sameRegisteredCompany({ name: pr.name, number: pr.number }, { name: account.name, number: account.companiesHouseNumber });
     const crmRow = cands.companies.find(fitsIt);
-    const elsewhereRow = cands.entities.find(e => (!owner || e.parentId !== owner.id) && fitsIt(e));
+    const elsewhereRow = cands.entities.find(e => (!account || e.parentId !== account.id) && fitsIt(e));
     const filed = filedRow ? { entityId: filedRow.id, name: filedRow.name } : null;
     const crm = crmRow ? { id: crmRow.id, name: crmRow.name, companiesHouseNumber: crmRow.number } : null;
     const use = titleUsePlan({ onRecord, tenure: t.tenure, owner, proprietor: { filed: !!filed, crm }, roles });
-    const withChecks = opts.withChecks !== false && owner && filed;
+    const withKyc = opts.withChecks !== false && account && filed;
     return {
       ...pr,
+      account,
       filed,
-      isOwner,
+      isAccount,
       crm,
       elsewhere: elsewhereRow ? { entityId: elsewhereRow.id, name: elsewhereRow.name, under: { id: elsewhereRow.parentId, name: elsewhereRow.parentName, companiesHouseNumber: elsewhereRow.parentNumber } } : null,
       use,
-      kyc: withChecks ? await kycFor(db, owner!.id, filed!.entityId) : null,
-      checks: withChecks ? await checksFor(owner!.id, filed!.entityId) : null,
+      kyc: withKyc ? await kycFor(db, account!.id, filed!.entityId) : null,
     };
   };
   const view = async (t: TitleRow, onRecord: boolean, fit: TitleView["fit"]): Promise<TitleView> => ({
     titleNumber: t.titleNumber, tenure: t.tenure, propertyAddress: t.propertyAddress, pricePaid: t.pricePaid, dateAdded: t.dateAdded,
     fit, onRecord,
-    proprietors: await Promise.all(t.proprietors.map(pr => proprietorView(t, onRecord, pr))),
+    proprietors: await Promise.all(t.proprietors.map(pr => proprietorView(t, onRecord, pr, fit === "unit"))),
   });
 
+  const unitTitles = [...new Map(units.map(t => [t.titleNumber, t])).values()]
+    .sort((a, b) => text(a.propertyAddress).localeCompare(text(b.propertyAddress), "en", { numeric: true })).slice(0, 40);
+  if (freeholds) freeholds.titles = await Promise.all(cappedCandidates.map(c => view(c.t, false, c.fit)));
   return {
     property: { id: p.id, name: text(p.name), postcode: postcode || null, number: place?.number || null, street: place?.street || null },
     landRegistry,
@@ -234,6 +289,9 @@ export async function loadPropertyOwnership(propertyId: string, db: Db = pool, o
     } : null,
     titles: await Promise.all(here.map(f => view(f.t, f.onRecord, f.fit!))),
     postcodeTitles: await Promise.all(nearby.map(t => view(t, false, "postcode"))),
+    unitLeases: await Promise.all(unitTitles.map(t => view(t, false, "unit"))),
+    freeholds,
+    ...(typedNumber ? { typed: typed ? await view(typed, !!storedTitle && typed.titleNumber === storedTitle, "typed") : null, typedNumber } : {}),
     roles: roleIds.map(r => {
       const c = roleCompanies.find((x: any) => x.id === r.id);
       return {
@@ -243,6 +301,27 @@ export async function loadPropertyOwnership(propertyId: string, db: Db = pool, o
     }),
     owner,
   };
+}
+
+/**
+ * File a title's owner under an account for the AML (the Owner, or the Long
+ * leaseholder): a UK company with its number; a company on Land Registry's
+ * overseas list with its country, so BGP's checks look for it abroad.
+ */
+async function fileUnder(client: Db, accountId: string, pr: LandRegistryProprietor, companyName: string): Promise<{ id: string } | { conflict: string }> {
+  const { insertTradingEntity } = await import("./tenancy-tenant");
+  const made = await insertTradingEntity(client as any, { parentCompanyId: accountId, name: companyName, companiesHouseNumber: pr.number });
+  const held = (await client.query(`SELECT companies_house_number, country FROM crm_trading_entities WHERE id = $1`, [made.id])).rows[0];
+  const heldNumber = tidyNumber(held?.companies_house_number);
+  if (!made.created && heldNumber && pr.number && heldNumber !== pr.number) return { conflict: String(held.companies_house_number) };
+  if (!made.created && !heldNumber && pr.number) {
+    await client.query(`UPDATE crm_trading_entities SET companies_house_number = $2 WHERE id = $1 AND companies_house_number IS NULL`, [made.id, pr.number]);
+  }
+  const country = pr.dataset === "ocod" && !pr.number ? countryWords(pr.country) : null;
+  if (country && !text(held?.country)) {
+    await client.query(`UPDATE crm_trading_entities SET country = $2, updated_at = now() WHERE id = $1 AND country IS NULL`, [made.id, country]);
+  }
+  return { id: made.id };
 }
 
 const CLOSED = ["dissolved", "converted-closed", "removed", "closed"];
@@ -290,25 +369,49 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
     const p = await readProperty(client, propertyId, true);
     if (!p) { await client.query("ROLLBACK"); return { status: 404, message: "Property not found." }; }
     const onRecord = text(p.title_number).toUpperCase() === titleNumber && sameRegisteredCompany({ name: p.proprietor_name, number: p.proprietor_company_number }, { name: pr.name, number: pr.number });
-    let ownerId = text(p.landlord_id) || null;
-    if (ownerId && !(await client.query(`SELECT 1 FROM crm_companies WHERE id = $1`, [ownerId])).rows[0]) ownerId = null;
+    const exists = async (id: string | null) => (id && (await client.query(`SELECT 1 FROM crm_companies WHERE id = $1`, [id])).rows[0] ? id : null);
+    let ownerId = await exists(text(p.landlord_id) || null);
+    const leaseholderId = await exists(text(p.long_leaseholder_id) || null);
+    const leasehold = text(row.tenure).toLowerCase() === "leasehold";
+    const freeholderId = await exists(text(p.freeholder_id) || null);
+    // Whom the company is filed under for the AML: the Long leaseholder for a head lease; for a freehold, the
+    // Freeholder when the building is held on a long lease, else the Owner.
+    const asFreeholder = !leasehold && !!leaseholderId && !onRecord && text(row.tenure).toLowerCase() === "freehold";
+    const accountId = leasehold ? leaseholderId : asFreeholder ? freeholderId : ownerId;
     const cands = await crmCandidates(client, [pr]);
     const fitsIt = (c: { name: string; number: string | null }) => sameRegisteredCompany({ name: pr.name, number: pr.number }, { name: c.name, number: c.number });
-    const filedRow = ownerId ? cands.entities.find(e => e.parentId === ownerId && fitsIt(e)) : undefined;
+    const filedRow = accountId ? cands.entities.find(e => e.parentId === accountId && fitsIt(e)) : undefined;
     const crmRow = cands.companies.find(fitsIt) || null;
     const plan = titleUsePlan({
       onRecord, tenure: row.tenure, owner: ownerId ? { id: ownerId } : null, proprietor: { filed: !!filedRow, crm: crmRow },
-      roles: { freeholderId: text(p.freeholder_id) || null, longLeaseholderId: text(p.long_leaseholder_id) || null },
+      roles: { freeholderId, longLeaseholderId: leaseholderId },
+      // A lease of a unit is a tenant's: never the building's Long leaseholder (unless a person put it on the record).
+      unitLease: leasehold && !onRecord && text(p.title_number).toUpperCase() !== titleNumber && isUnitLease(row.propertyAddress),
     });
     if (!plan) { await client.query("ROLLBACK"); return { status: 200, message: "Already set up from this title.", done: [] }; }
 
-    // A long lease's owner: only the empty Long leaseholder pill, to the CRM company that is it.
-    if (plan.kind === "long_leaseholder") {
-      const companyId = crmRow ? crmRow.id : String((await client.query(
-        `INSERT INTO crm_companies (name, companies_house_number, company_type) VALUES ($1, $2, 'Landlord') RETURNING id`, [companyName, pr.number])).rows[0].id);
-      if (!crmRow) done.push(`${companyName} added to the CRM`);
-      const set = await client.query(`UPDATE crm_properties SET long_leaseholder_id = $2, updated_at = now() WHERE id = $1 AND long_leaseholder_id IS NULL RETURNING id`, [propertyId, companyId]);
-      if (set.rows[0]) done.push("Long leaseholder set");
+    // A head lease's owner (the Long leaseholder), or a freehold's on a building held on a long lease (the
+    // Freeholder): the empty pill, to the CRM company that is it, and the company filed under it.
+    if (plan.kind === "long_leaseholder" || plan.kind === "freeholder") {
+      const column = plan.kind === "long_leaseholder" ? "long_leaseholder_id" : "freeholder_id";
+      const role = plan.kind === "long_leaseholder" ? "Long leaseholder" : "Freeholder";
+      let holderId = plan.kind === "long_leaseholder" ? leaseholderId : freeholderId;
+      if (plan.company !== "keep") {
+        const companyId = crmRow ? crmRow.id : String((await client.query(
+          `INSERT INTO crm_companies (name, companies_house_number, company_type) VALUES ($1, $2, 'Landlord') RETURNING id`, [companyName, pr.number])).rows[0].id);
+        if (!crmRow) done.push(`${companyName} added to the CRM`);
+        const set = await client.query(`UPDATE crm_properties SET ${column} = $2, updated_at = now() WHERE id = $1 AND ${column} IS NULL RETURNING id`, [propertyId, companyId]);
+        if (set.rows[0]) { done.push(`${role} set`); holderId = companyId; }
+        else holderId = await exists(text((await client.query(`SELECT ${column} AS id FROM crm_properties WHERE id = $1`, [propertyId])).rows[0]?.id) || null);
+      }
+      if (plan.files && holderId) {
+        const filed = await fileUnder(client, holderId, pr, companyName);
+        if ("conflict" in filed) {
+          await client.query("ROLLBACK");
+          return { status: 409, message: `The ${role} already has a company called ${companyName}, with number ${filed.conflict}. Check which company is right on its page.` };
+        }
+        done.push(`${companyName} filed for the AML`);
+      }
     } else {
     if (plan.records) {
       await client.query(
@@ -333,15 +436,10 @@ export async function useLandRegistryOwner(propertyId: string, pick: { titleNumb
       if (set.rows[0]) done.push("Freeholder set");
     }
     if (plan.files) {
-      const { insertTradingEntity } = await import("./tenancy-tenant");
-      const made = await insertTradingEntity(client, { parentCompanyId: ownerId!, name: companyName, companiesHouseNumber: pr.number });
-      const held = (await client.query(`SELECT companies_house_number FROM crm_trading_entities WHERE id = $1`, [made.id])).rows[0];
-      if (!made.created && tidyNumber(held?.companies_house_number) && pr.number && tidyNumber(held?.companies_house_number) !== pr.number) {
+      const filed = await fileUnder(client, ownerId!, pr, companyName);
+      if ("conflict" in filed) {
         await client.query("ROLLBACK");
-        return { status: 409, message: `The owner already has a company called ${companyName}, with Companies House number ${held.companies_house_number}. Check which company is right on its page.` };
-      }
-      if (!made.created && !tidyNumber(held?.companies_house_number) && pr.number) {
-        await client.query(`UPDATE crm_trading_entities SET companies_house_number = $2 WHERE id = $1 AND companies_house_number IS NULL`, [made.id, pr.number]);
+        return { status: 409, message: `The owner already has a company called ${companyName}, with Companies House number ${filed.conflict}. Check which company is right on its page.` };
       }
       done.push(`${companyName} filed under the owner`);
     }
@@ -366,7 +464,9 @@ const router = Router();
 router.get("/api/properties/:id/ownership", async (req: Request, res: Response) => {
   try {
     if (!(await staffMe(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    const view = await loadPropertyOwnership(String(req.params.id));
+    const typed = typeof req.query.title === "string" ? text(req.query.title).toUpperCase().replace(/\s+/g, "") : "";
+    if (typed && !/^[A-Z]{0,4}\d{1,9}$/.test(typed)) return res.status(400).json({ message: "A Land Registry title number looks like WM757813." });
+    const view = await loadPropertyOwnership(String(req.params.id), pool, { typedTitle: typed || null });
     if (!view) return res.status(404).json({ message: "Property not found." });
     res.json(view);
   } catch (e: any) {
@@ -389,31 +489,6 @@ router.post("/api/properties/:id/ownership/use", async (req: Request, res: Respo
   } catch (e: any) {
     console.error("[property-ownership] use failed:", e?.message);
     res.status(500).json({ message: "The owner could not be set up." });
-  }
-});
-
-router.post("/api/properties/:id/ownership/check", async (req: Request, res: Response) => {
-  try {
-    const me = await staffMe(req);
-    if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
-    const p = await readProperty(pool, String(req.params.id));
-    if (!p) return res.status(404).json({ message: "Property not found." });
-    const ownerId = text(p.landlord_id);
-    const entityId = text(req.body?.entityId);
-    // Only a company filed under this building's Owner: the check is the one a transaction's AML box reads.
-    const entity = ownerId && entityId ? (await pool.query(`SELECT id FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [entityId, ownerId])).rows[0] : null;
-    if (!entity) return res.status(400).json({ message: "Set the owner up from Land Registry first." });
-    const { startPrecheck } = await import("./kyc-prechecks");
-    const state = await startPrecheck(ownerId, { entityId, userId: me.id, force: req.body?.again === true });
-    const words: Record<string, string> = {
-      started: "Checking now.", running: "Already being checked.", fresh: "Checked in the last 30 days: press Run again to check now.",
-      cap: "Today's allowance of checks is used up. Try again tomorrow.", off: "BGP's checks are switched off.",
-      waiting: "Companies House is busy. Try again in a few minutes.", needs_company: "Set the company that signs first.",
-    };
-    res.json({ state, message: words[state] || state });
-  } catch (e: any) {
-    console.error("[property-ownership] check failed:", e?.message);
-    res.status(500).json({ message: "The checks could not be started." });
   }
 });
 

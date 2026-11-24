@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Officers and sign-off", title: "The app drafts why a red flag can be set aside",
+    text: "When an officer opens Set aside, the app reads the flag's findings and drafts the reason into the box, saying whether any finding bears on money laundering risk. The officer reads and edits it; Set aside is still the only save. It drafts nothing for a possible sanctions match, the client's own public-role answer or a declined identity check." },
   { date: "2026-11-24", who: ["Woody"], topic: "Emails and wording", title: "One build for every AML screen",
     text: "Every AML screen uses the same heading, To do box, steps and chips, and one rule words each step, so a company reads the same everywhere. Step 1 is now called The company (it was Who signs). The AML page's Transactions and Companies views have Table and Cards, as the CRM lists do." },
   { date: "2026-11-24", who: ["Woody"], topic: "Screening", title: "A birth year one either side is not enough for adverse media",

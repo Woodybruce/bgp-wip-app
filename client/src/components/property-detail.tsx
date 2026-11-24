@@ -74,6 +74,7 @@ import { trackRecentItem } from "@/hooks/use-recent-items";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { PropertyOwnershipCard } from "@/components/property-page/ownership-card";
+import { PropertyOwnersKyc } from "@/components/property-page/owners-kyc";
 import { PropertySetupDialog } from "@/components/property-page/property-setup";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1153,6 +1154,8 @@ export function PropertyDetail({ id }: { id: string }) {
             {planLayout && !isClientViewer && (
               <ErrorBoundary compact name="Ownership">
                 <PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} />
+                {/* The owners' KYC: the shared Companies and KYC card (24 November 2026). */}
+                <PropertyOwnersKyc property={property as any} />
               </ErrorBoundary>
             )}
             {/* Top-row strip: property summary card on the left,
@@ -1628,13 +1631,15 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {!planLayout && !isClientViewer && (
               <PropertySection name={"kyc"} active={phoneSection} simple={tabbed}>
-                <ErrorBoundary compact name="Ownership"><PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} /></ErrorBoundary>
+                <ErrorBoundary compact name="Ownership"><PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} /><PropertyOwnersKyc property={property as any} /></ErrorBoundary>
               </PropertySection>
               )}
 
               {/* Visible to clients — same decision as the brand-profile
-                  KYC panel (landlords need tenant AML/financial standing). */}
-              {!uiJointAgent && <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
+                  KYC panel (landlords need tenant AML/financial standing).
+                  BGP staff have the owners' Companies and KYC card instead
+                  (Woody, 24 November 2026: "I think this KYC board is old?"). */}
+              {!uiJointAgent && isClientViewer && <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}

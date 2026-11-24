@@ -302,7 +302,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       late: amlLate(stage, deadline),
       redFlags: allFlags,
       flagDetails: shownFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length),
+      waitingOn: amlWaitingOn(stage, allFlags.length, sanctionsOnly),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

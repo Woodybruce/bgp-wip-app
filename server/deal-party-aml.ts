@@ -501,6 +501,26 @@ router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Resp
   }
 });
 
+// The app's draft of the reason (Woody, 24 November 2026: "can you get the app to
+// review and put a suggestions of why can set aside these flags in this box?"). Reads
+// the flag again here; saves nothing. server/flag-set-aside.ts.
+router.post("/api/deals/:id/red-flags/suggest", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const key = text(req.body?.key).slice(0, 300);
+    if (!key) return res.status(400).json({ message: "Which red flag?" });
+    const role = req.body?.role == null || req.body.role === "" ? null : String(req.body.role);
+    const { dealFlagSubject, suggestSetAside } = await import("./flag-set-aside");
+    const subject = await dealFlagSubject(String(req.params.id), role);
+    res.json(await suggestSetAside({ dealId: String(req.params.id), ...subject, key }));
+  } catch (err: any) {
+    if (err?.name === "SuggestRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[deal-party-aml] suggest failed:", err?.message);
+    res.status(500).json({ message: "The app could not draft a reason." });
+  }
+});
+
 router.post("/api/deals/:id/red-flags/put-back", async (req: Request, res: Response) => {
   try {
     const me = await decider(req);

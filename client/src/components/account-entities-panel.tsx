@@ -216,9 +216,11 @@ function ClientKycLine({ e, bulk }: { e: GroupEntity; bulk?: string }) {
   );
 }
 
-export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
+export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, label }: {
   companyId: string;
   hideSingleEntity?: boolean;
+  /** Whose companies these are, where the page shows more than one account ("Long leaseholder" on a property). */
+  label?: string;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -391,6 +393,7 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <Building2 className="w-3.5 h-3.5" /> Companies and KYC
+          {label && <span className="normal-case tracking-normal text-xs font-medium text-foreground" data-testid="entities-label">{label}: {data.accountName}</span>}
           {chipWords ? (
             <span className={tone(CHIP_TONE[chipWords.tone])} title={chipWords.title} data-testid="entities-current-summary">{chipWords.label}</span>
           ) : (

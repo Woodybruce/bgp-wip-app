@@ -8,7 +8,7 @@ const read = f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
 test("the ownership routes are BGP staff's and read only the free Land Registry lists", () => {
   const s = read("server/property-ownership.ts");
-  for (const route of ['"/api/properties/:id/ownership"', '"/api/properties/:id/ownership/use"', '"/api/properties/:id/ownership/check"']) {
+  for (const route of ['"/api/properties/:id/ownership"', '"/api/properties/:id/ownership/use"']) {
     const at = s.indexOf(`router.${route.endsWith('ownership"') ? "get" : "post"}(${route}`);
     assert.ok(at > 0, route);
     assert.match(s.slice(at, at + 400), /await staffMe\(req\)/, route);
@@ -22,11 +22,21 @@ test("the ownership routes are BGP staff's and read only the free Land Registry 
   assert.doesNotMatch(s, /req\.body\??\.(name|number|proprietor)/);
   // A role a person set is never changed; a long lease's owner is never filed under the Owner.
   assert.match(s, /WHERE id = \$1 AND freeholder_id IS NULL RETURNING id/);
-  assert.match(s, /WHERE id = \$1 AND long_leaseholder_id IS NULL RETURNING id/);
-  assert.match(read("shared/property-ownership.ts"), /if \(text\(input\.tenure\)\.toLowerCase\(\) === "leasehold"\) \{\n\s+return input\.roles\.longLeaseholderId \? null : \{ kind: "long_leaseholder"/);
-  // BGP's checks run only when a person presses for them, on a company filed under the Owner.
-  assert.match(s, /parent_company_id = \$2`, \[entityId, ownerId\]/);
-  assert.doesNotMatch(read("server/property-ownership.ts").split('router.get("/api/properties/:id/ownership"')[1].split("router.post")[0], /startPrecheck/);
+  assert.match(s, /SET \$\{column\} = \$2, updated_at = now\(\) WHERE id = \$1 AND \$\{column\} IS NULL RETURNING id/);
+  assert.match(s, /const column = plan\.kind === "long_leaseholder" \? "long_leaseholder_id" : "freeholder_id";/);
+  // A head lease's owner is filed under the Long leaseholder, never the Owner; a unit's lease is never the building's.
+  const rules = read("shared/property-ownership.ts");
+  assert.match(rules, /if \(text\(input\.tenure\)\.toLowerCase\(\) === "leasehold"\) \{\n\s+if \(input\.unitLease\) return null;/);
+  assert.match(rules, /if \(!input\.roles\.longLeaseholderId\) return \{ kind: "long_leaseholder", company: input\.proprietor\.crm \? "existing" : "create", files: true \};/);
+  assert.match(s, /const accountId = leasehold \? leaseholderId : asFreeholder \? freeholderId : ownerId;/);
+  // The KYC on a company filed here is the shared client KYC window (one build for AML, 24 November 2026):
+  // the card has no checks of its own, and nothing here starts BGP's checks.
+  assert.doesNotMatch(s, /ownership\/check|startPrecheck/);
+  assert.match(read("client/src/components/property-page/ownership-card.tsx"), /<ClientKycDialog companyId=\{owner\.account\.id\} entityId=\{owner\.filed\.entityId\}/);
+  // Beyond the postcode only with no freehold among the building's titles; a title a person typed is read from the lists.
+  assert.match(s, /if \(landRegistry\.available && !here\.some\(f => isFreehold\(f\.t\)\)\) \{/);
+  assert.match(s, /WHERE lower\(property_address\) LIKE \$1 AND lower\(tenure\) = 'freehold' AND \$\{near\}/);
+  assert.match(s, /if \(typed && !\/\^\[A-Z\]\{0,4\}\\d\{1,9\}\$\/\.test\(typed\)\) return res\.status\(400\)/);
   assert.match(read("server/index.ts"), /app\.use\(propertyOwnershipRouter\);/);
 });
 
@@ -36,6 +46,10 @@ test("the property page: Ownership & KYC, investment beside the BGP take, no Pro
   assert.doesNotMatch(s, /<PropertyIntelligencePanel/);
   assert.match(s, /data-testid="property-intro-investment">Investment<\/Pill>/);
   assert.match(s, /<PropertyOwnershipCard propertyId=\{property\.id\} onOpenAml=\{setAmlDeal\} \/>/);
+  // The owners' KYC is the shared Companies and KYC card; the older company checks card is a client login's only.
+  assert.match(s, /<PropertyOwnersKyc property=\{property as any\} \/>/);
+  assert.match(s, /\{!uiJointAgent && isClientViewer && <PropertySection name=\{planLayout \? "overview" : "kyc"\}/);
+  assert.match(read("client/src/components/property-page/owners-kyc.tsx"), /<AccountEntitiesPanel key=\{id\} companyId=\{id\} label=\{joinRoles\(labels\)\} \/>/);
   // The plan-led page's news is in News & social only.
   assert.match(s, /\{!uiJointAgent && !planLayout && <ErrorBoundary compact name="Property news \(top-strip preview\)">/);
   // The card's AML list is the AML board's own rows for the building.

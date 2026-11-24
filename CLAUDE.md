@@ -3939,6 +3939,10 @@ check?" Do not re-litigate.
   board shows the party as **Sanctions only** (`sanctionsOnly` on the row)
   and lists only possible sanctions matches, with "Letting under £10k a
   month" under it. The sanctions line names who was screened.
+- **A sanctions-only party waits on the sign-off** (24 November 2026): once
+  screened it reads "BGP: sign off" on the AML board ("Officers: sign off"
+  with a possible sanctions match), never "send the client checks", because
+  nobody is asked for anything (`amlWaitingOn(stage, flags, sanctionsOnly)`).
 - **The board's red flags are a count** (Woody, the same evening: "lets not
   show the actual problem in the table just 2 flags but click and it shows
   the explanations as pop up and can take to the AML board"). The Due
@@ -4975,6 +4979,44 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   aside. Not run against Companies House or ComplyAdvantage from a build
   machine (no keys here): the queue and the profile detail are first seen on
   live.
+
+## The app drafts why a red flag can be set aside (Woody, 2026-11-24)
+
+Woody, on the Set aside box for adverse media about BERKELEY GROUP PLC(THE):
+"can you get the app to review and put a suggestions of why can set aside
+these flags in this box?" Do not re-litigate. Rules: `shared/flag-set-aside.ts`;
+reader: `server/flag-set-aside.ts`; box: `SetAsideDialog` in
+`client/src/components/aml-red-flags.tsx`. Tests: `server/flag-set-aside.test.ts`
+(in `npm test`), `qa/regression/flag-set-aside-guards.test.mjs`.
+
+- **When the box opens** it asks `POST /api/deals/:id/red-flags/suggest
+  { role?, key }` (or the client file's `.../red-flags/suggest { key }`), the
+  officers only (`decider`), and fills the box with the draft unless the
+  officer has typed; **Use the app's draft** puts it back. Above the box, the
+  app's read: none of these bears on money laundering risk; look closer; or
+  this one should stand. **Set aside is still the only save**: the draft is
+  never saved by itself.
+- **The reader**: the flag is read again on the server by its key (as the
+  set-aside does), its findings numbered (`flagFindings`: a web finding's
+  words with its source and date, a ComplyAdvantage profile with its
+  articles), with what BGP holds on the company (register facts and listing
+  from BGP's checks). Anthropic, called directly, one forced-tool call
+  (`suggest_set_aside`), capped a day (`FLAG_SET_ASIDE_DAILY_CAP`, default
+  100, 0 = off), told what bears on money laundering risk (financial crime,
+  sanctions, corruption, tax evasion, charges, a regulator's action for
+  financial crime) and what does not (another person of the name, commercial
+  disputes, competition or consumer law resolved with no finding of financial
+  crime, environmental or planning matters, allegations withdrawn or found
+  unfounded), to use only the facts given, and to write plainly in 80 words.
+  `checkSetAsideSuggestion` drops findings the flag does not have, takes off
+  bullets, cuts a long draft, and turns set_aside into look_closer when the
+  reader itself calls a finding relevant.
+- **Never drafted** (`setAsideNeedsPerson`, before any call): a possible
+  sanctions match (a person compares the list entry; tell the Nominated
+  Officer), the client's own public-role answer, a declined identity check,
+  the client's dispute of the register's owners, a source of funds mismatch,
+  and a mark a person put on the KYC record. The box says what to do instead.
+- Not run against Anthropic from a build machine.
 
 ## Which screening matches are red flags (Woody, 2026-11-19)
 
@@ -6504,8 +6546,63 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   `approvalScope` for it.
 - Also the same day: a People row's role pill ("Agent at a viewing") gives
   way before the name does (`people-board.tsx`).
+- **Touchwood (Woody, 24 November 2026)**: "picked up the long leasehold
+  interest but not the freehold for some reason but I think this KYC board is
+  old? it hasnt auto started the check on the long leaseholder?". Do not
+  re-litigate.
+  - **Why the freehold was missed**: the card read only the building's
+    postcode (B91 3GJ) and its title on record (WM757813, the head lease held
+    by the two ASF UK Touchwood trustees, registered abroad). A big site's
+    freehold is often registered at another address or with no postcode
+    (Solihull Council's 2015 compulsory purchase papers say the Council holds
+    the freehold of much of Touchwood), and the Land Registry boundary map
+    that would pin it by location (INSPIRE) is not loaded for Solihull (an
+    attempt on four councils in June 2026 never finished). So, with no
+    freehold among the building's titles, the feed now also reads freeholds
+    naming the building (its own words, `buildingSearchTerm`: "touchwood")
+    in its town or postcode district, and freeholds on its street
+    (`unnumberedStreet`: "Homer Road"), each by the trigram index on the
+    address (`titlesBeyondPostcode`), listed for a person to pick
+    (`freeholds`, fits "elsewhere" and "street"); and `GET
+    /api/properties/:id/ownership?title=WM123456` looks up a title number a
+    person typed (`typed`), from the long lease's register. Nothing is set by
+    itself.
+  - **Leases of units are tenants'** (`isUnitLease`: a unit, shop, kiosk,
+    suite, flat or floor): listed apart under Show N leases of units here, no
+    actions, never offered as the building's Long leaseholder (until then
+    Touchwood's shops were offered Set as long leaseholder). The building's
+    titles list freeholds first.
+  - **A freehold on a building held on a long lease is the Freeholder's**
+    (found in the local check of the fix): with a Long leaseholder set, Use on
+    a freehold title not on the record is **Set as freeholder** (`kind:
+    "freeholder"`): it sets the empty Freeholder pill and files the company
+    under it, keeps the head lease on the record and leaves the Owner alone.
+    Before, it would have recorded the council's freehold in place of the head
+    lease and made the council the Owner.
+  - **The Long leaseholder's KYC**: a head lease's owner is filed under the
+    Long leaseholder for the AML, as a freehold's is under the Owner
+    (`accountFor`, `fileUnder`: a UK number, or the overseas list's country,
+    so BGP's checks look for it abroad). Set as long leaseholder sets the
+    empty pill and files the company; File it for the AML files a co-owner or
+    one already set. The checks still start only when a person asks (his rule
+    of 23 November): a filed company shows its KYC and a **KYC** button that
+    opens the shared client KYC window (one build); the card's own checks
+    line and `POST .../ownership/check` were removed.
+  - **The old KYC card**: BGP staff get the shared Companies and KYC card
+    (`AccountEntitiesPanel`, with `label`) for the Owner, Freeholder and Long
+    leaseholder (`PropertyOwnersKyc`) in place of the older company checks
+    card (`PropertyComplianceBoardWrapper`: UK trading entity, downstream
+    checks parked, the property's billing entity), which stays for client
+    logins only. The property's billing entity field invoices nothing (a
+    transaction bills its party's billing entity) and is no longer shown to
+    staff here.
+  - Tests: `server/property-ownership.test.ts`,
+    `qa/regression/property-ownership-guards.test.mjs`. Not run against the
+    live Land Registry lists from a build machine: whether Touchwood's
+    freehold names Touchwood is first seen on live.
 - Not built: a building-level sign-off with no transaction; reading the
-  freeholder chain (`findFreeholderChain`) on the card.
+  freeholder chain (`findFreeholderChain`) on the card; loading the Land
+  Registry boundary map (INSPIRE, about 5.4 GB) for every council.
 
 ## Setting up a new property (Woody, 2026-11-23)
 

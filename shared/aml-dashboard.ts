@@ -174,11 +174,12 @@ export function amlBucket(stage: AmlStage, due: boolean, closed = false): AmlBuc
 }
 
 /** Who or what the party waits on, in a few words. The officers do enhanced checks (KYC4U is no longer used). */
-export function amlWaitingOn(stage: AmlStage, redFlags: number): string {
+export function amlWaitingOn(stage: AmlStage, redFlags: number, sanctionsOnly = false): string {
   const flagged = "Officers: sign off";
   switch (stage) {
     case "not_started": return "BGP: start the checks";
-    case "bgp_checked": return redFlags ? "BGP: send the client checks" : "BGP: send the client checks or sign off";
+    // A letting under £10,000 a month asks nobody for anything: once screened, it is signed off (24 November 2026).
+    case "bgp_checked": return sanctionsOnly ? redFlags ? flagged : "BGP: sign off" : redFlags ? "BGP: send the client checks" : "BGP: send the client checks or sign off";
     case "client_sent": return "The client";
     case "joint_asked": return "The joint agent";
     // Issue 4: their documents in, BGP checks and signs the party off (no Not required for a joint agent).

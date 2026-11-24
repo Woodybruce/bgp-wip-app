@@ -109,6 +109,10 @@ test("who a party waits on", () => {
   assert.equal(amlWaitingOn("not_started", 0), "BGP: start the checks");
   assert.equal(amlWaitingOn("bgp_checked", 0), "BGP: send the client checks or sign off");
   assert.equal(amlWaitingOn("bgp_checked", 1), "BGP: send the client checks");
+  // A letting under £10,000 a month asks nobody for anything: screened, it waits on the sign-off.
+  assert.equal(amlWaitingOn("bgp_checked", 0, true), "BGP: sign off");
+  assert.equal(amlWaitingOn("bgp_checked", 1, true), "Officers: sign off");
+  assert.equal(amlWaitingOn("not_started", 0, true), "BGP: start the checks");
   assert.equal(amlWaitingOn("client_sent", 2), "The client");
   assert.equal(amlWaitingOn("client_finished", 0), "BGP: sign off");
   assert.equal(amlWaitingOn("client_finished", 1), "Officers: sign off");
