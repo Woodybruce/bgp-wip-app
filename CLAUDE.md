@@ -6705,12 +6705,14 @@ questions I think? correct address? then documents where do we want the files
 options are existing folder with a pop out to the BGP share drive and ability
 to go in and pick a folder. or create new folder tree. Add joint agent and
 tenancy schedule or areas schedule for marketing and add brochure and add
-plans". Rules: `shared/property-setup.ts`; folder tree route:
-`server/property-setup.ts`; dialog:
-`client/src/components/property-page/property-setup.tsx`; folder picker:
-`client/src/components/sharepoint-folder-picker.tsx`. Tests:
+plans". Rules: `shared/property-setup.ts`; dialog:
+`client/src/components/property-page/property-setup.tsx`. Tests:
 `server/property-setup.test.ts` (in `npm test`),
-`qa/regression/property-setup-guards.test.mjs`.
+`qa/regression/property-setup-guards.test.mjs`. **Since 24 November 2026 the
+Files step uses the folder engine** ("Folders: one engine" below:
+`record-folder-picker.tsx`, `/api/folders/`); the folder tree route
+(`server/property-setup.ts`) and `sharepoint-folder-picker.tsx` are deleted, so
+the Files bullet below is how it worked before.
 
 - **When it opens**: after **Add property** on the Properties page saves a new
   property (or merges into one the address found), the property opens at
