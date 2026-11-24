@@ -468,7 +468,10 @@ export function registerComparablesScheduleRoute(app: Express): void {
         console.warn(`[pla-valuation] comparables xlsx async failed for matter ${matterId}:`, err?.message),
       );
 
-      return res.json({ rowCount: rows.length, rows, workbook });
+      // With no folder linked to the matter or its property the workbook is not filed: say so now.
+      const { appFilingNote } = await import("./document-filing");
+      const sharepointNote = await appFilingNote({ type: "pla_matter", id: matterId });
+      return res.json({ rowCount: rows.length, rows, workbook, sharepointNote });
     } catch (err: any) {
       console.error("[pla-valuation] comparables-schedule error:", err);
       return res.status(500).json({ error: err?.message || "comparables schedule failed" });

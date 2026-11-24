@@ -758,7 +758,7 @@ function MatterDetailView({ id }: { id: string }) {
                   });
                   if (res.ok) {
                     const data = await res.json();
-                    toast({ title: "Schedule generated", description: `${data.rowCount} comps · uploading to SharePoint` });
+                    toast({ title: "Schedule generated", description: `${data.rowCount} comps · ${data.sharepointNote || "uploading to SharePoint"}` });
                     refetch();
                   } else {
                     const e = await res.json().catch(() => null);
@@ -1965,7 +1965,7 @@ function DocumentBriefsDialog({
                 sandbox="allow-same-origin"
               />
               <div className="text-[10px] text-muted-foreground italic px-2 py-1">
-                HTML saves to the canonical SharePoint folder per brief category. PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
+                Save to SharePoint files the HTML in the folder linked to this matter, or else its property, under the brief's own folder (Rent Review / Representations and the like). PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
               </div>
             </CardContent>
           </Card>

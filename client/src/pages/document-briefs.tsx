@@ -174,8 +174,11 @@ export default function DocumentBriefsPage() {
         return;
       }
       const data = await r.json();
-      setSavedUrl(data.sharepointUrl);
-      toast({ title: `Saved as ${format.toUpperCase()}`, description: data.filename });
+      setSavedUrl(data.sharepointUrl || null);
+      // With no folder linked the PDF is kept in Document Studio only, and the note says how to get it filed.
+      toast(data.sharepointUrl
+        ? { title: `Saved as ${format.toUpperCase()}`, description: data.filename }
+        : { title: "Kept in Document Studio", description: data.sharepointNote || data.filename });
     } finally {
       setSaving(false);
     }
