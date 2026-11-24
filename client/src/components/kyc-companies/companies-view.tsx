@@ -11,7 +11,7 @@
 // Companies and KYC card), its transactions (each opening the transaction's
 // own AML box), its people and agents, and KYC4U's past checks. Nothing here
 // keeps a second copy of a rule: shared/kyc-companies.ts.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Building2, ExternalLink, Globe, Loader2, Mail, Phone, Plus, Search, Users } from "lucide-react";
@@ -149,8 +149,9 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
   const [filter, setFilter] = useState<KycCompanyFilter>("all");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
-  // Add a company pressed on the Transactions view opens it here (24 November 2026).
+  // Add a company on the bar at the top opens it here, from either view (24 November 2026).
   const [adding, setAdding] = useState(startAdding);
+  useEffect(() => { if (startAdding) setAdding(true); }, [startAdding]);
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const { data, isLoading, error } = useQuery<Feed>({ queryKey: [KYC_COMPANIES_KEY] });
@@ -180,14 +181,14 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
             </Pill>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+        {/* Laid out as the Transactions view's controls; Add a company is on the bar above. */}
+        <div className="flex w-full flex-wrap items-center gap-1.5 md:ml-auto md:w-auto">
+          {isAdmin && !selecting && <Pill onClick={() => { setSelecting(true); setPicked(new Set()); }} data-testid="kyc-companies-select">Select</Pill>}
+          <div className="hidden md:block" data-testid="kyc-companies-view-toggle"><ViewToggle view={view} onToggle={chooseView} /></div>
           <div className="relative w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Company, entity, transaction, Ref, agent" className="h-8 pl-7 w-full sm:w-64 text-sm" data-testid="kyc-companies-search" />
           </div>
-          <div className="hidden md:block" data-testid="kyc-companies-view-toggle"><ViewToggle view={view} onToggle={chooseView} /></div>
-          <Button size="sm" className="h-8" onClick={() => setAdding(true)} data-testid="kyc-companies-add"><Plus className="w-3.5 h-3.5 mr-1" />Add a company</Button>
-          {isAdmin && !selecting && <Button size="sm" variant="outline" className="h-8" onClick={() => { setSelecting(true); setPicked(new Set()); }} data-testid="kyc-companies-select">Select</Button>}
         </div>
       </div>
 

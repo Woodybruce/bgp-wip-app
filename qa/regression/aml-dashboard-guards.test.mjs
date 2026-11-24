@@ -101,7 +101,8 @@ test('the table shows the transaction status, the red flags under due diligence 
 
 test('the top folds once the table scrolls, keeping the title and pills (Woody, 22 November 2026)', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
-  assert.match(page, /const foldedTop = folded && !isMobile && shownSection === "checks";/);
+  // Transactions and Companies fold alike since 24 November 2026 (startsHere).
+  assert.match(page, /const foldedTop = folded && !isMobile && startsHere;/);
   assert.match(page, /if \(table\.scrollTop > 48\) setFolded\(/);
   // The policy line has its own pill, so the table starts at the top (22 November 2026).
   assert.match(page, /\{ key: "policy", label: "Policy" \},/);
@@ -138,7 +139,14 @@ test('the board is one line per transaction, each party on a line of its own ins
 // transaction text box and upload files box etc here?", "and add new company AML etc").
 test('the AML page starts a new transaction from words or heads of terms, and adds a company', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
-  assert.match(page, /\{!foldedTop && <AmlStartBar onTransaction=\{setStartTx\} onCompany=\{\(\) => \{ setAddCompany\(true\); setSection\("companies"\); \}\} \/>\}/);
+  // One top for Transactions and Companies (Woody, 24 November 2026: "make the company
+  // page the same format as the transactions page on the top ... and obviously have the
+  // new box"): the bar above both views, and both fold on scroll.
+  assert.match(page, /const startsHere = shownSection === "checks" \|\| shownSection === "companies";/);
+  assert.match(page, /\{startsHere && !foldedTop && <AmlStartBar onTransaction=\{setStartTx\} onCompany=\{\(\) => \{ setAddCompany\(true\); setSection\("companies"\); \}\} \/>\}/);
+  assert.equal([...page.matchAll(/<AmlStartBar /g)].length, 1, 'one bar, not one per view');
+  assert.match(page, /const foldedTop = folded && !isMobile && startsHere;/);
+  assert.match(page, /useEffect\(\(\) => \{ setFolded\(false\); lastTopRef\.current = 0; \}, \[shownSection\]\);/);
   assert.match(page, /const NewTransactionDialog = lazy\(\(\) => import\("@\/pages\/deals"\)\.then\(m => \(\{ default: m\.NewTransactionDialog \}\)\)\);/);
   assert.match(page, /initialNote=\{startTx\.note \|\| null\}/);
   assert.match(page, /initialHotsFile=\{startTx\.file \|\| null\}/);
@@ -153,5 +161,11 @@ test('the AML page starts a new transaction from words or heads of terms, and ad
   assert.match(deals, /autoRead=\{!handover && !!initialNote\}/);
   assert.match(deals, /autoHotsFile=\{!handover && !isClientCreate \? initialHotsFile : null\}/);
   assert.match(deals, /if \(!autoHotsFile \|\| autoHotsRead\.current\) return;/);
-  assert.match(read('client/src/components/kyc-companies/companies-view.tsx'), /const \[adding, setAdding\] = useState\(startAdding\);/);
+  const companies = read('client/src/components/kyc-companies/companies-view.tsx');
+  assert.match(companies, /const \[adding, setAdding\] = useState\(startAdding\);\n\s+useEffect\(\(\) => \{ if \(startAdding\) setAdding\(true\); \}, \[startAdding\]\);/);
+  // Its controls are laid out as Transactions' (Select, Table or Cards, then the search), and
+  // Add a company is the bar's, not a second button.
+  assert.doesNotMatch(companies, /data-testid="kyc-companies-add"/);
+  const controls = companies.indexOf('data-testid="kyc-companies-select"');
+  assert.ok(controls > 0 && controls < companies.indexOf('data-testid="kyc-companies-view-toggle"') && companies.indexOf('data-testid="kyc-companies-view-toggle"') < companies.indexOf('data-testid="kyc-companies-search"'));
 });

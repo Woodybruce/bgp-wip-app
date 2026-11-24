@@ -27,7 +27,7 @@ import { AmlRetentionBoard } from "@/components/aml-retention";
 import { AmlRulesBoard } from "@/components/aml-rules";
 import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
-import { KycCompaniesView } from "@/components/kyc-companies/companies-view";
+import { KycCompaniesView, KYC_COMPANIES_KEY } from "@/components/kyc-companies/companies-view";
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -366,6 +366,11 @@ export default function AmlDashboard() {
   const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
   const sections = SECTIONS.filter(x => (!x.officer || roles?.isOfficer) && (!x.admin || me?.isAdmin));
   const shownSection: Section = sections.some(x => x.key === section) ? section : "checks";
+  // Transactions and Companies share one top (Woody, 24 November 2026: "make the
+  // company page the same format as the transactions page on the top so they
+  // match up in terms of design and obviously have the new box"): the start bar
+  // above both, the pills and controls laid out alike, and both fold on scroll.
+  const startsHere = shownSection === "checks" || shownSection === "companies";
   // Add a company opens the Companies view's own Add a company, once.
   useEffect(() => { if (addCompany && shownSection === "companies") setAddCompany(false); }, [addCompany, shownSection]);
 
@@ -425,7 +430,9 @@ export default function AmlDashboard() {
       page.removeEventListener("wheel", onWheel);
     };
   }, [pageEl, isMobile]);
-  const foldedTop = folded && !isMobile && shownSection === "checks";
+  // A fold belongs to the table that was scrolled: changing view opens the top again.
+  useEffect(() => { setFolded(false); lastTopRef.current = 0; }, [shownSection]);
+  const foldedTop = folded && !isMobile && startsHere;
   // The table measures the room below it on a window resize: folding moves its
   // top without one, so ask it to measure again once the fold has drawn.
   useEffect(() => {
@@ -445,6 +452,8 @@ export default function AmlDashboard() {
         <div className="md:ml-auto"><RaiseReportButton label="Report a concern" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
       </div>
 
+      {startsHere && !foldedTop && <AmlStartBar onTransaction={setStartTx} onCompany={() => { setAddCompany(true); setSection("companies"); }} />}
+
       {shownSection === "policy" && <AmlPolicyPanel />}
 
       {shownSection === "rules" && <AmlRulesBoard />}
@@ -457,7 +466,6 @@ export default function AmlDashboard() {
       {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} startAdding={addCompany} />}
 
       {shownSection === "checks" && <>
-      {!foldedTop && <AmlStartBar onTransaction={setStartTx} onCompany={() => { setAddCompany(true); setSection("companies"); }} />}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where the checks stand">
           {AML_BUCKETS.map(b => (
@@ -466,7 +474,7 @@ export default function AmlDashboard() {
             </Pill>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+        <div className="flex w-full flex-wrap items-center gap-1.5 md:ml-auto md:w-auto">
           <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
@@ -474,7 +482,7 @@ export default function AmlDashboard() {
           {/* Full width on a phone: at 56 it ran off the screen there. */}
           <div className="relative w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-full sm:w-56 text-sm" data-testid="aml-search" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-full sm:w-64 text-sm" data-testid="aml-search" />
           </div>
         </div>
       </div>
@@ -526,7 +534,7 @@ export default function AmlDashboard() {
         <Suspense fallback={null}>
           <NewTransactionDialog
             open
-            onOpenChange={o => { if (!o) { setStartTx(null); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); } }}
+            onOpenChange={o => { if (!o) { setStartTx(null); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); queryClient.invalidateQueries({ queryKey: [KYC_COMPANIES_KEY] }); } }}
             initialNote={startTx.note || null}
             initialHotsFile={startTx.file || null}
           />

@@ -4891,8 +4891,9 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   with the same rule.
 - **Start from the AML page** (Woody, 24 November 2026: "what about my add
   new transaction text box and upload files box etc here?", then "and add new
-  company AML etc"). At the top of the Transactions view (folded away with the
-  top on scroll), `AmlStartBar` (`client/src/components/aml-start.tsx`):
+  company AML etc"). At the top of the Transactions and the Companies views
+  (folded away with the top when either table scrolls), `AmlStartBar`
+  (`client/src/components/aml-start.tsx`):
   **New transaction**, the Describe the transaction box's look (type the
   transaction out and press Fill it in, or drop or choose its heads of terms),
   opens New Transaction (`NewTransactionDialog` in `client/src/pages/deals.tsx`,
@@ -4900,10 +4901,20 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   box (`initialNote`: `initialText` and `autoRead` on its `NoteFill`) or the
   file read by its Add heads of terms (`initialHotsFile`, read once when the
   lists are in); saving is the form's own Create, then its Kick off AML step,
-  and closing it reads the board again. **Add a company** opens the Companies
-  view with its Add a company open (`startAdding` on `KycCompaniesView`), for
-  KYC with no transaction. Nothing is saved from the box itself. A party's own
-  KYC documents still go in its Documents step (Upload documents).
+  and closing it reads the board and the Companies view again. **Add a
+  company** opens the Companies view's Add a company (`startAdding` on
+  `KycCompaniesView`, read again while the view is open), for KYC with no
+  transaction. Nothing is saved from the box itself. A party's own KYC
+  documents still go in its Documents step (Upload documents).
+- **Transactions and Companies share one top** (Woody, 24 November 2026: "make
+  the company page the same format as the transactions page on the top so they
+  match up in terms of design and obviously have the new box"): the bar above
+  both (`startsHere` in `client/src/pages/aml-dashboard.tsx`), then the view's
+  pills on the left and its controls on the right in the same order (Companies:
+  Select for admins, Table / Cards, the search; Transactions: All, Mine, Late,
+  Table / Cards, the search), both searches the same width. The Companies view
+  has no Add a company button of its own. Changing view opens a folded top
+  again.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
