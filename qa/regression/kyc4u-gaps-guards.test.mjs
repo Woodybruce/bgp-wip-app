@@ -19,15 +19,16 @@ test("KYC4U's pack is read by the officers alone, and reading it saves nothing",
 
 test("a person is verified from public sources by admins who are AML officers only (23 November 2026)", () => {
   const s = read("server/deal-party-aml.ts");
-  assert.match(s, /router\.post\("\/api\/deals\/:id\/parties\/:role\/public-figure", adminDeciderFirst, takeFiles/);
-  assert.match(s, /router\.post\("\/api\/deals\/:id\/parties\/:role\/public-figure\/:checkId\/withdraw", \(req: Request, res: Response\) => withdrawPersonVerified\(req, res, false\)\);/);
+  // A route can carry two addresses: the transaction's and a client file's (24 November 2026).
+  assert.match(s, /router\.post\(\["\/api\/deals\/:id\/parties\/:role\/public-figure", "[^"]+"\], adminDeciderFirst, takeFiles/);
+  assert.match(s, /router\.post\(\["\/api\/deals\/:id\/parties\/:role\/public-figure\/:checkId\/withdraw", "[^"]+"\], \(req: Request, res: Response\) => withdrawPersonVerified\(req, res, false\)\);/);
   assert.match(s, /const me = certified \? await decider\(req\) : await adminDecider\(req\);/);
-  assert.match(s, /router\.post\("\/api\/deals\/:id\/parties\/:role\/public-figure\/search"[\s\S]{0,120}const me = await adminDecider\(req\);/);
+  assert.match(s, /router\.post\(\["\/api\/deals\/:id\/parties\/:role\/public-figure\/search", "[^"]+"\][\s\S]{0,120}const me = await adminDecider\(req\);/);
   assert.match(s, /export async function adminDecider\(req: Request\)[\s\S]{0,400}ADMIN_EMAILS\.has\(/);
   const ui = read("client/src/components/kyc-client-checks.tsx");
   assert.match(ui, /\{canDecide && admin && !pf && person\.outstanding\.length > 0 && \(/);
   // The search only suggests: it records nothing.
-  const search = s.slice(s.indexOf('"/api/deals/:id/parties/:role/public-figure/search"'), s.indexOf('router.post("/api/deals/:id/parties/:role/certified-documents", deciderFirst'));
+  const search = s.slice(s.indexOf('"/api/deals/:id/parties/:role/public-figure/search"'), s.indexOf('router.post(["/api/deals/:id/parties/:role/certified-documents"'));
   assert.doesNotMatch(search, /INSERT INTO kyc_public_figure_checks/);
   assert.match(read("server/index.ts"), /CREATE TABLE IF NOT EXISTS kyc_public_figure_checks/);
 });

@@ -17,7 +17,7 @@ const read = (p) => readFileSync(p, 'utf8');
 test('a person gets a link of their own from BGP staff, or from the person acting (owners only, never themselves)', () => {
   const portal = read('server/aml-portal.ts');
   // Staff: signed in as themselves, while the client checks are on.
-  assert.match(portal, /kycRequestRouter\.post\("\/api\/aml\/deal\/:id\/client-checks\/people", signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)[\s\S]{0,120}if \(!clientChecksOn\(\)\) return res\.status\(410\)/);
+  assert.match(portal, /kycRequestRouter\.post\(\["\/api\/aml\/deal\/:id\/client-checks\/people", "[^"]+"\], signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)[\s\S]{0,120}if \(!clientChecksOn\(\)\) return res\.status\(410\)/);
   // The client page: the request to the person acting only, never a test or a person's own page.
   // Nor the joint agent's page (22 November 2026).
   assert.match(portal, /if \(row\.is_test \|\| request\.person \|\| isJointRequest\(request\) \|\| request\.kind !== "company" \|\| !row\.company_id\) \{\s*return res\.status\(400\)/);
@@ -32,7 +32,7 @@ test('a person gets a link of their own from BGP staff, or from the person actin
   // The new staff address goes through the client checks' own switch.
   assert.match(read('shared/kyc-request.ts'), /\/\^\\\/api\\\/aml\\\/deal\\\/\[\^\/\]\+\\\/client-checks\\\/people\(\?:\\\/rename\)\?\$\//);
   // A name BGP typed is put right by BGP staff; a register name is kept (Jack, 20 November 2026).
-  assert.match(portal, /kycRequestRouter\.post\("\/api\/aml\/deal\/:id\/client-checks\/people\/rename", signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
+  assert.match(portal, /kycRequestRouter\.post\(\["\/api\/aml\/deal\/:id\/client-checks\/people\/rename", "[^"]+"\], signedIn, async[\s\S]{0,200}const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
   assert.match(portal, /This name comes from Companies House and is kept as the register gives it\./);
 });
 
@@ -111,5 +111,5 @@ test("a private individual's side is screened: People reads the checks, and addi
   const create = portal.slice(portal.indexOf('export async function createPersonCheck'), portal.indexOf('// ── What the agents see on the deal'));
   assert.match(create, /created = true;\s*\/\/ Someone added alongside[\s\S]{0,120}if \(input\.name\) \{\s*const \{ startPrecheck \} = await import\("\.\/kyc-prechecks"\);\s*void startPrecheck\(party\.companyId, \{ dealId, userId: me \? me\.id : null, force: true, entityId: party\.entityId \}\)/);
   const rename = portal.slice(portal.indexOf('"/api/aml/deal/:id/client-checks/people/rename"'), portal.indexOf('async function addressProofRow'));
-  assert.match(rename, /void startPrecheck\(String\(row\.company_id\), \{ dealId: String\(req\.params\.id\), userId: me\.id, force: true, entityId: row\.trading_entity_id \|\| null \}\)/);
+  assert.match(rename, /void startPrecheck\(String\(row\.company_id\), \{ dealId: scope\.dealId, userId: me\.id, force: true, entityId: row\.trading_entity_id \|\| null \}\)/);
 });

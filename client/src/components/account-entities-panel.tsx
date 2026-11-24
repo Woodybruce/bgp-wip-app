@@ -17,7 +17,7 @@
 // already held by the app; the Companies House register is read live only
 // when nothing is saved for that entity yet.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAuthHeaders, apiRequest } from "@/lib/queryClient";
@@ -33,6 +33,9 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Building2, AlertTriangle, CheckCircle2, AlertCircle, XCircle, ShieldCheck, Clock, ChevronRight, ExternalLink, FileText } from "lucide-react";
 import { approverWords } from "@shared/party-kyc";
+import { ClientKycDialog } from "@/components/client-kyc/client-kyc-dialog";
+import { CreateBillingEntityDialog } from "@/components/billing-entity-create";
+import { clientInstructionLabel } from "@shared/client-kyc";
 import { looksLikeSiteMenu } from "@shared/brand-compliance-status";
 
 interface GroupEntityKyc {
@@ -63,6 +66,14 @@ interface GroupEntity {
   registeredName?: string | null;
   // The transactions whose AML checks this entity (23 November 2026).
   transactions?: { id: string; name: string; ref: number | null; status: string | null; role: string }[];
+  // Its client KYC with no transaction (24 November 2026; server/account-entities.ts GroupEntityClientKyc).
+  client?: {
+    companyId: string; entityId: string | null; kind: "company" | "person" | "abroad";
+    checksAt: string | null; running: boolean;
+    file: { openedAt: string | null; instruction: string | null } | null;
+    request: { status: "sent" | "finished" | "cancelled" | "expired" | "not_sent"; sentAt: string | null; to: string | null } | null;
+    xero: { id: string; name: string } | null;
+  };
 }
 
 // Where each entity is checked: its transactions' Parties & AML (Woody, 23
@@ -136,7 +147,8 @@ const RELATION_LABEL: Record<GroupEntity["relation"], string> = {
   self: "Account",
   parent: "Parent",
   subsidiary: "Subsidiary",
-  trading_entity: "Trading entity",
+  // A company filed under the account: an SPV, the company that signs, a billing entity (24 November 2026: "sub companies").
+  trading_entity: "Sub company",
 };
 
 const EVIDENCE_LABEL: Record<string, string> = {
@@ -177,13 +189,29 @@ const fmtAddress = (a: any): string | null => {
 
 const CH_BASE = "https://find-and-update.company-information.service.gov.uk/company";
 
-export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embedded = false, primaryCompanyNumber }: {
+// A company's client KYC in one line: BGP's checks, the client checks, the
+// open file and its Xero contact (24 November 2026).
+function ClientKycLine({ e, bulk }: { e: GroupEntity; bulk?: string }) {
+  const c = e.client!;
+  const parts: Array<{ text: string; cls?: string; testId?: string }> = [];
+  if (bulk === "waiting") parts.push({ text: "Checks waiting to run", cls: "text-sky-700" });
+  else if (bulk === "running" || c.running) parts.push({ text: "BGP's checks running", cls: "text-sky-700" });
+  else if (bulk === "cap") parts.push({ text: "Today's checks allowance used: run tomorrow", cls: "text-amber-700" });
+  else if (c.checksAt) parts.push({ text: `Checked ${fmtDate(c.checksAt)}` });
+  else parts.push({ text: "Not checked", cls: "text-muted-foreground" });
+  if (c.request) parts.push({ text: c.request.status === "finished" ? `Client checks back${c.request.to ? ` from ${c.request.to}` : ""}` : c.request.status === "sent" ? `Client checks sent${c.request.to ? ` to ${c.request.to}` : ""}` : `Client checks ${c.request.status.replace("_", " ")}` });
+  if (c.file?.instruction) parts.push({ text: clientInstructionLabel(c.file.instruction) || "" });
+  parts.push(c.xero ? { text: `Xero: ${c.xero.name}`, testId: `entity-xero-${e.entityId}` } : { text: "Not in Xero", cls: "text-muted-foreground" });
+  return (
+    <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-tight" data-testid={`entity-client-kyc-${e.entityId}`}>
+      {parts.filter(p => p.text).map((p, i) => <span key={i} className={p.cls} data-testid={p.testId}>{p.text}</span>)}
+    </span>
+  );
+}
+
+export function AccountEntitiesPanel({ companyId, hideSingleEntity = false }: {
   companyId: string;
   hideSingleEntity?: boolean;
-  embedded?: boolean;
-  // In the combined landlord checks panel, the account identity is already
-  // shown above. Keep its review/status row without repeating those facts.
-  primaryCompanyNumber?: string | null;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -225,13 +253,88 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
     onError: (err: any) => toast({ title: "Not removed", description: err?.message, variant: "destructive" }),
   });
 
+  // Client KYC with no transaction (Woody, 24 November 2026: "aml all the sub
+  // companies within each company ... and use those for xero invoicing too"):
+  // a KYC box per company, several checked at once, a company added, each
+  // linked to Xero.
+  const [kycFor, setKycFor] = useState<GroupEntity | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [adding, setAdding] = useState(false);
+  const clientRows = (data?.entities || []).filter(e => e.client);
+  const accounts = [...new Set(clientRows.map(e => e.client!.companyId))];
+  const bulk = useQuery<{ state: Record<string, string> }>({
+    queryKey: ["/api/client-kyc", companyId, "checks"],
+    enabled: !!data && accounts.length > 0,
+    retry: false,
+    queryFn: async () => {
+      const states: Record<string, string> = {};
+      for (const a of accounts) {
+        const res = await fetch(`/api/client-kyc/${encodeURIComponent(a)}/checks`, { credentials: "include", headers: getAuthHeaders() });
+        if (res.ok) Object.assign(states, (await res.json()).state || {});
+      }
+      return { state: states };
+    },
+    refetchInterval: q => (Object.values(q.state.data?.state || {}).some(v => v === "waiting" || v === "running") ? 4000 : false),
+  });
+  const bulkState = bulk.data?.state || {};
+  const bulkBusy = Object.values(bulkState).some(v => v === "waiting" || v === "running");
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    // When a run finishes, the rows' dates follow.
+    if (wasBusy.current && !bulkBusy) invalidate();
+    wasBusy.current = bulkBusy;
+  }, [bulkBusy]);
+  const runChecks = useMutation({
+    mutationFn: async (rows: GroupEntity[]) => {
+      let queued = 0;
+      for (const a of [...new Set(rows.map(r => r.client!.companyId))]) {
+        const ids = rows.filter(r => r.client!.companyId === a && r.client!.entityId).map(r => r.client!.entityId!);
+        if (!ids.length) continue;
+        const res = await apiRequest("POST", `/api/client-kyc/${encodeURIComponent(a)}/checks`, { entityIds: ids });
+        queued += Number((await res.json()).queued || 0);
+      }
+      return queued;
+    },
+    onSuccess: n => { setPicked(new Set()); void bulk.refetch(); toast({ title: n ? `BGP's checks started on ${n}` : "Nothing new to check", description: n ? "They run one at a time. The rows show each as it finishes." : "Those were checked in the last 30 days, or are running." }); },
+    onError: (err: any) => toast({ title: "Checks not started", description: err?.message, variant: "destructive" }),
+  });
+  const linkXero = useMutation({
+    mutationFn: async (rows: GroupEntity[]) => {
+      let linked = 0;
+      const failed: string[] = [];
+      for (const r of rows) {
+        if (!r.client?.entityId || r.client.xero) continue;
+        try { await apiRequest("POST", `/api/billing-entities/${encodeURIComponent(r.client.entityId)}/xero`, {}); linked++; }
+        catch (e: any) { failed.push(`${r.name}: ${String(e?.message || e).replace(/^\d{3}:\s*/, "")}`); }
+      }
+      return { linked, failed };
+    },
+    onSuccess: ({ linked, failed }) => { invalidate(); setPicked(new Set()); toast({ title: `${linked} linked to Xero`, description: failed.length ? failed.slice(0, 2).join("; ") : undefined, variant: failed.length && !linked ? "destructive" : undefined }); },
+  });
+  const addSelf = useMutation({
+    mutationFn: async (e: GroupEntity) => apiRequest("POST", "/api/billing-entities", { brandId: companyId, companyNumber: e.companiesHouseNumber, xero: false }),
+    onSuccess: (_r, e) => { invalidate(); toast({ title: "Added as a company to check", description: e.registeredName || e.name }); },
+    onError: (err: any) => toast({ title: "Not added", description: err?.message, variant: "destructive" }),
+  });
+
   // Staff-only / any error → render nothing (same convention as the other
   // account workspace cards).
   if (!data) return null;
   // A brand with one legal entity already shows it (and its sign-off) in
   // Compliance & KYC — a second strip at the top double-counted it
   // (Woody, 2026-09-23). Groups with several entities keep the list.
-  if (hideSingleEntity && data.entities.length <= 1) return null;
+  // A brand with no company of its own to check yet still offers to add one (24 November 2026).
+  if (hideSingleEntity && data.entities.length <= 1 && !data.entities.some(e => e.client)) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`account-entities-empty-${companyId}`}>
+        <Building2 className="w-3.5 h-3.5" />No company filed under {data.accountName} to check yet.
+        <Button size="sm" variant="outline" className="h-6 text-[11px] px-2" onClick={() => setAdding(true)} data-testid="entities-add-company">Add a company</Button>
+        <CreateBillingEntityDialog open={adding} onOpenChange={setAdding} brand={{ id: companyId, name: data.accountName }} initialQuery="" xero={false} testIdPrefix="entities-add"
+          onCreated={() => { setAdding(false); invalidate(); }} onSavedWithoutXero={() => { setAdding(false); invalidate(); }} />
+      </div>
+    );
+  }
 
   const s = data.summary;
   const rowKey = (e: GroupEntity, i: number) => `${e.entityKind}-${e.entityId ?? `jsonb-${i}`}`;
@@ -245,13 +348,11 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
     [s.rejected, "rejected", TONE.rejected],
   ];
   const reviewing = review ? rows.find(r => r.key === review.key)?.e ?? null : null;
-  const Container = embedded ? "section" : Card;
-
   return (
-    <Container data-testid={`account-entities-${companyId}`}>
-      <CardHeader className={embedded ? "p-0 pb-2" : "p-3 pb-2"}>
+    <Card data-testid={`account-entities-${companyId}`}>
+      <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
-          <Building2 className="w-3.5 h-3.5" /> Group entities
+          <Building2 className="w-3.5 h-3.5" /> Companies and KYC
           <span className={tone(s.current === s.total ? TONE.current : TONE.expired)} data-testid="entities-current-summary">
             <span className="font-mono tabular-nums">{s.current}</span> of <span className="font-mono tabular-nums">{s.total}</span> KYC approved
           </span>
@@ -260,7 +361,29 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
           ))}
         </CardTitle>
       </CardHeader>
-      <CardContent className={embedded ? "p-0" : "p-3 pt-0"}>
+      <CardContent className="p-3 pt-0">
+        {/* Add a company to check, and check several at once (24 November 2026). */}
+        <div className="flex flex-wrap items-center gap-1.5 pb-1.5" data-testid="entities-toolbar">
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAdding(true)} data-testid="entities-add-company">Add a company</Button>
+          {clientRows.length > 1 && (
+            <Button size="sm" variant={selecting ? "secondary" : "ghost"} className="h-7 text-xs" onClick={() => { setSelecting(v => !v); setPicked(new Set()); }} data-testid="entities-select">
+              {selecting ? "Done" : "Select"}
+            </Button>
+          )}
+          {selecting && (
+            <>
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPicked(new Set(clientRows.filter(r => r.client!.entityId).map(r => r.client!.entityId!)))} data-testid="entities-select-all">Select all</Button>
+              <Button size="sm" className="h-7 text-xs" disabled={!picked.size || runChecks.isPending}
+                onClick={() => runChecks.mutate(clientRows.filter(r => r.client!.entityId && picked.has(r.client!.entityId)))} data-testid="entities-run-checks">
+                Run BGP's checks{picked.size ? ` on ${picked.size}` : ""}
+              </Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!picked.size || linkXero.isPending}
+                onClick={() => linkXero.mutate(clientRows.filter(r => r.client!.entityId && picked.has(r.client!.entityId)))} data-testid="entities-link-xero">
+                Link to Xero{picked.size ? ` (${picked.size})` : ""}
+              </Button>
+            </>
+          )}
+        </div>
         {/* Name gets the width and wraps to two lines; the chips drop
             beneath it until the card is wide enough to sit them alongside —
             side by side they cut the name to "THE ARD…" (Woody, 2026-09-28). */}
@@ -268,11 +391,15 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
           {rows.map(({ e, key }) => {
             const bucket = bucketOf(e);
             const actionable = isMlro && e.entityId;
-            const primaryShown = embedded && e.relation === "self" && !!primaryCompanyNumber?.trim()
-              && e.companiesHouseNumber?.trim().toUpperCase() === primaryCompanyNumber.trim().toUpperCase();
             const menuRead = e.entityKind === "trading_entity" && !e.companiesHouseNumber && looksLikeSiteMenu(e.name);
             return (
               <div key={key} className="flex items-start gap-1.5 py-1.5" data-testid={`entity-row-${e.entityId ?? key}`}>
+                {selecting && (e.client?.entityId ? (
+                  <input type="checkbox" className="mt-1.5 h-4 w-4 shrink-0 accent-primary" aria-label={`Select ${e.name}`}
+                    checked={picked.has(e.client.entityId)}
+                    onChange={ev => setPicked(prev => { const next = new Set(prev); if (ev.target.checked) next.add(e.client!.entityId!); else next.delete(e.client!.entityId!); return next; })}
+                    data-testid={`entity-pick-${e.entityId}`} />
+                ) : <span className="w-4 shrink-0" />)}
                 <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                 <button
                   type="button"
@@ -285,18 +412,22 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
                     <Building2 className="w-3.5 h-3.5 mt-px text-muted-foreground shrink-0" />
                     <span className="min-w-0 flex flex-col leading-tight">
                       {/* The account's own company by its Companies House name (it read "Review account entity"). */}
-                      <span className="text-xs font-medium line-clamp-2 break-words">{e.relation === "self" ? (e.registeredName || e.name) : e.name}{primaryShown && <span className="ml-1.5 font-normal text-muted-foreground">this account</span>}</span>
-                      {!primaryShown && e.tradingAs && <span className="text-[11px] text-muted-foreground line-clamp-1 break-words">trading as {e.tradingAs}</span>}
+                      <span className="text-xs font-medium line-clamp-2 break-words">{e.relation === "self" ? (e.registeredName || e.name) : e.name}</span>
+                      {e.tradingAs && <span className="text-[11px] text-muted-foreground line-clamp-1 break-words">trading as {e.tradingAs}</span>}
                       {menuRead && <span className="text-[11px] text-amber-700 dark:text-amber-300">Read from a website menu, not a company</span>}
                     </span>
                   </span>
                   <span className="flex flex-wrap items-center gap-1 pl-5 [@container(min-width:560px)]:pl-0 [@container(min-width:560px)]:shrink-0 [@container(min-width:560px)]:justify-end">
-                    {!primaryShown && (e.companiesHouseNumber ? (
+                    {e.companiesHouseNumber ? (
                       <span className={chip}>CH <span className="font-mono">{e.companiesHouseNumber}</span></span>
+                    ) : e.client?.kind === "person" ? (
+                      <span className={chip}>Person</span>
+                    ) : e.client?.kind === "abroad" ? (
+                      <span className={chip}>Registered abroad</span>
                     ) : (
                       <span className={tone(TONE.expired)}>No CH no.</span>
-                    ))}
-                    {!primaryShown && <span className={chip}>{RELATION_LABEL[e.relation]}</span>}
+                    )}
+                    <span className={chip}>{RELATION_LABEL[e.relation]}</span>
                     {e.representationConflicts.length > 0 && (
                       <span title={e.representationConflicts.join("\n")} data-testid={`entity-conflict-${e.entityId ?? key}`}>
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
@@ -314,8 +445,17 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
                   </span>
                 </button>
                 {e.entityId && !menuRead && <span className="pl-5"><EntityTransactions e={e} /></span>}
+                {e.client && <span className="pl-5"><ClientKycLine e={e} bulk={e.client.entityId ? bulkState[e.client.entityId] : undefined} /></span>}
                 </div>
                 <span className="flex items-center gap-0.5 shrink-0 pt-px">
+                  {e.client && !menuRead && (
+                    <Button size="sm" variant="outline" className="h-6 text-[11px] px-1.5" onClick={() => setKycFor(e)} data-testid={`entity-kyc-${e.entityId}`}>KYC</Button>
+                  )}
+                  {!e.client && e.relation === "self" && e.entityKind === "company" && !!e.companiesHouseNumber
+                    && !data.entities.some(x => x.entityKind === "trading_entity" && (x.companiesHouseNumber || "").toUpperCase() === (e.companiesHouseNumber || "").toUpperCase()) && (
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px] px-1.5" disabled={addSelf.isPending} onClick={() => addSelf.mutate(e)}
+                      title="File this company under the account so it can be checked" data-testid={`entity-add-self-${e.entityId}`}>Add to check</Button>
+                  )}
                   {menuRead && e.entityId && !(e.transactions || []).length && (
                     <Button
                       size="sm" variant="ghost" className="h-6 text-[11px] px-1.5"
@@ -365,7 +505,13 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
         onApprove={(e) => approve.mutate(e)}
         onReject={(e, reason) => reject.mutate({ e, reason })}
       />
-    </Container>
+      {kycFor?.client && (
+        <ClientKycDialog companyId={kycFor.client.companyId} entityId={kycFor.client.entityId} name={kycFor.name} open={!!kycFor}
+          onOpenChange={o => { if (!o) { setKycFor(null); invalidate(); } }} />
+      )}
+      <CreateBillingEntityDialog open={adding} onOpenChange={setAdding} brand={{ id: companyId, name: data.accountName }} initialQuery="" xero={false} testIdPrefix="entities-add"
+        onCreated={() => { setAdding(false); invalidate(); }} onSavedWithoutXero={() => { setAdding(false); invalidate(); }} />
+    </Card>
   );
 }
 

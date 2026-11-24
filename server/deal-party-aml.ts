@@ -73,6 +73,14 @@ export interface AmlParty {
   agents: { ids: string[]; names: string[] }; // the deal's agents (internal_agent_ids / internal_agent)
 }
 
+/**
+ * A party of a transaction, or a client file: BGP's client checked with no
+ * transaction (dealId null, role "client"; Woody, 24 November 2026: "build it
+ * within companies ... aml all the sub companies"). The sign-off rules read
+ * either the same way (server/client-kyc.ts builds the client file's).
+ */
+export type AmlSubject = Omit<AmlParty, "dealId" | "role"> & { dealId: string | null; role: DealPartyRole | "client" };
+
 /** One party of a deal, with its AML state read the gate's way (loadPartyKyc). */
 export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole, opts: { full?: boolean } = {}): Promise<AmlParty | null> {
   const col = DEAL_PARTY_COLUMNS[role];
@@ -115,7 +123,8 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole, 
 // on KYC4U's portal for this party in the last 180 days (one only prepared in
 // the app is not with them: Jack, 20 November 2026), whose
 // KYC4U request is not linked yet or still reads as with KYC4U.
-async function raisedWithKyc4u(db: Db, party: AmlParty): Promise<boolean> {
+async function raisedWithKyc4u(db: Db, party: AmlSubject): Promise<boolean> {
+  if (!party.dealId) return false;
   const rows = (await db.query(
     `SELECT d.status, q.status AS request_status, d.request_item_id
        FROM kyc4u_drafts d
@@ -137,7 +146,7 @@ export interface KnownFacts {
 }
 
 /** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
-export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null }> {
+export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null }> {
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
@@ -169,7 +178,7 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   // A person's own request finishing is not the party's checks finishing.
   const mainFinished = (await db.query(
     `SELECT 1 FROM kyc_upload_tokens
-      WHERE deal_id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
+      WHERE deal_id IS NOT DISTINCT FROM $1::varchar AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
         AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
         AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object'
         AND COALESCE(request->>'audience', 'client') <> 'joint_agent' LIMIT 1`,
@@ -179,7 +188,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
   // A trust is checked by BGP's officers, never KYC4U (Jack, 23 November 2026).
   const trust = String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
   const people = await import("./kyc-people")
-    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await m.dealPeopleRequests(party.dealId, db)))
+    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
+      await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId })))
     .catch(() => null);
   // People that could not be read count as outstanding: a note is asked for.
   const outstanding = people ? people.outstanding : ["the people to check could not be read"];
@@ -209,8 +219,8 @@ export async function signOffFacts(db: Db, party: AmlParty, known: KnownFacts = 
     registerExtract: party.regime === "sanctions_only" || kind !== "company" || trust ? null
       : await import("./kyc-documents").then(m => m.registerExtractFact(party.brandId, party.entityId, db)).catch(() => null),
     // The party's guarantors: signed off only once BGP's checks on each have run (23 November 2026).
-    guarantorChecks: await import("./deal-guarantors")
-      .then(m => m.guarantorViews(party.dealId, db))
+    guarantorChecks: !party.dealId ? [] : await import("./deal-guarantors")
+      .then(m => m.guarantorViews(party.dealId!, db))
       .then(list => list.filter(g => g.companyId === party.brandId).map(g => ({ name: g.name, state: g.checks.state })))
       .catch(() => [{ name: "the guarantors (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
@@ -282,14 +292,29 @@ async function dealAudit(dealId: string, field: string, oldValue: string | null,
     [dealId, field, oldValue, newValue, reason.slice(0, 2000), me.id, me.name]).catch((e: any) => console.warn(`[deal-party-aml] audit line not written: ${e?.message}`));
 }
 
-const partyName = (p: AmlParty) => p.entityName || p.brandName;
+const partyName = (p: Pick<AmlSubject, "entityName" | "brandName">) => p.entityName || p.brandName;
+
+// A transaction's party (:id, :role), or a client file (:companyId, :entity;
+// 24 November 2026: BGP's client checked with no transaction), or the refusal sent.
+async function subjectFor(req: Request, res: Response): Promise<AmlSubject | null> {
+  if (req.params.companyId) {
+    const { clientSubjectFor } = await import("./client-kyc");
+    return clientSubjectFor(req, res);
+  }
+  const role = String(req.params.role);
+  if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
+  const party = await loadAmlParty(pool, String(req.params.id), role);
+  if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  return party;
+}
+const subjectLabel = (p: Pick<AmlSubject, "role">) => (p.role === "client" ? "Client" : DEAL_PARTY_LABEL[p.role]);
 // The officer's note when recording a reliance with gaps in the joint agent's files.
 const JOINT_BY_HAND_MIN = 20;
 
 // The brand's own approval: the columns the company approval writes, the
 // re-check reminder on the AML policy's cycle for the party's level, the KYC
 // audit line.
-async function approveBrand(party: AmlParty, by: { name: string }, line: string, years: number): Promise<Date> {
+export async function approveBrand(party: AmlSubject, by: { name: string }, line: string, years: number): Promise<Date> {
   const expires = new Date();
   expires.setUTCFullYear(expires.getUTCFullYear() + years);
   await pool.query(
@@ -659,7 +684,7 @@ router.post("/api/deals/:id/parties/:role/kyc4u-result", deciderFirst, takeFiles
 // (each copied to PDF on the party's KYC record) and any files; it then counts
 // for that person's identity check and proof of address, on every deal with
 // the party (server/kyc-people.ts). It can be withdrawn.
-export async function partyKindOf(db: Db, party: AmlParty) {
+export async function partyKindOf(db: Db, party: Pick<AmlSubject, "brandId" | "entityId">) {
   const held = (await db.query(`SELECT aml_subject_type FROM crm_companies WHERE id = $1`, [party.brandId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null;
   const signer = party.entityId ? (await db.query(`SELECT entity_kind FROM crm_trading_entities WHERE id = $1`, [party.entityId]).catch(() => ({ rows: [] as any[] }))).rows[0] || { entity_kind: null } : null;
   return partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
@@ -688,17 +713,16 @@ async function adminDeciderFirst(req: Request, res: Response, next: NextFunction
 // and pull out what it can ... make a suggestion if thats a reasonable amount
 // or have to ask for further info"). Records nothing: the officer reads it
 // and saves the verification, or asks for their ID.
-router.post("/api/deals/:id/parties/:role/public-figure/search", async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/public-figure/search", "/api/client-kyc/:companyId/subjects/:entity/public-figure/search"], async (req: Request, res: Response) => {
   try {
     const me = await adminDecider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
-    const role = String(req.params.role);
-    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const party = await subjectFor(req, res);
+    if (!party) return;
     const kind = await partyKindOf(pool, party);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId));
+    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
+      await dealPeopleRequests(party.dealId, pool, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId }));
     const person = people.people.find(p => p.key === String(req.body?.key || ""));
     if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
     const { searchPublicRecords } = await import("./public-records");
@@ -723,15 +747,13 @@ router.post("/api/deals/:id/parties/:role/public-figure/search", async (req: Req
 // Certified copies accepted for a person (Jack, 23 November 2026): the
 // officers', not only admins'. It shares the handler below, which reads the
 // method from the route, never from the request.
-router.post("/api/deals/:id/parties/:role/certified-documents", deciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, true));
-router.post("/api/deals/:id/parties/:role/public-figure", adminDeciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, false));
+router.post(["/api/deals/:id/parties/:role/certified-documents", "/api/client-kyc/:companyId/subjects/:entity/certified-documents"], deciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, true));
+router.post(["/api/deals/:id/parties/:role/public-figure", "/api/client-kyc/:companyId/subjects/:entity/public-figure"], adminDeciderFirst, takeFiles, (req: Request, res: Response) => recordPersonVerified(req, res, false));
 async function recordPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
     const me = (req as any).amlDecider as { id: string; name: string };
-    const role = String(req.params.role);
-    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const party = await subjectFor(req, res);
+    if (!party) return;
     const note = text(req.body?.note).slice(0, 1000);
     const how = certified ? "verified from certified documents" : "verified from public sources";
     if (note.length < PUBLIC_FIGURE_NOTE_MIN) return res.status(400).json({ message: certified ? "Say which documents you checked and who certified them (at least a sentence)." : "Say what makes them a public figure and what the sources show (at least a sentence)." });
@@ -753,7 +775,8 @@ async function recordPersonVerified(req: Request, res: Response, certified: bool
 
     const kind = await partyKindOf(pool, party);
     const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
-    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId));
+    const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
+      await dealPeopleRequests(party.dealId, pool, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId }));
     const person = people.people.find(p => p.key === String(req.body?.key || ""));
     if (!person) return res.status(404).json({ message: `That person is not on the list of people to check for ${partyName(party)}.` });
     if (person.publicFigure) return res.status(409).json({ message: `${person.name} is already ${personVerifiedWords(person.publicFigure)} (by ${person.publicFigure.by}).` });
@@ -778,7 +801,7 @@ async function recordPersonVerified(req: Request, res: Response, certified: bool
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure', $2, $3, $4, $5)`,
       [party.brandId, me.name, `${person.name} ${how} on ${party.dealName}: ${note}${links.length ? ` (${links.length} page${links.length === 1 ? "" : "s"})` : ""}${documentIds.length ? ` (${documentIds.length} file${documentIds.length === 1 ? "" : "s"})` : ""}`,
         party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
-    await dealAudit(party.dealId, "aml_public_figure", null, `verified by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${person.name} ${how} · ${note}`, me);
+    if (party.dealId) await dealAudit(party.dealId, "aml_public_figure", null, `verified by ${me.name}`, `${subjectLabel(party)}: ${partyName(party)} · ${person.name} ${how} · ${note}`, me);
     // The pages, copied to PDF on the party's record after the reply.
     if (links.length) {
       void fileWebCopies({ companyId: party.brandId, entityId: party.entityId, dealId: party.dealId, pages: links.map(url => ({ url, about: `public source for ${person.name}` })),
@@ -796,16 +819,14 @@ async function recordPersonVerified(req: Request, res: Response, certified: bool
   }
 }
 
-router.post("/api/deals/:id/parties/:role/certified-documents/:checkId/withdraw", (req: Request, res: Response) => withdrawPersonVerified(req, res, true));
-router.post("/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", (req: Request, res: Response) => withdrawPersonVerified(req, res, false));
+router.post(["/api/deals/:id/parties/:role/certified-documents/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/certified-documents/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, true));
+router.post(["/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/public-figure/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, false));
 async function withdrawPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
     const me = certified ? await decider(req) : await adminDecider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
-    const role = String(req.params.role);
-    if (!isDealPartyRole(role)) return res.status(400).json({ message: "Unknown party." });
-    const party = await loadAmlParty(pool, String(req.params.id), role);
-    if (!party) return res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` });
+    const party = await subjectFor(req, res);
+    if (!party) return;
     const row = (await pool.query(
       `UPDATE kyc_public_figure_checks SET withdrawn_at = now(), withdrawn_by = $4, withdrawn_by_name = $5
         WHERE id = $1 AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3::varchar AND withdrawn_at IS NULL
@@ -814,7 +835,7 @@ async function withdrawPersonVerified(req: Request, res: Response, certified: bo
     if (!row) return res.status(404).json({ message: "That verification was not found on this party, or was already withdrawn." });
     await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'public_figure_withdrawn', $2, $3, $4, $5)`,
       [party.brandId, me.name, `${row.person_name}: verification from ${row.method === "certified" ? "certified documents" : "public sources"} withdrawn on ${party.dealName}`, party.entityId ? "trading_entity" : null, party.entityId]).catch(() => {});
-    await dealAudit(party.dealId, "aml_public_figure", "verified", `withdrawn by ${me.name}`, `${DEAL_PARTY_LABEL[role]}: ${partyName(party)} · ${row.person_name}: verification from ${row.method === "certified" ? "certified documents" : "public sources"} withdrawn`, me);
+    if (party.dealId) await dealAudit(party.dealId, "aml_public_figure", "verified", `withdrawn by ${me.name}`, `${subjectLabel(party)}: ${partyName(party)} · ${row.person_name}: verification from ${row.method === "certified" ? "certified documents" : "public sources"} withdrawn`, me);
     res.json({ ok: true });
   } catch (err: any) {
     console.error("[deal-party-aml] public figure withdraw failed:", err?.message);

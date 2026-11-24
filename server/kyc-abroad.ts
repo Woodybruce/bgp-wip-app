@@ -286,14 +286,22 @@ const takeFile = (req: Request, res: Response, next: NextFunction) => {
   });
 };
 
-interface PartyCtx { party: { dealId: string; dealName: string; role: DealPartyRole; brandId: string; brandName: string; entityId: string | null; entityName: string | null }; precheck: KycPrecheckResult | null }
+// dealId null, role "client": a client file (24 November 2026).
+interface PartyCtx { party: { dealId: string | null; dealName: string; role: DealPartyRole | "client"; brandId: string; brandName: string; entityId: string | null; entityName: string | null }; precheck: KycPrecheckResult | null }
 
 async function partyCtx(req: Request, res: Response): Promise<PartyCtx | null> {
-  const role = String(req.params.role);
-  if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
-  const { loadAmlParty } = await import("./deal-party-aml");
-  const party = await loadAmlParty(pool, String(req.params.id), role);
-  if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  let party: PartyCtx["party"] | null;
+  if (req.params.companyId) {
+    const { clientSubjectFor } = await import("./client-kyc");
+    party = await clientSubjectFor(req, res);
+    if (!party) return null;
+  } else {
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
+    const { loadAmlParty } = await import("./deal-party-aml");
+    party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  }
   const { latestPrecheck } = await import("./kyc-prechecks");
   const precheck = (await latestPrecheck(party.brandId, party.entityId).catch(() => null))?.result || null;
   return { party, precheck };
@@ -323,6 +331,7 @@ async function audit(ctx: PartyCtx, me: { id: string; name: string }, action: st
   const p = ctx.party;
   await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, $2, $3, $4, $5, $6)`,
     [p.brandId, action, me.name, line, p.entityId ? "trading_entity" : null, p.entityId]).catch(() => {});
+  if (!p.dealId || p.role === "client") return;
   await pool.query(`INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'aml_abroad', NULL, $2, $3, $4, $5)`,
     [p.dealId, action.replace(/^abroad_/, "").replace(/_/g, " "), `${DEAL_PARTY_LABEL[p.role]}: ${p.entityName || p.brandName} · ${line}`.slice(0, 2000), me.id, me.name]).catch(() => {});
 }
@@ -353,7 +362,7 @@ function foundNames(pre: KycPrecheckResult | null, records: AbroadRecord[]): Cha
   return out;
 }
 
-router.get("/api/deals/:id/parties/:role/abroad", staffFirst, async (req: Request, res: Response) => {
+router.get(["/api/deals/:id/parties/:role/abroad", "/api/client-kyc/:companyId/subjects/:entity/abroad"], staffFirst, async (req: Request, res: Response) => {
   try {
     const ctx = await partyCtx(req, res);
     if (!ctx) return;
@@ -382,7 +391,7 @@ router.get("/api/deals/:id/parties/:role/abroad", staffFirst, async (req: Reques
   }
 });
 
-router.post("/api/deals/:id/parties/:role/abroad/page", staffFirst, async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/abroad/page", "/api/client-kyc/:companyId/subjects/:entity/abroad/page"], staffFirst, async (req: Request, res: Response) => {
   try {
     const me = (req as any).abroadMe as { id: string; name: string };
     const ctx = await partyCtx(req, res);
@@ -412,7 +421,7 @@ router.post("/api/deals/:id/parties/:role/abroad/page", staffFirst, async (req: 
   }
 });
 
-router.post("/api/deals/:id/parties/:role/abroad/document", staffFirst, takeFile, async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/abroad/document", "/api/client-kyc/:companyId/subjects/:entity/abroad/document"], staffFirst, takeFile, async (req: Request, res: Response) => {
   try {
     const me = (req as any).abroadMe as { id: string; name: string };
     const ctx = await partyCtx(req, res);
@@ -452,7 +461,7 @@ router.post("/api/deals/:id/parties/:role/abroad/document", staffFirst, takeFile
   }
 });
 
-router.post("/api/deals/:id/parties/:role/abroad/note", staffFirst, async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/abroad/note", "/api/client-kyc/:companyId/subjects/:entity/abroad/note"], staffFirst, async (req: Request, res: Response) => {
   try {
     const me = (req as any).abroadMe as { id: string; name: string };
     const ctx = await partyCtx(req, res);
@@ -470,7 +479,7 @@ router.post("/api/deals/:id/parties/:role/abroad/note", staffFirst, async (req: 
   }
 });
 
-router.post("/api/deals/:id/parties/:role/abroad/person", staffFirst, async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/abroad/person", "/api/client-kyc/:companyId/subjects/:entity/abroad/person"], staffFirst, async (req: Request, res: Response) => {
   try {
     const me = (req as any).abroadMe as { id: string; name: string };
     const ctx = await partyCtx(req, res);
@@ -505,7 +514,7 @@ router.post("/api/deals/:id/parties/:role/abroad/person", staffFirst, async (req
   }
 });
 
-router.post("/api/deals/:id/parties/:role/abroad/:recordId/remove", staffFirst, async (req: Request, res: Response) => {
+router.post(["/api/deals/:id/parties/:role/abroad/:recordId/remove", "/api/client-kyc/:companyId/subjects/:entity/abroad/:recordId/remove"], staffFirst, async (req: Request, res: Response) => {
   try {
     const me = (req as any).abroadMe as { id: string; name: string };
     const ctx = await partyCtx(req, res);

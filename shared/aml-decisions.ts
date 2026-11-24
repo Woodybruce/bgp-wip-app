@@ -39,6 +39,11 @@ export interface AmlDecision {
 }
 
 export const AML_DECISIONS: AmlDecision[] = [
+  // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "A client can be checked before any transaction",
+    text: "BGP's client can be checked on its company page when BGP is instructed: a leasing or sale instruction, advice on a purchase, or a tenant BGP acts for to find sites. The steps are the transaction's and the sign-off is the same record, so a transaction with that company is cleared until its re-check date." },
+  { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "Every company under a client can be checked",
+    text: "Each company filed under a landlord or tenant (an SPV that owns a building, one that takes a lease) has its own checks and sign-off. Several can be checked at once, one at a time within the day's allowance of BGP's checks, and each can be linked to Xero so it is billed when it signs." },
   // 23 November 2026
   { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "Foreign companies on Companies House still need their home register's extract",
     text: "An overseas entity (an OE number) or the UK branch of an overseas company (an FC number) is on Companies House but registered abroad. The app reads its home register and number from Companies House, checks the extract against that number, and holds the sign-off until the extract is in. A GLEIF match by number abroad must also match the name." },

@@ -353,7 +353,13 @@ function takeFiles(req: Request, res: Response, next: NextFunction) {
   });
 }
 
-async function partyFor(req: Request, res: Response) {
+// A transaction's party (:id, :role), or a client file (:companyId, :entity;
+// 24 November 2026): the same documents, read and checked the same way.
+async function partyFor(req: Request, res: Response): Promise<import("./deal-party-aml").AmlSubject | null> {
+  if (req.params.companyId) {
+    const { clientSubjectFor } = await import("./client-kyc");
+    return clientSubjectFor(req, res);
+  }
   const role = String(req.params.role);
   if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
   const { loadAmlParty } = await import("./deal-party-aml");
@@ -368,7 +374,8 @@ async function documentsView(party: Awaited<ReturnType<typeof partyFor>> & objec
   const { partyKindOf } = await import("./deal-party-aml");
   const kind = await partyKindOf(pool, party);
   const uploads = await uploadsFor(party.brandId, party.entityId);
-  const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, await dealPeopleRequests(party.dealId)).catch(() => null);
+  const people = await partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
+    await dealPeopleRequests(party.dealId, pool, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId })).catch(() => null);
   const list = (people?.people || []).map(p => ({ name: p.name, dob: p.dob || null }));
   const urls = new Map<string, string | null>();
   if (uploads.length) {
@@ -391,7 +398,7 @@ async function documentsView(party: Awaited<ReturnType<typeof partyFor>> & objec
   });
 }
 
-kycDocumentsRouter.get("/api/deals/:id/parties/:role/documents", async (req: Request, res: Response) => {
+kycDocumentsRouter.get(["/api/deals/:id/parties/:role/documents", "/api/client-kyc/:companyId/subjects/:entity/documents"], async (req: Request, res: Response) => {
   try {
     if (!(await staff(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const party = await partyFor(req, res);
@@ -404,7 +411,7 @@ kycDocumentsRouter.get("/api/deals/:id/parties/:role/documents", async (req: Req
   }
 });
 
-kycDocumentsRouter.post("/api/deals/:id/parties/:role/documents", staffFirst, takeFiles, async (req: Request, res: Response) => {
+kycDocumentsRouter.post(["/api/deals/:id/parties/:role/documents", "/api/client-kyc/:companyId/subjects/:entity/documents"], staffFirst, takeFiles, async (req: Request, res: Response) => {
   try {
     const me = (req as any).kycDocsMe as { id: string; name: string };
     const party = await partyFor(req, res);
@@ -471,7 +478,7 @@ kycDocumentsRouter.post("/api/deals/:id/parties/:role/documents", staffFirst, ta
   }
 });
 
-kycDocumentsRouter.post("/api/deals/:id/parties/:role/documents/:docId/read", async (req: Request, res: Response) => {
+kycDocumentsRouter.post(["/api/deals/:id/parties/:role/documents/:docId/read", "/api/client-kyc/:companyId/subjects/:entity/documents/:docId/read"], async (req: Request, res: Response) => {
   try {
     if (!(await staff(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const party = await partyFor(req, res);
@@ -488,7 +495,7 @@ kycDocumentsRouter.post("/api/deals/:id/parties/:role/documents/:docId/read", as
   }
 });
 
-kycDocumentsRouter.post("/api/deals/:id/parties/:role/documents/:docId/accept", async (req: Request, res: Response) => {
+kycDocumentsRouter.post(["/api/deals/:id/parties/:role/documents/:docId/accept", "/api/client-kyc/:companyId/subjects/:entity/documents/:docId/accept"], async (req: Request, res: Response) => {
   try {
     const { decider } = await import("./deal-party-aml");
     const me = await decider(req);

@@ -6,6 +6,7 @@
 // that passes counts for that person's identity or address. The rules are
 // shared/kyc-documents.ts; the server is server/kyc-documents.ts.
 import { useRef, useState } from "react";
+import { useAmlUrls } from "@/lib/aml-scope";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, FileText, Languages, Loader2, RefreshCw, Upload, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,10 +36,11 @@ const keyFor = (dealId: string, role: string) => ["/api/deals", dealId, "parties
 const peopleKey = (dealId: string) => ["/api/aml/deal", dealId, "client-checks"];
 
 export function useUploadedDocuments(dealId: string, role: string, enabled = true) {
+  const urls = useAmlUrls();
   return useQuery<{ documents: UploadedDocument[] }>({
     enabled,
     queryKey: keyFor(dealId, role),
-    queryFn: async () => (await apiRequest("GET", `/api/deals/${dealId}/parties/${role}/documents`)).json(),
+    queryFn: async () => (await apiRequest("GET", `${urls.party(dealId, role)}/documents`)).json(),
     // Read again every few seconds while a file is being read or translated.
     refetchInterval: q => (q.state.data?.documents || []).some(d => !d.read || (d.reading?.read && d.reading.english === false && !d.translation)) ? 5000 : false,
   });
@@ -54,6 +56,7 @@ function useLanded(dealId: string, role: string) {
 }
 
 export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { dealId: string; role: string; partyName: string; canDecide: boolean }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -65,7 +68,7 @@ export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { deal
       const fd = new FormData();
       for (const f of files) fd.append("files", f);
       fd.append("seenOriginal", seenOriginal ? "true" : "false");
-      const res = await fetch(`/api/deals/${dealId}/parties/${role}/documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`${urls.party(dealId, role)}/documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "The documents could not be uploaded.");
       return body;
@@ -122,18 +125,19 @@ export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { deal
 }
 
 function DocumentLine({ dealId, role, doc, canDecide }: { dealId: string; role: string; doc: UploadedDocument; canDecide: boolean }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const landed = useLanded(dealId, role);
   const [accepting, setAccepting] = useState(false);
   const [note, setNote] = useState("");
   const [viewing, setViewing] = useState<number | null>(null);
   const reread = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/documents/${doc.id}/read`, {})).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/documents/${doc.id}/read`, {})).json(),
     onSuccess: (body: any) => landed(body),
     onError: (e) => toast({ title: "Not read", description: plain(e), variant: "destructive" }),
   });
   const accept = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/documents/${doc.id}/accept`, { note: note.trim() })).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/documents/${doc.id}/accept`, { note: note.trim() })).json(),
     onSuccess: (body: any) => { landed(body); setAccepting(false); setNote(""); toast({ title: "Accepted" }); },
     onError: (e) => toast({ title: "Not accepted", description: plain(e), variant: "destructive" }),
   });
@@ -199,12 +203,13 @@ function DocumentLine({ dealId, role, doc, canDecide }: { dealId: string; role: 
 // happen in the app including translation"). Not a certified translation:
 // HMRC can ask for one (MLR 2017 reg 66), and the screen says so.
 function TranslationLine({ dealId, role, doc }: { dealId: string; role: string; doc: UploadedDocument }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const t = doc.translation || null;
   const foreign = doc.reading?.read && doc.reading.english === false;
   const translate = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/documents/${doc.id}/translate`, {})).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/documents/${doc.id}/translate`, {})).json(),
     onSuccess: (body: any) => {
       queryClient.invalidateQueries({ queryKey: keyFor(dealId, role) });
       if (body?.translation?.error) toast({ title: "Not translated", description: body.translation.error, variant: "destructive" });
@@ -239,9 +244,10 @@ function TranslationLine({ dealId, role, doc }: { dealId: string; role: string; 
 }
 
 function TranslationDialog({ dealId, role, doc, onClose, onAgain, again }: { dealId: string; role: string; doc: UploadedDocument; onClose: () => void; onAgain: () => void; again: boolean }) {
+  const urls = useAmlUrls();
   const q = useQuery<{ translation: { language: string | null; translation: string | null; madeAt: string; cut: boolean; madeBy: string | null } | null; note: string }>({
     queryKey: [...keyFor(dealId, role), doc.id, "translation", doc.translation?.madeAt || ""],
-    queryFn: async () => (await apiRequest("GET", `/api/deals/${dealId}/parties/${role}/documents/${doc.id}/translation`)).json(),
+    queryFn: async () => (await apiRequest("GET", `${urls.party(dealId, role)}/documents/${doc.id}/translation`)).json(),
   });
   const t = q.data?.translation || null;
   return (
@@ -275,6 +281,7 @@ function TranslationDialog({ dealId, role, doc, onClose, onAgain, again }: { dea
 // directors are screened against the sanctions lists by BGP's checks; an owner
 // who is a person is added as one with a press, and then does their own check.
 function ExtractPeople({ dealId, role, doc }: { dealId: string; role: string; doc: UploadedDocument }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const r = doc.reading!;
   const company = doc.about?.name || r.company?.name || null;
@@ -282,7 +289,7 @@ function ExtractPeople({ dealId, role, doc }: { dealId: string; role: string; do
   const owners = r.owners || [];
   const [added, setAdded] = useState<string[]>([]);
   const add = useMutation({
-    mutationFn: async (o: { name: string; share: string | null }) => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/abroad/person`, {
+    mutationFn: async (o: { name: string; share: string | null }) => (await apiRequest("POST", `${urls.party(dealId, role)}/abroad/person`, {
       ownerName: company, name: o.name, detail: `${o.share ? `${o.share} ` : ""}shareholder on the register extract`,
     })).json(),
     onSuccess: (_b, o) => {

@@ -60,6 +60,25 @@ export interface GroupEntity {
    * company that signs, a company where it is the party with no company that signs set.
    */
   transactions?: GroupEntityTransaction[];
+  /**
+   * Its client KYC with no transaction (Woody, 24 November 2026: "aml all the
+   * sub companies within each company"): where it is filed, BGP's latest
+   * checks, an open client file, the latest client checks request with no
+   * transaction, and its Xero contact for invoicing. A row the client KYC
+   * cannot be about (a company with no sub company record) has none.
+   */
+  client?: GroupEntityClientKyc;
+}
+
+export interface GroupEntityClientKyc {
+  companyId: string;              // the account record the file is under
+  entityId: string | null;        // the sub company (null: the record itself, a person, trust or public body)
+  kind: "company" | "person" | "abroad";
+  checksAt: string | null;
+  running: boolean;
+  file: { openedAt: string | null; instruction: string | null } | null;
+  request: { status: "sent" | "finished" | "cancelled" | "expired" | "not_sent"; sentAt: string | null; to: string | null } | null;
+  xero: { id: string; name: string } | null;
 }
 
 export interface GroupEntityTransaction {
@@ -364,12 +383,72 @@ export async function getAccountEntities(
     }));
   }
 
+  await layerClientKyc(q, entities, companyIds).catch((e: any) => console.warn(`[account-entities] client KYC not read: ${e?.message}`));
+
   return {
     accountId: companyId,
     accountName: view.root.name,
     entities,
     summary: summariseEntities(entities, now),
   };
+}
+
+// The client KYC on each sub company, and on a record that is itself a
+// person, trust or public body (24 November 2026). Batched: five reads.
+async function layerClientKyc(q: Querier, entities: GroupEntity[], companyIds: string[]): Promise<void> {
+  const tradingIds = entities.filter(e => e.entityKind === "trading_entity" && e.entityId).map(e => e.entityId!);
+  const { rows: tradingRows } = tradingIds.length ? await q.query(
+    `SELECT id, parent_company_id, entity_kind, country, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = ANY($1::text[])`, [tradingIds]) : { rows: [] as any[] };
+  const { rows: selfRows } = companyIds.length ? await q.query(
+    `SELECT id FROM crm_companies WHERE id = ANY($1::text[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [companyIds]) : { rows: [] as any[] };
+  const ownSubjects = new Set(selfRows.map((r: any) => String(r.id)));
+  const subjects: Array<{ e: GroupEntity; companyId: string; entityId: string | null; row: any }> = [];
+  for (const e of entities) {
+    if (!e.entityId) continue;
+    if (e.entityKind === "trading_entity") {
+      const row = tradingRows.find((r: any) => String(r.id) === e.entityId);
+      if (row?.parent_company_id) subjects.push({ e, companyId: String(row.parent_company_id), entityId: e.entityId, row });
+    } else if (ownSubjects.has(e.entityId)) {
+      subjects.push({ e, companyId: e.entityId, entityId: null, row: null });
+    }
+  }
+  if (!subjects.length) return;
+  const accountIds = [...new Set(subjects.map(x => x.companyId))];
+  const [checks, files, requests] = await Promise.all([
+    q.query(
+      `SELECT DISTINCT ON (crm_company_id, trading_entity_id) crm_company_id, trading_entity_id, conducted_at FROM kyc_investigations
+        WHERE crm_company_id = ANY($1::text[]) AND result->>'kind' = 'precheck'
+        ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST`, [accountIds]).catch(() => ({ rows: [] as any[] })),
+    q.query(
+      `SELECT company_id, trading_entity_id, opened_at, instruction FROM kyc_client_files WHERE closed_at IS NULL AND company_id = ANY($1::text[])`, [accountIds]).catch(() => ({ rows: [] as any[] })),
+    q.query(
+      `SELECT DISTINCT ON (company_id, trading_entity_id) company_id, trading_entity_id, contact_name, request->>'sentAt' AS sent_at, completed_at, revoked_at, expires_at
+         FROM kyc_upload_tokens
+        WHERE deal_id IS NULL AND company_id = ANY($1::text[]) AND is_test IS NOT TRUE AND request IS NOT NULL
+          AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object'
+        ORDER BY company_id, trading_entity_id, created_at DESC`, [accountIds]).catch(() => ({ rows: [] as any[] })),
+  ]);
+  const { precheckRunning } = await import("./kyc-prechecks");
+  const same = (r: any, companyId: string, entityId: string | null) =>
+    String(r.crm_company_id ?? r.company_id) === companyId && (r.trading_entity_id ? String(r.trading_entity_id) : null) === entityId;
+  for (const x of subjects) {
+    const check = checks.rows.find((r: any) => same(r, x.companyId, x.entityId));
+    const file = files.rows.find((r: any) => same(r, x.companyId, x.entityId));
+    const req = requests.rows.find((r: any) => same(r, x.companyId, x.entityId));
+    const kindRaw = String(x.row?.entity_kind || "").toLowerCase();
+    x.e.client = {
+      companyId: x.companyId, entityId: x.entityId,
+      kind: kindRaw === "individual" ? "person" : x.row?.country && !/^(uk|gb|united kingdom|great britain|england|scotland|wales|northern ireland)$/i.test(String(x.row.country).trim()) ? "abroad" : "company",
+      checksAt: iso(check?.conducted_at),
+      running: !!precheckRunning(x.companyId, x.entityId),
+      file: file ? { openedAt: iso(file.opened_at), instruction: file.instruction || null } : null,
+      request: req ? {
+        status: req.revoked_at ? "cancelled" : req.completed_at ? "finished" : new Date(req.expires_at).getTime() < Date.now() ? "expired" : req.sent_at ? "sent" : "not_sent",
+        sentAt: req.sent_at || null, to: req.contact_name || null,
+      } : null,
+      xero: x.row?.xero_contact_id ? { id: String(x.row.xero_contact_id), name: String(x.row.xero_contact_name || x.e.name) } : null,
+    };
+  }
 }
 
 // ─── Per-entity KYC writes (Task 7) ──────────────────────────────────────

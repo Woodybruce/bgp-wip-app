@@ -14,6 +14,8 @@ import { isEngagementStaff } from "./crm-engagement";
 import { isPrivateEmailRecord, isPrivateMailboxAddress, PRIVATE_MAILBOX } from "./private-mail";
 import { closedStatusSqlList } from "@shared/letting-rules";
 import { requirementStateSql } from "@shared/requirement-live";
+import { clientKycSummary, clientKycWords } from "@shared/client-kyc";
+import { entitySignOffScope } from "@shared/party-kyc";
 import {
   CRM_HUB_PEOPLE_SHOWN, LENDER_SUB_TYPES, LENDER_TYPES, LANDLORD_TYPES,
   agentLine, brandWhy, companyCity, companyIsKind, contactDates, isCrmClient, isCrmHubKind, landlordLine, lenderLine, lenderSubType,
@@ -172,7 +174,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
 
   const ownerIds = Array.from(new Set(companies.flatMap(row => Array.isArray(row.bgp_contact_user_ids) ? row.bgp_contact_user_ids : []).filter(Boolean)));
   const unowned = companies.filter(row => !(Array.isArray(row.bgp_contact_user_ids) && row.bgp_contact_user_ids.length)).map(row => row.id);
-  const [actions, strategies, contacts, users, dealOwners, properties, deals, represented] = await Promise.all([
+  const [actions, strategies, contacts, users, dealOwners, properties, deals, represented, kycRows] = await Promise.all([
     brand ? Promise.resolve(brandActions) : side(q, "actions", actionsSql(BY_IDS), [ids]),
     brand ? Promise.resolve(brandStrategies) : side(q, "strategies", strategiesSql(BY_IDS), [ids]),
     side(q, "contacts", `SELECT p.id, p.name, p.role, p.email, p.phone, p.phone_mobile, p.is_favourite, p.company_id
@@ -196,6 +198,21 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
       FROM brand_agent_representations r JOIN crm_companies b ON b.id = r.brand_company_id
       WHERE r.agent_company_id = ANY($1::text[]) AND r.end_date IS NULL AND b.merged_into_id IS NULL AND b.archived_at IS NULL
       GROUP BY r.agent_company_id`, [ids], kind === "agent"),
+    // The KYC on the companies filed under each (24 November 2026): every sub
+    // company's own approval, whether its checks were started, and the
+    // record's own when it is a person, trust or public body.
+    side(q, "KYC", `SELECT e.parent_company_id AS company_id, k.kyc_status, k.expires_at, k.approved_at,
+             k.evidence->'bgpSignOff'->>'regime' AS regime, k.evidence->'bgpSignOff'->>'at' AS signoff_at,
+             (EXISTS (SELECT 1 FROM kyc_client_files f WHERE f.trading_entity_id = e.id AND f.closed_at IS NULL)
+               OR EXISTS (SELECT 1 FROM kyc_investigations i WHERE i.trading_entity_id = e.id AND i.result->>'kind' = 'precheck')) AS started
+        FROM crm_trading_entities e
+        LEFT JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = e.id
+       WHERE e.parent_company_id = ANY($1::text[])
+      UNION ALL
+      SELECT c.id, c.kyc_status, c.kyc_expires_at, c.kyc_checked_at, NULL, NULL,
+             EXISTS (SELECT 1 FROM kyc_client_files f WHERE f.company_id = c.id AND f.trading_entity_id IS NULL AND f.closed_at IS NULL)
+        FROM crm_companies c
+       WHERE c.id = ANY($1::text[]) AND lower(COALESCE(c.aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [ids]),
   ]);
 
   const people = contacts.rows.filter(row => !isPrivateMailboxAddress(row.email));
@@ -221,6 +238,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
   const dealCount = countMap(deals.rows);
   const representedCount = countMap(represented.rows);
   const requirementCount = countMap(brandRequirements.rows);
+  const kycByCompany = groupBy(kycRows.rows, "company_id");
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" });
 
   const rows: CrmHubRow[] = [];
@@ -274,6 +292,7 @@ export async function loadCrmHub(q: Queryable, kind: CrmHubKind, now: number = D
       counts, line,
       ...(why ? { why } : {}),
       ...(kind === "brand" && company.hunter_flag === true ? { superBrand: true } : {}),
+      ...kycChip(kycByCompany.get(id) || [], new Date(now)),
     });
   }
   // Super Brands lead the Brands list (the sort keeps name order within each).
@@ -362,3 +381,19 @@ export default createCrmHubRouter({
   query: async (sql, values) => (await import("./db")).pool.query(sql, values),
   resolveScope: async req => (await import("./company-scope")).resolveCompanyScope(req),
 });
+
+// The KYC chip on a CRM row (24 November 2026): left out when no company is
+// filed under it and nothing was started.
+function kycChip(rows: any[], now: Date): { kyc?: CrmHubRow["kyc"] } {
+  if (!rows.length) return {};
+  const list = rows.map(r => ({
+    status: r.kyc_status || null,
+    expiresAt: r.expires_at ? new Date(r.expires_at).toISOString() : null,
+    scope: String(r.kyc_status || "").toLowerCase() === "approved" ? entitySignOffScope({ regime: r.regime, signedOffAt: r.signoff_at, approvedAt: r.approved_at }) : null,
+    started: !!r.started,
+  }));
+  const sum = clientKycSummary(list, now);
+  const words = clientKycWords(sum);
+  const cleared = sum.cleared + sum.expiring;
+  return { kyc: { ...words, total: sum.total, cleared, toDo: sum.total - cleared } };
+}

@@ -2732,6 +2732,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>
               <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
             </div>
+            {/* The landlord's own company and every SPV filed under it, each with its KYC box, checked several at once and
+                linked to Xero (Woody, 24 November 2026: "some landlords have lots of spvs to own buildings"). Its own card, not behind Show more. */}
+            {!isClientViewer && <AccountEntitiesPanel companyId={companyId} />}
             {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
             {/* Signals are hidden on Landlord pages while the board is reviewed.
                 The underlying records and Brand presentation are retained. */}
@@ -5405,9 +5408,6 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
                   : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
               </p>}
             </section>}
-            {!isClientViewer && landlord && <div className="border-t border-border pt-3">
-              <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
-            </div>}
             {!isClientViewer && landlord && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
               <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">Billing</h3>
               <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />

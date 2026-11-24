@@ -12,12 +12,24 @@ import { isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } 
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
-/** Every client checks request on the deal (tests left out), as the people rule reads them. */
-export async function dealPeopleRequests(dealId: string, db: Db = pool): Promise<PeopleRequest[]> {
+/**
+ * Every client checks request on the deal (tests left out), as the people rule
+ * reads them. dealId null: a client file (Woody, 24 November 2026: BGP's
+ * client checked with no transaction), the requests with no transaction for
+ * that company (and, when given, that sub company).
+ */
+export async function dealPeopleRequests(dealId: string | null, db: Db = pool, client?: { companyId: string; entityId?: string | null }): Promise<PeopleRequest[]> {
+  if (!dealId && !client) return [];
   const rows = (await db.query(
-    `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
-       FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE
-        AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`, [dealId])).rows;
+    dealId
+      ? `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
+           FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE
+            AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`
+      : `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
+           FROM kyc_upload_tokens WHERE deal_id IS NULL AND company_id = $1 AND ($2::boolean OR trading_entity_id IS NOT DISTINCT FROM $3::varchar)
+            AND request IS NOT NULL AND is_test IS NOT TRUE
+            AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`,
+    dealId ? [dealId] : [client!.companyId, client!.entityId === undefined, client!.entityId ?? null])).rows;
   if (!rows.length) return [];
   const tokens = rows.map((r: any) => r.token);
   const files = (await db.query(

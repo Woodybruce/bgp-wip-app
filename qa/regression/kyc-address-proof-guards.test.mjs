@@ -47,11 +47,12 @@ test('a proof counts only on its verdict or an officer accepting it', () => {
 test('Read again is BGP staff, Accept is the Nominated Officer or a Deputy, both through the switch', () => {
   const reread = portal.slice(portal.indexOf('"/api/aml/deal/:id/client-checks/address-proof/read"'), portal.indexOf('"/api/aml/deal/:id/client-checks/address-proof/accept"'));
   assert.match(reread, /const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
-  const accept = portal.slice(portal.indexOf('"/api/aml/deal/:id/client-checks/address-proof/accept"'), portal.indexOf('kycRequestRouter.post("/api/aml/deal/:id/client-checks", signedIn'));
+  const accept = portal.slice(portal.indexOf('"/api/aml/deal/:id/client-checks/address-proof/accept"'), portal.indexOf('kycRequestRouter.post(["/api/aml/deal/:id/client-checks", '));
   assert.match(accept, /if \(!actor\.isMlro\) return res\.status\(403\)/);
   assert.match(accept, /note\.length < ADDRESS_PROOF_ACCEPT_NOTE_MIN/);
-  // The file must be this deal's, a proof of address, on a request that is not a test.
-  assert.match(portal, /JOIN kyc_upload_files f ON f\.token = u\.token AND f\.kyc_document_id = \$3 AND f\.doc_type = 'proof_of_address'\s*WHERE u\.token = \$1 AND u\.deal_id = \$2 AND u\.is_test IS NOT TRUE/);
+  // The file must be this deal's (or this client file's), a proof of address, on a request that is not a test.
+  assert.match(portal, /JOIN kyc_upload_files f ON f\.token = u\.token AND f\.kyc_document_id = \$2 AND f\.doc_type = 'proof_of_address'\s*WHERE u\.token = \$1 AND u\.is_test IS NOT TRUE`, \[t, d\]\)\)\.rows\[0\];\s*if \(!row \|\| !rowInScope\(row, scope\)\) return null;/);
+  assert.match(portal, /if \(scope\.dealId\) return String\(row\.deal_id \|\| ""\) === scope\.dealId;\s*return !row\.deal_id && String\(row\.company_id \|\| ""\) === scope\.client!\.companyId && \(row\.trading_entity_id \|\| null\) === scope\.client!\.entityId;/);
   assert.match(routes, /client-checks\\\/address-proof\\\/\(\?:read\|accept\)\$/);
   // The card offers Accept only to those who may decide.
   assert.match(card, /\{canDecide && !accepting && \(/);
@@ -61,7 +62,7 @@ test('Read again is BGP staff, Accept is the Nominated Officer or a Deputy, both
 });
 
 test('proofs sent before the reading existed are read when the deal card is opened, each once, never a test', () => {
-  const list = portal.slice(portal.indexOf('kycRequestRouter.get("/api/aml/deal/:id/client-checks"'), portal.indexOf('// A person\'s own link: given'));
+  const list = portal.slice(portal.indexOf('kycRequestRouter.get(["/api/aml/deal/:id/client-checks"'), portal.indexOf('// A person\'s own link: given'));
   assert.ok(list.indexOf('await staffMe(req)') < list.indexOf('readUnreadAddressProofs(pool, dealId)'), 'staff only, before anything is read');
   const lazy = reader.slice(reader.indexOf('export async function readUnreadAddressProofs('));
   assert.match(lazy, /u\.is_test IS NOT TRUE AND f\.doc_type = 'proof_of_address'/);

@@ -4,6 +4,7 @@ import { rolloutBadge } from "@shared/rollout-badge";
 import { EstatePipelineCards, type StatedPlans } from "@/components/brand-page/estate-pipeline";
 import { aboutText } from "@/lib/about-text";
 import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, urlPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName, newsOutsideSignals, brandNewsLists, cleanUnitLabel, LandlordCompanyChecksCard } from "@/components/brand-profile-panel";
+import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { BrandPatternScope, BrandQuietBlock, BrandQuietLine } from "@/components/brand-page/brand-card";
 import { BrandMoreMenu, type BrandMenuItem } from "@/components/brand-page/brand-top";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -952,6 +953,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       {/* A brand's own page: the combined Company checks card, as on the
           desktop page, in place of the separate Compliance pill. */}
       {brandPage && <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} landlord={false} brandSummary />}
+      {/* The brand's companies and their KYC, as on the desktop page (24 November 2026). Staff only: the server refuses it to a client login. */}
+      {brandPage && !isClientViewer && <AccountEntitiesPanel companyId={companyId} hideSingleEntity />}
       </div>
 
       {!brandPage && <div className={sec("compliance")}>
@@ -982,6 +985,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
 
       {/* Compliance & KYC — same board as desktop (staff actions hide for clients inside) */}
       <BrandComplianceCard companyId={companyId} company={c} />
+      {/* The account's companies (a landlord's SPVs) and their KYC, each with its KYC box and Xero link (24 November 2026). Staff only. */}
+      {!isClientViewer && <AccountEntitiesPanel companyId={companyId} />}
       </div>}
 
       <div className={sec("intel")}>

@@ -278,6 +278,47 @@ export function setupBillingEntityRoutes(app: Express) {
     import("./auth").then(m => m.requireAuth(req, res, next)).catch(next);
   };
 
+  // A sub company already filed under an account, linked to its contact in
+  // the firm's Xero (Woody, 24 November 2026: the SPVs "use those for xero
+  // invoicing too"): the contact there by that name, or a new one. The
+  // company keeps it (crm_trading_entities.xero_contact_*), so a transaction
+  // it signs bills it. BGP staff signed in as themselves.
+  app.post("/api/billing-entities/:entityId/xero", signedIn, async (req: Request, res: Response) => {
+    try {
+      const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+      if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) return res.status(403).json({ message: BILLING_ENTITY_STAFF_ONLY });
+      const { pool } = await import("./db");
+      const entity = (await pool.query(
+        `SELECT e.id, e.name, e.companies_house_number, e.entity_kind, e.contact_id, e.xero_contact_id, e.xero_contact_name, c.merged_into_id
+           FROM crm_trading_entities e JOIN crm_companies c ON c.id = e.parent_company_id WHERE e.id = $1`, [String(req.params.entityId)])).rows[0];
+      if (!entity || entity.merged_into_id) return res.status(404).json({ message: "That company was not found." });
+      if (entity.xero_contact_id) return res.json({ contact: { ContactID: entity.xero_contact_id, Name: entity.xero_contact_name || entity.name }, xeroCreated: false, xeroError: null, already: true });
+      const name = String(entity.name || "").replace(/\s+/g, " ").trim();
+      if (!name) return res.status(400).json({ message: "The company has no name to find in Xero." });
+      let body: Record<string, unknown> = { Name: name.slice(0, 255) };
+      if (String(entity.entity_kind || "").toLowerCase() === "individual") {
+        const person = entity.contact_id ? (await pool.query(`SELECT email FROM crm_contacts WHERE id = $1`, [entity.contact_id])).rows[0] : null;
+        body = xeroContactForPerson({ name, email: person?.email || null });
+      } else if (entity.companies_house_number) {
+        let office: RegisteredOffice | null = null;
+        try {
+          const { chFetch } = await import("./companies-house");
+          office = (await chFetch(`/company/${encodeURIComponent(String(entity.companies_house_number))}`, { timeoutMs: 15_000 }))?.registered_office_address || null;
+        } catch { office = null; }
+        body = xeroContactFor({ name, number: String(entity.companies_house_number), office });
+      }
+      const got = await xeroContactByName(name, body);
+      if (got.contact) {
+        await pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`,
+          [entity.id, String(got.contact.ContactID), String(got.contact.Name || name)]);
+      }
+      res.status(got.contact ? (got.created ? 201 : 200) : 502).json({ contact: got.contact, xeroCreated: got.created, xeroError: got.error });
+    } catch (err: any) {
+      console.error("[billing-entity] Xero link failed:", err?.message || err);
+      res.status(500).json({ message: "It could not be linked to Xero. Try again in a moment." });
+    }
+  });
+
   app.post("/api/billing-entities", signedIn, async (req: Request, res: Response) => {
     try {
       // Xero and the CRM's companies are BGP's: a client login, or BGP staff

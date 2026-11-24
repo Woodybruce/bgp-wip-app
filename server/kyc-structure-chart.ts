@@ -145,14 +145,16 @@ export interface PartyChart {
 const reading = new Set<string>();
 
 /** The structure charts for a party on a deal: the client's, and any BGP added. Starts reading the unread ones. */
-export async function partyCharts(party: { dealId: string; brandId: string; entityId: string | null }, records: AbroadRecord[], db: Db = pool): Promise<PartyChart[]> {
+// dealId null: a client file's charts (its requests have no transaction; 24 November 2026).
+export async function partyCharts(party: { dealId: string | null; brandId: string; entityId: string | null }, records: AbroadRecord[], db: Db = pool): Promise<PartyChart[]> {
   const client = (await db.query(
     `SELECT f.token, f.kyc_document_id, f.file_name, f.uploaded_at, u.request->>'ref' AS ref, u.request->'structureCharts'->f.kyc_document_id AS reading, d.file_url
        FROM kyc_upload_files f
        JOIN kyc_upload_tokens u ON u.token = f.token
        LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id AND d.deleted_at IS NULL
-      WHERE u.deal_id = $1 AND u.company_id = $2 AND u.is_test IS NOT TRUE AND f.doc_type = 'ownership' AND f.kyc_document_id IS NOT NULL
-      ORDER BY f.uploaded_at`, [party.dealId, party.brandId]).catch(() => ({ rows: [] as any[] }))).rows;
+      WHERE u.deal_id IS NOT DISTINCT FROM $1::varchar AND u.company_id = $2 AND u.is_test IS NOT TRUE AND f.doc_type = 'ownership' AND f.kyc_document_id IS NOT NULL
+        AND ($1::varchar IS NOT NULL OR u.trading_entity_id IS NOT DISTINCT FROM $3::varchar)
+      ORDER BY f.uploaded_at`, [party.dealId, party.brandId, party.entityId]).catch(() => ({ rows: [] as any[] }))).rows;
   const ours = records.filter(r => r.kind === "chart" && r.documentId);
   const oursRows = ours.length ? (await db.query(
     `SELECT r.id, r.reading, d.file_url, d.file_name FROM kyc_abroad_records r LEFT JOIN kyc_documents d ON d.id::text = r.document_id AND d.deleted_at IS NULL

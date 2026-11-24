@@ -8,7 +8,8 @@ const read = f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
 test("every route about a company abroad is BGP staff's, signed in as themselves", () => {
   const s = read("server/kyc-abroad.ts");
-  const routes = s.match(/router\.(get|post)\("[^"]+"/g) || [];
+  // A route can carry two addresses: the transaction's and a client file's (24 November 2026).
+  const routes = s.match(/router\.(get|post)\((?:\[[^\]]+\]|"[^"]+")/g) || [];
   assert.equal(routes.length, 6);
   for (const r of routes) assert.match(s, new RegExp(`${r.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}, staffFirst`), `${r} must start with staffFirst`);
   assert.match(s, /contactViewer\(req\)/);

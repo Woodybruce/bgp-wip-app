@@ -723,7 +723,7 @@ export async function chaseJointRequest(db: Db, row: TokenRow, by: { name: strin
     `UPDATE kyc_upload_tokens SET request = request || jsonb_build_object('sentAt', $2::text, 'sentFrom', $3::text, 'sendError', NULL)
       WHERE token = $1 AND request->>'sentAt' IS NULL`, [row.token, now.toISOString(), sent.from]);
   const what = `${by.auto ? "The app" : by.name} asked ${request.jointAgent?.firm || "the joint agent"} for what is missing on ${request.partyName} (ref ${request.ref}): ${missing.join("; ")}`;
-  await audit(db, row.company_id || "", "joint_agent_chased", by.name, what, row.deal_id, { id: by.userId || null, name: by.name },
+  await audit(db, row.company_id || "", "joint_agent_chased", by.name, what, String(row.deal_id), { id: by.userId || null, name: by.name },
     `${isDealPartyRole(request.role) ? DEAL_PARTY_LABEL[request.role] : "Party"}: ${what}`);
   return { ok: true, error: null, missing };
 }
@@ -733,7 +733,7 @@ async function partySettled(db: Db, row: TokenRow): Promise<boolean> {
   const role = row.request?.role || "";
   if (!row.company_id || !isDealPartyRole(role)) return false;
   const { loadNotRequired } = await import("./aml-policy");
-  const mark = (await loadNotRequired(db as any, [row.deal_id]).catch(() => new Map())).get(`${row.deal_id}:${role}`) as { companyId?: string } | undefined;
+  const mark = (await loadNotRequired(db as any, [String(row.deal_id)]).catch(() => new Map())).get(`${String(row.deal_id)}:${role}`) as { companyId?: string } | undefined;
   if (mark && mark.companyId === row.company_id) return true;
   if ((await db.query(`SELECT 1 FROM kyc_reliance WHERE deal_id = $1 AND company_id = $2 AND withdrawn_at IS NULL LIMIT 1`, [row.deal_id, row.company_id])).rows.length) return true;
   const { loadPartyKyc } = await import("./deal-gates");
@@ -783,13 +783,13 @@ export async function chaseJointAgents(now = new Date(), db: Db = pool): Promise
           to: kycReplyAddresses(row, request.cc),
           build: sentFrom => jointAgentChaseStoppedEmail({
             firm: request.jointAgent?.firm || "The joint agent", partyName: request.partyName, dealName: request.dealName, ref: request.ref,
-            dealLink: `${(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "")}/deals/${encodeURIComponent(row.deal_id)}`,
+            dealLink: `${(process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "")}/deals/${encodeURIComponent(String(row.deal_id))}`,
             missing: gapsFor(row, files, coverage, false), chases: JOINT_CHASE_MAX, letting: isLettingRule(request.jointAgent?.rule), sentFrom,
           }),
         });
         if (!sent.ok) console.warn(`[joint-agent] the stop note for ${request.ref} was not sent: ${sent.error}`);
         await audit(db, row.company_id || "", "joint_agent_chase_stopped", "the app",
-          `Stopped chasing ${request.jointAgent?.firm || "the joint agent"} on ${request.partyName} after ${JOINT_CHASE_MAX} reminders (ref ${request.ref})`, row.deal_id, { id: null, name: "the app" },
+          `Stopped chasing ${request.jointAgent?.firm || "the joint agent"} on ${request.partyName} after ${JOINT_CHASE_MAX} reminders (ref ${request.ref})`, String(row.deal_id), { id: null, name: "the app" },
           `Stopped chasing ${request.jointAgent?.firm || "the joint agent"} on ${request.partyName} after ${JOINT_CHASE_MAX} reminders (ref ${request.ref})`);
         out.stopped++;
       }

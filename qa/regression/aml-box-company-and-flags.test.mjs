@@ -94,7 +94,8 @@ test('a flag is set aside only by the MLRO, with a comment, on the flag the app 
 test('a flag set aside counts nowhere: the deal card, KYC4U, the sign-off, the dashboard', () => {
   const flags = read('server/kyc-red-flags.ts');
   assert.match(flags, /const split = applyFlagReviews\(all, reviewsForParty\(reviews, id, signs\[id\] \|\| null\)\);\s*parties\[id\] = split\.live;/);
-  assert.match(flags, /const dealSplit = applyFlagReviews\(dealRedFlags\(deal\), reviewsForDeal\(reviews, dealId\)\);/);
+  // A client file has no transaction, so no transaction's flags (24 November 2026).
+  assert.match(flags, /const dealSplit = applyFlagReviews\(dealRedFlags\(deal\), dealId \? reviewsForDeal\(reviews, dealId\) : \[\]\);/);
   const board = read('server/aml-dashboard.ts');
   // The flags that count also decide the party's level (BGP's AML policy, 19 November 2026).
   assert.match(board, /reviewsForParty\(reviews, p\.brandId, p\.entityId\)\)\.live;/);

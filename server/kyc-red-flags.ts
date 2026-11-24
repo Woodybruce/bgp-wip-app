@@ -86,7 +86,10 @@ export async function loadRecordHistory(db: Db, brandIds: string[]): Promise<Rec
 // A company party with none has no checks before asking to read: they are
 // about the company that signs (Woody, 19 November 2026), so a brand-level
 // check's findings are not its red flags.
-export async function loadDealRedFlags(dealId: string, companyIds: string[], signs: Record<string, string> = {}): Promise<DealRedFlags> {
+// dealId null: a client file, BGP's client checked with no transaction (Woody,
+// 24 November 2026): its own client checks (no transaction) are read, and
+// there is no transaction record, payer or guarantor.
+export async function loadDealRedFlags(dealId: string | null, companyIds: string[], signs: Record<string, string> = {}): Promise<DealRedFlags> {
   const ids = [...new Set(companyIds.filter(Boolean))];
   const unchecked: string[] = [];
   async function read<T>(what: string, query: () => Promise<T>, empty: T): Promise<T> {
@@ -101,7 +104,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
   const none: any[] = [];
   const companies = ids.length ? await read("KYC records", async () => (await pool.query(
     `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [ids])).rows, none) : none;
-  const reviews = await read("flags set aside", () => loadFlagReviews(pool, ids, [dealId]), [] as FlagReviewRow[]);
+  const reviews = await read("flags set aside", () => loadFlagReviews(pool, ids, dealId ? [dealId] : []), [] as FlagReviewRow[]);
   const history = ids.length ? await read("the KYC records' history", () => loadRecordHistory(pool, ids), {} as Record<string, NonNullable<PartyRedFlagFacts["recordHistory"]>>) : {};
   // The latest record that screened anyone: a Companies House lookup that
   // screened nothing (the nightly refresh) never reads as "no match".
@@ -117,14 +120,14 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
     .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none) : none;
   const requests = ids.length ? await read("client checks", async () => (await pool.query(
     `SELECT company_id, request FROM kyc_upload_tokens
-      WHERE deal_id = $1 AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
+      WHERE deal_id IS NOT DISTINCT FROM $1::varchar AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
         AND COALESCE(request->>'audience', 'client') <> 'joint_agent'
       ORDER BY created_at DESC`, [dealId, ids])).rows, none) : none;
   const idChecks = ids.length ? await read("identity checks", async () => (await pool.query(
     `SELECT company_id, status, decision_reason, received_at, first_name, last_name FROM veriff_sessions
       WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
       ORDER BY received_at DESC NULLS LAST`, [ids])).rows, none) : none;
-  const deal = await read("the transaction's AML fields", async () => (await pool.query(
+  const deal = !dealId ? null : await read("the transaction's AML fields", async () => (await pool.query(
     `SELECT d.aml_pep_status, d.aml_risk_level, d.aml_edd_required, d.aml_edd_reason, d.aml_edd_completed_at, d.aml_sof_analysis,
             d.deal_type, d.team, d.pricing, p.postcode,
             d.bgp_acting_for, d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
@@ -132,7 +135,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
        LEFT JOIN crm_trading_entities e ON e.id = d.invoice_payer_entity_id
       WHERE d.id = $1`, [dealId])).rows[0] || null, null as any);
-  const dealSplit = applyFlagReviews(dealRedFlags(deal), reviewsForDeal(reviews, dealId));
+  const dealSplit = applyFlagReviews(dealRedFlags(deal), dealId ? reviewsForDeal(reviews, dealId) : []);
   const superPrime = deal ? superPrimeWeigh({ dealType: deal.deal_type, team: deal.team, pricing: deal.pricing, postcode: deal.postcode }) : null;
   // A third party paying BGP's invoice for the client (20 November 2026): its
   // own flags join the client's, read from BGP's checks before asking on it.
@@ -144,7 +147,7 @@ export async function loadDealRedFlags(dealId: string, companyIds: string[], sig
 
   // The guarantors of a tenant or a buyer (23 November 2026): their own flags
   // join the party's, read from BGP's checks before asking on each.
-  const guarantors = ids.length
+  const guarantors = ids.length && dealId
     ? await read("the guarantors", async () => (await import("./deal-guarantors")).guarantorRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
     : [];
 
@@ -202,8 +205,10 @@ export class FlagReviewRefusal extends Error {
  * aside, with the words the app wrote, never the request's.
  */
 export async function setFlagAside(input: {
-  dealId: string; brandId: string | null; entityId: string | null; key: string; comment: string; me: { id: string; name: string };
+  // null: a client file (no transaction), always about a party.
+  dealId: string | null; brandId: string | null; entityId: string | null; key: string; comment: string; me: { id: string; name: string };
 }): Promise<{ review: KycFlagReview; flag: KycRedFlag }> {
+  if (!input.dealId && !input.brandId) throw new FlagReviewRefusal("Which company?", 400);
   const flags = await loadDealRedFlags(input.dealId, input.brandId ? [input.brandId] : [], input.brandId && input.entityId ? { [input.brandId]: input.entityId } : {});
   if (flags.unchecked.length) throw new FlagReviewRefusal(`Not set aside: the app could not read ${flags.unchecked.join(", ")}. Try again in a moment.`);
   const live = input.brandId ? flags.parties[input.brandId] || [] : flags.deal;
@@ -227,8 +232,8 @@ export async function setFlagAside(input: {
   };
 }
 
-/** Puts a set-aside flag back: it counts again. The decision stays on the record. Only one about the deal's own parties or record. */
-export async function putFlagBack(input: { dealId: string; partyIds: string[]; reviewId: number; me: { id: string; name: string } }): Promise<{ label: string; companyId: string | null }> {
+/** Puts a set-aside flag back: it counts again. The decision stays on the record. Only one about the deal's own parties or record (dealId null: a client file's company). */
+export async function putFlagBack(input: { dealId: string | null; partyIds: string[]; reviewId: number; me: { id: string; name: string } }): Promise<{ label: string; companyId: string | null }> {
   const row = (await pool.query(
     `UPDATE kyc_flag_reviews SET restored_at = now(), restored_by = $2, restored_by_name = $3
       WHERE id = $1 AND restored_at IS NULL AND (company_id = ANY($4::varchar[]) OR (company_id IS NULL AND deal_id = $5))

@@ -40,14 +40,15 @@ test("translation is Anthropic, called directly, under a daily allowance, for BG
   assert.match(s, /process\.env\.KYC_TRANSLATION_DAILY_CAP/);
   assert.doesNotMatch(s, /callClaude\(/);
   assert.match(s, /export const TRANSLATION_NOTE = "[^"]*Not a certified translation[^"]*regulation 66/);
-  const routes = [...s.matchAll(/kycTranslationRouter\.(get|post)\("([^"]+)"/g)].map(m => `${m[1]} ${m[2]}`);
+  // Each route's first address (the transaction's); a client file's sits beside it (24 November 2026).
+  const routes = [...s.matchAll(/kycTranslationRouter\.(get|post)\(\[?"([^"]+)"/g)].map(m => `${m[1]} ${m[2]}`);
   assert.deepEqual(routes.sort(), [
     "get /api/deals/:id/parties/:role/documents/:docId/translation",
     "post /api/deals/:id/parties/:role/documents/:docId/translate",
   ]);
   assert.match(s, /if \(!\(await contactViewer\(req\)\)\.staff\) return null;/);
-  assert.match(s, /translation", async \(req: Request, res: Response\) => \{\s*try \{\s*if \(!\(await staff\(req\)\)\) return res\.status\(403\)/);
-  assert.match(s, /translate", async \(req: Request, res: Response\) => \{\s*try \{\s*const me = await staff\(req\);/);
+  assert.match(s, /translation"\]?, async \(req: Request, res: Response\) => \{\s*try \{\s*if \(!\(await staff\(req\)\)\) return res\.status\(403\)/);
+  assert.match(s, /translate"\]?, async \(req: Request, res: Response\) => \{\s*try \{\s*const me = await staff\(req\);/);
   const index = read("server/index.ts");
   assert.match(index, /app\.use\(kycTranslationRouter\);/);
   assert.match(index, /CREATE TABLE IF NOT EXISTS kyc_document_translations \(/);

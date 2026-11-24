@@ -6,6 +6,7 @@
 // status: their own switch since 18 November 2026, not in-app AML's);
 // otherwise KYC4U does the checks.
 import { useMemo, useState } from "react";
+import { useAmlUrls } from "@/lib/aml-scope";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, Clock, Copy, Eye, Globe, Link2, Loader2, Mail, MessageCircle, Send, ShieldCheck, Trash2, AlertCircle, FileCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -74,11 +75,12 @@ const shortDate = (iso: string | null) => iso ? new Date(iso).toLocaleDateString
 const keyFor = (dealId: string) => ["/api/aml/deal", dealId, "client-checks"];
 
 export function useClientChecks(dealId: string | null | undefined, enabled = true) {
+  const urls = useAmlUrls();
   return useQuery<ClientChecks>({
     enabled: !!dealId && enabled,
     queryKey: keyFor(String(dealId)),
     queryFn: async () => {
-      const res = await fetch(`/api/aml/deal/${dealId}/client-checks`, { credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(urls.clientChecks(String(dealId)), { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(plain(await res.text()));
       return res.json();
     },
@@ -459,6 +461,7 @@ const refreshPeople = (dealId: string) => {
 // public figure and gives the pages (copied to PDF on the KYC record) or
 // files; it counts for their identity check and proof of address.
 function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string; role: string; person: KycPartyPerson; onClose: () => void }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const [note, setNote] = useState("");
   const [links, setLinks] = useState("");
@@ -471,7 +474,7 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
     : !linkList.length && !files.length ? "Give the pages or files that show who they are."
     : null;
   const search = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/public-figure/search`, { key: person.key })).json() as Promise<{
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/public-figure/search`, { key: person.key })).json() as Promise<{
       result: PublicRecordsResult; suggestion: PublicRecordsSuggestion; note: string; links: string[];
     }>,
     // Filled in only when the sources are enough: a search that says to ask
@@ -491,7 +494,7 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
       fd.append("note", note.trim());
       fd.append("links", linkList.join("\n"));
       for (const f of files) fd.append("files", f);
-      const res = await fetch(`/api/deals/${dealId}/parties/${role}/public-figure`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`${urls.party(dealId, role)}/public-figure`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
       return body;
@@ -568,6 +571,7 @@ function PublicFigureDialog({ dealId, role, person, onClose }: { dealId: string;
 function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
   dealId: string; role: string; person: KycPartyPerson; held: Array<{ name: string; url: string | null; documentId?: string | null }>; onClose: () => void;
 }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const [note, setNote] = useState("");
   const [ticked, setTicked] = useState<string[]>([]);
@@ -582,7 +586,7 @@ function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
       fd.append("note", note.trim());
       fd.append("documentIds", ticked.join(","));
       for (const f of files) fd.append("files", f);
-      const res = await fetch(`/api/deals/${dealId}/parties/${role}/certified-documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`${urls.party(dealId, role)}/certified-documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "It could not be recorded.");
       return body;
@@ -636,10 +640,11 @@ function CertifiedDocsDialog({ dealId, role, person, held, onClose }: {
 }
 
 function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string; role: string; person: KycPartyPerson; canDecide: boolean }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const pf = person.publicFigure!;
   const withdraw = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/${pf.method === "certified" ? "certified-documents" : "public-figure"}/${pf.id}/withdraw`, {})).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/${pf.method === "certified" ? "certified-documents" : "public-figure"}/${pf.id}/withdraw`, {})).json(),
     onSuccess: () => { refreshPeople(dealId); toast({ title: "Withdrawn", description: `${person.name} needs their identity check and proof of address again.` }); },
     onError: (e: any) => toast({ title: "Not withdrawn", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -660,11 +665,12 @@ function PublicFigureLine({ dealId, role, person, canDecide }: { dealId: string;
 // (Jack, 20 November 2026: "Jonny" on the deal, "Jonathan" on the passport).
 // What they sent is read against the new name at once; nothing is resent.
 function RenamePerson({ dealId, token, current, suggested, onDone }: { dealId: string; token: string; current: string; suggested: string | null; onDone: () => void }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const titleCase = (s: string) => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
   const [name, setName] = useState(suggested ? titleCase(suggested) : current);
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people/rename`, { token, name: name.trim() })).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.clientChecks(dealId)}/people/rename`, { token, name: name.trim() })).json(),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: keyFor(dealId) }); toast({ title: `Name changed to ${name.trim()}` }); onDone(); },
     onError: (e: any) => toast({ title: "Not changed", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
   });
@@ -689,6 +695,7 @@ function RenamePerson({ dealId, token, current, suggested, onDone }: { dealId: s
 // months, a kind the policy accepts) or the Nominated Officer or a Deputy
 // accepts it with a note.
 function AddressProofLine({ dealId, person, canDecide }: { dealId: string; person: KycPartyPerson; canDecide: boolean }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const [accepting, setAccepting] = useState(false);
   const [note, setNote] = useState("");
@@ -696,12 +703,12 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
   const testKey = person.key.replace(/\s+/g, "-");
   const refresh = () => queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
   const reread = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/address-proof/read`, { token: proof?.token, documentId: proof?.documentId })).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.clientChecks(dealId)}/address-proof/read`, { token: proof?.token, documentId: proof?.documentId })).json(),
     onSuccess: () => { refresh(); toast({ title: "Read again" }); },
     onError: (e) => toast({ title: "Not read", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
   });
   const accept = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/address-proof/accept`, { token: proof?.token, documentId: proof?.documentId, note: note.trim() })).json(),
+    mutationFn: async () => (await apiRequest("POST", `${urls.clientChecks(dealId)}/address-proof/accept`, { token: proof?.token, documentId: proof?.documentId, note: note.trim() })).json(),
     onSuccess: () => { refresh(); setAccepting(false); setNote(""); toast({ title: "Proof of address accepted" }); },
     onError: (e) => toast({ title: "Not accepted", description: plain(String((e as any)?.message || e)), variant: "destructive" }),
   });
@@ -779,6 +786,7 @@ export function AddPersonButton({ dealId, data, party, className }: { dealId: st
 }
 
 function AddPersonDialog({ dealId, data, party, onClose }: { dealId: string; data: ClientChecks; party: Party; onClose: () => void }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -787,7 +795,7 @@ function AddPersonDialog({ dealId, data, party, onClose }: { dealId: string; dat
   const [done, setDone] = useState<null | { link: string; emailed: boolean; error: string | null; person: string }>(null);
   const make = useMutation({
     mutationFn: async (send: boolean) => {
-      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people`, {
+      const res = await apiRequest("POST", `${urls.clientChecks(dealId)}/people`, {
         companyId: party.companyId, key: "new", name: name.trim(), email: send ? email.trim() : null, mobile: mobile.trim() || null, send, note: note.trim() || null,
       });
       return res.json();
@@ -840,6 +848,7 @@ function AddPersonDialog({ dealId, data, party, onClose }: { dealId: string; dat
 
 // A person's own link: emailed to them, or given to copy and pass on.
 function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: string; data: ClientChecks; party: Party; person: KycPartyPerson; onClose: () => void }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const known = party.contacts.find(c => c.email && c.name.trim().toLowerCase().split(/\s+/).every(w => person.name.toLowerCase().includes(w))) || null;
   const [email, setEmail] = useState(known?.email || "");
@@ -861,7 +870,7 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
   }, [preview, person, party, data, asks.needsIdCheck, asks.docs, note]);
   const make = useMutation({
     mutationFn: async (send: boolean) => {
-      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks/people`, {
+      const res = await apiRequest("POST", `${urls.clientChecks(dealId)}/people`, {
         companyId: party.companyId, key: person.key, email: send ? email.trim() : null, mobile: mobile.trim() || null, send, note: note.trim() || null,
       });
       return res.json();
@@ -964,6 +973,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaAgent, onClose }: {
   dealId: string; companyId: string; partyName: string; agent: ClientChecksAgent | null; startViaAgent: boolean; onClose: () => void;
 }) {
+  const urls = useAmlUrls();
   const { toast } = useToast();
   const { data, isLoading, error } = useClientChecks(dealId);
   const party = data?.parties.find(p => p.companyId === companyId) || null;
@@ -1043,7 +1053,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
 
   const send = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/aml/deal/${dealId}/client-checks`, via ? {
+      const res = await apiRequest("POST", urls.clientChecks(dealId), via ? {
         companyId, contactId: null, name: toName, email: "", mobile: null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null,
         viaAgent: {
           firm: agentFirm.trim(), firmCompanyId: agent?.companyId && agentFirm.trim() === agent.firm ? agent.companyId : null,

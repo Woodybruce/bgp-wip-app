@@ -106,7 +106,8 @@ test("replies are filed only from the address the request went to, with its refe
   // Woody, 19 and 20 November 2026: only a live deal is chased, never one
   // deleted, withdrawn, completed, invoiced or archived.
   // The joint agent's requests are chased by their own rule (22 November 2026).
-  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1 AND \$\{NOT_JOINT_SQL\(\)\}\s*AND EXISTS \(SELECT 1 FROM crm_deals d WHERE d\.id = kyc_upload_tokens\.deal_id\s*AND NOT \(lower\(btrim\(coalesce\(d\.status, ''\)\)\) = ANY\(\$2::text\[\]\)\)\)`,\s*\[REMINDER_DAYS\.length, statusSpellingsFor\(CLOSED_STATUSES\)\]/, "reminders only for a live deal");
+  // A client file has no transaction (24 November 2026): it is chased as a live one is.
+  assert.match(portal, /AND expires_at > now\(\) AND COALESCE\(reminders_sent, 0\) < \$1 AND \$\{NOT_JOINT_SQL\(\)\}\s*AND \(kyc_upload_tokens\.deal_id IS NULL\s*OR EXISTS \(SELECT 1 FROM crm_deals d WHERE d\.id = kyc_upload_tokens\.deal_id\s*AND NOT \(lower\(btrim\(coalesce\(d\.status, ''\)\)\) = ANY\(\$2::text\[\]\)\)\)\)`,\s*\[REMINDER_DAYS\.length, statusSpellingsFor\(CLOSED_STATUSES\)\]/, "reminders only for a live deal");
   assert.match(index, /if \(!clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\)\) return;\s*import\("\.\/aml-portal"\)\.then\(m => m\.pollKycMailbox\(\)\)/, "the reply reader follows the client checks' own switch");
 });
 
@@ -172,7 +173,7 @@ test("the client checks run on their own switch, not the old in-app AML one (Woo
   assert.match(portal, /export const clientChecksOn = \(\) => clientChecksSwitchOn\(process\.env\.KYC_CLIENT_CHECKS\);/);
   assert.doesNotMatch(portal, /inAppAmlOn|IN_APP_AML_ENABLED/, "nothing in the client checks waits on the old switch");
   // Sending and reminding stop when the switch is off; reading what was sent does not.
-  for (const route of ['"/api/aml/deal/:id/client-checks", signedIn, async (req: Request, res: Response) => {\n  try {\n    const me', '"/api/aml/client-checks/:token/remind"']) {
+  for (const route of ['"/api/aml/deal/:id/client-checks", "/api/client-kyc/:companyId/subjects/:entity/client-checks"], signedIn, async (req: Request, res: Response) => {\n  try {\n    const me', '"/api/aml/client-checks/:token/remind"']) {
     const at = portal.indexOf(route);
     assert.ok(at > 0, route);
     assert.match(portal.slice(at, at + 400), /if \(!clientChecksOn\(\)\) return res\.status\(410\)/, route);

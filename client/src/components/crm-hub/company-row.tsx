@@ -29,6 +29,13 @@ const ukDay = (value: string, now = new Date()) => {
 };
 const fullDay = (value: string) => new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
 
+const KYC_TONE: Record<NonNullable<CrmHubRow["kyc"]>["tone"], string> = {
+  ok: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300",
+  warn: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300",
+  bad: "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300",
+  none: "border-border bg-muted text-muted-foreground",
+};
+
 // ── The cells ───────────────────────────────────────────────────────────────
 
 /** Logo or initials, the name, the crown for a company BGP acts for, the star for a Super Brand, then what it is and the list's own fact line. */
@@ -42,6 +49,8 @@ export function CompanyCell({ row, size, roomy = false }: { row: CrmHubRow; size
           <span className="text-sm font-semibold truncate" title={row.name}>{row.name}</span>
           {row.isClient && <span title="BGP client" className="shrink-0 inline-flex"><Crown className="w-3.5 h-3.5 text-amber-500" aria-label="BGP client" /></span>}
           {row.superBrand && <span title="Super Brand: one of BGP's chosen expansion targets, VIP in the CRM" className="shrink-0 inline-flex" data-testid={`crm-hub-super-${row.id}`}><Star className="w-3.5 h-3.5 fill-amber-400 text-amber-500" aria-label="Super Brand" /></span>}
+          {/* The KYC on the companies filed under it (24 November 2026). */}
+          {row.kyc && <span title={row.kyc.title} className={cn("shrink-0 rounded-full border px-1.5 py-px text-[10px] font-medium leading-4", KYC_TONE[row.kyc.tone])} data-testid={`crm-hub-kyc-${row.id}`}>{row.kyc.label}</span>}
         </div>
         <p className="text-[11px] text-muted-foreground truncate">{meta}</p>
         {row.line && <p className="text-xs text-foreground/80 truncate" data-testid={`crm-hub-line-${row.id}`}>{row.line}</p>}

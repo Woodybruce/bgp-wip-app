@@ -34,7 +34,8 @@ test('combined landlord card preserves the covenant run action and invalidates t
   assert.equal(all.filter(node => node.type === 'Card').length, 1);
   assert.equal(all.find(node => node.type === 'BrandComplianceCard').props.landlord, true);
   assert.equal(all.find(node => node.type === 'BrandComplianceCard').props.embedded, true);
-  assert.equal(all.find(node => node.type === 'AccountEntitiesPanel').props.primaryCompanyNumber, '12345678');
+  // The landlord's companies and their KYC are their own card on People & checks, not behind Show more (24 November 2026).
+  assert.equal(all.some(node => node.type === 'AccountEntitiesPanel'), false);
   const billing = all.find(node => node.type === 'CompanyInvoicingControls');
   assert.equal(billing.props.mode, 'billing');
   assert.equal(billing.props.landlord, true);
@@ -62,11 +63,17 @@ test('brand card keeps the covenant summary and compliance checks but drops the 
   assert.equal(all.some(node => node.props.href === '/kyc-clouseau'), false);
 });
 
-test('landlord card ends with KYC4U past checks, after the group entities and billing', () => {
+test('landlord card ends with KYC4U past checks, after billing', () => {
   const render = component(panel, 'LandlordCompanyChecksCard', { useCovenantReport: () => ({ data: null }), useMutation: () => ({}) });
   const all = nodes(render({ companyId: 'landlord', company: { companies_house_number: '12345678' }, isClientViewer: false, landlord: true }));
   const order = all.filter(node => ['AccountEntitiesPanel', 'CompanyInvoicingControls', 'Kyc4uStatusStrip'].includes(node.type)).map(node => node.type);
-  assert.deepEqual(order, ['AccountEntitiesPanel', 'CompanyInvoicingControls', 'Kyc4uStatusStrip']);
+  assert.deepEqual(order, ['CompanyInvoicingControls', 'Kyc4uStatusStrip']);
+});
+
+test('the landlord page shows its companies and their KYC as their own card on People & checks, for BGP staff', () => {
+  const s = source(panel);
+  const people = s.slice(s.indexOf('data-testid="landlord-contacts-checks"'));
+  assert.match(people.slice(0, 1600), /\{!isClientViewer && <AccountEntitiesPanel companyId=\{companyId\} \/>\}/);
 });
 
 test('client view does not gain group-entity data or staff check actions', () => {
@@ -99,7 +106,7 @@ test('landlord checks lead with the scoped summary and keep all existing control
   assert.equal(details.props.open, undefined, 'native details must start collapsed');
   assert.ok(all.indexOf(summary) < all.indexOf(details));
   assert.equal(nodes(details).some(node => node.type === 'LandlordCovenantSummary'), false);
-  for (const name of ['BrandComplianceCard', 'AccountEntitiesPanel', 'CompanyInvoicingControls']) {
+  for (const name of ['BrandComplianceCard', 'CompanyInvoicingControls']) {
     assert.equal(nodes(details).filter(node => node.type === name).length, 1, `${name} remains available once opened`);
   }
   assert.equal(nodes(details).find(node => node.type === 'summary').props.children, 'Show more');
@@ -162,33 +169,32 @@ test('a brand page card rests on its summary and the checks run, with the toggle
   assert.equal(none.some(node => node.type === 'BrandComplianceCard'), false);
 });
 
-test('embedded entities avoid repeating the account identity while keeping review, child identities and per-entity actions', () => {
+test('the companies card lists the account and each company under it with its number, its review and per-company actions', () => {
   const self = { entityKind: 'company', entityId: 'landlord', name: 'Example Estates Ltd', companiesHouseNumber: '12345678', relation: 'self', representationConflicts: [], kyc: null };
   const child = { ...self, entityId: 'child', name: 'Example Property SPV Ltd', companiesHouseNumber: '87654321', relation: 'subsidiary' };
   const data = { accountName: self.name, entities: [self, child], summary: { total: 2, current: 0, unchecked: 2 } };
   let review;
   const render = component(entities, 'AccountEntitiesPanel', {
-    Card: 'Card',
     useQuery: options => ({ data: options.queryKey[0] === '/api/aml/me' ? { isMlro: true } : data }),
     useMutation: () => ({}), useState: initial => [initial, value => { review = value; }],
+    useRef: initial => ({ current: initial }), useEffect: () => {}, looksLikeSiteMenu: () => false,
     bucketOf: () => 'unchecked', BUCKET_ORDER: ['unchecked'], TONE: { unchecked: '', expired: '' }, tone: value => value,
     chip: 'chip', RELATION_LABEL: { self: 'Account', subsidiary: 'Subsidiary' },
   });
-  const combined = render({ companyId: 'landlord', embedded: true, primaryCompanyNumber: '12345678' });
-  assert.equal(combined.type, 'section');
-  // The account's own company by its name, marked "this account" (it read "Review account entity", 23 November 2026).
-  assert.doesNotMatch(text(combined), /Review account entity/);
-  assert.match(text(combined), /Example Estates Ltd.*this account/s);
-  assert.doesNotMatch(text(combined), /12345678/);
-  assert.match(text(combined), /Example Property SPV Ltd.*87654321/s);
-  const reviewButton = nodes(combined).find(node => node.props['data-testid'] === 'entity-open-landlord');
+  const card = render({ companyId: 'landlord' });
+  assert.equal(card.type, 'Card');
+  assert.match(text(card), /Companies and KYC/);
+  // The account's own company by its name and number (it read "Review account entity" until 23 November 2026).
+  assert.doesNotMatch(text(card), /Review account entity/);
+  assert.match(text(card), /Example Estates Ltd.*12345678.*Account/s);
+  assert.match(text(card), /Example Property SPV Ltd.*87654321.*Subsidiary/s);
+  const reviewButton = nodes(card).find(node => node.props['data-testid'] === 'entity-open-landlord');
   assert.equal(reviewButton.props['aria-label'], 'Review Example Estates Ltd');
   reviewButton.props.onClick();
   assert.equal(review.key, 'company-landlord');
-  assert.equal(nodes(combined).filter(node => node.props['data-testid']?.startsWith('entity-approve-')).length, 2);
-  assert.equal(nodes(combined).filter(node => node.props['data-testid']?.startsWith('entity-reject-')).length, 2);
-  const brand = render({ companyId: 'landlord' });
-  assert.equal(brand.type, 'Card');
-  assert.match(text(brand), /Example Estates Ltd.*12345678/s);
-  assert.doesNotMatch(text(brand), /Review account entity/);
+  assert.equal(nodes(card).filter(node => node.props['data-testid']?.startsWith('entity-approve-')).length, 2);
+  assert.equal(nodes(card).filter(node => node.props['data-testid']?.startsWith('entity-reject-')).length, 2);
+  // Adding a company to check is always offered; the account's own company can be filed under it to be checked.
+  assert.ok(nodes(card).some(node => node.props['data-testid'] === 'entities-add-company'));
+  assert.ok(nodes(card).some(node => node.props['data-testid'] === 'entity-add-self-landlord'));
 });

@@ -33,6 +33,12 @@ export interface CrmHubRow {
   why?: string[];
   /** A brand BGP has starred as a Super Brand (hunter_flag): VIP, listed first. */
   superBrand?: boolean;
+  /**
+   * The KYC on the companies filed under it (Woody, 24 November 2026: "show in
+   * the CRM boards"), from shared/client-kyc.ts: a few words, a tone and the
+   * counts behind them. Left out when nothing is filed or started.
+   */
+  kyc?: { label: string; tone: "ok" | "warn" | "bad" | "none"; title: string; total: number; cleared: number; toDo: number };
 }
 export interface CrmHubResponse { kind: CrmHubKind; rows: CrmHubRow[]; owners: Array<{ id: string; name: string }>; cities: string[]; subTypes: string[] }
 export const CRM_HUB_PEOPLE_SHOWN = 6;
@@ -209,20 +215,23 @@ export function rankPeople<T extends RankablePerson>(people: T[]): T[] {
 // ── The list's filters (the screen and its counts use the same tests) ───────
 
 export const CRM_HUB_QUIET_DAYS = 90;
-export type CrmHubFilter = "all" | "strategy" | "no-strategy" | "no-next" | "quiet";
+export type CrmHubFilter = "all" | "strategy" | "no-strategy" | "no-next" | "quiet" | "kyc";
 export const CRM_HUB_FILTERS: Array<{ key: CrmHubFilter; label: string }> = [
   { key: "all", label: "All" },
   { key: "strategy", label: "On a strategy" },
   { key: "no-strategy", label: "No strategy" },
   { key: "no-next", label: "No next step" },
   { key: "quiet", label: `No contact in ${CRM_HUB_QUIET_DAYS} days` },
+  // A company with a sub company not yet cleared (24 November 2026).
+  { key: "kyc", label: "KYC to do" },
 ];
 /** No contact in 90 days: never spoken to, or last spoken to over 90 days ago. A meeting booked ahead does not count as contact. */
 export function rowIsQuiet(row: Pick<CrmHubRow, "lastContactAt">, now: number = Date.now()): boolean {
   const read = readLastContact(row.lastContactAt, now);
   return read.kind !== "last" || read.days > CRM_HUB_QUIET_DAYS;
 }
-export function rowMatchesFilter(row: Pick<CrmHubRow, "strategies" | "nextAction" | "lastContactAt">, filter: CrmHubFilter, now: number = Date.now()): boolean {
+export function rowMatchesFilter(row: Pick<CrmHubRow, "strategies" | "nextAction" | "lastContactAt"> & { kyc?: CrmHubRow["kyc"] }, filter: CrmHubFilter, now: number = Date.now()): boolean {
+  if (filter === "kyc") return !!row.kyc && row.kyc.toDo > 0;
   if (filter === "strategy") return row.strategies.length > 0;
   if (filter === "no-strategy") return row.strategies.length === 0;
   if (filter === "no-next") return !row.nextAction;

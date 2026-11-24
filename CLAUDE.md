@@ -6019,10 +6019,12 @@ assset manager and TPG are the actual owners / freeholders".
   those two presses: changing live records directly from a build machine was
   refused.
 - **The card's order and headings.** On the landlord card, Show more is:
-  registered entity, company records, the review note, covenant, Group
-  entities, Billing, then KYC4U's past checks at the foot (the separate
-  link at its top is gone; `BrandComplianceCard` leaves the strip to the
-  landlord card). Billing takes the other sections' heading style.
+  registered entity, company records, the review note, covenant, Billing,
+  then KYC4U's past checks at the foot (the separate link at its top is
+  gone; `BrandComplianceCard` leaves the strip to the landlord card). Billing
+  takes the other sections' heading style. Group entities sat between the
+  covenant and Billing until 24 November 2026, when they became their own
+  Companies and KYC card under it (see "Client KYC with no transaction").
 - **Asset manager on a property.** The property's ownership pills had an
   Asset manager role (`crm_properties.asset_manager_id`) behind "+ Owner or
   lender"; the button now reads **Owner, lender or asset manager** while that
@@ -6034,6 +6036,89 @@ assset manager and TPG are the actual owners / freeholders".
   `landlord-company-checks.test.mjs`, `brand-compliance-ui.test.mjs`,
   `server/account-entities.test.ts`. Checked in a browser against a local copy
   shaped like TPG Angelo Gordon on 23 November 2026.
+
+## Client KYC with no transaction, and every company under a client (Woody, 2026-11-24)
+
+Woody asked whether a client can be KYC'd when no transaction exists (a leasing
+or sale instruction, advice on a purchase, a tenant BGP acts for to find
+sites), then: "Yes build it within companies and show in the CRM boards and we
+will want to be able to aml all the sub companies within each company, tenants
+have lots of spv when taking leases as example and some landlords have lots of
+spvs to own buildings so we need to be able to aml as many sub companies as we
+can and use those for xero invoicing too". Do not re-litigate. Rules:
+`shared/client-kyc.ts`; server: `server/client-kyc.ts`; box:
+`client/src/components/client-kyc/client-kyc-dialog.tsx`; addresses:
+`client/src/lib/aml-scope.tsx`. Tests: `server/client-kyc.test.ts` (in
+`npm test`), `qa/regression/client-kyc-guards.test.mjs`.
+
+- **A client file** is one subject: a company filed under an account
+  (`crm_trading_entities`, an SPV), or the account's own record when it is a
+  private individual, trust or UK public body (`recordIsOwnSubject`). An
+  ordinary company's checks are always about a company filed under it, as on a
+  transaction. Kept in `kyc_client_files` (boot migration: the company, the sub
+  company, what BGP is instructed on (`CLIENT_INSTRUCTIONS`: letting, sale,
+  purchase, tenant_rep, other), who to ask, who opened it, closed when signed
+  off). One open file per company and sub company.
+- **The same steps and code as a transaction party**, with no transaction
+  (`dealId` null, role "client", `AmlSubject` in `server/deal-party-aml.ts`):
+  BGP's checks before asking (`startPrecheck`), the client checks and people to
+  check (the requests in `kyc_upload_tokens` with `deal_id` NULL for that
+  company and sub company; `deal_id` and `kyc_upload_files.deal_id` became
+  nullable), upload documents, translation, owners abroad, verified from public
+  sources and certified documents, red flags and set-aside
+  (`loadDealRedFlags(null, ...)`), and the sign-off rules (`signOffFacts`,
+  `signOffDenial`). The routes are the transaction ones registered on a second
+  path, `/api/client-kyc/:companyId/subjects/:entity/...` (`:entity` a sub
+  company's id or `self`), outside the retired `/api/kyc/` and `/api/aml/`
+  prefixes; BGP staff signed in as themselves. In the emails and on the
+  client's page the work reads "our instruction from <account>"
+  (`clientFileName`), the agents copied are the account's BGP people
+  (`bgp_contact_user_ids`), the email's link opens the company page at People &
+  checks, and reminders chase it as they chase a live transaction.
+- **The sign-off** (`POST /api/client-kyc/:companyId/subjects/:entity/sign-off`):
+  the officers, or one of the account's own BGP people on a standard or
+  simplified file (as an agent on a transaction). It writes the approval every
+  transaction reads (`approveEntityKyc` for a sub company, `approveBrand` for
+  the record itself) for the policy's period (3 years, 1 if enhanced), always
+  as the full checks (`regime: "full"`), re-derives the transactions that carry
+  it, and closes the file. So a transaction with that company is cleared until
+  its re-check date.
+- **Many sub companies at once**: `POST /api/client-kyc/:companyId/checks
+  { entityIds }` queues BGP's checks on up to 60 (`CLIENT_KYC_BULK_MAX`), run
+  one at a time within the day's allowance (`KYC_PRECHECK_DAILY_CAP`); those
+  left when it is used say so and are run again by a person. The queue is in
+  memory (`GET .../checks` reads it): a restart loses the waiting ones.
+- **Xero**: `POST /api/billing-entities/:entityId/xero` (BGP staff) finds or
+  makes the sub company's Xero contact and keeps it on the company
+  (`xero_contact_id`), so a transaction it signs bills it (the existing
+  invoice rule).
+- **Screens**: the Group entities panel is now **Companies and KYC**
+  (`account-entities-panel.tsx`, BGP staff only), its own card: under the
+  contacts and company checks on a landlord's People & checks (it was behind
+  the company checks card's Show more; that embedded copy is gone), in the
+  people column on a brand's page, and on the phone under a landlord's
+  Compliance pill and a brand's company checks (`mobile-brand-view.tsx`).
+  A company filed under the account reads **Sub company** (a person: Person;
+  one registered abroad: Registered abroad). Each company's
+  client KYC in one line (`ClientKycLine`: checks run, client checks, what BGP
+  is instructed on, Xero), **KYC** opens the box, **Select** then **Run BGP's
+  checks** or **Link to Xero** on the ticked ones, **Add a company** (the billing
+  entity dialog, no Xero contact), and **Add to check** on the account's own
+  registered company when it is not yet filed as one. A brand with no company
+  filed shows one line with Add a company. The box
+  (`ClientKycDialog`) has the transaction box's four steps (the company,
+  screening, documents, sign-off) and a Next line (`clientKycNextStep`); the
+  client checks, people and documents are the transaction components, pointed
+  at the client file through `AmlUrlsProvider`.
+- **CRM boards**: each Landlords, Brands, Agents and Lenders row carries
+  `kyc` (`server/crm-hub.ts`, `clientKycSummary`, `clientKycWords`): a chip
+  (KYC cleared, KYC due soon, KYC 2 of 5, KYC in progress, KYC expired, KYC
+  rejected) drawn in the company cell, left out when no company is filed or
+  started; the **KYC to do** filter lists rows with a company not yet cleared.
+  A sanctions-only approval does not count as cleared for a client.
+- Not built: client files on the AML board (Transactions → AML lists
+  transactions only), the AML file for a client file, a check of the daily
+  allowance before queuing, and persisting the bulk queue.
 
 ## Ownership & KYC on the property page, and the full checks on a small letting (Woody, 2026-11-23)
 

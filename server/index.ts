@@ -3181,6 +3181,27 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       accepted_at timestamptz
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_document_readings_party_idx ON kyc_document_readings (company_id, trading_entity_id)`,
+    // Client KYC with no transaction (Woody, 24 November 2026: "build it within
+    // companies ... aml all the sub companies within each company"): a client
+    // file per company checked, and its client checks requests and their files
+    // carry no transaction (server/client-kyc.ts). Additive.
+    `CREATE TABLE IF NOT EXISTS kyc_client_files (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      instruction text,
+      contact_id varchar,
+      opened_by varchar,
+      opened_by_name text,
+      opened_at timestamp DEFAULT now(),
+      closed_at timestamp,
+      closed_by_name text,
+      outcome text
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS kyc_client_files_open_idx ON kyc_client_files (company_id, COALESCE(trading_entity_id, '')) WHERE closed_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS kyc_client_files_company_idx ON kyc_client_files (company_id)`,
+    `ALTER TABLE kyc_upload_tokens ALTER COLUMN deal_id DROP NOT NULL`,
+    `ALTER TABLE kyc_upload_files ALTER COLUMN deal_id DROP NOT NULL`,
     // Companies registered abroad, checked in the app (Woody, 23 November
     // 2026: "No external ... to all happen in the app including translation").
     // A company that signs registered abroad: its country, its number on its
@@ -4575,6 +4596,7 @@ import dealPartiesRouter from "./deal-parties";
 import dealHotsRouter from "./deal-hots";
 import dealPartyAmlRouter from "./deal-party-aml";
 import { kycDocumentsRouter } from "./kyc-documents";
+import { clientKycRouter } from "./client-kyc";
 import { kycTranslationRouter } from "./kyc-translation";
 import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
@@ -5964,6 +5986,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartyAmlRouter);
   app.use(kycDocumentsRouter);
   app.use(kycTranslationRouter);
+  // Client KYC with no transaction: a company and its sub companies (BGP staff only, 24 November 2026).
+  app.use(clientKycRouter);
   // Companies owned from abroad: what BGP records against them (21 November 2026).
   app.use(kycAbroadRouter);
   // BGP stops acting on a deal for AML reasons, and is released (21 November 2026).

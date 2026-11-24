@@ -117,7 +117,7 @@ test("certified copies are offered on every request and accepted only by the off
   assert.doesNotMatch(shared.match(/export const TRUST_REQUEST_DOCS[^\n]*/)[0], /certified_ids/);
   // Accepting is the officers' and takes only documents on that party's record.
   const route = read("server/deal-party-aml.ts");
-  assert.match(route, /router\.post\("\/api\/deals\/:id\/parties\/:role\/certified-documents", deciderFirst, takeFiles, \(req: Request, res: Response\) => recordPersonVerified\(req, res, true\)\);/);
+  assert.match(route, /router\.post\(\["\/api\/deals\/:id\/parties\/:role\/certified-documents", "[^"]+"\], deciderFirst, takeFiles, \(req: Request, res: Response\) => recordPersonVerified\(req, res, true\)\);/);
   // The method comes from the route, never the request: the admin-only public route cannot record a certified one.
   assert.doesNotMatch(route, /req\.body\?\.method/);
   assert.match(route, /FROM kyc_documents WHERE id::text = ANY\(\$1::text\[\]\) AND company_id = \$2/);

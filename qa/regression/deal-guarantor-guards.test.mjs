@@ -52,7 +52,8 @@ test('its flags join the party\'s on the transaction and the AML board; its peop
   assert.match(read('server/kyc-red-flags.ts'), /read\("the guarantors"/);
   assert.match(read('server/aml-dashboard.ts'), /withGuarantorFlags\(p, prechecks, withPayerFlags\(/);
   assert.match(read('server/kyc-people.ts'), /guarantorsForParty\(String\(party\.dealId\), party\.companyId\)/);
-  assert.match(read('server/deal-party-aml.ts'), /guarantorChecks: await import\("\.\/deal-guarantors"\)/);
+  // A client file has no transaction, so no guarantor (24 November 2026).
+  assert.match(read('server/deal-party-aml.ts'), /guarantorChecks: !party\.dealId \? \[\] : await import\("\.\/deal-guarantors"\)/);
   // A guarantor that could not be read holds the sign-off, never lets it through.
   assert.match(read('server/deal-party-aml.ts'), /\.catch\(\(\) => \[\{ name: "the guarantors \(could not be read\)", state: "not_run" as const \}\]\)/);
   assert.match(read('server/aml-file.ts'), /guarantors: pv\?\.guarantors \|\| \[\]/);

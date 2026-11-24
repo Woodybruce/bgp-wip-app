@@ -10,15 +10,16 @@ const read = f => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
 test("every route is BGP staff's, signed in as themselves; accepting is the officers'; the router is mounted", () => {
   const s = read("server/kyc-documents.ts");
-  const routes = [...s.matchAll(/kycDocumentsRouter\.(get|post)\("([^"]+)"/g)].map(m => `${m[1]} ${m[2]}`);
+  // Each route's first address (the transaction's); a client file's sits beside it (24 November 2026).
+  const routes = [...s.matchAll(/kycDocumentsRouter\.(get|post)\(\[?"([^"]+)"/g)].map(m => `${m[1]} ${m[2]}`);
   assert.deepEqual(routes.sort(), [
     "get /api/deals/:id/parties/:role/documents", "post /api/deals/:id/parties/:role/documents",
     "post /api/deals/:id/parties/:role/documents/:docId/accept", "post /api/deals/:id/parties/:role/documents/:docId/read",
   ].sort());
   // Who it is is known before multer reads a file.
-  assert.match(s, /"\/api\/deals\/:id\/parties\/:role\/documents", staffFirst, takeFiles,/);
-  assert.match(s, /if \(!\(await staff\(req\)\)\) return res\.status\(403\)[\s\S]{0,200}"\/api\/deals\/:id\/parties\/:role\/documents\/:docId\/read"|"\/api\/deals\/:id\/parties\/:role\/documents\/:docId\/read", async \(req: Request, res: Response\) => \{\s*try \{\s*if \(!\(await staff\(req\)\)\)/);
-  assert.match(s, /documents\/:docId\/accept", async \(req: Request, res: Response\) => \{\s*try \{\s*const \{ decider \} = await import\("\.\/deal-party-aml"\);\s*const me = await decider\(req\);/);
+  assert.match(s, /"\/api\/deals\/:id\/parties\/:role\/documents", "\/api\/client-kyc\/:companyId\/subjects\/:entity\/documents"\], staffFirst, takeFiles,/);
+  assert.match(s, /if \(!\(await staff\(req\)\)\) return res\.status\(403\)[\s\S]{0,200}"\/api\/deals\/:id\/parties\/:role\/documents\/:docId\/read"|"\/api\/deals\/:id\/parties\/:role\/documents\/:docId\/read"(?:, "[^"]+"\])?, async \(req: Request, res: Response\) => \{\s*try \{\s*if \(!\(await staff\(req\)\)\)/);
+  assert.match(s, /documents\/:docId\/accept"\]?, async \(req: Request, res: Response\) => \{\s*try \{\s*const \{ decider \} = await import\("\.\/deal-party-aml"\);\s*const me = await decider\(req\);/);
   const index = read("server/index.ts");
   assert.match(index, /app\.use\(kycDocumentsRouter\);/);
   assert.match(index, /CREATE TABLE IF NOT EXISTS kyc_document_readings \(/);
@@ -48,7 +49,9 @@ test("the box is on each party's Documents step, with drag and drop", () => {
   assert.match(box, /<PartyDocumentsBox dealId=\{dealId\} role=\{cp\.role\} partyName=\{partyName\} canDecide=\{canDecide\} \/>/);
   const c = read("client/src/components/kyc-documents.tsx");
   assert.match(c, /onDrop=\{e => \{/);
-  assert.match(c, /\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}\/documents/);
+  // Its address is the transaction's party, or a client file's (client/src/lib/aml-scope.tsx, 24 November 2026).
+  assert.match(c, /\$\{urls\.party\(dealId, role\)\}\/documents/);
+  assert.match(read("client/src/lib/aml-scope.tsx"), /party: \(dealId, role\) => `\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}`/);
   assert.match(c, /An agent saw the originals/);
 });
 

@@ -189,18 +189,26 @@ async function staff(req: Request): Promise<{ id: string; name: string } | null>
 
 /** The party's own document: filed on its KYC record (the brand, or a company under it). */
 async function partyDocument(req: Request, res: Response): Promise<{ documentId: string } | null> {
-  const role = String(req.params.role);
-  if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
-  const { loadAmlParty } = await import("./deal-party-aml");
-  const party = await loadAmlParty(pool, String(req.params.id), role);
-  if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  let party: { brandId: string } | null;
+  if (req.params.companyId) {
+    // A client file (24 November 2026).
+    const { clientSubjectFor } = await import("./client-kyc");
+    party = await clientSubjectFor(req, res);
+    if (!party) return null;
+  } else {
+    const role = String(req.params.role);
+    if (!isDealPartyRole(role)) { res.status(400).json({ message: "Unknown party." }); return null; }
+    const { loadAmlParty } = await import("./deal-party-aml");
+    party = await loadAmlParty(pool, String(req.params.id), role);
+    if (!party) { res.status(404).json({ message: `This transaction has no ${DEAL_PARTY_LABEL[role].toLowerCase()}.` }); return null; }
+  }
   const documentId = String(req.params.docId);
   const held = (await pool.query(`SELECT 1 FROM kyc_documents WHERE id::text = $1 AND company_id = $2 AND deleted_at IS NULL`, [documentId, party.brandId])).rows[0];
   if (!held) { res.status(404).json({ message: "That document is not on this party's record." }); return null; }
   return { documentId };
 }
 
-kycTranslationRouter.post("/api/deals/:id/parties/:role/documents/:docId/translate", async (req: Request, res: Response) => {
+kycTranslationRouter.post(["/api/deals/:id/parties/:role/documents/:docId/translate", "/api/client-kyc/:companyId/subjects/:entity/documents/:docId/translate"], async (req: Request, res: Response) => {
   try {
     const me = await staff(req);
     if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
@@ -214,7 +222,7 @@ kycTranslationRouter.post("/api/deals/:id/parties/:role/documents/:docId/transla
   }
 });
 
-kycTranslationRouter.get("/api/deals/:id/parties/:role/documents/:docId/translation", async (req: Request, res: Response) => {
+kycTranslationRouter.get(["/api/deals/:id/parties/:role/documents/:docId/translation", "/api/client-kyc/:companyId/subjects/:entity/documents/:docId/translation"], async (req: Request, res: Response) => {
   try {
     if (!(await staff(req))) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
     const doc = await partyDocument(req, res);
