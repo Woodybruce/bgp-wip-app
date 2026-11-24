@@ -8,8 +8,8 @@
 import { listAllChildren } from "../microsoft-graph-pagination";
 import { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, sharesId } from "../sharepoint-graph";
 import {
-  SHARE_DRIVE_NAME, driveKindOf, folderDisplayPath, folderTreeOrder, folderTreePaths, graphRefusalWords,
-  type DriveEntry, type FolderPlaces,
+  SHARE_DRIVE_NAME, UPLOAD_SESSION_ABOVE, contentRange, copyState, driveKindOf, folderDisplayPath, folderTreeOrder, folderTreePaths,
+  graphRefusalWords, type DriveEntry, type FolderPlaces,
 } from "@shared/folders";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -32,7 +32,8 @@ const fetchTransport: GraphTransport = async (r) => {
   let body: any;
   if (r.json !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(r.json); }
   else if (r.bytes) body = r.bytes;
-  const res = await fetch(r.url, { method: r.method, headers, body, signal: AbortSignal.timeout(90_000) });
+  // A signed SharePoint address (no token) is never followed somewhere else.
+  const res = await fetch(r.url, { method: r.method, headers, body, redirect: r.token ? "follow" : "manual", signal: AbortSignal.timeout(90_000) });
   const text = await res.text();
   let parsed: any = null;
   if (text) { try { parsed = JSON.parse(text); } catch { parsed = text; } }
@@ -232,4 +233,122 @@ export async function createFolderTree(token: string, driveId: string, parentId:
     }
   }
   return { root, made, failed };
+}
+
+// ── Inside a folder (step 3): rename, move, copy, delete, upload, share, preview ──
+/** A file or folder before it is changed: what it is, its folder, and whether it is a library's top. */
+export async function itemForChange(token: string, driveId: string, itemId: string): Promise<{ entry: DriveEntry; parentId: string | null; isRoot: boolean }> {
+  const raw = await call(token, "GET", `/drives/${driveId}/items/${itemId}?$select=${ITEM_SELECT}`);
+  return { entry: driveEntry(raw, driveId), parentId: raw?.parentReference?.id ? String(raw.parentReference.id) : null, isRoot: !!raw?.root };
+}
+
+/** A new name in the same folder. A name already there is refused, never replaced. */
+export async function renameItem(token: string, driveId: string, itemId: string, name: string): Promise<DriveEntry> {
+  const res = await graph({ method: "PATCH", url: `/drives/${driveId}/items/${itemId}?@microsoft.graph.conflictBehavior=fail`, token, json: { name } });
+  if (res.status >= 400) throw new GraphError(res.status, res.status === 409 ? `Something called "${name}" is already there.` : undefined);
+  return driveEntry(res.body, driveId);
+}
+
+/** Into another folder of the same library (Microsoft moves within one library only). */
+export async function moveItem(token: string, driveId: string, itemId: string, parentId: string): Promise<DriveEntry> {
+  const res = await graph({ method: "PATCH", url: `/drives/${driveId}/items/${itemId}?@microsoft.graph.conflictBehavior=fail`, token, json: { parentReference: { id: parentId } } });
+  if (res.status >= 400) throw new GraphError(res.status, res.status === 409 ? "Something of that name is already in that folder." : res.status === 400 ? "SharePoint would not move it there (a folder cannot go inside itself)." : undefined);
+  return driveEntry(res.body, driveId);
+}
+
+/**
+ * Starts a copy into any folder, in any library. Microsoft copies in the
+ * background and answers with an address to ask how far it has got; that
+ * address is on BGP's SharePoint and is asked with no token. Null when it
+ * gave none the engine may call.
+ */
+export async function startCopy(token: string, driveId: string, itemId: string, toDriveId: string, toParentId: string): Promise<string | null> {
+  const res = await graph({ method: "POST", url: `/drives/${driveId}/items/${itemId}/copy?@microsoft.graph.conflictBehavior=rename`, token, json: { parentReference: { driveId: toDriveId, id: toParentId } } });
+  if (res.status >= 400) throw new GraphError(res.status);
+  const target = res.location ? graphTarget(res.location) : null;
+  return target && !target.withToken ? res.location : null;
+}
+
+/** How far a copy has got. */
+export async function copyProgress(monitorUrl: string) {
+  const target = graphTarget(monitorUrl);
+  if (!target || target.withToken) throw new GraphError(400, "Not a copy SharePoint is running.");
+  const res = await graph({ method: "GET", url: monitorUrl, token: null });
+  return copyState(res.status, res.body, res.location);
+}
+
+/** To the library's recycle bin, where it can be restored for 93 days. */
+export async function deleteItem(token: string, driveId: string, itemId: string): Promise<void> {
+  const res = await graph({ method: "DELETE", url: `/drives/${driveId}/items/${itemId}`, token });
+  if (res.status >= 400) throw new GraphError(res.status);
+}
+
+/** A file of up to 10 MB in one go. A name already there gets a number added, never replaced. */
+export async function uploadSmall(token: string, driveId: string, parentId: string, name: string, bytes: Uint8Array): Promise<DriveEntry> {
+  if (bytes.length > UPLOAD_SESSION_ABOVE) throw new GraphError(413, "Larger files go up in pieces.");
+  const res = await graph({ method: "PUT", url: `/drives/${driveId}/items/${parentId}:/${encodeURIComponent(name)}:/content?@microsoft.graph.conflictBehavior=rename`, token, bytes, headers: { "Content-Type": "application/octet-stream" } });
+  if (res.status >= 400) throw new GraphError(res.status);
+  return driveEntry(res.body, driveId);
+}
+
+/** An upload session for a larger file: the address the pieces go to, signed by Microsoft. */
+export async function startUploadSession(token: string, driveId: string, parentId: string, name: string): Promise<{ uploadUrl: string; expires: string | null }> {
+  const res = await graph({ method: "POST", url: `/drives/${driveId}/items/${parentId}:/${encodeURIComponent(name)}:/createUploadSession`, token, json: { item: { "@microsoft.graph.conflictBehavior": "rename", name } } });
+  if (res.status >= 400) throw new GraphError(res.status);
+  const uploadUrl = String(res.body?.uploadUrl || "");
+  const target = graphTarget(uploadUrl);
+  if (!target || target.withToken) throw new GraphError(502, "SharePoint gave no upload address the app may use.");
+  return { uploadUrl, expires: res.body?.expirationDateTime || null };
+}
+
+/** One piece of a session, with no token. Done gives the file; otherwise where the next piece starts. */
+export async function uploadPiece(uploadUrl: string, bytes: Uint8Array, start: number, total: number): Promise<{ done: DriveEntry | null; next: number }> {
+  const res = await graph({ method: "PUT", url: uploadUrl, token: null, bytes, headers: { "Content-Range": contentRange(start, bytes.length, total) } });
+  if (res.status === 200 || res.status === 201) return { done: driveEntry(res.body), next: total };
+  if (res.status === 202) {
+    const next = Number(String(res.body?.nextExpectedRanges?.[0] ?? "").split("-")[0]);
+    return { done: null, next: Number.isFinite(next) && next > start ? next : start + bytes.length };
+  }
+  throw new GraphError(res.status);
+}
+
+/** Ends a session that will not be finished. */
+export async function cancelUploadSession(uploadUrl: string): Promise<void> {
+  await graph({ method: "DELETE", url: uploadUrl, token: null }).catch(() => undefined);
+}
+
+/**
+ * A link to send. "Anyone with the link" falls back to people in BGP when
+ * BGP's sharing rules do not allow it, and says so.
+ */
+export async function shareLink(token: string, driveId: string, itemId: string, opts: { scope: "anonymous" | "organization"; edit: boolean }): Promise<{ url: string; scope: "anonymous" | "organization"; edit: boolean; fellBack: boolean }> {
+  const make = (scope: "anonymous" | "organization") => graph({ method: "POST", url: `/drives/${driveId}/items/${itemId}/createLink`, token, json: { type: opts.edit ? "edit" : "view", scope } });
+  let res = await make(opts.scope);
+  let fellBack = false;
+  if (res.status >= 400 && opts.scope === "anonymous" && (res.status === 400 || res.status === 403)) {
+    res = await make("organization");
+    fellBack = res.status < 400;
+  }
+  if (res.status >= 400) throw new GraphError(res.status);
+  const url = String(res.body?.link?.webUrl || "");
+  if (!/^https:\/\//.test(url)) throw new GraphError(502, "SharePoint gave no link.");
+  return { url, scope: fellBack ? "organization" : opts.scope, edit: opts.edit, fellBack };
+}
+
+/** Named people, by email, with SharePoint's own invitation. They sign in to open it. */
+export async function invitePeople(token: string, driveId: string, itemId: string, emails: string[], write: boolean, message: string): Promise<void> {
+  const res = await graph({
+    method: "POST", url: `/drives/${driveId}/items/${itemId}/invite`, token,
+    json: { recipients: emails.map(email => ({ email })), roles: [write ? "write" : "read"], requireSignIn: true, sendInvitation: true, message },
+  });
+  if (res.status >= 400) throw new GraphError(res.status);
+}
+
+/** An address that shows the file in a frame, as the person who asked for it. */
+export async function previewUrl(token: string, driveId: string, itemId: string): Promise<string> {
+  const res = await graph({ method: "POST", url: `/drives/${driveId}/items/${itemId}/preview`, token, json: {} });
+  if (res.status >= 400) throw new GraphError(res.status);
+  const url = String(res.body?.getUrl || "");
+  if (!/^https:\/\//.test(url)) throw new GraphError(415, "SharePoint has no preview of that file: open it in SharePoint.");
+  return url;
 }

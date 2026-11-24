@@ -5098,6 +5098,13 @@ app.use((req, res, next) => {
     // promote sweeps both run many UPDATEs in series — the default
     // 45s timeout cuts them off mid-pass, leaving partial state.
     timeoutMs = 180000;
+  } else if (req.path.startsWith('/api/folders/') && (req.path.includes('/upload') || req.path.endsWith('/create'))) {
+    // Folders: a file or a 10 MB piece passed on to SharePoint, or a new
+    // property folder with its five folders made one after another.
+    timeoutMs = 180000;
+  } else if (req.path.startsWith('/api/admin/folders/migration')) {
+    // Folders: the migration report opens every stored folder address once.
+    timeoutMs = 600000;
   } else if (req.path.includes('/sharepoint-candidates') || req.path.includes('/from-sharepoint')) {
     // Walking a property's linked folder plus a Microsoft 365 search, and
     // downloading a large brochure PDF from SharePoint.

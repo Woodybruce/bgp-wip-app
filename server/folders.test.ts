@@ -9,12 +9,14 @@ import assert from "node:assert/strict";
 import express from "express";
 import type { AddressInfo } from "node:net";
 import {
-  FOLDER_COLOURS, FOLDER_RECORD_TYPES, PROPERTY_FOLDER_TEMPLATE, folderColourKey, folderDisplayPath, folderLabel,
-  folderStatusFromGraph, folderTemplate, folderUrlKey, isFolderRecordType, isGraphId, itemNameProblem, legacyFolderKey,
-  moveLinkTo, pathFromWebUrl, driveKindOf,
+  FOLDER_COLOURS, FOLDER_RECORD_TYPES, PROPERTY_FOLDER_TEMPLATE, UPLOAD_MAX_BYTES, UPLOAD_PIECE, UPLOAD_SESSION_ABOVE, contentRange, copyState,
+  folderColourKey, folderDisplayPath, folderLabel, folderStatusFromGraph, folderTemplate, folderUrlKey, inviteEmails, isFolderRecordType,
+  isGraphId, itemNameProblem, legacyFolderKey, moveLinkTo, needsUploadSession, parseContentRange, pathFromWebUrl, pieceProblem, driveKindOf,
+  uploadPieces, uploadProblem,
 } from "../shared/folders";
 import {
-  GraphError, bgpLibrary, createFolderTree, driveEntry, forgetLibrary, graph, graphTarget, searchFolders, setGraphTransport,
+  GraphError, bgpLibrary, copyProgress, createFolderTree, deleteItem, driveEntry, forgetLibrary, graph, graphTarget, moveItem, previewUrl,
+  renameItem, searchFolders, setGraphTransport, shareLink, startCopy, startUploadSession, uploadPiece, uploadSmall,
   type GraphRequest, type GraphResponse,
 } from "./folders/graph";
 import { foldersRouter, sortEntries, STAFF_ONLY } from "./folders/routes";
@@ -219,6 +221,11 @@ test("every route is BGP staff's, checked before any token; folder actions need 
       ["PATCH", "/api/folders/links/l1", { label: "x" }], ["DELETE", "/api/folders/links/l1"],
       ["GET", "/api/folders/property/p1"], ["POST", "/api/folders/property/p1/links", { driveId: DRIVE, itemId: "x" }],
       ["POST", "/api/folders/deal/d1/create", { driveId: DRIVE, parentId: "x", name: "New" }],
+      ["POST", `/api/folders/items/${DRIVE}/i1/rename`, { name: "New" }], ["POST", `/api/folders/items/${DRIVE}/i1/move`, { parentId: "p2" }],
+      ["POST", `/api/folders/items/${DRIVE}/i1/copy`, { toDriveId: DRIVE, toParentId: "p2" }], ["DELETE", `/api/folders/items/${DRIVE}/i1`],
+      ["POST", `/api/folders/items/${DRIVE}/i1/folders`, { name: "New" }], ["POST", `/api/folders/items/${DRIVE}/i1/upload-session`, { name: "big.pdf", size: 20_000_000 }],
+      ["POST", `/api/folders/items/${DRIVE}/i1/share`, { scope: "organization" }], ["POST", `/api/folders/items/${DRIVE}/i1/invite`, { emails: "a@b.com" }],
+      ["POST", `/api/folders/items/${DRIVE}/i1/preview`],
     ];
     for (const [method, path, body] of routes) {
       const r = await send(method, path, body);
@@ -234,6 +241,193 @@ test("every route is BGP staff's, checked before any token; folder actions need 
       assert.equal(r.body.connect, true);
     }
     assert.ok(asked.every(id => id === "u1"), "only the person's own Microsoft 365 is asked for");
+  } finally {
+    server.close();
+  }
+});
+
+// ── Inside a folder (step 3) ────────────────────────────────────────────
+test("uploads: one go up to 10 MB, then pieces of whole 320 KB blocks, in order", () => {
+  assert.equal(needsUploadSession(UPLOAD_SESSION_ABOVE), false);
+  assert.equal(needsUploadSession(UPLOAD_SESSION_ABOVE + 1), true);
+  assert.equal(UPLOAD_PIECE % (320 * 1024), 0);
+  assert.deepEqual(uploadPieces(12 * 1024 * 1024), [[0, UPLOAD_PIECE - 1], [UPLOAD_PIECE, 2 * UPLOAD_PIECE - 1], [2 * UPLOAD_PIECE, 12 * 1024 * 1024 - 1]]);
+  assert.deepEqual(uploadPieces(0), []);
+  assert.equal(contentRange(0, 10, 25), "bytes 0-9/25");
+  assert.deepEqual(parseContentRange("bytes 0-9/25"), { start: 0, end: 9, total: 25 });
+  assert.equal(parseContentRange("bytes 9-0/25"), null);
+  assert.equal(parseContentRange("bytes 0-25/25"), null);
+  assert.equal(parseContentRange("bytes=0-9/25"), null);
+  const session = { next: 0, size: 12 * 1024 * 1024 };
+  assert.equal(pieceProblem(parseContentRange(`bytes 0-${UPLOAD_PIECE - 1}/${session.size}`), UPLOAD_PIECE, session), null);
+  assert.match(pieceProblem(parseContentRange(`bytes ${UPLOAD_PIECE}-${2 * UPLOAD_PIECE - 1}/${session.size}`), UPLOAD_PIECE, session)!, /starts at byte 0/);
+  assert.match(pieceProblem(parseContentRange(`bytes 0-999/${session.size}`), 1000, session)!, /320 KB/);
+  assert.match(pieceProblem(parseContentRange(`bytes 0-9/26`), 10, session)!, /different file/);
+  assert.match(pieceProblem(parseContentRange(`bytes 0-9/${session.size}`), 9, session)!, /not the size it says/);
+  assert.equal(pieceProblem(parseContentRange("bytes 0-999/1000"), 1000, { next: 0, size: 1000 }), null, "the last piece may be any size");
+  assert.equal(uploadProblem("Lease.pdf", 100), null);
+  assert.match(uploadProblem("Lease.pdf", UPLOAD_MAX_BYTES + 1)!, /1 GB/);
+  assert.match(uploadProblem("a:b.pdf", 1)!, /does not take/);
+  assert.match(uploadProblem("Lease.pdf", -1)!, /could not be read/);
+});
+
+test("a copy's progress, as Microsoft's monitor tells it", () => {
+  assert.deepEqual(copyState(202, { status: "inProgress", percentageComplete: 41.6 }), { state: "running", percent: 42, itemId: null, error: null });
+  assert.deepEqual(copyState(200, { status: "completed", resourceId: "new-1" }), { state: "done", percent: 100, itemId: "new-1", error: null });
+  assert.equal(copyState(303, null, `https://graph.microsoft.com/v1.0/drives/${DRIVE}/items/new-2`).itemId, "new-2");
+  assert.equal(copyState(200, { status: "failed", error: { message: "Name conflict" } }).error, "SharePoint could not copy it: Name conflict");
+  assert.equal(copyState(404, null).state, "failed");
+  assert.equal(copyState(200, { status: "notStarted" }).state, "running");
+});
+
+test("people to invite: plain addresses, at most 20", () => {
+  assert.deepEqual(inviteEmails("Jo@Example.com, sam@example.co.uk;sam@example.co.uk"), ["jo@example.com", "sam@example.co.uk"]);
+  assert.deepEqual(inviteEmails(["a@b.com"]), ["a@b.com"]);
+  assert.equal(inviteEmails(""), null);
+  assert.equal(inviteEmails("not an address"), null);
+  assert.equal(inviteEmails(Array.from({ length: 21 }, (_, i) => `p${i}@b.com`)), null);
+});
+
+test("rename, move, copy, delete, upload, share and preview: Graph asked as the person, signed addresses with no token", async () => {
+  calls.length = 0;
+  answer = r => (r.method === "PATCH" ? ok({ error: {} }, { status: 409 }) : ok({}));
+  await assert.rejects(renameItem("t", DRIVE, "i1", "Leases"), /Something called "Leases" is already there/);
+  assert.equal(calls[0].url, `https://graph.microsoft.com/v1.0/drives/${DRIVE}/items/i1?@microsoft.graph.conflictBehavior=fail`);
+  assert.deepEqual(calls[0].json, { name: "Leases" });
+
+  calls.length = 0;
+  answer = () => ok({ id: "i1", name: "Leases", folder: {}, parentReference: { driveId: DRIVE } });
+  const moved = await moveItem("t", DRIVE, "i1", "p2");
+  assert.equal(moved.itemId, "i1");
+  assert.deepEqual(calls[0].json, { parentReference: { id: "p2" } });
+
+  calls.length = 0;
+  const monitor = "https://brucegillinghampollardlimited.sharepoint.com/_api/v2.0/monitor/m1";
+  answer = r => (r.url.endsWith("/copy?@microsoft.graph.conflictBehavior=rename") ? ok(null, { status: 202, location: monitor }) : ok({ status: "inProgress", percentageComplete: 10 }, { status: 202 }));
+  assert.equal(await startCopy("t", DRIVE, "i1", "other-drive", "p9"), monitor);
+  assert.deepEqual(calls[0].json, { parentReference: { driveId: "other-drive", id: "p9" } });
+  assert.deepEqual(await copyProgress(monitor), { state: "running", percent: 10, itemId: null, error: null });
+  assert.equal(calls[1].token, null, "the monitor is asked with no token");
+  answer = () => ok(null, { status: 202, location: "https://graph.microsoft.com/v1.0/monitor/elsewhere" });
+  assert.equal(await startCopy("t", DRIVE, "i1", DRIVE, "p9"), null, "a monitor the engine may not call is not followed");
+  await assert.rejects(copyProgress("https://example.com/monitor"), /Not a copy/);
+
+  calls.length = 0;
+  answer = () => ok(null, { status: 204 });
+  await deleteItem("t", DRIVE, "i1");
+  assert.equal(calls[0].method, "DELETE");
+
+  calls.length = 0;
+  answer = () => ok({ id: "f1", name: "Lease 1.pdf", file: {}, parentReference: { driveId: DRIVE } }, { status: 201 });
+  const up = await uploadSmall("t", DRIVE, "p1", "Lease.pdf", new Uint8Array(5));
+  assert.equal(up.name, "Lease 1.pdf");
+  assert.equal(calls[0].url, `https://graph.microsoft.com/v1.0/drives/${DRIVE}/items/p1:/Lease.pdf:/content?@microsoft.graph.conflictBehavior=rename`, "a name already there gets a number, never replaced");
+  await assert.rejects(uploadSmall("t", DRIVE, "p1", "Big.pdf", new Uint8Array(UPLOAD_SESSION_ABOVE + 1)), /pieces/);
+
+  calls.length = 0;
+  const uploadUrl = "https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/_api/v2.0/drives/x/items/y/uploadSession?guid=1";
+  answer = () => ok({ uploadUrl, expirationDateTime: "2026-11-25T10:00:00Z" });
+  assert.equal((await startUploadSession("t", DRIVE, "p1", "Big plan.pdf")).uploadUrl, uploadUrl);
+  assert.ok(calls[0].url.endsWith("/items/p1:/Big%20plan.pdf:/createUploadSession"));
+  answer = () => ok({ uploadUrl: "https://example.com/upload" });
+  await assert.rejects(startUploadSession("t", DRIVE, "p1", "Big.pdf"), /no upload address/);
+
+  calls.length = 0;
+  answer = r => (r.headers?.["Content-Range"] === "bytes 0-9/20" ? ok({ nextExpectedRanges: ["10-19"] }, { status: 202 }) : ok({ id: "big-1", name: "Big.pdf", file: {}, parentReference: { driveId: DRIVE } }, { status: 201 }));
+  assert.deepEqual(await uploadPiece(uploadUrl, new Uint8Array(10), 0, 20), { done: null, next: 10 });
+  assert.equal((await uploadPiece(uploadUrl, new Uint8Array(10), 10, 20)).done!.itemId, "big-1");
+  assert.ok(calls.every(c => c.token === null), "pieces go to Microsoft's signed address with no token");
+
+  calls.length = 0;
+  answer = r => ((r.json as any)?.scope === "anonymous" ? ok({ error: {} }, { status: 403 }) : ok({ link: { webUrl: "https://brucegillinghampollardlimited.sharepoint.com/:f:/s/BGP/abc", scope: "organization" } }, { status: 201 }));
+  const link = await shareLink("t", DRIVE, "i1", { scope: "anonymous", edit: false });
+  assert.deepEqual([link.scope, link.fellBack, (calls[0].json as any).type], ["organization", true, "view"], "anyone with the link falls back to people in BGP, and says so");
+
+  calls.length = 0;
+  answer = () => ok({ getUrl: "https://brucegillinghampollardlimited.sharepoint.com/_layouts/15/embed.aspx?x=1" });
+  assert.match(await previewUrl("t", DRIVE, "f1"), /^https:\/\//);
+  answer = () => ok({});
+  await assert.rejects(previewUrl("t", DRIVE, "f1"), /no preview/);
+});
+
+test("the routes inside a folder: the top of a library and linked folders are kept safe, pieces come in order, each action is logged", async () => {
+  const logged: any[] = [];
+  let linkedCount = 0;
+  const db = {
+    query: async (sql: string, params: unknown[]) => {
+      if (/INSERT INTO folder_actions/.test(sql)) { logged.push(params); return { rows: [] }; }
+      if (/FROM record_folders WHERE drive_id = \$1 AND item_id = \$2/.test(sql)) return { rows: [{ n: linkedCount }] };
+      return { rows: [] };
+    },
+  };
+  let me = "u1";
+  const app = express();
+  app.use(express.json());
+  app.use(foldersRouter({
+    db, auth: (_req, _res, next) => next(),
+    staff: async () => ({ userId: me, name: me, email: `${me}@brucegillinghampollard.com` }),
+    microsoft: async () => ({ token: "own-token", account: "victoria@brucegillinghampollard.com" }),
+  }));
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const send = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
+    const raw = body instanceof Uint8Array;
+    const res = await fetch(base + path, { method, headers: raw ? headers : { "Content-Type": "application/json", ...headers }, body: body === undefined ? undefined : raw ? body : JSON.stringify(body) });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const uploadUrl = "https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/_api/v2.0/uploadSession?guid=2";
+  try {
+    // The top of a library is never renamed.
+    answer = r => (r.method === "GET" ? ok({ id: "root", name: "root", root: {}, folder: {}, parentReference: { driveId: DRIVE } }) : ok({}));
+    let r = await send("POST", `/api/folders/items/${DRIVE}/root/rename`, { name: "Renamed" });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /top of a library/);
+
+    // A folder linked to a record is unlinked first, never deleted from under it.
+    linkedCount = 2;
+    answer = r => (r.method === "GET" ? ok({ id: "i1", name: "Leases", folder: {}, parentReference: { driveId: DRIVE, id: "p1" } }) : ok(null, { status: 204 }));
+    calls.length = 0;
+    r = await send("DELETE", `/api/folders/items/${DRIVE}/i1`);
+    assert.equal(r.status, 409);
+    assert.match(r.body.message, /linked to 2 records/);
+    assert.ok(!calls.some(c => c.method === "DELETE"), "nothing was deleted");
+    linkedCount = 0;
+    logged.length = 0;
+    r = await send("DELETE", `/api/folders/items/${DRIVE}/i1`);
+    assert.equal(r.status, 200);
+    assert.deepEqual([logged[0][0], logged[0][1], logged[0][2], logged[0][7]], ["u1", "victoria@brucegillinghampollard.com", "delete", "Leases"], "who, which Microsoft account, what, and the name it had");
+
+    // A move stays in its library.
+    r = await send("POST", `/api/folders/items/${DRIVE}/i1/move`, { toDriveId: "other-drive", parentId: "p2" });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /copy it there/);
+
+    // An upload in pieces: in order, only by the person who started it, then the file.
+    answer = r => r.url.endsWith(":/createUploadSession") ? ok({ uploadUrl })
+      : r.url === uploadUrl && r.headers?.["Content-Range"]?.endsWith(`/${UPLOAD_SESSION_ABOVE + 10}`) && r.headers["Content-Range"].startsWith("bytes 0-") ? ok({ nextExpectedRanges: [`${UPLOAD_PIECE}-`] }, { status: 202 })
+      : r.url === uploadUrl ? ok({ id: "big-1", name: "Big.pdf", file: {}, parentReference: { driveId: DRIVE } }, { status: 201 }) : ok({});
+    r = await send("POST", `/api/folders/items/${DRIVE}/p1/upload-session`, { name: "Big.pdf", size: 1000 });
+    assert.equal(r.status, 400, "10 MB or less goes up in one go");
+    r = await send("POST", `/api/folders/items/${DRIVE}/p1/upload-session`, { name: "Big.pdf", size: UPLOAD_SESSION_ABOVE + 10 });
+    assert.equal(r.status, 200);
+    const { sessionId, pieceSize } = r.body;
+    assert.equal(pieceSize, UPLOAD_PIECE);
+    const total = UPLOAD_SESSION_ABOVE + 10;
+    r = await send("PUT", `/api/folders/uploads/${sessionId}`, new Uint8Array(UPLOAD_PIECE), { "Content-Type": "application/octet-stream", "Content-Range": `bytes ${UPLOAD_PIECE}-${2 * UPLOAD_PIECE - 1}/${total}` });
+    assert.equal(r.status, 400, "out of order");
+    me = "u2";
+    r = await send("PUT", `/api/folders/uploads/${sessionId}`, new Uint8Array(UPLOAD_PIECE), { "Content-Type": "application/octet-stream", "Content-Range": `bytes 0-${UPLOAD_PIECE - 1}/${total}` });
+    assert.equal(r.status, 404, "someone else's upload is not theirs to add to");
+    me = "u1";
+    r = await send("PUT", `/api/folders/uploads/${sessionId}`, new Uint8Array(UPLOAD_PIECE), { "Content-Type": "application/octet-stream", "Content-Range": `bytes 0-${UPLOAD_PIECE - 1}/${total}` });
+    assert.deepEqual(r.body, { next: UPLOAD_PIECE });
+    logged.length = 0;
+    const rest = total - UPLOAD_PIECE;
+    r = await send("PUT", `/api/folders/uploads/${sessionId}`, new Uint8Array(rest), { "Content-Type": "application/octet-stream", "Content-Range": `bytes ${UPLOAD_PIECE}-${total - 1}/${total}` });
+    assert.equal(r.body.item.itemId, "big-1");
+    assert.equal(logged[0][2], "upload");
+    r = await send("PUT", `/api/folders/uploads/${sessionId}`, new Uint8Array(1), { "Content-Type": "application/octet-stream", "Content-Range": `bytes 0-0/${total}` });
+    assert.equal(r.status, 404, "a finished upload takes no more");
   } finally {
     server.close();
   }

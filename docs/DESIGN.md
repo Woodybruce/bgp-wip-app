@@ -29,6 +29,13 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
   never `#1C1917`/black literals (it's colour-scheme aware).
 - Status colours are semantic only (deal stages, alerts), from the existing
   status maps — not decoration. Red means genuinely negative, not emphasis.
+- **One deliberate exception: folder colours** (Woody, 24 November 2026,
+  decision 5 of `docs/folders-review-2026-11-20.md`). A folder chip may
+  carry one of six muted colours a person chooses (slate, sage, sky, sand,
+  rose, plum), as tokens `--folder-*` in `index.css` (light and dark) and
+  `folder.*` in Tailwind, listed once in `FOLDER_COLOURS`
+  (`shared/folders.ts`). A dot on the chip only; they mean nothing else and
+  are not used anywhere else.
 - The Bordeaux/Nectar/Stone rebrand palette is for **documents** (PDFs,
   decks, emails), not app chrome, until decided otherwise. Every generated
   document goes through `doc-engine.ts` `BGP_BRAND` (the single palette +

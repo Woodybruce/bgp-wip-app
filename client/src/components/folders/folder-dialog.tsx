@@ -24,7 +24,7 @@ export function FolderDialog({ open, onOpenChange, title, description, children,
             <SheetTitle className="break-words">{title}</SheetTitle>
             {description ? <SheetDescription>{description}</SheetDescription> : null}
           </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-3">{children}</div>
           {footer ? <div className="shrink-0 flex flex-wrap justify-end gap-2">{footer}</div> : null}
         </SheetContent>
       </Sheet>
@@ -38,7 +38,7 @@ export function FolderDialog({ open, onOpenChange, title, description, children,
           <DialogTitle className="break-words">{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-3">{children}</div>
         {footer ? <div className="shrink-0 flex flex-wrap justify-end gap-2">{footer}</div> : null}
       </DialogContent>
     </Dialog>

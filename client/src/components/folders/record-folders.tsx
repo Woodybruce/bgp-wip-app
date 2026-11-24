@@ -17,13 +17,15 @@ import { Pill } from "@/components/ui/pill";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { ClientPropertyFoldersPanel } from "@/pages/properties";
-import { folderLabel, type DriveEntry, type FolderLinkView, type FolderRecordRef, type FolderTemplateKey, type RecordFoldersView } from "@shared/folders";
+import { FOLDER_COLOURS, folderLabel, type DriveEntry, type FolderLinkView, type FolderRecordRef, type FolderTemplateKey, type RecordFoldersView } from "@shared/folders";
+import { cn } from "@/lib/utils";
 import { FolderApiError, folderApi, recordFoldersKey, refreshFolders } from "./folder-api";
 import { FolderBrowser } from "./folder-browser";
 import { FolderDialog } from "./folder-dialog";
 import { FolderPicker } from "./folder-picker";
 
 type RecordType = "property" | "deal";
+const colourOf = (key: string | null) => FOLDER_COLOURS.find(c => c.key === key) || null;
 const recordHref = (r: FolderRecordRef) => r.type === "property" ? `/properties/${r.id}` : r.type === "deal" ? `/deals/${r.id}` : r.type === "company" ? `/companies/${r.id}` : null;
 
 export function RecordFolders(props: {
@@ -77,6 +79,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
     <span key={f.id} className="inline-flex items-center" data-testid={`folder-chip-${f.legacy ? "legacy" : f.id}`}>
       <Pill active={current?.id === f.id} onClick={() => setOpenId(f.id)} title={f.path || f.webUrl || f.label} className="max-w-[16rem]" data-testid={`folder-chip-open-${f.id}`}>
         {f.status !== "ok" && f.status !== "unknown" ? <AlertTriangle className="w-3 h-3 shrink-0" /> : null}
+        {colourOf(f.colour) ? <span className={cn("h-2 w-2 shrink-0 rounded-full", colourOf(f.colour)!.dot)} aria-hidden data-testid={`folder-chip-colour-${f.id}`} /> : null}
         <span className="truncate">{f.label}</span>
         {f.legacy ? <span className="font-normal normal-case opacity-70">· old link</span> : null}
       </Pill>
@@ -96,6 +99,18 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
           ) : (
             <>
               <DropdownMenuItem onClick={() => setRelabel(f)} data-testid={`folder-chip-relabel-${f.id}`}><Pencil className="w-3.5 h-3.5 mr-2" />Rename the label</DropdownMenuItem>
+              {/* Colour (decision 5): the app's own six, seen in the app only; SharePoint keeps none. */}
+              <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Colour</DropdownMenuLabel>
+              <div className="flex flex-wrap items-center gap-1 px-2 pb-1.5" role="group" aria-label="Colour">
+                {FOLDER_COLOURS.map(c => (
+                  <DropdownMenuItem key={c.key} className={cn("h-6 w-6 justify-center rounded-full p-0", f.colour === c.key && "ring-2 ring-foreground ring-offset-1 ring-offset-popover")} onClick={() => change(f, { colour: c.key }, `${c.label} colour`)} aria-label={c.label} title={c.label} data-testid={`folder-chip-colour-${c.key}-${f.id}`}>
+                    <span className={cn("h-3.5 w-3.5 rounded-full", c.dot)} />
+                  </DropdownMenuItem>
+                ))}
+                {f.colour && (
+                  <DropdownMenuItem className="h-6 justify-center rounded-full px-2 py-0 text-[11px] text-muted-foreground" onClick={() => change(f, { colour: null }, "No colour")} data-testid={`folder-chip-colour-none-${f.id}`}>None</DropdownMenuItem>
+                )}
+              </div>
               {index > 0 && <DropdownMenuItem onClick={() => change(f, { position: index - 1 }, "Moved up")} data-testid={`folder-chip-up-${f.id}`}><ArrowUp className="w-3.5 h-3.5 mr-2" />Move up</DropdownMenuItem>}
               {index < count - 1 && <DropdownMenuItem onClick={() => change(f, { position: index + 1 }, "Moved down")} data-testid={`folder-chip-down-${f.id}`}><ArrowDown className="w-3.5 h-3.5 mr-2" />Move down</DropdownMenuItem>}
               <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setUnlink(f)} data-testid={`folder-chip-unlink-${f.id}`}><Unlink className="w-3.5 h-3.5 mr-2" />Unlink</DropdownMenuItem>

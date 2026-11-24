@@ -273,3 +273,85 @@ export interface FolderPlaces {
   oneDrive: DriveEntry | null;
   followed: DriveEntry[];
 }
+
+// ── Inside a folder: uploads, copies, sharing (step 3 of the review) ───
+/** Above this a file goes up in pieces through an upload session (4.9, step 3). */
+export const UPLOAD_SESSION_ABOVE = 10 * 1024 * 1024;
+/** Each piece of a session: Microsoft needs a multiple of 320 KiB (this is 5 MiB). */
+export const UPLOAD_PIECE = 16 * 320 * 1024;
+/** The most the app takes in one piece of a session. */
+export const UPLOAD_PIECE_MAX = 10 * 1024 * 1024;
+/** The largest file the app sends on; bigger ones go up in SharePoint itself. */
+export const UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+const PIECE_UNIT = 320 * 1024;
+
+export function needsUploadSession(size: number): boolean {
+  return size > UPLOAD_SESSION_ABOVE;
+}
+
+/** Why a file cannot go up, or null. */
+export function uploadProblem(name: unknown, size: unknown): string | null {
+  const nameProblem = itemNameProblem(name);
+  if (nameProblem) return nameProblem;
+  const n = Number(size);
+  if (!Number.isSafeInteger(n) || n < 0) return "That file could not be read.";
+  if (n > UPLOAD_MAX_BYTES) return "Files over 1 GB go up in SharePoint itself.";
+  return null;
+}
+
+/** A file's pieces for an upload session, as [first byte, last byte]. */
+export function uploadPieces(size: number, piece = UPLOAD_PIECE): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (!(size > 0)) return out;
+  for (let start = 0; start < size; start += piece) out.push([start, Math.min(size, start + piece) - 1]);
+  return out;
+}
+
+export function contentRange(start: number, length: number, total: number): string {
+  return `bytes ${start}-${start + length - 1}/${total}`;
+}
+
+export function parseContentRange(v: unknown): { start: number; end: number; total: number } | null {
+  const m = /^bytes (\d{1,12})-(\d{1,12})\/(\d{1,12})$/.exec(String(v ?? "").trim());
+  if (!m) return null;
+  const [start, end, total] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (start > end || end >= total) return null;
+  return { start, end, total };
+}
+
+/** Why a piece of a session is refused, or null: it must come next, fit, and be whole 320 KiB blocks unless it is the last. */
+export function pieceProblem(range: { start: number; end: number; total: number } | null, length: number, session: { next: number; size: number }): string | null {
+  if (!range) return "Send the piece's place in the file.";
+  if (range.total !== session.size) return "That piece is from a different file.";
+  if (range.start !== session.next) return `The next piece starts at byte ${session.next}.`;
+  if (length !== range.end - range.start + 1) return "The piece is not the size it says.";
+  if (length > UPLOAD_PIECE_MAX) return "A piece can be at most 10 MB.";
+  const last = range.end === range.total - 1;
+  if (!last && length % PIECE_UNIT !== 0) return "A piece must be a whole number of 320 KB blocks, except the last.";
+  return null;
+}
+
+/** How far a copy has got, from what Microsoft's monitor answered. */
+export function copyState(status: number, body: any, location: string | null = null): { state: "running" | "done" | "failed"; percent: number | null; itemId: string | null; error: string | null } {
+  if (status === 302 || status === 303) {
+    const itemId = /\/items\/([A-Za-z0-9!_\-.]+)/.exec(String(location || ""))?.[1] || null;
+    return { state: "done", percent: 100, itemId, error: null };
+  }
+  if (status >= 400) return { state: "failed", percent: null, itemId: null, error: graphRefusalWords(status) };
+  const s = String(body?.status || "").toLowerCase();
+  const percent = typeof body?.percentageComplete === "number" ? Math.max(0, Math.min(100, Math.round(body.percentageComplete))) : null;
+  if (s === "completed") return { state: "done", percent: 100, itemId: body?.resourceId ? String(body.resourceId) : null, error: null };
+  if (s === "failed" || s === "deletefailed" || s === "cancelled") {
+    const why = String(body?.error?.message || body?.errorCode || "").trim();
+    return { state: "failed", percent, itemId: null, error: why ? `SharePoint could not copy it: ${why.slice(0, 200)}` : "SharePoint could not copy it." };
+  }
+  return { state: "running", percent, itemId: null, error: null };
+}
+
+/** People to invite by email: at most 20 addresses, each plausible. */
+export function inviteEmails(v: unknown): string[] | null {
+  const list = (Array.isArray(v) ? v : String(v ?? "").split(/[\s,;]+/)).map(e => String(e ?? "").trim().toLowerCase()).filter(Boolean);
+  const unique = [...new Set(list)];
+  if (!unique.length || unique.length > 20) return null;
+  return unique.every(e => /^[^\s@<>()"',;]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(e)) ? unique : null;
+}

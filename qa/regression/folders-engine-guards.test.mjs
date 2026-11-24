@@ -68,6 +68,8 @@ const ROUTES = [
   ['GET', '/api/folders/property/p1'], ['GET', '/api/folders/deal/d1'],
   ['POST', '/api/folders/property/p1/links'], ['POST', '/api/folders/deal/d1/create'],
   ['PATCH', '/api/folders/links/l1'], ['DELETE', '/api/folders/links/l1'],
+  ['POST', '/api/folders/items/d/i/rename'], ['DELETE', '/api/folders/items/d/i'], ['POST', '/api/folders/items/d/i/upload'],
+  ['PUT', '/api/folders/uploads/s1'], ['GET', '/api/folders/copies/j1'], ['POST', '/api/folders/items/d/i/share'],
   ['GET', '/API/Folders/property/p1'], ['GET', '/api/folders//property/p1'],
 ];
 
@@ -83,7 +85,7 @@ test('a client login and a joint agent are refused every folder route at the gat
     for (const [method, target] of ROUTES) assert.equal(await send(target, method), 403, `${role || 'client'}: ${method} ${target}`);
   }
   who.client = false; who.role = null;
-  for (const [method, target] of ROUTES.slice(0, 9)) assert.equal(await send(target, method), 200, `staff: ${method} ${target}`);
+  for (const [method, target] of ROUTES.slice(0, 15)) assert.equal(await send(target, method), 200, `staff: ${method} ${target}`);
 });
 
 const routes = read('server/folders/routes.ts');
@@ -122,6 +124,37 @@ test('only server/folders/graph.ts talks to Microsoft, and never sends a token o
   const graph = read('server/folders/graph.ts');
   assert.match(graph, /const res = await transport\(\{ \.\.\.r, url: target\.url, token: target\.withToken \? r\.token : null \}\);/);
   assert.match(graph, /if \(TENANT_HOST\.test\(u\.hostname\)\) return \{ url, withToken: false \};/);
+});
+
+test('inside a folder: bodies are read after the staff check, Microsoft\'s signed addresses stay on the server, safe things stay safe', () => {
+  assert.match(routes, /router\.post\("\/api\/folders\/items\/:driveId\/:itemId\/upload", auth, handle\("microsoft", async \(req, res, ctx\) => \{\n\s+const \{ driveId, itemId \} = itemIds\(req\);\n[^\n]*\n\s+await new Promise<void>\(\(done, fail\) => smallUpload\(req, res,/);
+  assert.match(routes, /router\.put\("\/api\/folders\/uploads\/:sessionId", auth, handle\("staff", async \(req, res, ctx\) => \{[\s\S]{0,400}?if \(!session \|\| session\.userId !== ctx\.staff\.userId\) throw folderRefusal\(404,[\s\S]{0,300}?pieceBody\(req, res,/);
+  // The upload address and a copy's monitor are Microsoft's signed addresses: never sent to the browser.
+  for (const m of routes.matchAll(/res\.json\(([^;]*)\);/g)) assert.doesNotMatch(m[1], /uploadUrl|monitor/, `res.json(${m[1]}) sends a signed address`);
+  const graph = read('server/folders/graph.ts');
+  assert.match(graph, /export async function uploadPiece\([\s\S]{0,200}?\n\s+const res = await graph\(\{ method: "PUT", url: uploadUrl, token: null,/);
+  assert.match(graph, /const res = await graph\(\{ method: "GET", url: monitorUrl, token: null \}\);/);
+  // A name already there is never replaced: new folders fail, uploads and copies get a number.
+  assert.match(graph, /conflictBehavior=rename`, token, bytes/);
+  assert.match(graph, /"@microsoft\.graph\.conflictBehavior": "rename", name/);
+  assert.doesNotMatch(graph, /conflictBehavior[^\n]*replace/);
+  // The top of a library and "BGP - Share Drive" are never renamed, moved or deleted; a linked folder is unlinked first.
+  for (const route of ['rename', 'move']) assert.match(routes, new RegExp(`/api/folders/items/:driveId/:itemId/${route}", auth, handle\\("microsoft"[\\s\\S]{0,900}?await changeable\\(`));
+  assert.match(routes, /router\.delete\("\/api\/folders\/items\/:driveId\/:itemId", auth, handle\("microsoft"[\s\S]{0,300}?await changeable\([\s\S]{0,300}?FROM record_folders WHERE drive_id = \$1 AND item_id = \$2 AND removed_at IS NULL[\s\S]{0,200}?folderRefusal\(409,/);
+  assert.match(routes, /if \(body\.toDriveId !== undefined && body\.toDriveId !== driveId\) throw folderRefusal\(400, "A move stays in the same library/);
+  // Every change is logged with who did it and the Microsoft account Graph saw.
+  for (const action of ['create', 'rename', 'move', 'copy', 'delete', 'upload', 'share', 'invite', 'preview']) assert.match(routes, new RegExp(`action: "${action}"`), `${action} is logged`);
+});
+
+test('the six folder colours are design tokens, light and dark, and the browser\'s dialogs are the app\'s own', () => {
+  const css = read('client/src/index.css');
+  for (const c of ['slate', 'sage', 'sky', 'sand', 'rose', 'plum']) assert.equal((css.match(new RegExp(`--folder-${c}: \\d+ \\d+% \\d+%;`, 'g')) || []).length, 2, `--folder-${c} in light and dark`);
+  assert.match(read('tailwind.config.ts'), /folder: \{\n\s+slate: "hsl\(var\(--folder-slate\) \/ <alpha-value>\)"/);
+  const browser = read('client/src/components/folders/folder-browser.tsx');
+  for (const piece of ['RenameItemDialog', 'DeleteItemsDialog', 'ShareItemDialog', 'PreviewItemDialog', 'NewFolderDialog', 'UploadProgress', 'CopyProgress']) assert.match(browser, new RegExp(`<${piece} `));
+  // A drop on an open folder is its own: the app-wide Drop to import never sees it.
+  assert.match(browser, /onDrop = \(e: DragEvent\) => \{\n\s+if \(!hasFiles\(e\)\) return;\n\s+e\.preventDefault\(\); e\.stopPropagation\(\);/);
+  assert.match(browser, /driveId=\{here\.driveId\}\n\s+start=\{stack\}/, 'a move picks only in the same library');
 });
 
 test('the engine is mounted, and its two tables are made at boot', () => {
