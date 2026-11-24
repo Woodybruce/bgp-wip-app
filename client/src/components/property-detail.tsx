@@ -1018,7 +1018,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     <WebsiteLookup propertyId={property.id} propertyName={property.name} address={formatAddress(property.address)} hasWebsite={!!property.website} onPick={url => inlineUpdateAsync("website", url)} /></span>
                   <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Joint agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
                   {/* AML for each open deal here: the deal's own AML box in a window. */}
-                  {!isClientViewer && amlDeals.slice(0, 4).map((d: any) => (
+                  {!isClientViewer && !landsecView && amlDeals.slice(0, 4).map((d: any) => (
                     <button key={d.id} type="button" className={`${factPill} hover:border-primary hover:text-foreground`} title={`AML and KYC for ${d.name || "the transaction"}`}
                       onClick={() => setAmlDeal({ id: d.id, name: d.name, dealRef: d.dealRef ?? d.deal_ref ?? null, status: d.status })} data-testid={`property-aml-${d.id}`}>
                       <ShieldCheck className="w-3 h-3 text-muted-foreground" /><span className={factLabel}>AML</span>
@@ -1096,7 +1096,8 @@ export function PropertyDetail({ id }: { id: string }) {
               {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
               {/* Details became Ownership & KYC (Woody, 23 November 2026): the Land Registry owner, the
                   owner's KYC and the transactions' AML. Still admins only, as Details was (2026-11-14). */}
-              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Ownership &amp; KYC</Pill>}
+              {/* Not in the Landsec view (Woody, 2026-11-24: "remove ownership and KYC from the landsec views on property"). */}
+              {pdViewer?.isAdmin && !landsecView && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Ownership &amp; KYC</Pill>}
             </div>
             ) : (
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -1150,7 +1151,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
             <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
             {/* Ownership & KYC opens on who owns the building at Land Registry (Woody, 23 November 2026). */}
-            {planLayout && !isClientViewer && (
+            {planLayout && !isClientViewer && !landsecView && (
               <ErrorBoundary compact name="Ownership">
                 <PropertyOwnershipCard propertyId={property.id} onOpenAml={setAmlDeal} />
               </ErrorBoundary>

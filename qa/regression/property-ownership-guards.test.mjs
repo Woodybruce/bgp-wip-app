@@ -34,6 +34,10 @@ test("the property page: Ownership & KYC, investment beside the BGP take, no Pro
   const s = read("client/src/components/property-detail.tsx");
   assert.match(s, /data-testid="property-tab-details">Ownership &amp; KYC<\/Pill>/);
   assert.doesNotMatch(s, /<PropertyIntelligencePanel/);
+  // Not in the Landsec view (Woody, 2026-11-24): the tab, the card and the AML pills.
+  assert.match(s, /\{pdViewer\?\.isAdmin && !landsecView && <Pill active=\{phoneSection === "overview"\}/);
+  assert.match(s, /\{planLayout && !isClientViewer && !landsecView && \(\s*<ErrorBoundary compact name="Ownership">/);
+  assert.match(s, /\{!isClientViewer && !landsecView && amlDeals\.slice\(0, 4\)/);
   assert.match(s, /data-testid="property-intro-investment">Investment<\/Pill>/);
   assert.match(s, /<PropertyOwnershipCard propertyId=\{property\.id\} onOpenAml=\{setAmlDeal\} \/>/);
   // The plan-led page's news is in News & social only.
