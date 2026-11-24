@@ -440,6 +440,23 @@ async function partyPeopleForRow(row: TokenRow): Promise<PartyPeople | null> {
     await dealPeopleRequests(row.deal_id, pool, row.deal_id ? undefined : { companyId: row.company_id, entityId: row.trading_entity_id || null }));
 }
 
+// The owners the person acting is asked to pass their own link: those the
+// request named when it went out, and, read live as their page lists them,
+// any who still owe something with no link of their own. A request sent
+// before BGP's checks read the register (#4664, 24 November 2026: the
+// landlord's owner Lee Chung Chan) asks for it too.
+async function ownersToLink(row: TokenRow): Promise<Array<{ key: string; name: string }>> {
+  const request = row.request!;
+  const stored = request.ownLinksFor || [];
+  if (request.kind !== "company" || request.person || isTrustDocsRequest(request) || isJointRequest(request)) return stored;
+  const found = await partyPeopleForRow(row).catch(() => null);
+  const live = (found?.people || [])
+    .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner"))
+      && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, row.contact_name || ""))
+    .map(p => ({ key: p.key, name: p.name }));
+  return [...stored, ...live.filter(l => !stored.some(s => s.key === l.key))];
+}
+
 async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycProgress & { idState: KycIdState | null; idPerson: KycIdPerson | null; files: UploadedFile[] }> {
   const request = row.request!;
   const list = files || await uploadedFiles(row.token);
@@ -456,9 +473,10 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
     && await import("./kyc-people").then(async m => (await m.publicFiguresFor(row.company_id!, row.trading_entity_id || null)).some(f => personNamesMatch(f.name, row.contact_name!))).catch(() => false);
   if (accepted) for (const k of ["photo_id", "proof_of_address"] as KycDocKey[]) if (request.docs.includes(k) && !docsDone.includes(k)) docsDone.push(k);
   const idDone = accepted || ((idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false);
-  const ownersLinked = !request.ownLinksFor?.length
-    || await linkedPeople(row).then(keys => request.ownLinksFor!.every(o => keys.has(o.key))).catch(() => false);
-  return { idDone, docsDone, pepAnswered, ownersAnswered, ownersLinked, idState, idPerson, files: list };
+  const toLink = await ownersToLink(row).catch(() => request.ownLinksFor || []);
+  const ownersLinked = !toLink.length
+    || await linkedPeople(row).then(keys => toLink.every(o => keys.has(o.key))).catch(() => false);
+  return { idDone, docsDone, pepAnswered, ownersAnswered, ownersLinked, ownersToLink: toLink.map(o => o.name), idState, idPerson, files: list };
 }
 
 export async function portalView(row: TokenRow): Promise<KycPortalView> {
@@ -621,9 +639,12 @@ async function dealParties(dealId: string) {
     // A person who signs is asked themselves when nobody else is named.
     const person = d[col.contact] || (client?.company_id === companyId ? d.client_contact_id : null)
       || (String(entity?.entity_kind || "").toLowerCase() === "individual" ? entity?.contact_id || null : null);
+    // Who to ask is offered even when filed under another company: a party
+    // changed after they were set keeps them (One Clapham #4578, 24 November
+    // 2026: Gavin Hubrich, filed under Mount Anvil, asked for the SPV selling).
     const contacts = (await pool.query(
       `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile
-         FROM crm_contacts WHERE company_id = $1 AND COALESCE(email, '') <> ''
+         FROM crm_contacts WHERE (company_id = $1 OR id = $2) AND COALESCE(email, '') <> ''
         ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, person || ""])).rows;
     parties.push({
       companyId, name: entity?.name || c.name, brandName: c.name, role: col.role,
@@ -664,7 +685,7 @@ export async function clientFileParties(companyId: string, entityId: string | nu
   const person = file?.contact_id || (String(entity?.entity_kind || "").toLowerCase() === "individual" ? entity?.contact_id || null : null);
   const contacts = (await pool.query(
     `SELECT id, name, email, COALESCE(NULLIF(phone_mobile, ''), NULLIF(phone, '')) AS mobile
-       FROM crm_contacts WHERE company_id = $1 AND COALESCE(email, '') <> ''
+       FROM crm_contacts WHERE (company_id = $1 OR id = $2) AND COALESCE(email, '') <> ''
       ORDER BY (id = $2) DESC, name LIMIT 60`, [companyId, person || ""])).rows;
   const name = String(entity?.name || c.name);
   return {
@@ -1065,7 +1086,7 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
       notAsked: request.notAsked || [],
       person: request.person ? { key: request.person.key, name: request.person.name, roles: request.person.roles } : null,
       viaAgent: request.viaAgent ? { firm: request.viaAgent.firm, name: request.viaAgent.name, email: request.viaAgent.email, passedOn: request.viaAgent.passedOn || [] } : null,
-      ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
+      ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
       // The old single step for every owner's ID: files there do not say
       // whose they are (Woody, 19 November 2026), so it is never ticked here.
       docs: request.docs.map(key => {
@@ -1103,7 +1124,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
     partyName: request.partyName, kind: request.kind, dealName: request.dealName,
     ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
     agents: amlContact(request.agents), progress, test: !!row.is_test, askPep: !!request.askPep,
-    confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: (request.ownLinksFor || []).map(o => o.name),
+    confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
     person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
   };
   const sent = await sendKycEmail({

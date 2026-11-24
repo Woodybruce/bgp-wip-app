@@ -4704,6 +4704,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     "xeroContactId", "xeroContactName", "kycApproved", "amlCheckCompleted",
     "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
     "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
+    // People added on the transaction's People card: BGP's own CRM contacts.
+    "deal_people",
   ]);
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {

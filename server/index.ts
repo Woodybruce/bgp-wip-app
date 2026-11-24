@@ -1652,6 +1652,13 @@ const schemaStartup = (async () => {
     `DELETE FROM crm_contact_deals a USING crm_contact_deals b
       WHERE a.contact_id = b.contact_id AND a.deal_id = b.deal_id AND a.id > b.id`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_deals_pair ON crm_contact_deals(contact_id, deal_id)`,
+    // Everyone on a transaction (Woody, 24 November 2026; server/deal-people.ts):
+    // a contact added on the People card says who they are there and who added them.
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS deal_group text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS deal_label text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_by varchar`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_by_name text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_at timestamptz`,
     `DELETE FROM crm_contact_properties a USING crm_contact_properties b
       WHERE a.contact_id = b.contact_id AND a.property_id = b.property_id AND a.id > b.id`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_properties_pair ON crm_contact_properties(contact_id, property_id)`,
@@ -4697,6 +4704,7 @@ import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
 import amlCommentaryRouter from "./aml-commentary";
+import dealPeopleRouter from "./deal-people";
 import amlSecondReadRouter from "./aml-second-read";
 import trustStructureRouter from "./trust-structure";
 import amlPolicyRouter from "./aml-policy";
@@ -6105,6 +6113,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);
   app.use(amlCommentaryRouter);
+  app.use(dealPeopleRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);
   app.use(trustStructureRouter);

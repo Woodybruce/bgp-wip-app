@@ -332,3 +332,22 @@ test("a sale's heads of terms fill the vendor, purchaser, price, fee and team", 
   assert.equal(teamPatch(["Investment"], "Sale"), null);
   assert.equal(teamPatch(["London Estate"], "New Letting"), null);
 });
+
+// One Clapham #4578 (24 November 2026): the heads of terms gave the parties
+// with their company numbers and who they are care of, and those whole lines
+// became CRM records' names.
+test("a heads of terms party is offered by its name alone, without its number or who it is care of", async () => {
+  const { hotsPartyName, hotsParties } = await import("../client/src/lib/deal-note");
+  assert.equal(hotsPartyName("St John's Hill PH03 LLP (Company No. OC443074)"), "St John's Hill PH03 LLP");
+  assert.equal(hotsPartyName("SCPI Eden (c/o Advenis Real Estate Investment Management (ADVENIS REIM); Company No. 833 409 899)"), "SCPI Eden");
+  assert.equal(hotsPartyName("Bruce Cap Ltd (05211343)"), "Bruce Cap Ltd");
+  assert.equal(hotsPartyName("Bruce Cap Ltd, Company No. 05211343"), "Bruce Cap Ltd");
+  assert.equal(hotsPartyName("Bruce Cap Ltd c/o Savills"), "Bruce Cap Ltd");
+  assert.equal(hotsPartyName("AG Hondo Brixton Village B.V. (registered in the Netherlands)"), "AG Hondo Brixton Village B.V.");
+  // What is part of the name stays.
+  assert.equal(hotsPartyName("Savills (UK) Limited"), "Savills (UK) Limited");
+  assert.equal(hotsPartyName("Mount Anvil (No. 2) Limited"), "Mount Anvil (No. 2) Limited");
+  assert.equal(hotsPartyName("Inception Ventures Group (Holdings) Limited"), "Inception Ventures Group (Holdings) Limited");
+  assert.deepEqual(hotsParties({ vendorName: "St John's Hill PH03 LLP (Company No. OC443074)", purchaserName: "SCPI Eden (c/o Advenis; Company No. 833 409 899)" }, "Sale"),
+    [{ role: "vendor", name: "St John's Hill PH03 LLP" }, { role: "purchaser", name: "SCPI Eden" }]);
+});

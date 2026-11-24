@@ -86,6 +86,7 @@ import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 import { useIsLandsecView, DaysAtStage, NerFigure, BriefCheck } from "@/components/landsec/deal-clock";
 import { CompanyChip } from "@/components/company-chip";
 import { BgpTeamGroup, type BgpTeamPerson } from "@/components/bgp-team-group";
+import { DealPeopleCard } from "@/components/deal-people";
 import { CompanyKindPage, type CompanySection } from "@/components/company-page/company-kind-page";
 import { trackerUnitHref } from "@/lib/unit-links";
 import { dealPageSections, owedItems, type DealEventOpen, type DealPageData, type DealPageNames, type DealPartyRole } from "@shared/deal-page";
@@ -841,7 +842,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   {staffView ? (
                     <div className="space-y-3" data-testid="deal-kyc">
                       <StaffPartiesAml
-                        dealId={id} deal={deal} names={names} dealBgpTeam={dealBgpTeam}
+                        dealId={id} deal={deal} names={names} dealBgpTeam={dealBgpTeam} onChangeTeam={() => goTo("fees")}
                         onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
                       />
                       {/* Only a note saved before Issue 4 of BGP's AML policy shows, as a record: no new ones (23 November 2026). */}
@@ -863,7 +864,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                       onPartySave={handlePartySave} onActingFor={handleActingForSave} onCreate={createCounterparty}
                     />
                   )}
-                  {!jointAgent && <LinkedContactsCard deal={deal} />}
+                  {!jointAgent && !staffView && <LinkedContactsCard deal={deal} />}
                   {!jointAgent && brandParties.length > 0 && (
                     <CollapsibleCard open={brandsOpen} onToggle={() => setBrandsOpen(o => !o)} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
                       <div className="space-y-3">
@@ -1168,8 +1169,8 @@ function partySlotDefs(deal: CrmDeal) {
 // BGP staff: the Parties card inside the AML box (Woody, 22 November 2026:
 // "yes go ahead"), one card per party slot with its picker, and who BGP acts
 // for in the box's heading. The BGP team stays above it.
-function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onPartySave, onActingFor, onCreate }: {
-  dealId: string; deal: CrmDeal; names: DealPageNames | null; dealBgpTeam: BgpTeamPerson[];
+function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onChangeTeam, onPartySave, onActingFor, onCreate }: {
+  dealId: string; deal: CrmDeal; names: DealPageNames | null; dealBgpTeam: BgpTeamPerson[]; onChangeTeam: () => void;
   onPartySave: (field: PartyField, value: string | null) => Promise<void>;
   onActingFor: (side: "landlord" | "tenant") => Promise<void>;
   onCreate: (field: PartyField, companyType: string, name: string) => Promise<void>;
@@ -1229,11 +1230,8 @@ function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onPartySave, onActi
   ) : null;
   return (
     <>
-      {dealBgpTeam.length > 0 && (
-        <Card><CardContent className="p-4" data-testid="deal-bgp-team">
-          <BgpTeamGroup people={dealBgpTeam} addControl={<span className="text-[11px] text-muted-foreground">Change in Fees &amp; invoicing</span>} />
-        </CardContent></Card>
-      )}
+      {/* Everyone on the transaction with their email and phone (Woody, 24 November 2026). */}
+      <DealPeopleCard dealId={dealId} bgpTeam={dealBgpTeam} onChangeTeam={onChangeTeam} />
       <DealAmlStatusCard dealId={dealId} dealStatus={deal.status} slots={slots} actingFor={actingForControl} footer={footer} />
     </>
   );

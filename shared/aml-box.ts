@@ -302,6 +302,15 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("act", "bgp", "To do", words, viaAgent ? "send_via_agent" : "send_client_checks");
   }
   if (unreachable.length) {
+    // The person acting passes each owner their own link from their page, so
+    // while their request is open the wait is on them; BGP can add the
+    // details and send the link itself (#4664, 24 November 2026: "unclear if
+    // the email for Lee has been added for Kenneth to send on?").
+    const to = f.request.to;
+    if (f.request.status !== "finished" && to && unreachable.every(p => !personNamesMatch(p.name, to))) {
+      const who = unreachable.length === 1 ? unreachable[0].name : `${unreachable.length} owners`;
+      return step("wait", "client", `Waiting on ${to}`, `to pass ${who} ${unreachable.length === 1 ? "their link" : "their links"}`, "add_details");
+    }
     return step("act", "bgp", "To do", `Add contact details for ${andList(unreachable.map(p => p.name))}`, "add_details");
   }
   const noLink = f.people.filter(p => !p.linked);

@@ -7152,6 +7152,80 @@ and the routes: `server/aml-commentary.ts`; the screen:
   checks; an empty owners list draws no empty line.
 - Not run against Anthropic from a build machine (no key here).
 
+## Everyone on a transaction: the People card (Woody, 2026-11-24)
+
+Woody, on #4664's Parties & AML, which listed only the BGP team: "add up there
+all the other contacts on the deal with email and phone number? should be
+client/s and the details of the other side plus advisors agents and solcitors
+and ability to add a contact to the deal". Then, on its party box: Kenneth Tam
+"shown twice", "if a company or person has been chosen then those tabs for
+other choices should disappear", and Lee Chung Chan (the landlord's owner, no
+email held) "unclear if the email for Lee has been added for Kenneth to send
+on?". Do not re-litigate. Rules: `shared/deal-people.ts`; reads and routes:
+`server/deal-people.ts`; card: `client/src/components/deal-people.tsx`. Tests:
+`server/deal-people.test.ts` (in `npm test`), `qa/regression/deal-people-guards.test.mjs`.
+
+- **The People card** leads the Parties & AML pill for BGP staff (it replaced
+  the BGP-team-only card and, for staff, the Linked contacts card): the BGP
+  team (`BgpTeamGroup` with `details`: email and phone written out; **Change
+  the team** opens Fees & invoicing, where the agents and the fee split are
+  set), then **Our client**, **The other side** (each heading names the
+  parties), **Agents**, **Solicitors** and **Advisers and others**, every
+  person with their email and phone as links. A person met in more than one
+  place is one row with every role, in the first group any role gives
+  (`mergePeople`).
+- **Where each comes from** (`loadDealPeople`, read only): each party's person
+  to ask (`<role>_contact_id`), the client contact, the joint agent and each
+  party's agent (a firm with nobody named is a firm line with the firm's own
+  phone), our client's solicitors (`solicitor_firm`, and `solicitor_contact`
+  as the heads of terms save it, "Name · email · phone",
+  `parseSolicitorContact`), every firm checked at the SRA on the transaction
+  (its head office, from the SRA, when nobody there is named; someone at the
+  firm carries the side instead), and the contacts linked to the transaction
+  (`crm_contact_deals`, boot columns `deal_group`, `deal_label`, `added_by`,
+  `added_by_name`, `added_at`; an older link with no group is placed by the
+  party it is filed under, else its firm's kind, `groupForLinked`). A party
+  with nobody named reads "Nobody named yet" with **Add someone**.
+- **Routes** (BGP staff signed in as themselves, checked first): `GET
+  /api/deals/:id/people`, `GET …/people/search?q=` (CRM contacts by name,
+  email or firm; BGP's own people left out), `POST …/people` (a CRM contact,
+  or someone new: found by email first, else made, filed under a CRM company
+  only when exactly one has the firm's name; `newDealContact`), `DELETE
+  …/people/:contactId` (only a contact linked on the card), `POST
+  …/people/:contactId/details` (a blank email or phone only; the contact page
+  changes the rest). Each change is a `deal_audit_log` line, field
+  `deal_people`, which client logins never see (`CLIENT_HIDDEN_AUDIT_FIELDS`).
+- **The party box shows a choice once it is made**: a company that signs is
+  one line with **Change** and **Clear** (the list, Find it at Companies
+  House, Registered abroad and A person signs come back on Change; the brand's
+  other companies are offered as guarantor in the Guarantor section); who to
+  ask is one line with **Change** (the picker and Add someone come back on
+  Change), and when they are listed under Who the AML checks need it reads
+  "details above" rather than repeating them.
+- **An owner with no email is passed their link by the person dealing with
+  us**, from that person's own page (it lists the owners live). The Next line
+  reads "Waiting on <person> · to pass <owner> their link" while their request
+  is open (still offering Add details), and "To do · Add contact details" once
+  they have finished; the party box and the AML box's line say so. Their
+  reminders list the pass-on step for owners read since the request went out
+  (`ownersToLink` in `server/aml-portal.ts`, `KycProgress.ownersToLink`).
+- **Who to ask is offered by the client checks wherever they are filed**
+  (`dealParties` and `clientFileParties`: `company_id = $1 OR id = $2`). On
+  One Clapham (#4578, 24 November 2026) the vendor became a new record after
+  Gavin Hubrich (filed under Mount Anvil) was set as who to ask, and Send
+  client checks had nobody to send to although the party box named him.
+- **Heads of terms party names are offered without what the document says
+  about the company** (`hotsPartyName` in `client/src/lib/deal-note.ts`, used
+  by `hotsParties`): "(Company No. …)", "(c/o …)", "(registered in …)", a bare
+  number in brackets and a trailing "Company No. …" or "c/o …" come off;
+  "(UK)", "(No. 2)" and "(Holdings)" stay. One Clapham's heads of terms had
+  made CRM records named "St John's Hill PH03 LLP (Company No. OC443074)" and
+  "SCPI Eden (c/o Advenis Real Estate Investment Management (ADVENIS REIM);
+  Company No. 833 409 899)".
+- Not built: two companies signing for one party (joint landlords on one
+  title). A party has one company that signs, with guarantors and a third
+  party that pays beside it.
+
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 
 Jack: "We probably need to keep an up to date document of all these updates

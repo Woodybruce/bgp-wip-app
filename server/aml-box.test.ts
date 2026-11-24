@@ -102,9 +102,17 @@ test("the client checks: who to ask, then send, then the people with no details,
   assert.equal(send.action, "send_client_checks");
   assert.equal(line(send), "To do · Send the client checks to Jack Barratt");
   const huseyn = { name: "Huseyn Mirhadiyev", needs: ["identity check", "proof of address"], reachable: false, linked: false };
+  // No details held for an owner: the person acting passes them their link from their page
+  // (#4664, 24 November 2026), and BGP can add the details instead.
   const add = next({ request: { status: "sent", to: "Jack Barratt" }, people: [huseyn] });
   assert.equal(add.action, "add_details");
-  assert.equal(line(add), "To do · Add contact details for Huseyn Mirhadiyev");
+  assert.equal(add.tone, "wait");
+  assert.equal(line(add), "Waiting on Jack Barratt · to pass Huseyn Mirhadiyev their link");
+  assert.equal(line(next({ request: { status: "opened", to: "Jack Barratt" }, people: [huseyn, { ...huseyn, name: "Ann Other" }] })), "Waiting on Jack Barratt · to pass 2 owners their links");
+  // Once the person acting has finished, it is BGP's to do.
+  const finished = next({ request: { status: "finished", to: "Jack Barratt" }, people: [huseyn] });
+  assert.equal(finished.tone, "act");
+  assert.equal(line(finished), "To do · Add contact details for Huseyn Mirhadiyev");
   const link = next({ request: { status: "sent", to: "Jack Barratt" }, people: [{ ...huseyn, reachable: true }] });
   assert.equal(link.action, "people");
   assert.equal(line(link), "To do · Send Huseyn Mirhadiyev their own link");

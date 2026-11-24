@@ -329,19 +329,32 @@ function PeopleToReachLine({ party, people, aml, onOpen }: { party: DealPartyVie
   }
   const missing = peopleToReach(people.people, party.people, personNamesMatch);
   if (!missing.length) return null;
+  const passOn = passOnFrom(people);
   return (
     <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid={`deal-party-people-to-reach-${party.role}`}>
-      {joinNames(missing.map(p => personDisplayName(p.name)))} {missing.length === 1 ? "needs" : "need"} AML checks: no email or mobile held for them yet. <button type="button" className="underline underline-offset-2" onClick={onOpen} data-testid={`deal-party-people-add-${party.role}`}>Add their details</button>
+      {joinNames(missing.map(p => personDisplayName(p.name)))} {missing.length === 1 ? "needs" : "need"} AML checks: no email or mobile held for them yet.{" "}
+      {passOn ? <>{passOn.name} can pass {missing.length === 1 ? "them their link" : "each their link"} from their page ({passOn.ref}), or <button type="button" className="underline underline-offset-2" onClick={onOpen} data-testid={`deal-party-people-add-${party.role}`}>add their details</button>.</>
+        : <button type="button" className="underline underline-offset-2" onClick={onOpen} data-testid={`deal-party-people-add-${party.role}`}>Add their details</button>}
     </p>
   );
+}
+
+// The person dealing with us, while their link is open: their page lets them
+// pass each owner their own link (#4664, 24 November 2026: "unclear if the
+// email for Lee has been added for Kenneth to send on?").
+function passOnFrom(people: PartyPeople | null): { name: string; ref: string } | null {
+  const acting = people?.people.find(p => p.roles.includes("acting") && p.own?.isMain);
+  return acting?.own ? { name: personDisplayName(acting.name), ref: acting.own.ref } : null;
 }
 
 // One person the checks need, in the party box: their contact details as the
 // CRM holds them under the party, or a place to give them (saved to the CRM,
 // blank fields only, by POST /api/deals/:id/parties/:role/owner).
-function PersonToReach({ dealId, party, person, busy, quiet, onAsk }: { dealId: string; party: DealPartyView; person: KycPartyPerson; busy: boolean; quiet: boolean; onAsk: (contactId: string) => void }) {
+function PersonToReach({ dealId, party, person, busy, quiet, onAsk, passOn }: { dealId: string; party: DealPartyView; person: KycPartyPerson; busy: boolean; quiet: boolean; onAsk: (contactId: string) => void; passOn?: { name: string; ref: string } | null }) {
   const { toast } = useToast();
-  const contact = party.people.find(c => personNamesMatch(person.name, c.name) && (c.email || c.mobile)) || null;
+  // Who to ask is matched too, wherever they are filed (One Clapham #4578: Gavin Hubrich, filed under Mount Anvil).
+  const contact = party.people.find(c => personNamesMatch(person.name, c.name) && (c.email || c.mobile))
+    || (party.person && personNamesMatch(person.name, party.person.name) && (party.person.email || party.person.mobile) ? party.person : null);
   const [email, setEmail] = useState(contact?.email || "");
   const [mobile, setMobile] = useState(contact?.mobile || "");
   const asked = !!party.person && personNamesMatch(person.name, party.person.name);
@@ -380,13 +393,20 @@ function PersonToReach({ dealId, party, person, busy, quiet, onAsk }: { dealId: 
           {!asked && <button type="button" className="underline underline-offset-2 text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => onAsk(contact.id)} data-testid={`deal-party-ask-${person.key}`}>Make them who to ask</button>}
         </div>
       ) : needs || (contact && !quiet) ? (
-        <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-center">
-          <Input type="email" className="h-8 text-xs" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid={`input-check-person-email-${person.key}`} />
-          <Input className="h-8 text-xs" placeholder="Mobile" value={mobile} onChange={e => setMobile(e.target.value)} data-testid={`input-check-person-mobile-${person.key}`} />
-          <Button type="button" size="sm" className="h-8 text-xs" disabled={busy || save.isPending || (!email.trim() && !mobile.trim())} onClick={() => save.mutate()} data-testid={`button-check-person-save-${person.key}`}>
-            {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Save
-          </Button>
-        </div>
+        <>
+          <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-center">
+            <Input type="email" className="h-8 text-xs" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid={`input-check-person-email-${person.key}`} />
+            <Input className="h-8 text-xs" placeholder="Mobile" value={mobile} onChange={e => setMobile(e.target.value)} data-testid={`input-check-person-mobile-${person.key}`} />
+            <Button type="button" size="sm" className="h-8 text-xs" disabled={busy || save.isPending || (!email.trim() && !mobile.trim())} onClick={() => save.mutate()} data-testid={`button-check-person-save-${person.key}`}>
+              {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Save
+            </Button>
+          </div>
+          {needs && passOn && !personNamesMatch(person.name, passOn.name) && (
+            <div className="text-muted-foreground" data-testid={`deal-party-pass-on-${person.key}`}>
+              No details? {passOn.name} can pass {name} their link from their own page ({passOn.ref}).
+            </div>
+          )}
+        </>
       ) : null}
     </li>
   );
@@ -446,7 +466,7 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
             : "The AML box's Owners abroad section traces what it can, and the client checks ask for a structure chart up to the people and their IDs."}
         </p>
       )}
-      {people.people.length > 0 && <ul className="space-y-1.5">{people.people.map(p => <PersonToReach key={p.key} dealId={dealId} party={party} person={p} busy={busy} quiet={!!quiet} onAsk={onAsk} />)}</ul>}
+      {people.people.length > 0 && <ul className="space-y-1.5">{people.people.map(p => <PersonToReach key={p.key} dealId={dealId} party={party} person={p} busy={busy} quiet={!!quiet} onAsk={onAsk} passOn={passOnFrom(people)} />)}</ul>}
       {people.directors.length > 0 && (
         <p className="text-[11px] text-muted-foreground">Directors, no ID needed (sanctions checks only): {people.directors.map(d => personDisplayName(d.name)).join(", ")}.</p>
       )}
@@ -861,6 +881,21 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const [hotsOpen, setHotsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [person, setPerson] = useState({ name: "", jobTitle: "", email: "", mobile: "" });
+  // Once a company signs, or someone is who to ask, the other choices fold
+  // away behind Change (Woody, 24 November 2026: "if a company or person has
+  // been chosen then those tabs for other choices should disappear").
+  const [changingCompany, setChangingCompany] = useState(false);
+  const [changingPerson, setChangingPerson] = useState(false);
+  const chosenCompanyId = party?.company?.id || null;
+  const chosenPersonId = party?.person?.id || null;
+  useEffect(() => { setChangingCompany(false); }, [chosenCompanyId]);
+  useEffect(() => { setChangingPerson(false); }, [chosenPersonId]);
+  const { people: checkPeople } = usePartyPeople(dealId, party);
+  // Who to ask is listed with their details under Who the AML checks need: shown once.
+  const askListed = !!party?.person && party.brand.kind === "company" && !!checkPeople?.people.some(p => personNamesMatch(p.name, party.person!.name));
+  const toReach = party && aml && !quietWords(aml) && checkPeople && checkPeople.basis !== "individual"
+    ? peopleToReach(checkPeople.people, party.people, personNamesMatch) : [];
+  const passOn = passOnFrom(checkPeople);
 
   const save = useMutation({
     mutationFn: async (body: Record<string, unknown>) => (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}`, body)).json() as Promise<DealParties>,
@@ -933,6 +968,17 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                 <>
                   <PublicBodyLine dealId={dealId} party={party} />
                   <TrustLine dealId={dealId} party={party} />
+                  {party.company && !changingCompany && !hotsOpen ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-company-chosen">
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium">{party.company.name}</span>
+                        <span className="ml-1.5 text-muted-foreground">{companyRegisterWords(party.company)}</span>
+                        <span className="ml-1.5 inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" />Signs</span>
+                      </span>
+                      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setChangingCompany(true)} data-testid="deal-party-company-change">Change</Button>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })} data-testid="deal-party-company-clear">Clear</Button>
+                    </div>
+                  ) : <>
                   {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
                   {/* Kept while its dialog is open: setting the company from the heads of terms
                       must not close them (23 November 2026). */}
@@ -1017,6 +1063,9 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     {party.company && (
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })}>Clear</Button>
                     )}
+                    {party.company && changingCompany && (
+                      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setChangingCompany(false)} data-testid="deal-party-company-keep">Keep {party.company.name}</Button>
+                    )}
                   </div>
                   {!party.company && !party.brand.companiesHouseNumber && !party.brand.privateMark && (
                     <p className="text-xs text-muted-foreground" data-testid="deal-party-individual-option">
@@ -1025,6 +1074,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                         onClick={() => markIndividual.mutate(true)} data-testid="deal-party-mark-individual">Record them as a private individual</button>
                     </p>
                   )}
+                  </>}
                   {party.client && <div className="rounded-md bg-muted/50 px-2.5 py-2 text-xs space-y-1" data-testid="deal-party-billing">
                     <div><span className="text-muted-foreground">Billed to (Xero): </span>{party.xero ? (party.xero.name || "a Xero contact") : "not set"}</div>
                     {billedElsewhere && party.company?.companiesHouseNumber && (
@@ -1045,6 +1095,18 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     {party.guarantors!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} canRemove />)}
                   </div>
                 )}
+                {party.company && !changingCompany && (() => {
+                  const others = party.companies.filter(c => c.id !== party.company!.id && !(party.guarantors || []).some(g => g.entityId === c.id));
+                  return others.length > 0 ? (
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="deal-party-guarantor-options">
+                      <span className="text-muted-foreground">Make one of {party.brand.name}'s companies the guarantor:</span>
+                      {others.map(c => (
+                        <Button key={c.id} type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy || guarantor.busy}
+                          onClick={() => guarantor.add.mutate({ role, companyId: c.id })} data-testid={`deal-party-make-guarantor-${c.id}`}>{c.name}</Button>
+                      ))}
+                    </div>
+                  ) : null;
+                })()}
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || guarantor.busy} onClick={() => setGuarantorFinding("company")} data-testid="deal-party-find-guarantor">
                     <Plus className="w-3.5 h-3.5 mr-1" />Find the guarantor at Companies House
@@ -1072,13 +1134,16 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
 
             <section className="space-y-2" data-testid="deal-party-person-section">
               <h4 className="flex items-center gap-1.5 font-semibold"><UserRound className="w-4 h-4 text-muted-foreground" />Who to ask</h4>
-              {party.person && (
-                <div className="rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-person-current">
-                  <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}</div>
-                  <div className="text-muted-foreground">{[party.person.email || "no email", party.person.mobile].filter(Boolean).join(" · ")}</div>
-                  {party.person.from === "client" && <div className="text-muted-foreground italic">The transaction's client contact</div>}
+              {party.person && !changingPerson && !adding ? (
+                <div className={`flex items-start gap-2 text-xs ${askListed ? "" : "rounded-md border px-2.5 py-2"}`} data-testid="deal-party-person-current">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}{askListed ? <span className="font-normal text-muted-foreground"> · details above</span> : null}</div>
+                    {!askListed && <div className="text-muted-foreground">{[party.person.email || "no email", party.person.mobile].filter(Boolean).join(" · ")}</div>}
+                    {party.person.from === "client" && <div className="text-muted-foreground italic">The transaction's client contact</div>}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" disabled={busy} onClick={() => setChangingPerson(true)} data-testid="deal-party-person-change">Change</Button>
                 </div>
-              )}
+              ) : <>
               {party.people.length > 0 && (
                 <Select value={party.person?.from === "party" ? party.person.id : undefined} onValueChange={v => save.mutate({ personId: v })} disabled={busy}>
                   <SelectTrigger className="h-8 text-xs" data-testid="deal-party-person-select"><SelectValue placeholder={`Pick someone at ${party.brand.name}`} /></SelectTrigger>
@@ -1103,16 +1168,26 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                   </div>
                 </div>
               ) : (
-                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setAdding(true)} data-testid="deal-party-add-person-open">
-                  <Plus className="w-3.5 h-3.5 mr-1" />Add someone
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setAdding(true)} data-testid="deal-party-add-person-open">
+                    <Plus className="w-3.5 h-3.5 mr-1" />Add someone
+                  </Button>
+                  {party.person && changingPerson && (
+                    <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setChangingPerson(false)} data-testid="deal-party-person-keep">Keep {party.person.name}</Button>
+                  )}
+                </div>
               )}
+              </>}
             </section>
 
             {party.gaps.length > 0 ? (
               <div className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-950" data-testid="deal-party-editor-gaps">
                 <div className="font-semibold">Still needed before the checks can start</div>
                 <ul className="list-disc pl-4">{party.gaps.map(g => <li key={g.key}>{g.words}</li>)}</ul>
+              </div>
+            ) : toReach.length > 0 ? (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-950" data-testid="deal-party-editor-to-reach">
+                <span className="font-semibold">Still needed:</span> an email or mobile for {joinNames(toReach.map(p => personDisplayName(p.name)))}{passOn ? `, or ${passOn.name} passes ${toReach.length === 1 ? "them their link" : "each their link"}` : ""}.
               </div>
             ) : (
               <p className="flex items-center gap-1.5 text-xs text-emerald-700" data-testid="deal-party-editor-ready"><CheckCircle2 className="w-3.5 h-3.5" />Everything the checks need is here.</p>

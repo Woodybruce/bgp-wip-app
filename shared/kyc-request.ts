@@ -669,6 +669,10 @@ export interface KycProgress {
   ownersAnswered?: boolean;
   // Every owner the person acting was asked to pass a link to has one.
   ownersLinked?: boolean;
+  // The owners the person acting can pass a link to: those the request named
+  // when it went out, and any the register named since (read live, as their
+  // page lists them; 24 November 2026, #4664).
+  ownersToLink?: string[];
 }
 
 // The reminder: what is done, what is still needed, the same button.
