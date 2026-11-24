@@ -23,6 +23,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useBrand } from "@/lib/brand-context";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
+import { BGP_SHAREPOINT_SITE_URL } from "@shared/folders";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList, MoreHorizontal } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
 import { CompanyInvoicingControls } from "@/components/company-invoicing-controls";
@@ -7314,16 +7315,18 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   const stripImages = heroStrip ? companyStripImages(data.images || [], c.company_type) : [];
   const stripIds = new Set(stripImages.map((img: any) => img.id));
   const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || [])]);
+  // The brand's folder when it has files in it; otherwise BGP's own SharePoint
+  // site (it opened bgp.sharepoint.com, which is not BGP's).
   const openSharePointFolder = () => {
     fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
       .then(r => r.json())
       .then(d => {
         const url = d.items?.[0]?.webUrl
           ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
-          : `https://bgp.sharepoint.com`;
+          : BGP_SHAREPOINT_SITE_URL;
         window.open(url, "_blank");
       })
-      .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
+      .catch(() => window.open(BGP_SHAREPOINT_SITE_URL, "_blank"));
   };
   const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
   const shownAbove = stripImages.length;

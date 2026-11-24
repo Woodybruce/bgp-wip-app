@@ -157,7 +157,7 @@ test('the folder-link routes are staff only and the Files panel resolves each ta
     assert.match(crm.slice(at, at + 400), /resolveCompanyScope\(req\)\) \|\| \(await isClientRequestUser\(req\)\)\) return res\.status\(403\)/);
   }
   const page = readFileSync(new URL('../../client/src/pages/properties.tsx', import.meta.url), 'utf8');
-  const panel = page.slice(page.indexOf('export function PropertyFoldersPanel('), page.indexOf('export function PropertySharepointLink('));
+  const panel = page.slice(page.indexOf('export function PropertyFoldersPanel('), page.indexOf('export function TaggedConversationsPanel('));
   assert.match(panel, /propertyFolderTabs\(folderTeams, folderLinks\?\.folders, sharepointFolderUrl, userTeam\)/);
   assert.match(panel, /const folderUrl = \(activeTab\?\.url \|\| ""\)\.trim\(\)/);
   assert.match(panel, /formData\.append\("folderId", destFolderId\)/, 'uploads still go into the folder being browsed');

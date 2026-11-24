@@ -3,7 +3,8 @@
 // basic questions").
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SETUP_STEPS, bgpSharePointUrl, folderTreeOrder, folderTreePaths, safeFolderName } from "../shared/property-setup";
+import { SETUP_STEPS } from "../shared/property-setup";
+import { bgpSharePointUrl, folderTreeOrder, folderTreePaths, safeFolderName } from "../shared/folders";
 
 test("the steps, in the order Woody gave them", () => {
   assert.deepEqual(SETUP_STEPS.map(s => s.key), ["address", "owner", "files", "agent", "schedule", "brochure", "plans"]);

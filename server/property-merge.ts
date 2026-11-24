@@ -124,6 +124,16 @@ export async function mergeProperties(keepId: string, mergeId: string): Promise<
     //     conversation is left pointing at a record that is gone.
     await mergeSharedPropertyThreads(q, keepId, mergeId, String(keep.name || ""));
 
+    // 3d. The duplicate's folder links (record_folders, the folder engine)
+    //     move to the keeper; a folder both already link stays the keeper's.
+    await attempt(
+      `UPDATE record_folders d SET removed_at = now()
+        WHERE d.record_type = 'property' AND d.record_id = $2 AND d.removed_at IS NULL
+          AND EXISTS (SELECT 1 FROM record_folders k WHERE k.record_type = 'property' AND k.record_id = $1
+                        AND k.removed_at IS NULL AND k.drive_id = d.drive_id AND k.item_id = d.item_id)`,
+      [keepId, mergeId]);
+    await attempt(`UPDATE record_folders SET record_id = $1 WHERE record_type = 'property' AND record_id = $2`, [keepId, mergeId]);
+
     // 4. Remove the duplicate.
     await q(`DELETE FROM crm_properties WHERE id = $1`, [mergeId]);
     await q("COMMIT");

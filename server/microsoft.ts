@@ -113,6 +113,13 @@ export async function getAppGraphToken(): Promise<string | null> {
 // the delegated Calendars.Read consent that's already in place, without
 // needing the app-only Application permission.
 export async function getDelegatedGraphTokenForUser(userId: string, scopes: string[] = SCOPES): Promise<string | null> {
+  return (await getOwnMsAccess(userId, scopes))?.token ?? null;
+}
+
+// The same token with the Microsoft account it belongs to: the folder engine
+// acts as the person, never as a colleague (Woody, 24 November 2026: decision
+// 7 of docs/folders-review-2026-11-20.md), and logs whose account Graph saw.
+export async function getOwnMsAccess(userId: string, scopes: string[] = SCOPES): Promise<{ token: string; account: string } | null> {
   if (!userId) return null;
   return withMsalCacheLock(async () => {
     try {
@@ -133,7 +140,7 @@ export async function getDelegatedGraphTokenForUser(userId: string, scopes: stri
       const result = await client.acquireTokenSilent({ scopes, account });
       if (result?.accessToken && !isPrivateMicrosoftAccount(result)) {
         await saveMsalCache(String(userId), homeAccountId);
-        return result.accessToken;
+        return { token: result.accessToken, account: String(result.account?.username || account.username || "") };
       }
       return null;
     } catch (e: any) {

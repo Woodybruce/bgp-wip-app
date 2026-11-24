@@ -153,6 +153,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { RecordFolderPicker } from "@/components/folders/record-folder-picker";
 
 const GROUP_TABS = [
   { id: "all", label: "All" },
@@ -355,6 +356,11 @@ export function InlineEngagement({
   );
 }
 
+// The Properties list's Folders column (Woody, 24 November 2026;
+// docs/folders-review-2026-11-20.md, decisions 2 and 3): a new property folder
+// is made through the folder engine where the person chooses, with the
+// property folder's five folders inside, never at a fixed place under "BGP
+// share drive". The old team-folder badges show read only.
 function InlineFolderTree({
   propertyId,
   propertyName,
@@ -365,92 +371,35 @@ function InlineFolderTree({
   folderTeams: string[] | null;
 }) {
   const current = folderTeams || [];
-  const { toast } = useToast();
-  const [creating, setCreating] = useState<string | null>(null);
-
-  const createFoldersMutation = useMutation({
-    mutationFn: async (team: string) => {
-      setCreating(team);
-      const res = await apiRequest("POST", "/api/microsoft/property-folders", {
-        propertyName,
-        team,
-      });
-      return res.json();
-    },
-    onSuccess: async (data, team) => {
-      const updated = [...current, team];
-      try {
-        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
-      } catch (e: any) {
-        toast({ title: "Folders created, but the badge didn't save", description: e?.message, variant: "destructive" });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
-      toast({
-        title: "Folders Created",
-        description: `${data.created} folders created for ${propertyName} under ${team}`,
-      });
-      setCreating(null);
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Error",
-        description: err.message || "Failed to create folders",
-        variant: "destructive",
-      });
-      setCreating(null);
-    },
-  });
-
-  const handleToggle = (team: string) => {
-    if (current.includes(team)) return;
-    createFoldersMutation.mutate(team);
-  };
-
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" data-testid="inline-folder-tree-trigger">
-          {current.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-              <FolderTree className="w-3 h-3" />
-              Set up folders
-            </span>
-          ) : (
-            <div className="flex items-center gap-1 flex-wrap">
-              {current.map(t => (
-                <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
-                  <FolderOpen className="w-2.5 h-2.5" />
-                  {t}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
-        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Create folder tree for team</div>
-        {TEAMS.map(team => {
-          const isCreated = current.includes(team);
-          const isCreating = creating === team;
-          return (
-            <DropdownMenuItem
-              key={team}
-              onClick={() => !isCreated && !isCreating && handleToggle(team)}
-              disabled={isCreated || isCreating}
-              data-testid={`folder-team-option-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
-            >
-              <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${isCreated ? "bg-green-500 border-green-500" : "border-muted-foreground/30"}`}>
-                {isCreated && <span className="text-white text-[8px]">✓</span>}
-              </div>
-              <span className="text-xs flex-1">{team}</span>
-              {isCreating && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
-              {isCreated && <CheckCircle2 className="w-3 h-3 text-green-500 ml-1" />}
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" onClick={() => setOpen(true)} title={`New property folder for ${propertyName}`} data-testid="inline-folder-tree-trigger">
+        {current.length === 0 ? (
+          <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+            <FolderPlus className="w-3 h-3" />
+            New folder
+          </span>
+        ) : (
+          <div className="flex items-center gap-1 flex-wrap">
+            {current.map(t => (
+              <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
+                <FolderOpen className="w-2.5 h-2.5" />
+                {t}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </button>
+      <RecordFolderPicker
+        open={open}
+        onOpenChange={setOpen}
+        record={{ type: "property", id: propertyId, name: propertyName }}
+        startNew
+        defaultTemplate="property"
+        title={`New property folder for ${propertyName}`}
+      />
+    </>
   );
 }
 
@@ -1634,7 +1583,11 @@ export function SetUpFoldersDialog({
     enabled: open,
   });
 
-  const defaultTeam = currentUser?.team || null;
+  // Only the teams the server has a folder tree for (or a client team, which
+  // gets the leasing tree): the four leasing teams have none, and Create
+  // answered "Unknown team" for them (docs/folders-review-2026-11-20.md, 1.5).
+  const offeredTeams = TEAMS.filter((team) => team === "Landsec" || (templates || []).some((t) => t.team === team));
+  const defaultTeam = offeredTeams.includes(currentUser?.team) ? currentUser.team : null;
   const activeTeam = selectedTeam || defaultTeam;
 
   const activeTemplate = templates?.find((t) => t.team === activeTeam);
@@ -1726,7 +1679,7 @@ export function SetUpFoldersDialog({
             <div>
               <p className="text-xs font-medium text-muted-foreground mb-2">Which team should this property be filed under?</p>
               <div className="grid grid-cols-2 gap-2">
-                {TEAMS.map((team) => (
+                {offeredTeams.map((team) => (
                   <button
                     key={team}
                     className={`text-left px-3 py-2 rounded-md border text-xs transition-colors ${
@@ -2264,107 +2217,6 @@ export function PropertyFoldersPanel({ propertyName, propertyId, folderTeams, sh
         </DialogContent>
       </Dialog>
     </Card>
-  );
-}
-
-export function PropertySharepointLink({
-  propertyId,
-  sharepointFolderUrl,
-  onUpdate,
-}: {
-  propertyId: string;
-  sharepointFolderUrl?: string | null;
-  onUpdate: (field: string, value: any) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [urlInput, setUrlInput] = useState(sharepointFolderUrl || "");
-
-  if (sharepointFolderUrl && !editing) {
-    return (
-      <div className="flex items-center gap-2 pt-1">
-        <a
-          href={sharepointFolderUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-          data-testid="link-property-sharepoint-url"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Open in SharePoint
-        </a>
-        <button
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => { setUrlInput(sharepointFolderUrl); setEditing(true); }}
-          data-testid="button-edit-property-sharepoint-url"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  if (editing) {
-    return (
-      <div className="space-y-2 pt-1">
-        <Input
-          placeholder="https://brucegillinghampollard.sharepoint.com/..."
-          value={urlInput}
-          onChange={(e) => setUrlInput(e.target.value)}
-          className="text-xs h-8"
-          data-testid="input-property-sharepoint-url"
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => {
-              onUpdate("sharepointFolderUrl", urlInput.trim() || null);
-              setEditing(false);
-            }}
-            disabled={!urlInput.trim()}
-            data-testid="button-save-property-sharepoint-url"
-          >
-            Save
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </Button>
-          {sharepointFolderUrl && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-destructive hover:text-destructive"
-              onClick={() => {
-                onUpdate("sharepointFolderUrl", null);
-                setEditing(false);
-                setUrlInput("");
-              }}
-              data-testid="button-remove-property-sharepoint-url"
-            >
-              Remove
-            </Button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="text-xs h-7 mt-1"
-      onClick={() => setEditing(true)}
-      data-testid="button-link-property-sharepoint"
-    >
-      <Link2 className="w-3 h-3 mr-1" />
-      Link SharePoint Folder
-    </Button>
   );
 }
 
@@ -5661,7 +5513,7 @@ function PropertiesList({
     tenants: "Tenants",
     agents: "BGP Contacts",
     sqft: "Sq Ft",
-    folderTree: "Folder Tree",
+    folderTree: "Folders",
   };
 
   const toggleColumn = (col: string) => {
@@ -6485,7 +6337,7 @@ function PropertiesList({
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[90px] w-[90px]">Sq Ft</SortableTableHead>}
-                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
+                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folders</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
