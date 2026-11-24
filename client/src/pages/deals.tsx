@@ -2,6 +2,8 @@ import { isBgpTeam } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
+import { XeroInvoiceWindow, XERO_STATUS_COLOURS } from "@/components/xero-invoice-window";
+import { xeroStatusWords } from "@shared/xero-invoice";
 import { SigningEntityPicker } from "@/components/signing-entity-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -5478,6 +5480,8 @@ function HotsChecklistDialog({
 export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
+  // The invoice window: the invoice as Xero holds it, its PDF, change the draft, approve, email, void (components/xero-invoice-window.tsx).
+  const [openInvoice, setOpenInvoice] = useState<string | null>(null);
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
   const [currency, setCurrency] = useState<"GBP" | "USD">(deal.feeCurrency === "USD" ? "USD" : "GBP");
@@ -5615,9 +5619,11 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
       });
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Invoice created in Xero" });
+    onSuccess: (out: any) => {
+      toast({ title: "Draft created in Xero" });
       setCreating(false);
+      // The new draft opens in the invoice window, to check, change, approve and send.
+      if (out?.invoice?.id) setOpenInvoice(String(out.invoice.id));
       setAllowMissingPo(false);
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "po-check"] });
       setReference("");
@@ -5664,26 +5670,6 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     },
   });
 
-  const XERO_STATUS_COLORS: Record<string, string> = {
-    DRAFT: "bg-zinc-500",
-    SUBMITTED: "bg-blue-500",
-    AUTHORISED: "bg-green-600",
-    PAID: "bg-emerald-600",
-    VOIDED: "bg-red-500",
-    DELETED: "bg-red-700",
-    ERROR: "bg-red-500",
-  };
-  // Say where the invoice is in Xero — a bare "DRAFT" chip under an
-  // "Invoiced" deal status read as a contradiction (Woody, 2026-09-27).
-  const XERO_STATUS_LABELS: Record<string, string> = {
-    DRAFT: "Draft in Xero",
-    SUBMITTED: "Awaiting approval",
-    AUTHORISED: "Approved",
-    PAID: "Paid",
-    VOIDED: "Voided",
-    DELETED: "Deleted",
-    ERROR: "Error",
-  };
   // Contact search and invoice sync run on the firm-wide Xero session, so
   // "Connect Xero" (a per-login token, only needed to send a NEW invoice)
   // no longer headlines a card that already has invoices.
@@ -5914,13 +5900,14 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {invoices.length > 0 && (
           <div className="space-y-2">
             {invoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm">
+              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm" data-testid={`xero-invoice-row-${inv.id}`}>
                 {/* Two lines — entity name, then invoice # + amount — so the
                     phone row stops clipping to "The Cr…" with the number
-                    hidden and the amount wrapping (Woody, 2026-09-28). */}
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
-                    {XERO_STATUS_LABELS[inv.status] || inv.status}
+                    hidden and the amount wrapping (Woody, 2026-09-28). The
+                    row opens the invoice window (24 November 2026). */}
+                <button type="button" className="flex items-center gap-2 min-w-0 flex-1 text-left hover:opacity-80" onClick={() => setOpenInvoice(inv.id)} title="Open the invoice" data-testid={`xero-invoice-open-${inv.id}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLOURS[inv.status] || "bg-zinc-500"}`}>
+                    {xeroStatusWords(inv.status)}
                   </Badge>
                   <div className="min-w-0 flex-1">
                     {inv.invoicingEntityName && (
@@ -5937,7 +5924,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       )}
                     </p>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-1 shrink-0">
                   {inv.xeroUrl && (
                     <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
@@ -5980,6 +5967,17 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {!xeroStatus?.connected && invoices.length === 0 && (
           <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this transaction.</p>
         )}
+        <XeroInvoiceWindow
+          invoiceId={openInvoice}
+          open={!!openInvoice}
+          onOpenChange={(v) => { if (!v) setOpenInvoice(null); }}
+          onChanged={() => {
+            refetchInvoices();
+            invalidateDealCaches();
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
+          }}
+        />
       </CardContent>
     </Card>
   );

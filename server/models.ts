@@ -3831,7 +3831,7 @@ CRITICAL RULES:
             };
             const deleteFn = deleteMap[input.entityType];
             if (!deleteFn) return JSON.stringify({ error: `Unknown entity type: ${input.entityType}` });
-            await deleteFn(input.id);
+            try { await deleteFn(input.id); } catch (e: any) { if (e?.status === 409) return JSON.stringify({ error: e.message }); throw e; }
             return JSON.stringify({ success: true, action: "deleted", entity: input.entityType, id: input.id, name: input.confirmName });
           }
 

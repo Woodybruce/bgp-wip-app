@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { db, pool } from "./db";
 import { xeroInvoices, crmDeals } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode } from "@shared/deal-status";
+import { xeroDay } from "@shared/xero-invoice";
 import { xeroApiWithFallback, xeroNetAmount } from "./xero";
 import { updateDeal } from "./letting-service";
 import { mirrorFromDeal } from "./lease-status-mirror";
@@ -65,7 +66,7 @@ export async function applyXeroInvoice(row: typeof xeroInvoices.$inferSelect, xe
     lineAmount: xeroNetAmount(xeroInvoice, row.lineAmount),
     invoiceNumber: xeroInvoice.InvoiceNumber,
     reference: xeroInvoice.Reference ?? row.reference,
-    dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : row.dueDate,
+    dueDate: xeroDay(xeroInvoice.DueDateString ?? xeroInvoice.DueDate) ?? row.dueDate,
     contactName: xeroInvoice.Contact?.Name ?? row.contactName,
     lineDescription: firstLine?.Description ?? row.lineDescription,
     syncedAt: new Date(),
@@ -198,7 +199,7 @@ async function linkInvoiceToDeal(inv: any, deal: DealRow, by: string): Promise<b
     totalAmount: inv.Total ?? null,
     lineAmount: xeroNetAmount(inv, null),
     currency: inv.CurrencyCode || "GBP",
-    dueDate: inv.DueDate ? String(inv.DueDate).slice(0, 10) : null,
+    dueDate: xeroDay(inv.DueDateString ?? inv.DueDate),
     contactName: inv.Contact?.Name || null,
     lineDescription: inv.LineItems?.[0]?.Description || null,
     sentToXero: true,

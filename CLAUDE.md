@@ -3214,6 +3214,70 @@ in when Layla bills. Rule: `shared/invoice-template.ts`; read:
 - Not run against Xero from a build machine; checked in a browser on a local
   copy on 22 November 2026.
 
+## Xero invoices worked from the app (Woody, 2026-11-24)
+
+Woody, on draft INV-05587 (20 November 2026): "at this point need the ability
+to edit that draft or also see that draft in the app is that possible? and
+also delete it if the deal gets deleted from the app? ... does the api allow
+for approval and email from the app? can you review and see if we can make it
+more integrated so layla doesn't need to go on to Xero?"; asked who may
+approve and send, on 24 November 2026: "xero all admin". Do not re-litigate.
+Rules: `shared/xero-invoice.ts`; routes: `server/xero-invoice-actions.ts`
+(`setupXeroInvoiceRoutes`, after `setupXeroRoutes` in `server/index.ts`);
+window: `client/src/components/xero-invoice-window.tsx`. Tests:
+`server/xero-invoice.test.ts` (in `npm test`),
+`qa/regression/xero-invoice-actions.test.mjs`.
+
+- **The invoice window**: pressing an invoice on the transaction's Xero
+  Invoicing card (Fees & invoicing), or making a draft with Send to Xero, opens
+  it as Xero holds it (`GET /api/xero/invoices/:id/detail`, which also
+  refreshes the row and moves the transaction to Invoiced once approved, as the
+  sync does): lines, VAT, totals, dates, reference, amount due, and the last
+  email sent from the app. **See the PDF** is Xero's own PDF
+  (`GET …/:id/pdf`, `Accept: application/pdf`) in the pop-out viewer.
+- **Who does what** (`invoiceActions`): any BGP person signed in as themselves
+  reads an invoice, changes a draft and deletes a draft, as any BGP person makes
+  one. Admins (`users.is_admin` or `ADMIN_EMAILS`, requireAdmin's test) approve,
+  email and void. Writes go through the person's own Xero connection, so Xero
+  records who did it and the email goes out in their name (`XERO_CONNECT` asks
+  them to connect); reads fall back to the firm's connection.
+- **Changing a draft** (`PUT /api/xero/invoices/:id`, `invoiceEditInput`,
+  `xeroEditPayload`): every line is sent (Xero deletes a line not sent), a kept
+  line keeps its account code and tax type, a new one takes the sales nominal
+  (`salesAccountCode`); the dates, reference and contact. **The contact is sent
+  by its Xero id only**: a name or details would change the contact itself in
+  Xero. Read fresh first: a draft approved in Xero since is refused.
+- **Approve** (`POST …/:id/approve`, optional `andEmail`) from DRAFT or
+  SUBMITTED; never on a transaction stopped for AML reasons. **Email**
+  (`POST …/:id/email`): AUTHORISED or PAID only; Xero sends it to the contact's
+  own address and its contact persons marked to receive emails, from
+  messaging-service@post.xero.com with Xero's default template
+  (`GET …/:id/recipients` shows who). With no address on the contact, a person
+  gives one and it is saved on the contact (its contact persons sent back as
+  they were). An `Idempotency-Key` on every send; a second send within ten
+  minutes asks first (`SENT_RECENTLY`); then marked as sent
+  (`SentToContact`). **Void** (`POST …/:id/void`): approved with nothing paid or
+  credited, with a reason noted on the invoice's history in Xero. **Delete the
+  draft** (`POST …/:id/delete-draft`). Each writes a history line on the
+  transaction (`xero_invoice_edited`, `_approved`, `_emailed`, `_voided`,
+  `_deleted`), hidden from client logins with the AML lines.
+- **Deleting a transaction** (`xeroBeforeDealDelete`): its drafts are deleted in
+  Xero first (Status DELETED); an approved invoice keeps it until an admin voids
+  it, and a paid one keeps it (409 `XERO_INVOICE_LIVE`); a draft Xero could not
+  be reached for keeps it too (`XERO_UNREACHABLE`), so no draft is left behind.
+  The delete routes ask with the person's own Xero login; `storage.deleteCrmDeal`
+  asks again (the firm's connection) for every other caller, ChatBGP's
+  delete_record included, and removes the transaction's invoice rows with it.
+- **Taking a row off** (`DELETE /api/xero/invoices/:id`) only when Xero holds
+  nothing live for it (deleted, voided, or never sent).
+- Also fixed: Xero's dates came back as `/Date(…)/` and were cut to "/Date(176"
+  on sync; `xeroDay` reads both forms.
+- Checked in a browser on a local copy against a stand-in for Xero on
+  24 November 2026 (edit, PDF, approve and email, no address, void, transaction
+  delete). Not run against BGP's Xero from a build machine: the first real
+  approval and email is an admin's.
+- Not built: attachments, repeating invoices, payments, credit notes.
+
 ## Who BGP bills and who pays (Woody, 2026-11-20)
 
 Woody: "the Xero billing entity and the aml entity need to be flagged if they

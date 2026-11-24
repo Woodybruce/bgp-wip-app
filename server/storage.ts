@@ -1134,7 +1134,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteCrmDeal(id: string): Promise<void> {
-    const { tenancyScheduleUnits } = await import("@shared/schema");
+    const { tenancyScheduleUnits, xeroInvoices } = await import("@shared/schema");
+    // Its draft invoices are deleted in Xero first, and an approved or paid one
+    // keeps the transaction (Woody, 20 November 2026). The delete routes ask
+    // the same with the person's own Xero login before they get here.
+    const { xeroBeforeDealDelete } = await import("./xero-invoice-actions");
+    const xero = await xeroBeforeDealDelete([id], null);
+    if (!xero.ok) throw Object.assign(new Error(xero.message), { code: xero.code, status: 409 });
     await db.transaction(async (tx) => {
       await tx.update(crmRequirementsLeasing).set({ dealId: null }).where(eq(crmRequirementsLeasing.dealId, id));
       // Unlink (not delete) the unit-spine rows pointing at this deal —
@@ -1147,6 +1153,7 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(crmContactDeals).where(eq(crmContactDeals.dealId, id));
       await tx.delete(crmReqInvestDeals).where(eq(crmReqInvestDeals.dealId, id));
       await tx.delete(dealFeeAllocations).where(eq(dealFeeAllocations.dealId, id));
+      await tx.delete(xeroInvoices).where(eq(xeroInvoices.dealId, id));
       await tx.delete(crmDeals).where(eq(crmDeals.id, id));
     });
   }

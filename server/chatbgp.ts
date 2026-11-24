@@ -9998,7 +9998,8 @@ export async function executeCrmToolRaw(
     };
     const deleteFn = deleteMap[fnArgs.entityType];
     if (!deleteFn) return { data: { error: `Unknown entity type: ${fnArgs.entityType}` } };
-    await deleteFn(fnArgs.id);
+    // A transaction with an approved or paid Xero invoice is kept (server/xero-invoice-actions.ts).
+    try { await deleteFn(fnArgs.id); } catch (e: any) { if (e?.status === 409) return { data: { error: e.message } }; throw e; }
     return { data: { success: true, action: "deleted", entity: fnArgs.entityType, id: fnArgs.id, name: fnArgs.confirmName }, action: { type: "crm_deleted", entityType: fnArgs.entityType, id: fnArgs.id } };
   }
 
@@ -14013,7 +14014,8 @@ export async function handleCrmToolCall(
     if (!deleteFn) {
       return { handled: true, response: { reply: `Unknown entity type: ${fnArgs.entityType}` } };
     }
-    await deleteFn(fnArgs.id);
+    // A transaction with an approved or paid Xero invoice is kept (server/xero-invoice-actions.ts).
+    try { await deleteFn(fnArgs.id); } catch (e: any) { if (e?.status === 409) return { handled: true, response: { reply: e.message } }; throw e; }
     const reply = await summaryHelper({ success: true, action: "deleted", entity: fnArgs.entityType, id: fnArgs.id, name: fnArgs.confirmName });
     return { handled: true, response: { reply: reply || `${fnArgs.entityType} "${fnArgs.confirmName}" has been deleted.`, action: { type: "crm_deleted", entityType: fnArgs.entityType, id: fnArgs.id } } };
   }

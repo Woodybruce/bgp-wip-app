@@ -7,6 +7,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { isInvoicedStatus, statusSpellingsFor, TERMINAL_STATUSES } from "@shared/deal-status";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, dealClientRole, invoiceContactFor, type InvoiceCompany, type InvoiceContact } from "@shared/deal-parties";
+import { xeroDay } from "@shared/xero-invoice";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -474,6 +475,13 @@ async function invoiceCompaniesFor(deal: Record<string, any>): Promise<{ payer: 
 }
 
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
+  const res = await xeroFetch(session, path, options);
+  return res.json();
+}
+
+// The request behind xeroApi, for answers that are not JSON: an invoice as a
+// PDF (Accept: application/pdf), and Xero's empty 204 to an emailed invoice.
+export async function xeroFetch(session: any, path: string, options: RequestInit = {}): Promise<globalThis.Response> {
   const token = await refreshXeroToken(session);
   if (!token) throw new Error("Not connected to Xero");
 
@@ -532,7 +540,7 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
     throw new Error(`Xero API error: ${res.status} - ${errText}`);
   }
 
-  return res.json();
+  return res;
 }
 
 // Xero Payroll UK API — separate base URL from accounting. Uses the same
@@ -1512,7 +1520,7 @@ export function setupXeroRoutes(app: Express) {
           totalAmount: xeroInvoice.Total,
           invoiceNumber: xeroInvoice.InvoiceNumber,
           reference: xeroInvoice.Reference ?? invoice.reference,
-          dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : invoice.dueDate,
+          dueDate: xeroDay(xeroInvoice.DueDateString ?? xeroInvoice.DueDate) ?? invoice.dueDate,
           contactName: xeroInvoice.Contact?.Name ?? invoice.contactName,
           lineDescription: firstLine?.Description ?? invoice.lineDescription,
           lineAmount: xeroNetAmount(xeroInvoice, invoice.lineAmount),
@@ -1533,69 +1541,8 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
-  // Edit an existing draft and push the changes back to Xero. Only DRAFT
-  // (or SUBMITTED) invoices are editable per Xero's rules — AUTHORISED+
-  // invoices are locked once issued.
-  app.put("/api/xero/invoices/:id", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const [invoice] = await db.select().from(xeroInvoices).where(eq(xeroInvoices.id, req.params.id as string));
-      if (!invoice) return res.status(404).json({ message: "Invoice record not found" });
-      if (!invoice.xeroInvoiceId) return res.status(400).json({ message: "Invoice not yet sent to Xero" });
-      if (invoice.status && !["DRAFT", "SUBMITTED"].includes(invoice.status)) {
-        return res.status(409).json({ message: `Invoice is ${invoice.status} in Xero — only drafts can be edited` });
-      }
-
-      const { description, body, amount, reference, dueDate, contactName, poNumber } = req.body || {};
-      const headline = (description || "").trim() || "Professional fees";
-      const lineDescription = (body || "").trim() ? `${headline}\n\n${(body || "").trim()}` : headline;
-      const lineAmount = typeof amount === "number" ? amount : (invoice.lineAmount ?? invoice.totalAmount ?? 0);
-
-      const payload: any = {
-        InvoiceID: invoice.xeroInvoiceId,
-        Type: "ACCREC",
-        LineAmountTypes: "Exclusive",
-        LineItems: [{
-          Description: lineDescription,
-          Quantity: 1,
-          UnitAmount: lineAmount,
-          AccountCode: SALES_ACCOUNT_CODE,
-          TaxType: "OUTPUT2",
-        }],
-      };
-      if (reference !== undefined) payload.Reference = reference;
-      if (dueDate) payload.DueDate = dueDate;
-      if (poNumber !== undefined) payload.PONumber = poNumber;
-      if (contactName) payload.Contact = { Name: contactName };
-
-      // Xero accepts updates by POSTing to /Invoices with the InvoiceID set.
-      const xeroRes = await xeroApi(req.session, "/Invoices", {
-        method: "POST",
-        body: JSON.stringify({ Invoices: [payload] }),
-      });
-      const updated = xeroRes.Invoices?.[0];
-      if (!updated) return res.status(502).json({ message: "Xero didn't return an updated invoice" });
-
-      const firstLine = updated.LineItems?.[0];
-      await db.update(xeroInvoices).set({
-        status: updated.Status,
-        totalAmount: updated.Total,
-        invoiceNumber: updated.InvoiceNumber,
-        reference: updated.Reference ?? reference ?? invoice.reference,
-        dueDate: updated.DueDate ? String(updated.DueDate).slice(0, 10) : (dueDate || invoice.dueDate),
-        contactName: updated.Contact?.Name ?? contactName ?? invoice.contactName,
-        lineDescription: firstLine?.Description ?? lineDescription,
-        lineAmount: xeroNetAmount(updated, lineAmount),
-        poNumber: poNumber ?? invoice.poNumber,
-        syncedAt: new Date(),
-        updatedAt: new Date(),
-      } as any).where(eq(xeroInvoices.id, req.params.id as string));
-
-      res.json({ success: true, status: updated.Status });
-    } catch (err: any) {
-      console.error("[Xero] Edit invoice error:", err);
-      res.status(500).json({ message: err.message });
-    }
-  });
+  // Changing a draft, approving, emailing, voiding and deleting one, and the
+  // invoice in full and as a PDF: server/xero-invoice-actions.ts.
 
   // Refresh Xero (WIP): every open invoice the app knows, plus invoices
   // raised directly in Xero matched to deals — server/xero-invoice-sync.ts.
@@ -1609,16 +1556,6 @@ export function setupXeroRoutes(app: Express) {
       });
     } catch (err: any) {
       console.error("[Xero] Sync-all error:", err);
-      res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.delete("/api/xero/invoices/:id", requireAuth, async (req: Request, res: Response) => {
-    try {
-      await db.delete(xeroInvoices).where(eq(xeroInvoices.id, req.params.id as string));
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("[Xero] Delete invoice error:", err);
       res.status(500).json({ message: err.message });
     }
   });

@@ -3059,11 +3059,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
       const stopped = await stoppedDealIds(ids.map(String));
       if (stopped.size) return res.status(409).json({ error: `${stopped.size === 1 ? "One of these transactions" : `${stopped.size} of these transactions`}: ${AML_STOP_REFUSAL}`, code: "AML_STOPPED" });
+      // Draft invoices go from Xero with them; an approved or paid one keeps them all (server/xero-invoice-actions.ts).
+      const { xeroBeforeDealDelete } = await import("./xero-invoice-actions");
+      const xero = await xeroBeforeDealDelete(ids.map(String), (req as any).session || null);
+      if (!xero.ok) return res.status(409).json({ error: xero.message, code: xero.code });
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
       res.json({ ok: true, deleted: ids.length });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { res.status(e?.status === 409 ? 409 : 500).json({ error: e.message, ...(e?.code ? { code: e.code } : {}) }); }
   });
 
   app.get("/api/crm/company-property-links", async (req, res) => {
@@ -4740,8 +4744,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         .orderBy(sql`created_at DESC`);
       // BGP's AML working is never a client's to read: every line about the
       // checks (aml_sign_off, aml_red_flag, aml_reliance, aml_stopped,
-      // kyc4u_result, client_checks_sent ...), as the five-year deletion reads them.
-      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field) && !/^(aml|kyc|client_checks)/i.test(String(l.field || ""))) : logs);
+      // kyc4u_result, client_checks_sent ...), as the five-year deletion reads them,
+      // nor BGP's invoicing (xero_invoice_approved, _emailed, _voided ...: 24 November 2026).
+      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field) && !/^(aml|kyc|client_checks|xero)/i.test(String(l.field || ""))) : logs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4887,9 +4892,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
         return res.status(409).json({ error: AML_STOP_REFUSAL, code: "AML_STOPPED" });
       }
+      // Its draft invoices are deleted in Xero with it; an approved or paid one keeps it (server/xero-invoice-actions.ts).
+      const { xeroBeforeDealDelete } = await import("./xero-invoice-actions");
+      const xero = await xeroBeforeDealDelete([String(req.params.id)], (req as any).session || null);
+      if (!xero.ok) return res.status(409).json({ error: xero.message, code: xero.code });
       await storage.deleteCrmDeal(String(req.params.id));
       res.json({ ok: true });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { res.status(e?.status === 409 ? 409 : 500).json({ error: e.message, ...(e?.code ? { code: e.code } : {}) }); }
   });
 
   app.get("/api/crm/fee-allocations", async (req, res) => {
