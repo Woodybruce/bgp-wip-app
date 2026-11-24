@@ -141,6 +141,7 @@ export interface KnownFacts {
     parties: Record<string, unknown[]>; deal: unknown[]; unchecked: string[];
     setAside?: Record<string, Array<{ flag: { key: string } }>>;
     levels?: Record<string, PartyDueDiligence>;
+    oldMarks?: Record<string, { edd: boolean; pep: boolean; risk: boolean; sanctions: boolean }>;
   } | null;
   precheck?: { ranAt: string | null; running: boolean; ownersAbroad?: string[] } | null;
 }
@@ -153,13 +154,15 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
   const held = (await db.query(
     `SELECT aml_risk_level, aml_edd_required, aml_pep_status, aml_cdd_form, aml_subject_type FROM crm_companies WHERE id = $1`, [party.brandId])).rows[0] || null;
   // A record field whose flag the MLRO set aside with a comment does not make
-  // the file higher risk either (the old automatic screening's marks).
+  // the file higher risk either, nor does one the old in-app screening wrote by
+  // itself (Woody, 24 November 2026: "Only sign off counts remove the old bit").
   const aside = new Set((flags?.setAside?.[party.brandId] || []).map((x: any) => String(x?.flag?.key || "")));
+  const old = flags?.oldMarks?.[party.brandId];
   const brand = held ? {
     ...held,
-    aml_risk_level: aside.has("record:high_risk") ? null : held.aml_risk_level,
-    aml_edd_required: aside.has("record:edd") ? false : held.aml_edd_required,
-    aml_pep_status: aside.has("record:screening") ? null : held.aml_pep_status,
+    aml_risk_level: aside.has("record:high_risk") || old?.risk ? null : held.aml_risk_level,
+    aml_edd_required: aside.has("record:edd") || old?.edd ? false : held.aml_edd_required,
+    aml_pep_status: aside.has("record:screening") || old?.pep ? null : held.aml_pep_status,
   } : null;
   const { isHigherRisk } = await import("@shared/aml-checklist");
   let precheck = known.precheck ?? null;

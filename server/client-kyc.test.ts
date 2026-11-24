@@ -55,7 +55,9 @@ test("each company's bucket: cleared, due soon, expired, sanctions only, in prog
   assert.equal(clientKycBucket({ status: "approved", expiresAt: inDays(-1) }, NOW), "expired");
   assert.equal(clientKycBucket({ status: "approved", expiresAt: inDays(400), scope: "sanctions_only" }, NOW), "sanctions_only");
   assert.equal(clientKycBucket({ status: "rejected", expiresAt: null }, NOW), "rejected");
-  assert.equal(clientKycBucket({ status: "in_review", expiresAt: null }, NOW), "in_progress");
+  // Only a sign-off counts: an old "in review" is not checked unless work has started.
+  assert.equal(clientKycBucket({ status: "in_review", expiresAt: null }, NOW), "not_checked");
+  assert.equal(clientKycBucket({ status: "in_review", expiresAt: null, started: true }, NOW), "in_progress");
   assert.equal(clientKycBucket({ status: null, expiresAt: null, started: true }, NOW), "in_progress");
   assert.equal(clientKycBucket({ status: null, expiresAt: null }, NOW), "not_checked");
 });

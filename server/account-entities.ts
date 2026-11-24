@@ -17,6 +17,7 @@
 
 import { requireMlro } from "./aml-authority";
 import { entitySignOffScope } from "@shared/party-kyc";
+import { signedOffStatus } from "@shared/kyc-status";
 import { Router, type Request, type Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { resolveAccountView, type AccountView, type Querier } from "./account-resolver";
@@ -329,16 +330,17 @@ export async function getAccountEntities(
   // 3. Layer KYC state on top.
   for (const entity of entities) {
     let kyc: GroupEntityKyc | null = null;
-    // A sub company folded into a company row (the account's own legal company): its own record
-    // first; with none, only the account's decision (approved or rejected), as the CRM chip and the
-    // Companies view read it, never a bare "in review" the retired screening left (24 November 2026).
-    const folded = entity.tradingEntityId ? kycByEntity.get(`trading_entity|${entity.tradingEntityId}`) || null : null;
-    const decided = (status: unknown) => /^(approved|rejected)$/i.test(String(status || "").trim());
-    const companyRow = entity.entityId ? kycByEntity.get(`${entity.entityKind}|${entity.entityId}`) : null;
-    const row = entity.tradingEntityId ? folded || (companyRow && decided(companyRow.kyc_status) ? companyRow : null) : companyRow;
+    // Only a sign-off counts (Woody, 24 November 2026: "Only sign off counts remove the old
+    // bit"): a record that holds no approval, rejection or lapsed approval is read as none.
+    // A sub company folded into a company row (the account's own legal company): its own
+    // sign-off first, then the account's, as the CRM chip and the Companies view read it.
+    const signed = (r: any) => (r && signedOffStatus(r.kyc_status) ? r : null);
+    const folded = entity.tradingEntityId ? signed(kycByEntity.get(`trading_entity|${entity.tradingEntityId}`)) : null;
+    const companyRow = entity.entityId ? signed(kycByEntity.get(`${entity.entityKind}|${entity.entityId}`)) : null;
+    const row = folded || companyRow;
     if (row) {
       kyc = {
-        status: row.kyc_status || "pending",
+        status: signedOffStatus(row.kyc_status)!,
         approvedBy: row.approved_by ?? null,
         approvedAt: iso(row.approved_at),
         expiresAt: iso(row.expires_at),
@@ -350,9 +352,9 @@ export async function getAccountEntities(
       };
     } else if (entity.entityKind === "company" && entity.entityId) {
       const live = companyById.get(entity.entityId);
-      if (live?.kyc_status && (!entity.tradingEntityId || decided(live.kyc_status))) {
+      if (signedOffStatus(live?.kyc_status)) {
         kyc = {
-          status: live.kyc_status,
+          status: signedOffStatus(live.kyc_status)!,
           approvedBy: live.kyc_approved_by ?? null,
           approvedAt: null,
           expiresAt: iso(live.kyc_expires_at),

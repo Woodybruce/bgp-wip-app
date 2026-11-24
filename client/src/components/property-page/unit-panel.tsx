@@ -121,7 +121,8 @@ function Facts({ rows }: { rows: Fact[] }) {
 }
 
 // Words for the brand's KYC check (crm_companies.kyc_status); anything else is shown as stored.
-const KYC_WORDS: Record<string, string> = { pending: "pending", in_review: "in review", approved: "approved", rejected: "rejected", expired: "expired", not_found: "no record found" };
+// Only a sign-off counts (24 November 2026): "in review" and "pending" read as not signed off.
+const KYC_WORDS: Record<string, string> = { pending: "not signed off", in_review: "not signed off", approved: "approved", rejected: "rejected", expired: "expired", not_found: "no record found" };
 
 // For BGP staff (the server sends a client none of this): the company on the
 // lease, or that none is recorded, and the brand's KYC check. Plain text.

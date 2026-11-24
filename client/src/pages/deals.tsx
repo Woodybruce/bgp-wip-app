@@ -118,6 +118,7 @@ import { toDateInputValue, stripPropertyFromTitle, gbDate, dealDisplayTitle } fr
 import { cleanUnit } from "@/components/account-deals-board";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { shownKycStatus } from "@shared/kyc-status";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
@@ -5988,7 +5989,6 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
 // leaking onto deal pages (Woody, 2026-09-27).
 function kycStatusLabel(status: string): string {
   if (status === "approved") return "Approved";
-  if (status === "in_review") return "In review";
   if (status === "rejected") return "Rejected";
   if (status === "not_found") return "Not on Companies House";
   const words = status.replace(/_/g, " ");
@@ -6002,7 +6002,8 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
   const officers = (chData?.officers || company.companiesHouseOfficers || []) as any[];
   const pscs = (chData?.pscs || []) as any[];
   const filings = (chData?.filings || []) as any[];
-  const kycStatus = company.kycStatus;
+  // Only a sign-off counts (24 November 2026): a stale "in review" or "pending" shows as not checked.
+  const kycStatus = shownKycStatus(company.kycStatus);
   const hasKyc = !!profile;
   const activeOfficers = officers.filter((o: any) => !o.resignedOn);
   const activePscs = pscs.filter((p: any) => !p.ceasedOn);
@@ -6012,7 +6013,6 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           {kycStatus === "approved" ? <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" /> :
-           kycStatus === "in_review" ? <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" /> :
            kycStatus === "rejected" ? <XCircle className="w-4 h-4 text-red-500 shrink-0" /> :
            <div className="w-4 h-4 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
           <div className="min-w-0">
@@ -6021,8 +6021,8 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {kycStatus && kycStatus !== "pending" && (
-            <Badge className={`text-[9px] text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
+          {kycStatus && (
+            <Badge className={`text-[9px] text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
               {kycStatusLabel(kycStatus)}
             </Badge>
           )}

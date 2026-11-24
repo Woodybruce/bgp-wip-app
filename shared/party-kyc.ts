@@ -12,6 +12,7 @@
 // the brand's own legal name). A brand the MLRO has rejected blocks whatever
 // company is named: a rejection is never stepped round by naming a company.
 
+import { signedOffStatus } from "./kyc-status";
 import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
 import { countryInSentence } from "./kyc-prechecks";
 
@@ -62,15 +63,24 @@ export function approverWords(by: string | null | undefined): string | null {
   return by.trim() === "KYC4U (MLRO)" ? "KYC4U" : by;
 }
 
+// Only a sign-off counts (Woody, 24 November 2026): a status that is not an
+// approval, a rejection or a lapsed approval reads as no checks run, with no
+// approver or dates.
+const NOT_SIGNED_OFF: KycFacts = { status: null, expiresAt: null, approvedBy: null, approvedAt: null, scope: null };
+
 export function partyKycState(input: PartyKycInput): PartyKycState {
   const { brand, company } = input;
-  const brandFacts: KycFacts = { status: brand.status, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null, scope: brand.scope ?? null };
-  const about = { brandName: brand.name, brandStatus: brand.status };
+  const brandStatus = signedOffStatus(brand.status);
+  const brandFacts: KycFacts = brandStatus
+    ? { status: brandStatus, expiresAt: brand.expiresAt, approvedBy: approverWords(brand.approvedBy), approvedAt: brand.approvedAt ?? null, scope: brand.scope ?? null }
+    : NOT_SIGNED_OFF;
+  const about = { brandName: brand.name, brandStatus };
   if (!company) return { name: brand.name, source: "brand", ...brandFacts, ...about };
-  if (brand.status === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
-  if (company.kyc) return { name: company.name, source: "company", ...company.kyc, approvedBy: approverWords(company.kyc.approvedBy), ...about };
+  if (brandStatus === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
+  const own = company.kyc && signedOffStatus(company.kyc.status) ? company.kyc : null;
+  if (own) return { name: company.name, source: "company", ...own, status: signedOffStatus(own.status), approvedBy: approverWords(own.approvedBy), ...about };
   if (sameLegalCompany(brand, company)) return { name: company.name, source: "same_company", ...brandFacts, ...about };
-  return { name: company.name, source: "company", status: null, expiresAt: null, approvedBy: null, approvedAt: null, ...about };
+  return { name: company.name, source: "company", ...NOT_SIGNED_OFF, ...about };
 }
 
 // ── A sign-off for sanctions checks only ────────────────────────────────────

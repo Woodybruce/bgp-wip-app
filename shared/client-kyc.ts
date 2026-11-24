@@ -33,16 +33,22 @@ const chSql = (col: string) => {
 
 /** Joins and columns for a sub company's KYC (alias e: crm_trading_entities; adds k, ob, obl). */
 export function subCompanyKycSql(e = "e"): { joins: string; columns: string } {
+  // Only a sign-off counts (24 November 2026): the sub company's own when it has one,
+  // else the account's when it is the account's own legal company.
+  const signed = (col: string) => `lower(COALESCE(${col}, '')) IN ('approved', 'rejected', 'expired')`;
+  const own = signed("k.kyc_status");
   return {
     joins: `LEFT JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = ${e}.id
-         LEFT JOIN crm_companies ob ON ob.id = ${e}.parent_company_id AND k.entity_id IS NULL
-               AND lower(COALESCE(ob.kyc_status, '')) IN ('approved', 'rejected')
+         LEFT JOIN crm_companies ob ON ob.id = ${e}.parent_company_id AND NOT (${own})
+               AND ${signed("ob.kyc_status")}
                AND ${chSql(`${e}.companies_house_number`)} <> '' AND ${chSql(`${e}.companies_house_number`)} = ${chSql("ob.companies_house_number")}
          LEFT JOIN LATERAL (SELECT notes, created_at FROM kyc_audit_log WHERE company_id = ob.id AND action = 'kyc_approved'
                              ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 1) obl ON ob.id IS NOT NULL`,
-    columns: `COALESCE(k.kyc_status, ob.kyc_status) AS kyc_status, COALESCE(k.expires_at, ob.kyc_expires_at) AS expires_at,
-              COALESCE(k.approved_at, ob.kyc_checked_at) AS approved_at,
-              k.evidence->'bgpSignOff'->>'regime' AS regime, k.evidence->'bgpSignOff'->>'at' AS signoff_at,
+    columns: `CASE WHEN ${own} THEN k.kyc_status ELSE ob.kyc_status END AS kyc_status,
+              CASE WHEN ${own} THEN k.expires_at ELSE ob.kyc_expires_at END AS expires_at,
+              CASE WHEN ${own} THEN k.approved_at ELSE ob.kyc_checked_at END AS approved_at,
+              CASE WHEN ${own} THEN k.evidence->'bgpSignOff'->>'regime' END AS regime,
+              CASE WHEN ${own} THEN k.evidence->'bgpSignOff'->>'at' END AS signoff_at,
               obl.notes AS acct_notes, obl.created_at AS acct_logged, (ob.id IS NOT NULL) AS from_account`,
   };
 }
@@ -127,6 +133,7 @@ export const CLIENT_KYC_EXPIRING_DAYS = 30;
 export function clientKycBucket(row: ClientKycCompanyRow, now: Date): "cleared" | "expiring" | "expired" | "rejected" | "in_progress" | "not_checked" | "sanctions_only" {
   const status = clean(row.status).toLowerCase();
   if (status === "rejected") return "rejected";
+  if (status === "expired") return "expired";
   if (status === "approved") {
     const until = row.expiresAt ? Date.parse(row.expiresAt) : NaN;
     if (Number.isFinite(until) && until < now.getTime()) return "expired";
@@ -134,7 +141,9 @@ export function clientKycBucket(row: ClientKycCompanyRow, now: Date): "cleared" 
     if (Number.isFinite(until) && until - now.getTime() <= CLIENT_KYC_EXPIRING_DAYS * 86400000) return "expiring";
     return "cleared";
   }
-  if (status === "in_review" || status === "pending" || row.started) return "in_progress";
+  // Only a sign-off counts (24 November 2026): "in review" or "pending" on a record is not
+  // progress; work under way is (BGP's checks run, a client file open, a request sent).
+  if (row.started) return "in_progress";
   return "not_checked";
 }
 

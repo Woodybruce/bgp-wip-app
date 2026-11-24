@@ -115,7 +115,7 @@ export function amlFileStateWords(
     return { tone: "done", words: `Approved${by}${on}${until && !Number.isNaN(until.getTime()) ? `, valid until ${day(until)}` : ""}` };
   }
   if (status === "rejected") return { tone: "flag", words: `Rejected${on}` };
-  if (status === "in_review") return { tone: "act", words: `In review${on}: not approved yet` };
+  // Only a sign-off counts (24 November 2026): anything else is not approved yet.
   return { tone: "act", words: `Not approved yet${on}` };
 }
 

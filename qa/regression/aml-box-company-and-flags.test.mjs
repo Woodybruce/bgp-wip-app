@@ -103,9 +103,13 @@ test('a flag set aside counts nowhere: the deal card, KYC4U, the sign-off, the d
   // The row lists the same flags (on a letting under £10,000 a month, the sanctions ones only).
   assert.match(board, /\.\.\.live\.filter\(f => !sanctionsOnly \|\| isSanctionsFlag\(f\)\)/);
   assert.match(board, /applyFlagReviews\(dealRedFlags\(deal\), reviewsForDeal\(reviews, String\(deal\.id\)\)\)\.live/);
-  // A record field whose flag is set aside does not make the file higher risk.
+  // A record field whose flag is set aside does not make the file higher risk,
+  // nor one the old in-app screening wrote by itself (only a sign-off counts, 24 November 2026).
   const aml = read('server/deal-party-aml.ts');
-  assert.match(aml, /aml_risk_level: aside\.has\("record:high_risk"\) \? null : held\.aml_risk_level/);
+  assert.match(aml, /aml_risk_level: aside\.has\("record:high_risk"\) \|\| old\?\.risk \? null : held\.aml_risk_level/);
+  assert.match(aml, /aml_edd_required: aside\.has\("record:edd"\) \|\| old\?\.edd \? false : held\.aml_edd_required/);
+  assert.match(aml, /aml_pep_status: aside\.has\("record:screening"\) \|\| old\?\.pep \? null : held\.aml_pep_status/);
+  assert.match(aml, /const old = flags\?\.oldMarks\?\.\[party\.brandId\];/);
   const boot = read('server/index.ts');
   assert.match(boot, /CREATE TABLE IF NOT EXISTS kyc_flag_reviews \(/);
 });

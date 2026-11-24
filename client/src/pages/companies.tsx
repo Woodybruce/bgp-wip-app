@@ -67,6 +67,7 @@ import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { LenderPanel, LenderGlance } from "@/components/lender-panel";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { PropertiesSummary } from "@/components/properties-summary";
+import { shownKycStatus } from "@shared/kyc-status";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -229,10 +230,9 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
                   {sub.company_type && <Badge variant="outline" className="text-[11px] shrink-0">{formatCompanyType(sub.company_type)}</Badge>}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {sub.kyc_status === "approved" && <Badge className="text-[11px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
-                  {sub.kyc_status === "in_review" && <Badge className="text-[11px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
-                  {sub.kyc_status === "rejected" && <Badge className="text-[11px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
-                  {!sub.kyc_status && <Badge variant="outline" className="text-[11px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
+                  {shownKycStatus(sub.kyc_status) === "approved" && <Badge className="text-[11px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
+                  {shownKycStatus(sub.kyc_status) === "rejected" && <Badge className="text-[11px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
+                  {!shownKycStatus(sub.kyc_status) && <Badge variant="outline" className="text-[11px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
                   {sub.aml_risk && <Badge className={`text-[11px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
                 </div>
               </div>
@@ -288,11 +288,6 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
     await save(entities.filter((_, i) => i !== idx));
   };
 
-  const setStatus = async (idx: number, status: string) => {
-    const next = entities.map((e, i) => i === idx ? { ...e, kyc_status: status } : e);
-    await save(next);
-  };
-
   return (
     <div className="border rounded-md p-2 space-y-1.5 bg-slate-50/40 dark:bg-slate-900/20">
       <div className="flex items-center justify-between">
@@ -300,14 +295,14 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
           <Building2 className="w-3 h-3" />
           Trading entities
           <Badge variant="secondary" className="text-[11px]">{entities.length}</Badge>
-          <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-300" title="These per-row KYC flags are the legacy jsonb store — canonical per-entity KYC lives in the Group entities panel">legacy</Badge>
+          <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-300" title="The legacy list. KYC is a sign-off on the Companies and KYC card (only a sign-off counts, 24 November 2026)">legacy</Badge>
         </div>
         <Button size="sm" variant="ghost" className="h-5 text-[11px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
           <Plus className="w-3 h-3" />Add
         </Button>
       </div>
       <p className="text-[11px] text-muted-foreground leading-snug">
-        Legal entities that appear on this brand's leases. Each row is a separate KYC subject. The tenancy schedule auto-resolves any of these names to this brand.
+        Legal entities that appear on this brand's leases. The tenancy schedule auto-resolves any of these names to this brand. Each one's KYC is on the Companies and KYC card.
       </p>
       {entities.length === 0 && !adding && (
         <p className="text-[11px] text-muted-foreground italic">No trading entities yet. Add the legal entity from a lease (e.g. "Pret A Manger UK Ltd").</p>
@@ -318,20 +313,6 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
           {e.companies_house_number && (
             <Badge variant="outline" className="text-[11px] font-mono">CH {e.companies_house_number}</Badge>
           )}
-          <select
-            value={e.kyc_status || ""}
-            onChange={(ev) => setStatus(i, ev.target.value)}
-            disabled={saving}
-            className="text-[11px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
-            title="Legacy jsonb KYC flag — canonical per-entity KYC lives in the Group entities panel"
-          >
-            <option value="">KYC: —</option>
-            <option value="pending">Pending</option>
-            <option value="in_review">In review</option>
-            <option value="pass">Passed</option>
-            <option value="fail">Failed</option>
-            <option value="expired">Expired</option>
-          </select>
           <button
             onClick={() => removeEntity(i)}
             disabled={saving}
@@ -396,7 +377,8 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
   const activePscs = (kycResult?.pscs || storedPscs).filter((p: any) => !p.ceasedOn);
   const filings = kycResult?.filings || storedFilings;
   const profile = kycResult?.profile || displayProfile;
-  const kycStatus = kycResult?.kycStatus || storedKycStatus;
+  // Only a sign-off counts (24 November 2026): a stale "in review" shows as nothing.
+  const kycStatus = shownKycStatus(kycResult?.kycStatus || storedKycStatus);
   const fetchStatus = chData?.fetchStatus;
   const hasPartialFailure = fetchStatus && Object.values(fetchStatus).some((s) => s === "failed");
 
@@ -562,7 +544,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
     const lines: string[] = [];
     lines.push(`KYC REPORT — ${profile.companyName || company.name}`);
     lines.push(`Generated: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`);
-    lines.push(`Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "in_review" ? "WARNING" : "FAIL"}`);
+    lines.push(`Status: ${kycStatus === "approved" ? "PASS" : kycStatus === "rejected" ? "FAIL" : "NOT SIGNED OFF"}`);
     lines.push("");
     lines.push("COMPANY DETAILS");
     lines.push(`Company Number: ${profile.companyNumber || displayNumber}`);
@@ -649,7 +631,6 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
           </h3>
           <div className="flex items-center gap-1">
             {kycStatus === "approved" && <Badge className="text-[11px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">Passed</Badge>}
-            {kycStatus === "in_review" && <Badge className="text-[11px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0">Review</Badge>}
             {kycStatus === "rejected" && <Badge className="text-[11px] bg-red-100 text-red-700 border-0">Failed</Badge>}
           </div>
         </button>
@@ -720,12 +701,11 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
             <div className="space-y-2 pr-3">
               <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/30">
                 {kycStatus === "approved" && <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />}
-                {kycStatus === "in_review" && <AlertCircle className="w-5 h-5 text-yellow-500 shrink-0" />}
                 {kycStatus === "rejected" && <XCircle className="w-5 h-5 text-red-500 shrink-0" />}
                 {!kycStatus && <ShieldCheck className="w-5 h-5 text-muted-foreground shrink-0" />}
                 <div>
                   <p className="text-sm font-semibold">
-                    {kycStatus === "approved" ? "KYC approved" : kycStatus === "in_review" ? "KYC in review" : kycStatus === "rejected" ? "KYC rejected" : "Linked to Companies House"}
+                    {kycStatus === "approved" ? "KYC approved" : kycStatus === "rejected" ? "KYC rejected" : "Linked to Companies House"}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}

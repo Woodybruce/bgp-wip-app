@@ -65,18 +65,17 @@ test("screening, sanctions, risk and enhanced due diligence on the party's recor
     company: { aml_pep_status: "review_required", aml_risk_level: "High", aml_edd_required: true, aml_edd_reason: "Capital.bg reported its owner is under a UK asset freeze; unconfirmed" },
     latestInvestigation: { sanctions_match: true, conducted_at: "2026-11-10T09:00:00Z" },
   }));
-  assert.deepEqual(flags.map(f => f.kind), ["screening", "sanctions", "high_risk", "edd"]);
-  // Only the old in-app screening wrote review_required, and nobody at BGP set this risk (24 November 2026).
-  assert.equal(flags[0].label, "Possible PEP or sanctions match (old screening)");
-  assert.equal(flags[0].oldScreening, true);
-  assert.equal(flags[1].label, "Possible match on the UK Sanctions List");
-  assert.equal(flags[1].oldScreening, undefined, "a screening from November is not the old one");
-  assert.equal(flags[2].label, "Risk rated high (old screening)");
-  assert.match(flags[3].detail || "", /asset freeze/);
-  assert.equal(flags[3].oldScreening, undefined, "a reason in a person's own words");
+  // Only the old in-app screening wrote review_required, and nobody at BGP set this risk: neither is a red flag
+  // (Woody, 24 November 2026: "Only sign off counts remove the old bit"). A screening from November and an
+  // enhanced due diligence reason in a person's own words still are.
+  assert.deepEqual(flags.map(f => f.kind), ["sanctions", "edd"]);
+  assert.equal(flags[0].label, "Possible match on the UK Sanctions List");
+  assert.match(flags[1].detail || "", /asset freeze/);
   // A risk the MLRO set on the record is theirs.
   const mlro = partyRedFlags(facts({ company: { aml_risk_level: "High" }, recordHistory: [{ at: "2026-10-01T10:00:00Z", what: "risk=high", who: "Jack Barratt", action: "cdd_checklist_updated" }] }));
   assert.equal(mlro[0].label, "Risk rated high");
+  // The PEP status words still read for a status a person recorded.
+  assert.equal(pepStatusLabel("review_required"), "Screening found a possible PEP or sanctions match to review");
   assert.equal(pepStatusLabel("pep_foreign"), "Recorded as a politically exposed person outside the UK");
   assert.equal(pepStatusLabel("rca"), "Recorded as a close associate of a politically exposed person");
   assert.equal(pepStatusLabel("pep"), "Recorded as a politically exposed person");
@@ -156,21 +155,25 @@ test("the finished note carries the red flags when there are any", () => {
 // really a massive problem") ────────────────────────────────────────────────
 
 test("a flag set aside no longer counts; new evidence raises it again", () => {
+  // Marks a person set on the record (the MLRO's form), so they are red flags.
   const flags = partyRedFlags(facts({
-    company: { aml_pep_status: "review_required", aml_risk_level: "high", aml_edd_required: true, aml_edd_reason: "Sanctions screening returned a match — EDD mandatory" },
-    recordHistory: [{ at: "2026-09-24T10:00:00Z", what: "Sanctions screening returned a match — EDD mandatory", who: "automatic" }],
+    company: { aml_pep_status: "review_required", aml_risk_level: "high", aml_edd_required: true, aml_edd_reason: "Owner's source of wealth unclear" },
+    recordHistory: [{ at: "2026-10-05T10:00:00Z", what: "risk=high, pep=review_required, edd=true", who: "Jack Barratt", action: "cdd_checklist_updated" }],
   }));
   assert.deepEqual(flags.map(f => f.key).sort(), ["record:edd", "record:high_risk", "record:screening"]);
   // What is behind a record flag: the record's own history.
-  assert.ok(flags.every(f => (f.facts || []).some(x => /EDD mandatory/.test(x.value) && /automatic/.test(x.value))));
+  assert.ok(flags.every(f => (f.facts || []).some(x => /risk=high/.test(x.value) && /Jack Barratt/.test(x.value))));
   const risk = flags.find(f => f.key === "record:high_risk")!;
-  const review = { id: 1, flagKey: risk.key, evidence: risk.evidence, comment: "Left by the old automatic screening.", by: "Woody Bruce", at: "2026-11-19T12:00:00Z" };
+  const review = { id: 1, flagKey: risk.key, evidence: risk.evidence, comment: "The risk was reviewed and accepted by the MLRO.", by: "Woody Bruce", at: "2026-11-19T12:00:00Z" };
   const split = applyFlagReviews(flags, [review]);
   assert.deepEqual(split.live.map(f => f.key).sort(), ["record:edd", "record:screening"]);
   assert.equal(split.setAside.length, 1);
-  assert.equal(split.setAside[0].review.comment, "Left by the old automatic screening.");
+  assert.equal(split.setAside[0].review.comment, "The risk was reviewed and accepted by the MLRO.");
   // The record moves to "critical": not what was set aside.
-  const critical = partyRedFlags(facts({ company: { aml_risk_level: "critical" } }));
+  const critical = partyRedFlags(facts({
+    company: { aml_risk_level: "critical" },
+    recordHistory: [{ at: "2026-11-20T10:00:00Z", what: "risk=critical", who: "Jack Barratt", action: "cdd_checklist_updated" }],
+  }));
   assert.equal(applyFlagReviews(critical, [review]).live.length, 1);
 });
 

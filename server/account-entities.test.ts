@@ -151,6 +151,35 @@ describe("getAccountEntities", () => {
         { id: "ROOT", trading_entities: null, kyc_status: "approved", kyc_checked_at: "2026-01-01T00:00:00Z", kyc_approved_by: "Woody", kyc_expires_at: null },
       ],
       kycRows: [{
+        entity_kind: "company", entity_id: "ROOT", kyc_status: "rejected",
+        checked_at: "2026-09-01T00:00:00Z", approved_by: "Jack Barratt", approved_at: null,
+        expires_at: null, next_review_at: null,
+        outstanding: [{ key: "ubos", label: "UBO declaration" }], last_check_job_at: null,
+      }],
+    });
+    const report = await mod.getAccountEntities("ROOT", {}, { pool, view: view as any, now: () => NOW });
+    const root = report.entities[0];
+    assert.equal(root.kyc?.status, "rejected");
+    assert.equal(root.kyc?.source, "crm_entity_kyc");
+    assert.equal(root.kyc?.approvedBy, "Jack Barratt");
+    assert.deepEqual(root.kyc?.outstanding, [{ key: "ubos", label: "UBO declaration" }]);
+    assert.equal(report.summary.rejected, 1);
+    assert.equal(report.summary.current, 0);
+    assert.equal(root.groupRollupBlocks, true);
+  });
+
+  it("only a sign-off counts: an old in-review record is read as none", async () => {
+    // Woody, 24 November 2026: "Only sign off counts remove the old bit".
+    const view = fakeView([
+      entity({ companyId: "ROOT", name: "Landsec", relation: "self", evidence: "self" }),
+      entity({ companyId: "SPV", name: "Landsec SPV" }),
+    ]);
+    const pool = mockPool({
+      companyRows: [
+        { id: "ROOT", trading_entities: null, kyc_status: "approved", kyc_checked_at: "2026-01-01T00:00:00Z", kyc_approved_by: "Woody", kyc_expires_at: null },
+        { id: "SPV", trading_entities: null, kyc_status: "in_review", kyc_checked_at: "2026-09-27T00:00:00Z", kyc_approved_by: null, kyc_expires_at: null },
+      ],
+      kycRows: [{
         entity_kind: "company", entity_id: "ROOT", kyc_status: "in_review",
         checked_at: "2026-09-01T00:00:00Z", approved_by: null, approved_at: null,
         expires_at: null, next_review_at: null,
@@ -158,13 +187,16 @@ describe("getAccountEntities", () => {
       }],
     });
     const report = await mod.getAccountEntities("ROOT", {}, { pool, view: view as any, now: () => NOW });
-    const root = report.entities[0];
-    assert.equal(root.kyc?.status, "in_review");
-    assert.equal(root.kyc?.source, "crm_entity_kyc");
-    assert.deepEqual(root.kyc?.outstanding, [{ key: "ubos", label: "UBO declaration" }]);
-    assert.equal(report.summary.inReview, 1);
-    assert.equal(report.summary.current, 0);
-    assert.equal(root.groupRollupBlocks, true);
+    const root = report.entities.find(e => e.entityId === "ROOT")!;
+    const spv = report.entities.find(e => e.entityId === "SPV")!;
+    // The account's own approval stands over the old "in review" record.
+    assert.equal(root.kyc?.status, "approved");
+    assert.equal(root.kyc?.source, "crm_companies");
+    assert.equal(root.kyc?.approvedBy, "Woody");
+    // A company with only an old "in review" has no KYC: not checked.
+    assert.equal(spv.kyc, null);
+    assert.equal(spv.groupRollupBlocks, true);
+    assert.deepEqual(report.summary, { total: 2, current: 1, inReview: 0, unchecked: 1, expired: 0, rejected: 0 });
   });
 
   it("an expired approval counts as expired, never current", async () => {

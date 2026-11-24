@@ -4934,6 +4934,15 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   on `SignOffFacts`), not "Press Run again". Tests:
   `server/kyc-prechecks.test.ts`, `server/kyc-red-flags.test.ts`,
   `server/party-kyc.test.ts`.
+  **Superseded later the same day: only a sign-off counts** (Woody: "Yes
+  build Only sign off counts remove the old bit / The result are in the
+  app"; see the section of that name). The old screening's marks are no red
+  flags at all: the "(old screening)" label, the amber box, the clearing
+  rule and the set-aside words (`oldAutomaticScreening`, `supersededBy`,
+  `oldScreeningCleared`, `oldEddWhy`, `oldFlagStep`, the flag's
+  `suggestion`) are gone. `oldScreeningMarks`, the six history lines per
+  company and the sign-off's "Set the company that signs first (step 1)"
+  stay.
 - **Set aside with a comment** (the MLRO's, as the sign-off is: `decider` in
   `server/deal-party-aml.ts`; admins until an MLRO is appointed).
   `POST /api/deals/:id/red-flags/set-aside { role?, key, comment }` reads the
@@ -6557,6 +6566,52 @@ person who typed that message so fix that bug". Do not re-litigate.
   `request.sentBy` (it was the first name on the contact list); with nobody
   named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
 - Tests in `server/kyc-request.test.ts`.
+
+## Only a sign-off counts (Woody, 2026-11-24)
+
+Woody, once the old screening's flag on Coq d'Argent #3492 was explained:
+"Yes build Only sign off counts remove the old bit / The result are in the
+app". Do not re-litigate. Rules: `shared/kyc-status.ts` (`signedOffStatus`,
+`shownKycStatus`) and `oldScreeningMarks` in `shared/kyc-red-flags.ts`.
+Tests: `server/party-kyc.test.ts`, `server/kyc-red-flags.test.ts`,
+`server/kyc-prechecks.test.ts`, `server/client-kyc.test.ts`,
+`server/property-ownership.test.ts` (in `npm test`) and
+`server/account-entities.test.ts`.
+
+- **A KYC status is a sign-off or nothing.** `signedOffStatus` gives
+  approved, rejected or expired; anything else on a record ("in_review",
+  "pending": the in-app AML retired in October, the KYC4U mirror's "with
+  KYC4U", the old CDD form's bump, the property proprietor check) reads as
+  no checks run, with no approver or dates. Every reader goes through it:
+  `partyKycState` (the transaction's gate, AML box, AML board, AML file and
+  sign-off; on the brand's own legal company the brand's sign-off stands
+  over the company's old "in review"); the Companies and KYC card
+  (`getAccountEntities`: a record with no sign-off is read as none, so the
+  account's own approval stands over a stale `crm_entity_kyc` row); the CRM
+  chip and the Companies view (`subCompanyKycSql`); `clientKycBucket` ("in
+  review" is Not checked unless a check, file or request has started); the
+  property's Ownership & KYC words, the unit panel, the brand page's KYC
+  chip, the Transactions list's KYC mark and the property's proprietor
+  badge (`shownKycStatus`). The legacy trading entities list on the
+  company page no longer offers a hand-picked KYC flag (Pending, In
+  review, Passed ...): KYC is the sign-off on the Companies and KYC card.
+- **What the old in-app screening marked by itself is no red flag.**
+  `oldScreeningMarks` reads each mark's latest history line: written by the
+  old screening (`edd_triggered`, or a line by "automatic" or "system"
+  before 1 November 2026), or with no line at all a mark only it wrote (a
+  reason in its words, `oldScreeningEddReason`; a PEP status of
+  `review_required`; a risk rating), it is no flag; a mark whose latest line
+  is by a person (the MLRO form's `risk=`, `pep=`, `edd=` notes) still is.
+  A sanctions match from a screening dated before 1 November 2026 that was
+  not BGP's checks before asking is no flag. On live on 24 November 2026
+  that took 59 enhanced due diligence marks, 44 PEP reviews, 11 risk
+  ratings and 84 sanctions matches off the red flags, the enhanced level
+  and the AML board. The transaction's sign-off reads those fields as blank
+  (`oldMarks` on `DealRedFlags`, `server/deal-party-aml.ts`), so the file
+  is not higher risk for them.
+- **The results stay in the app**: no stored value was rewritten, and the
+  KYC history keeps every line (`loadRecordHistory` reads six lines per
+  company, with each line's action, to tell the two apart).
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 

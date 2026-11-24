@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import {
-  applyFlagReviews, dealRedFlags, partyRedFlags, redFlagAlertKey,
+  applyFlagReviews, dealRedFlags, oldScreeningMarks, partyRedFlags, redFlagAlertKey,
   type KycFlagReview, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts, type SetAsideFlag,
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
@@ -31,6 +31,9 @@ export interface DealRedFlags {
   // Each party's level of due diligence under BGP's AML policy (Issue 2),
   // from the flags that count (shared/aml-policy.ts).
   levels: Record<string, PartyDueDiligence>;
+  // The record fields the old in-app screening wrote by itself: no red flag, and
+  // not higher risk either (Woody, 24 November 2026: "Only sign off counts").
+  oldMarks?: Record<string, ReturnType<typeof oldScreeningMarks>>;
 }
 
 // ── Flags set aside (Woody, 19 November 2026) ──────────────────────────────
@@ -166,6 +169,7 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
   const parties: Record<string, KycRedFlag[]> = {};
   const setAside: Record<string, SetAsideFlag[]> = {};
   const levels: Record<string, PartyDueDiligence> = {};
+  const oldMarks: Record<string, ReturnType<typeof oldScreeningMarks>> = {};
   for (const id of ids) {
     const own = (r: any) => r.crm_company_id === id && (r.trading_entity_id || null) === (signs[id] || null);
     const latest = investigations.find(own) || null;
@@ -191,6 +195,11 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
       const guarantorPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === g.entityId && isPrecheckResult(p.result)) || null;
       all.push(...guarantorRedFlags({ guarantor: { id: g.entityId, name: g.name }, precheck: guarantorPre?.result || null }));
     }
+    oldMarks[id] = oldScreeningMarks({
+      company: companyRow,
+      recordHistory: history[id] || [],
+      latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
+    });
     const split = applyFlagReviews(all, reviewsForParty(reviews, id, signs[id] || null));
     parties[id] = split.live;
     setAside[id] = split.setAside;
@@ -202,7 +211,7 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
       toWeigh: [...policyFactorsToWeigh({ precheck: pre?.result || null, companyType: companyRow?.company_type || null }), ...(superPrime ? [superPrime] : [])],
     });
   }
-  return { parties, deal: dealSplit.live, setAside, dealSetAside: dealSplit.setAside, unchecked, levels };
+  return { parties, deal: dealSplit.live, setAside, dealSetAside: dealSplit.setAside, unchecked, levels, oldMarks };
 }
 
 // ── Setting a flag aside, and putting it back ──────────────────────────────

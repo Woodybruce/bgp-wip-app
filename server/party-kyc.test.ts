@@ -36,12 +36,24 @@ test("KYC4U's approvals read as KYC4U's, never the MLRO's (BGP's AML policy, Iss
 test("a party is judged on the company that signs when the deal names one", () => {
   // No company: the brand, as before.
   assert.deepEqual(partyKycState({ brand: brand(), company: null }).source, "brand");
-  // A company with its own check: that check, approved or not.
-  const own = partyKycState({ brand: brand(), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  // A company with its own sign-off: that sign-off, approved or rejected.
+  const own = partyKycState({ brand: brand(), company: company({ kyc: { status: "rejected", expiresAt: null, approvedBy: "Jack Barratt" } }) });
   assert.equal(own.source, "company");
-  assert.equal(own.status, "in_review");
+  assert.equal(own.status, "rejected");
   assert.equal(own.name, "The Test Bakery Operations Limited");
   assert.equal(own.brandName, "The Test Bakery");
+  // Only a sign-off counts (Woody, 24 November 2026): an old "in review" on the
+  // company, or on the brand, reads as no checks run.
+  const stale = partyKycState({ brand: brand(), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  assert.equal(stale.source, "company");
+  assert.equal(stale.status, null);
+  assert.equal(stale.approvedBy, null);
+  assert.equal(partyKycState({ brand: brand({ status: "in_review" }), company: null }).status, null);
+  assert.equal(partyKycState({ brand: brand({ status: "pending" }), company: null }).brandStatus, null);
+  // On the brand's own legal company the brand's sign-off stands over the old mark.
+  const ownCompany = partyKycState({ brand: brand({ companiesHouseNumber: "12345678" }), company: company({ kyc: { status: "in_review", expiresAt: null, approvedBy: null } }) });
+  assert.equal(ownCompany.source, "same_company");
+  assert.equal(ownCompany.status, "approved");
   // No check of its own and a different legal company: no checks run, though the brand is approved.
   const other = partyKycState({ brand: brand(), company: company() });
   assert.equal(other.source, "company");
