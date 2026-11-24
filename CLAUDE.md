@@ -3519,6 +3519,20 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   the number is in the document, each figure is one its own words give in the
   unit the transaction stores. A scan cannot be checked: its lines say check
   by eye. Solicitors and agents are not parties; "Guarantor: None" is none.
+- **A sum given as a figure and in words is read by the words** (Woody,
+  24 November 2026, on One Clapham #4578: "that's got 000 wrong"). Its heads
+  of terms gave "£2,325m (Two Million, Three Hundred & Twenty-Five Thousand
+  Pounds)"; the figure was read as £2,325,000,000 and filled, and a provider
+  reading of £2,325,000 from the words was dropped as "not in the words it
+  came from". `sumByWords` (`sumInWords`, `figuresWithWords` in
+  `shared/deal-hots.ts`) now settles a figure with a sum in words in brackets
+  beside it that disagrees: the provider's answer, the rules and New
+  Transaction's reader (`parseHotsHandler` in `server/crm.ts`: price, rent,
+  capital contribution, fee) all take the words, and the dialog shows the
+  term's `note` ("The figure £2,325m reads as £2,325,000,000 but the words
+  beside it say £2,325,000: the words are used."). Tests in
+  `server/deal-hots.test.ts`. #4578's price was put right on live the same
+  day (£2,325,000; its Investment Tracker row followed).
 - **Where each party is** (`matchHotsParties`, and `POST …/match` after
   anything is set, without reading the document again): the company filed
   under the transaction's party with that number or exact registered name

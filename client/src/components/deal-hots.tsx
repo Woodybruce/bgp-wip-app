@@ -440,6 +440,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
                       <span className="font-medium tabular-nums">{hotsTermWords(t.kind, t.value)}</span>
                       {t.state === "differs" && <span className="ml-2 text-amber-800 dark:text-amber-300">the transaction has {hotsTermWords(t.kind, t.current)}</span>}
                       <Quote text={t.quote} />
+                      {t.note && <span className="mt-0.5 block text-[11px] text-amber-800 dark:text-amber-300" data-testid={`deal-hots-term-note-${t.key}`}>{t.note}</span>}
                     </span>
                     {t.state === "same"
                       ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Same</span>

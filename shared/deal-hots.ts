@@ -32,7 +32,11 @@ export interface HotsParty {
 
 export type HotsTermKey = "pricing" | "rentPa" | "leaseLength" | "breakOption" | "rentFree" | "capitalContribution" | "totalAreaSqft" | "targetDate";
 export type HotsTermKind = "money" | "years" | "months" | "sqft" | "text" | "date";
-export interface HotsTerm { key: HotsTermKey; value: number | string; quote: string; checked: boolean }
+export interface HotsTerm {
+  key: HotsTermKey; value: number | string; quote: string; checked: boolean;
+  /** Why the value is not the document's figure: its words said another sum. */
+  note?: string;
+}
 export interface HotsDrop { what: string; value: string; reason: string }
 export interface HotsReading {
   parties: HotsParty[];
@@ -233,13 +237,65 @@ export function areasIn(words: string): number[] {
 }
 const same = (a: number, b: number) => Math.abs(a - b) < 0.5;
 
+const WORD_UNITS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const WORD_SCALES: Record<string, number> = { thousand: 1_000, million: 1_000_000, billion: 1_000_000_000 };
+
+/**
+ * A sum of pounds written out: "Two Million, Three Hundred & Twenty-Five
+ * Thousand Pounds" is 2,325,000. Null unless the words are a number, up to the
+ * pounds (what follows "pounds" is not read).
+ */
+export function sumInWords(words: string): number | null {
+  let total = 0, current = 0, seen = false;
+  for (const w of squash(words).replace(/&/g, " and ").split(/[\s,-]+/).filter(Boolean)) {
+    if (w === "pounds" || w === "pound" || w === "sterling") break;
+    if (w === "and") continue;
+    if (w in WORD_UNITS) current += WORD_UNITS[w];
+    else if (w === "hundred") current = (current || 1) * 100;
+    else if (w in WORD_SCALES) { total += (current || 1) * WORD_SCALES[w]; current = 0; }
+    else return null;
+    seen = true;
+  }
+  return seen ? total + current : null;
+}
+
+/** Each sum the words give twice, as a figure and in words beside it: "£2,325m (Two Million, Three Hundred & Twenty-Five Thousand Pounds)". */
+export function figuresWithWords(text: string): Array<{ raw: string; figure: number; words: number }> {
+  const out: Array<{ raw: string; figure: number; words: number }> = [];
+  for (const m of squash(text).matchAll(/((?:£|gbp\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:k|mn|m|million|thousand)?)\s*\(\s*([^()]{3,160})\)/g)) {
+    const figure = moneyIn(m[1])[0];
+    const words = sumInWords(m[2]);
+    if (figure !== undefined && words !== null && words > 0) out.push({ raw: m[1].trim(), figure, words });
+  }
+  return out;
+}
+
+/**
+ * Where the document gives a sum as a figure and in words and the two
+ * disagree, the words (One Clapham, 24 November 2026: "£2,325m (Two Million,
+ * Three Hundred & Twenty-Five Thousand Pounds)" was read as £2,325,000,000):
+ * a figure is read by its words. Given the figure or the words' sum, the
+ * words' sum and a note saying the two disagree; null when no figure and
+ * words beside it that disagree give this sum.
+ */
+export function sumByWords(text: string, value: number): { words: number; note: string } | null {
+  const p = figuresWithWords(text).find(x => !same(x.figure, x.words) && (same(x.figure, value) || same(x.words, value)));
+  if (!p) return null;
+  const pounds = (n: number) => `£${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })}`;
+  return { words: p.words, note: `The figure ${p.raw} reads as ${pounds(p.figure)} but the words beside it say ${pounds(p.words)}: the words are used.` };
+}
+
 /** A term's value is one the words give, in the unit the transaction stores. Null = fine; else why not. */
 function termProblem(kind: HotsTermKind, value: unknown, quote: string): string | null {
   switch (kind) {
     case "money": {
       const n = Number(value);
       if (!Number.isFinite(n) || n <= 0) return "not a sum of money";
-      return moneyIn(quote).some(m => same(m, n)) ? null : "the sum is not in the words it came from";
+      return moneyIn(quote).some(m => same(m, n)) || figuresWithWords(quote).some(p => same(p.words, n)) ? null : "the sum is not in the words it came from";
     }
     case "years":
     case "months": {
@@ -305,12 +361,15 @@ export function checkHotsAnswer(raw: unknown, documentText: string, opts: HotsTe
     const t = rawTerms[def.key];
     if (!t || typeof t !== "object" || t.value === null || t.value === undefined || t.value === "") continue;
     const quote = oneLine(t.quote).slice(0, 400);
-    const value = def.kind === "text" || def.kind === "date" ? oneLine(t.value).slice(0, 200) : Number(String(t.value).replace(/[£,\s]/g, ""));
+    let value = def.kind === "text" || def.kind === "date" ? oneLine(t.value).slice(0, 200) : Number(String(t.value).replace(/[£,\s]/g, ""));
     if (checkable && !quoteInDocument(quote, text)) { dropped.push({ what: def.label, value: String(value), reason: "its words are not in the document" }); continue; }
+    // A figure its own words say otherwise of is read by the words.
+    const byWords = def.kind === "money" && typeof value === "number" ? sumByWords(quote, value) : null;
+    if (byWords) value = byWords.words;
     // The value is one its own words give, whether or not the document could be checked.
     const problem = termProblem(def.kind, value, quote);
     if (problem) { dropped.push({ what: def.label, value: String(value), reason: problem }); continue; }
-    terms.push({ key: def.key, value, quote, checked: checkable });
+    terms.push({ key: def.key, value, quote, checked: checkable, ...(byWords ? { note: byWords.note } : {}) });
   }
   const contacts = checkHotsContacts(answer.contacts, text, checkable, dropped);
   return { parties, terms, contacts, scanned: !checkable, dropped };
@@ -429,13 +488,19 @@ export function readHotsByRules(documentText: string, opts: HotsTextOptions = {}
       if (!value) continue;
       const def = hotsTermDef(t.key);
       let v: number | string | null = null;
-      if (def.kind === "money") { const sums = moneyIn(value); v = sums.length ? sums[0] : null; }
+      let note: string | undefined;
+      if (def.kind === "money") {
+        const sums = moneyIn(value);
+        v = sums.length ? sums[0] : null;
+        const byWords = v === null ? null : sumByWords(value, v);
+        if (byWords) { v = byWords.words; note = byWords.note; }
+      }
       else if (def.kind === "years" || def.kind === "months") { const c = countsIn(value, def.kind); v = c.length ? c[0] : null; }
       // One area, or the total of several; never one floor of several.
       else if (def.kind === "sqft") { const a = areasIn(value); v = a.length === 1 ? a[0] : a.length > 1 && /\btotal\b/i.test(value) ? a[a.length - 1] : null; }
       else if (def.kind === "text") v = value.length >= 2 ? value.slice(0, 200) : null;
       if (v === null) continue;
-      terms.push({ key: t.key, value: v, quote: value, checked: checkable });
+      terms.push({ key: t.key, value: v, quote: value, checked: checkable, ...(note ? { note } : {}) });
       break;
     }
   }

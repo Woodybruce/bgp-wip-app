@@ -5136,6 +5136,17 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
 
       const extracted = parseAiJson(content);
+      // A sum the document gives as a figure and in words that disagree is
+      // read by the words (One Clapham, 24 November 2026: "£2,325m (Two
+      // Million, Three Hundred & Twenty-Five Thousand Pounds)").
+      if (extracted && typeof extracted === "object") {
+        const { sumByWords } = await import("@shared/deal-hots");
+        for (const key of ["price", "rentPa", "capitalContribution", "fee"]) {
+          const n = Number(String(extracted[key] ?? "").replace(/[£,\s]/g, ""));
+          const byWords = Number.isFinite(n) && n > 0 ? sumByWords(text, n) : null;
+          if (byWords) extracted[key] = byWords.words;
+        }
+      }
       console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for ${req.params.id ? `deal ${req.params.id}` : "a new deal"}`);
 
       res.json({

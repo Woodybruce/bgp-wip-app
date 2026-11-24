@@ -159,3 +159,19 @@ test('a company abroad is looked up by its name, and offered rather than set by 
   assert.match(screen, /!p\.numberIsAnother && !p\.byName/);
   assert.match(partyBox, /\{\(!party\.company \|\| hotsOpen\) && \(/);
 });
+
+test('a sum whose figure and words disagree is read by the words, on both heads of terms readers (One Clapham, 24 November 2026)', () => {
+  const rules = read('shared/deal-hots.ts');
+  // The transaction page: the provider's answer and the rules both go through the words.
+  const check = rules.slice(rules.indexOf('export function checkHotsAnswer('), rules.indexOf('// ── The rules reader'));
+  assert.match(check, /sumByWords\(quote, value\)/);
+  const byRules = rules.slice(rules.indexOf('export function readHotsByRules('), rules.indexOf('// ── A note a person typed'));
+  assert.match(byRules, /sumByWords\(value, v\)/);
+  // New Transaction's reader corrects the same sums.
+  const crm = read('server/crm.ts');
+  const parse = crm.slice(crm.indexOf('const parseHotsHandler = async'), crm.indexOf('app.post("/api/crm/deals/parse-hots"'));
+  assert.match(parse, /sumByWords\(text, n\)/);
+  assert.match(parse, /\["price", "rentPa", "capitalContribution", "fee"\]/);
+  // The dialog says why the figure was not used.
+  assert.match(screen, /data-testid=\{`deal-hots-term-note-\$\{t\.key\}`\}/);
+});
