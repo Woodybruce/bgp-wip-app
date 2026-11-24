@@ -12,7 +12,7 @@
 // so a person can only make folders where they may. Rules: shared/property-setup.ts.
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
-import { bgpSharePointUrl, folderTreeOrder, folderTreePaths, safeFolderName } from "@shared/property-setup";
+import { bgpSharePointUrl, folderTreeOrder, folderTreePaths, safeFolderName } from "@shared/folders";
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
 const GRAPH_ID = /^[A-Za-z0-9!_\-.]{1,200}$/;

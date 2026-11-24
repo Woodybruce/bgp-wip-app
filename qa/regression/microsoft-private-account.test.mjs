@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { isPrivateMailboxAddress, PRIVATE_MAILBOX } from '../../server/private-mail.ts';
+import { delegatedAccountBelongsToUser } from '../../server/microsoft-delegated-account.ts';
 
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
-const code = ['isPrivateMicrosoftAccount', 'getValidMsToken', 'getDelegatedGraphTokenForUser']
+const code = ['isPrivateMicrosoftAccount', 'getValidMsToken', 'getDelegatedGraphTokenForUser', 'getOwnMsAccess']
   .map(name => find('server/microsoft.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name)).join('\n');
 
 function harness(options = {}) {
@@ -32,7 +33,7 @@ function harness(options = {}) {
     loadMsalCache: async () => options.fallback ? null : 'synthetic-cache',
     getHomeAccountId: async () => options.fallback ? null : account.homeAccountId,
     saveMsalCache: async () => { saved++; },
-    delegatedAccountBelongsToUser: () => true,
+    delegatedAccountBelongsToUser: options.belongs || (() => true),
     console: { log() {}, warn() {} },
   });
   return { ...api, calls, account, refreshed: () => refreshed, saved: () => saved };
@@ -89,4 +90,20 @@ test('silent token results and delegated background users cannot return a privat
   assert.equal(privateUser.refreshed(), 0);
   const allowed = harness();
   assert.equal(await allowed.getDelegatedGraphTokenForUser('staff-1'), 'synthetic-fresh');
+});
+
+// The folder engine acts as the person, never as a colleague (Woody, 24
+// November 2026: decision 7 of docs/folders-review-2026-11-20.md). Their own
+// token comes with the account Graph sees; with no sign-in of their own there
+// is no token, and the colleague fallback getValidMsToken keeps is never read.
+test("a person's own token comes with their account, and never from a colleague", async () => {
+  const own = harness();
+  assert.deepEqual({ ...await own.getOwnMsAccess('staff-1') }, { token: 'synthetic-fresh', account: own.account.username });
+  assert.ok(!own.calls.some(call => call.sql.includes('FROM msal_token_cache mt')), 'no colleague fallback is read');
+  const none = harness({ fallback: true });
+  assert.equal(await none.getOwnMsAccess('staff-1'), null);
+  assert.ok(!none.calls.some(call => call.sql.includes('FROM msal_token_cache mt')), 'no colleague fallback is read');
+  // An account that is not the person's own (an old fallback cache saved under their id) gives nothing.
+  const other = harness({ belongs: delegatedAccountBelongsToUser, account: { homeAccountId: 'home-staff', username: 'someone.else@brucegillinghampollard.com' } });
+  assert.equal(await other.getOwnMsAccess('staff-1'), null);
 });

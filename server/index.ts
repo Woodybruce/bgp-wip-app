@@ -3402,6 +3402,52 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS scheme text`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS scheme text`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS requires_po boolean`,
+    // Folders: one engine (Woody, 24 November 2026: "go ahead with the folder
+    // suggestion"; docs/folders-review-2026-11-20.md, 4.2). A record's folder
+    // links by Microsoft's drive and item ids, several to a record; unlinking
+    // keeps the row. Every link change and folder action is a row of
+    // folder_actions. server/folders/. Additive.
+    `CREATE TABLE IF NOT EXISTS record_folders (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      record_type text NOT NULL,
+      record_id text NOT NULL,
+      drive_id text NOT NULL,
+      item_id text NOT NULL,
+      label text NOT NULL,
+      colour text,
+      position integer NOT NULL DEFAULT 0,
+      drive_kind text,
+      web_url text,
+      cached_name text,
+      cached_path text,
+      status text NOT NULL DEFAULT 'ok',
+      source text NOT NULL,
+      linked_by varchar,
+      linked_at timestamptz NOT NULL DEFAULT now(),
+      checked_at timestamptz,
+      removed_at timestamptz,
+      removed_by varchar
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS record_folders_live_uq ON record_folders (record_type, record_id, drive_id, item_id) WHERE removed_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS record_folders_item_idx ON record_folders (drive_id, item_id)`,
+    `CREATE TABLE IF NOT EXISTS folder_actions (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      at timestamptz NOT NULL DEFAULT now(),
+      user_id varchar,
+      ms_account text,
+      action text NOT NULL,
+      record_type text,
+      record_id text,
+      drive_id text,
+      item_id text,
+      name_before text,
+      name_after text,
+      parent_before text,
+      parent_after text,
+      ok boolean NOT NULL DEFAULT true,
+      error text,
+      detail jsonb
+    )`,
   ];
 
   let ok = 0, skipped = 0;
@@ -5975,6 +6021,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(portfolioPropertiesRouter);
   app.use(clientTeamsRouter);
   app.use(clientSharepointRouter);
+  // The folder engine (docs/folders-review-2026-11-20.md): BGP staff only, each
+  // on their own Microsoft 365. Client logins are refused /api/folders/ by the
+  // client gateway above and keep the data room on /api/client/sharepoint/.
+  const { appFoldersRouter } = await import("./folders/routes");
+  app.use(await appFoldersRouter());
   app.use(activitySummaryRouter);
   app.use(expansionIntelRouter);
   // The measured inputs to the Expansion score: the store count, and the
