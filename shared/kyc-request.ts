@@ -24,7 +24,9 @@ export type KycPartyKind = "individual" | "company";
 // guarantor: a person who guarantees the party; guarantor_owner: someone who
 // owns or controls a company that guarantees it (23 November 2026; HMRC
 // AMLG2300 s18: a guarantor is a party to the tenancy and a customer).
-export type KycPersonRole = "owner" | "acting" | "director" | "joint" | "settlor" | "trustee" | "protector" | "beneficiary" | "controller" | "guarantor" | "guarantor_owner";
+// signer: a person who signs for the party too; signer_owner: someone who owns
+// or controls another company that signs for it (24 November 2026).
+export type KycPersonRole = "owner" | "acting" | "director" | "joint" | "settlor" | "trustee" | "protector" | "beneficiary" | "controller" | "guarantor" | "guarantor_owner" | "signer" | "signer_owner";
 export const TRUST_PERSON_ROLES: readonly KycPersonRole[] = ["settlor", "trustee", "protector", "beneficiary", "controller"];
 export interface KycRequestPerson {
   key: string;
@@ -41,8 +43,10 @@ export const kycPersonRoleWords = (roles: KycPersonRole[], partyName: string): s
     : roles.includes("beneficiary") ? `a beneficiary of ${partyName}`
     : roles.includes("controller") ? `someone with control of ${partyName}`
     : roles.includes("guarantor") ? `the guarantor for ${withoutPrivateMark(partyName)}`
+    : roles.includes("signer") ? `signing with ${withoutPrivateMark(partyName)}`
     : roles.includes("owner") ? `an owner of ${partyName}`
     : roles.includes("guarantor_owner") ? `an owner of the company guaranteeing ${partyName}`
+    : roles.includes("signer_owner") ? `an owner of a company signing with ${partyName}`
     : roles.includes("joint") ? `named on this transaction alongside ${withoutPrivateMark(partyName)}`
     : roles.includes("acting") ? `the person dealing with us for ${partyName}` : `a director of ${partyName}`;
 
@@ -539,6 +543,10 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     ? `Companies House lists you as someone who owns or controls ${escHtml(ctx.partyName)}, a party to <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person?.roles.includes("guarantor_owner")
     ? `Companies House lists you as someone who owns or controls the company guaranteeing ${escHtml(ctx.partyName)} on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
+    : ctx.person?.roles.includes("signer")
+    ? `You're named as signing with <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
+    : ctx.person?.roles.includes("signer_owner")
+    ? `Companies House lists you as someone who owns or controls a company signing with ${escHtml(ctx.partyName)} on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person?.roles.includes("joint")
       ? `You're named alongside <strong>${escHtml(withoutPrivateMark(ctx.partyName))}</strong> on <strong>${escHtml(ctx.dealName)}</strong>. The law requires us to confirm your identity too.`
     : ctx.person

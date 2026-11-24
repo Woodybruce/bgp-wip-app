@@ -101,7 +101,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole, 
   // the approval then covers a sale or a letting at £10,000 a month or more.
   const fullOnSmall = !!opts.full && natural === "sanctions_only";
   const regime: AmlRegime = fullOnSmall ? "full" : natural;
-  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full" }]))[role];
+  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full", dealId }]))[role];
   if (!state?.brandName) return null;
   const sameCompany = !!entity && sameLegalCompany(
     { id: deal.brand_id, name: entity.brand_name, companiesHouseNumber: entity.brand_number || null, legalName: entity.uk_entity_name || entity.ch_name || null, status: null, expiresAt: null, approvedBy: null },
@@ -235,6 +235,11 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
       .then(m => m.guarantorViews(party.dealId!, db))
       .then(list => list.filter(g => g.companyId === party.brandId).map(g => ({ name: g.name, state: g.checks.state })))
       .catch(() => [{ name: "the guarantors (could not be read)", state: "not_run" as const }]),
+    // The other companies that sign for the party: the same (24 November 2026).
+    signerChecks: !party.dealId ? [] : await import("./deal-guarantors")
+      .then(m => m.signerViews(party.dealId!, db))
+      .then(list => list.filter(g => g.companyId === party.brandId && g.role === party.role).map(g => ({ name: g.name, state: g.checks.state })))
+      .catch(() => [{ name: "the other companies that sign (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
     dobNeeded: dobNeeded && !personDetails,
     dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
@@ -451,12 +456,21 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
     const before = party.state.status || "no checks";
     if (party.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
+      const evidence = { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
+        level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } };
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
-        reminderCompanyId: party.brandId, notes: line, recheckYears: years,
-        evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
-          level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+        reminderCompanyId: party.brandId, notes: line, recheckYears: years, evidence,
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company that signs was not found." });
+      // Each other company that signs for the party is a customer too: the
+      // sign-off, which waited for BGP's checks on it, approves it as well (24 November 2026).
+      const others = party.dealId ? await import("./deal-guarantors").then(m => m.signerRows([party.dealId!]))
+        .then(list => list.filter(g => g.companyId === party.brandId && g.role === role)).catch(() => []) : [];
+      for (const g of others) {
+        await approveEntityKyc("trading_entity", g.entityId, me.name, {
+          reminderCompanyId: party.brandId, notes: `${line} (signing with ${partyName(party)})`, recheckYears: years, evidence,
+        }).catch((e: any) => console.warn("[deal-party-aml] other company that signs not approved:", e?.message));
+      }
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
       await recomputeDealsForTradingEntity(party.entityId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     } else {

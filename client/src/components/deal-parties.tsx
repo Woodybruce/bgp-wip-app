@@ -310,8 +310,17 @@ function usePartyPeople(dealId: string, party: DealPartyView | null | undefined)
   return { people, loading: wanted && checks.isLoading, refetch: checks.refetch };
 }
 
-const roleWords = (p: KycPartyPerson) =>
-  [p.roles.includes("owner") ? "Owner" : null, p.roles.includes("acting") ? "dealing with us" : null, p.roles.includes("joint") ? "alongside them" : null].filter(Boolean).join(", ") || "Director";
+// Every role a person can hold (24 November 2026: a guarantor, another company
+// that signs and a trust's people read "Director" until then).
+const PERSON_ROLE_WORDS: Partial<Record<KycPartyPerson["roles"][number], string>> = {
+  settlor: "settlor", trustee: "trustee", protector: "protector", beneficiary: "beneficiary", controller: "other control",
+  owner: "owner", signer: "signs too", signer_owner: "owns a company that signs", guarantor: "guarantor", guarantor_owner: "owns the guarantor",
+  acting: "dealing with us", joint: "alongside them",
+};
+const roleWords = (p: KycPartyPerson) => {
+  const words = p.roles.map(r => PERSON_ROLE_WORDS[r]).filter((w): w is string => !!w).join(", ") || "director";
+  return words[0].toUpperCase() + words.slice(1);
+};
 
 // Names the people still to reach, with the box a press away (the Kick off
 // AML step, the AML box, the Parties card): Woody, 20 November 2026, "these
@@ -500,29 +509,34 @@ function refreshBilling(dealId: string, data?: DealParties) {
 // cornhill bar and the other is guaranteeing so should be able to allocate
 // add as the guarantor"). HMRC treats a guarantor as a party to the tenancy:
 // BGP's checks run on it, and its owners are checked with the party.
-function useGuarantorActions(dealId: string) {
+// kind "signer": another company that signs for the party (Woody, 24
+// November 2026: "can we add 2 entities?"), checked the same way.
+function useGuarantorActions(dealId: string, kind: "guarantor" | "signer" = "guarantor") {
   const { toast } = useToast();
+  const base = `/api/deals/${dealId}/${kind === "signer" ? "signers" : "guarantors"}`;
+  const what = kind === "signer" ? "the other company that signs" : "the guarantor";
   const done = (d?: DealParties) => {
     refreshBilling(dealId, d);
     queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
   };
   const add = useMutation({
-    mutationFn: async (v: { role: DealPartyRole; companyId: string }) => (await apiRequest("POST", `/api/deals/${dealId}/guarantors`, v)).json() as Promise<DealParties & { started?: string | null }>,
+    mutationFn: async (v: { role: DealPartyRole; companyId: string }) => (await apiRequest("POST", base, v)).json() as Promise<DealParties & { started?: string | null }>,
     onSuccess: (d) => {
       done({ deal: d.deal, parties: d.parties });
-      // BGP's checks on the guarantor run in the background: read again once they have had time.
+      // BGP's checks on it run in the background: read again once they have had time.
       setTimeout(() => done(), 20000);
     },
-    onError: (e) => toast({ title: "Guarantor not added", description: plain(e), variant: "destructive" }),
+    onError: (e) => toast({ title: kind === "signer" ? "Not added" : "Guarantor not added", description: plain(e), variant: "destructive" }),
   });
   const remove = useMutation({
-    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/deals/${dealId}/guarantors/${id}`)).json() as Promise<DealParties>,
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `${base}/${id}`)).json() as Promise<DealParties>,
     onSuccess: (d) => done(d),
     onError: (e) => toast({ title: "Not taken off", description: plain(e), variant: "destructive" }),
   });
   const run = useMutation({
-    mutationFn: async (id: string) => (await apiRequest("POST", `/api/deals/${dealId}/guarantors/${id}/checks`, {})).json(),
-    onSuccess: () => { done(); setTimeout(() => done(), 20000); toast({ title: "BGP's checks on the guarantor started" }); },
+    mutationFn: async (id: string) => (await apiRequest("POST", `${base}/${id}/checks`, {})).json(),
+    onSuccess: () => { done(); setTimeout(() => done(), 20000); toast({ title: `BGP's checks on ${what} started` }); },
     onError: (e) => toast({ title: "Checks not started", description: plain(e), variant: "destructive" }),
   });
   return { add, remove, run, busy: add.isPending || remove.isPending || run.isPending };
@@ -532,14 +546,14 @@ const guarantorWho = (g: DealGuarantorView) => g.kind === "individual" ? "a pers
 
 // One guarantor: who it is and where BGP's checks on it stand, with Run checks
 // when they have not run (or are old) and, in the party box, Remove.
-function GuarantorItem({ dealId, g, canRemove }: { dealId: string; g: DealGuarantorView; canRemove?: boolean }) {
-  const { remove, run, busy } = useGuarantorActions(dealId);
+function GuarantorItem({ dealId, g, canRemove, kind = "guarantor" }: { dealId: string; g: DealGuarantorView; canRemove?: boolean; kind?: "guarantor" | "signer" }) {
+  const { remove, run, busy } = useGuarantorActions(dealId, kind);
   const state = g.checks.state;
   const flags = state === "done" || state === "stale"
     ? g.checks.redFlags ? <span className="text-red-700 dark:text-red-400"> · {g.checks.redFlags} red flag{g.checks.redFlags === 1 ? "" : "s"} (in Screening)</span> : <span className="text-muted-foreground"> · no red flags</span>
     : null;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid={`deal-guarantor-${g.entityId}`}>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid={`deal-${kind}-${g.entityId}`}>
       <span className="min-w-0">
         <span className="font-medium">{g.name}</span>
         <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{guarantorWho(g)}</span>
@@ -547,13 +561,13 @@ function GuarantorItem({ dealId, g, canRemove }: { dealId: string; g: DealGuaran
         {flags}
       </span>
       {(state === "not_run" || state === "stale") && (
-        <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => run.mutate(g.id)} data-testid={`deal-guarantor-run-${g.entityId}`}>
+        <Button type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy} onClick={() => run.mutate(g.id)} data-testid={`deal-${kind}-run-${g.entityId}`}>
           {run.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}Run checks
         </Button>
       )}
       {state === "running" && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
       {canRemove && (
-        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => remove.mutate(g.id)} data-testid={`deal-guarantor-remove-${g.entityId}`}>
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[11px] text-muted-foreground" disabled={busy} onClick={() => remove.mutate(g.id)} data-testid={`deal-${kind}-remove-${g.entityId}`}>
           Remove
         </Button>
       )}
@@ -812,6 +826,11 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
               ? <span className="text-muted-foreground" data-testid={`deal-party-person-not-needed-${role}`}>Not needed: {aml!.done === "approved" ? "signed off" : aml!.done === "not_required" ? "not required" : "sanctions checks only"}</span>
               : <span className="text-amber-700 dark:text-amber-400">Nobody set, needed for the client checks</span>}
         </PartyRow>
+        {(party.signers || []).length > 0 && (
+          <PartyRow label="Also signs" testId={`deal-party-row-signers-${role}`}>
+            <div className="space-y-1">{party.signers!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} kind="signer" />)}</div>
+          </PartyRow>
+        )}
         {isGuaranteedRole(role) && (party.guarantors || []).length > 0 && (
           <PartyRow label={(party.guarantors || []).length > 1 ? "Guarantors" : "Guarantor"} testId={`deal-party-row-guarantor-${role}`}>
             <div className="space-y-1">{party.guarantors!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} />)}</div>
@@ -877,6 +896,10 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   // Finding a guarantor at Companies House, or adding a person who guarantees (23 November 2026).
   const [guarantorFinding, setGuarantorFinding] = useState<false | "company" | "person">(false);
   const guarantor = useGuarantorActions(dealId);
+  // Another company that signs too (24 November 2026), beside Change and Clear.
+  const [addingSigner, setAddingSigner] = useState(false);
+  const [signerFinding, setSignerFinding] = useState<false | "company" | "abroad" | "person">(false);
+  const signer = useGuarantorActions(dealId, "signer");
   // The heads of terms' dialog is open over this one: it must not close under it.
   const [hotsOpen, setHotsOpen] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -940,7 +963,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   const billedElsewhere = !!party?.company && (!party.xero || (party.xero.name || "").trim().toLowerCase() !== party.company.name.trim().toLowerCase());
 
   return (
-    <Dialog open onOpenChange={o => { if (!o && !finding && !hotsOpen && !guarantorFinding) onClose(); }}>
+    <Dialog open onOpenChange={o => { if (!o && !finding && !hotsOpen && !guarantorFinding && !signerFinding) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid={`deal-party-editor-${role}`}>
         <DialogHeader>
           <DialogTitle>{party ? `${party.label}: ${party.brand.name}` : "Party"}</DialogTitle>
@@ -978,7 +1001,53 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy} onClick={() => setChangingCompany(true)} data-testid="deal-party-company-change">Change</Button>
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })} data-testid="deal-party-company-clear">Clear</Button>
                     </div>
-                  ) : <>
+                  ) : null}
+                  {/* The other companies that sign too (Woody, 24 November 2026: "can we add 2
+                      entities? ... also add another entity"): joint landlords, a joint venture. */}
+                  {party.company && !changingCompany && !hotsOpen && (
+                    <div className="space-y-1.5" data-testid={`deal-party-signers-${role}`}>
+                      {(party.signers || []).length > 0 && (
+                        <div className="space-y-1.5 rounded-md border px-2.5 py-2 text-xs" data-testid="deal-party-signers">
+                          <p className="font-medium text-muted-foreground">Also signs</p>
+                          {party.signers!.map(g => <GuarantorItem key={g.id} dealId={dealId} g={g} canRemove kind="signer" />)}
+                        </div>
+                      )}
+                      {!addingSigner ? (
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={busy || signer.busy} onClick={() => setAddingSigner(true)} data-testid="deal-party-add-signer">
+                          <Plus className="w-3.5 h-3.5 mr-1" />Another company signs too
+                        </Button>
+                      ) : (() => {
+                        const taken = new Set([party.company!.id, ...(party.signers || []).map(g => g.entityId), ...(party.guarantors || []).map(g => g.entityId)]);
+                        const others = party.companies.filter(c => !taken.has(c.id));
+                        return (
+                          <div className="space-y-1.5 rounded-md border border-dashed px-2.5 py-2 text-xs" data-testid="deal-party-signer-options">
+                            {others.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-muted-foreground">One of {party.brand.name}'s companies:</span>
+                                {others.map(c => (
+                                  <Button key={c.id} type="button" variant="outline" size="sm" className="h-6 px-2 text-[11px]" disabled={busy || signer.busy}
+                                    onClick={() => { signer.add.mutate({ role, companyId: c.id }); setAddingSigner(false); }} data-testid={`deal-party-make-signer-${c.id}`}>{c.name}</Button>
+                                ))}
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || signer.busy} onClick={() => setSignerFinding("company")} data-testid="deal-party-find-signer">
+                                <Plus className="w-3.5 h-3.5 mr-1" />Find it at Companies House
+                              </Button>
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || signer.busy} onClick={() => setSignerFinding("abroad")} data-testid="deal-party-signer-abroad">
+                                <Globe2 className="w-3.5 h-3.5 mr-1" />Registered abroad
+                              </Button>
+                              <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={busy || signer.busy} onClick={() => setSignerFinding("person")} data-testid="deal-party-signer-person">
+                                <UserRound className="w-3.5 h-3.5 mr-1" />A person signs too
+                              </Button>
+                              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => setAddingSigner(false)} data-testid="deal-party-signer-cancel">Cancel</Button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  {party.company && !changingCompany && !hotsOpen ? null : <>
                   {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
                   {/* Kept while its dialog is open: setting the company from the heads of terms
                       must not close them (23 November 2026). */}
@@ -1021,6 +1090,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                         const chosen = party.company?.id === c.id;
                         // One company signs; another of the brand's can guarantee it (Woody, 23 November 2026).
                         const guarantees = (party.guarantors || []).find(g => g.entityId === c.id) || null;
+                        const alsoSigns = (party.signers || []).find(g => g.entityId === c.id) || null;
                         return (
                           <li key={c.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs" data-testid={`deal-party-company-option-${c.id}`}>
                             <span className="min-w-0 flex-1">
@@ -1030,6 +1100,8 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                             </span>
                             {chosen
                               ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" />Signs</span>
+                              : alsoSigns
+                                ? <span className="flex items-center gap-1 text-emerald-700" data-testid={`deal-party-also-signs-${c.id}`}><CheckCircle2 className="w-3.5 h-3.5" />Also signs</span>
                               : guarantees
                                 ? <span className="flex items-center gap-1 text-emerald-700" data-testid={`deal-party-guarantees-${c.id}`}><ShieldCheck className="w-3.5 h-3.5" />Guarantor</span>
                                 : <>
@@ -1208,6 +1280,19 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
             onCreated={(contact, company) => { if (company) pickCompany(company, contact); setFinding(false); }}
             onSavedWithoutXero={company => { pickCompany(company); setFinding(false); }}
             testIdPrefix={`deal-party-${role}-find`}
+          />
+        )}
+        {party && signerFinding && (
+          <CreateBillingEntityDialog
+            open
+            onOpenChange={v => { if (!v) setSignerFinding(false); }}
+            brand={{ id: party.brand.id, name: party.brand.name }}
+            initialQuery=""
+            xero={false}
+            startAs={signerFinding === "person" ? "person" : signerFinding === "abroad" ? "abroad" : "company"}
+            onCreated={(_contact, company) => { if (company) signer.add.mutate({ role, companyId: company.id }); setSignerFinding(false); setAddingSigner(false); }}
+            onSavedWithoutXero={company => { signer.add.mutate({ role, companyId: company.id }); setSignerFinding(false); setAddingSigner(false); }}
+            testIdPrefix={`deal-party-${role}-signer-find`}
           />
         )}
         {party && guarantorFinding && (

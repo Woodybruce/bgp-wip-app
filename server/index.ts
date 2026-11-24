@@ -3111,6 +3111,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       removed_by_name text
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS deal_guarantors_live_uq ON deal_guarantors (deal_id, role, entity_id) WHERE removed_at IS NULL`,
+    // Another company that signs for the same party (Woody, 24 November 2026:
+    // "can we add 2 entities?"): a row of kind 'signer'. server/deal-guarantors.ts.
+    `ALTER TABLE deal_guarantors ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'guarantor'`,
     // A trust's structure, checked by BGP itself (Jack, 23 November 2026:
     // "Remove KYC4u on trusts. We need you to build the trust structuring"):
     // one per trust record, shared by its deals. server/trust-structure.ts.

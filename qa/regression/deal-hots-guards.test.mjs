@@ -110,7 +110,7 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
-  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding\) onClose\(\);/);
+  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding && !signerFinding\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
   assert.doesNotMatch(screen, /from "@\/components\/deal-parties"/);
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);

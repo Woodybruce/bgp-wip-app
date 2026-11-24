@@ -78,3 +78,55 @@ export function guarantorLine(g: Pick<DealGuarantorView, "name" | "kind" | "comp
     ? g.checks.redFlags ? ` · ${g.checks.redFlags} red flag${g.checks.redFlags === 1 ? "" : "s"}` : " · no red flags" : "";
   return `${who} · ${GUARANTOR_CHECKS_WORDS[g.checks.state]}${flags}`;
 }
+
+// Another company that signs (Woody, 24 November 2026, on #4664's party box:
+// "can we add 2 entities? maybe should disappear with just clear left and
+// also add another entity"; then "yes"). A second company or person signing
+// for the same party: joint landlords on one title, a joint venture, two
+// people buying together. Kept in deal_guarantors with kind 'signer', filed
+// under the party, never the company that signs. Each one is a customer: BGP's
+// checks run on it, its red flags join the party's, a company's owners (or the
+// person) join People to check, the party's sign-off waits for its checks and
+// approves it too, and the party reads cleared only once each one is.
+
+/** Any party can have more than one company that signs. */
+export const SIGNER_ROLES = ["landlord", "tenant", "vendor", "purchaser"] as const;
+export type SignerRole = (typeof SIGNER_ROLES)[number];
+export const isSignerRole = (v: unknown): v is SignerRole =>
+  typeof v === "string" && (SIGNER_ROLES as readonly string[]).includes(v);
+
+/** Its findings, as red flags on the party it signs for. */
+export function signerRedFlags(input: { signer: { id: string; name: string }; precheck: KycPrecheckResult | null }): KycRedFlag[] {
+  if (!input.precheck) return [];
+  const { id, name } = input.signer;
+  return precheckRedFlags(input.precheck, { sanctionsCurrent: true })
+    .map(f => ({ ...f, key: `signer:${id}:${f.key}`, label: `Also signs, ${name}: ${f.label}` }));
+}
+
+/** Why the party cannot be signed off yet because of another company that signs, or null. */
+export function signerChecksDenial(list: Array<{ name: string; state: GuarantorChecksState }> | null | undefined): string | null {
+  const open = (list || []).filter(g => g.state !== "done");
+  if (!open.length) return null;
+  const names = (gs: typeof open) => gs.map(g => g.name).join(", ");
+  if (open.every(g => g.state === "running")) return `BGP's checks on ${names(open)}, which also sign${open.length === 1 ? "s" : ""}, are still running. Sign off once they finish.`;
+  return `Run BGP's checks on each company that signs first (${open.map(g => `${g.name}: ${GUARANTOR_CHECKS_WORDS[g.state].replace(/^BGP's checks /, "")}`).join("; ")}). Press Run checks on its line.`;
+}
+
+/** One line for another company that signs: "ST JOHN'S HILL PH03 LLP (OC443074) · BGP's checks have run · no red flags". */
+export const signerLine = guarantorLine;
+
+/**
+ * The approval of each other company that signs, for the party's own: the
+ * party reads cleared only while every one of them holds an approval of its
+ * own, in date (a sanctions-only one only where the transaction needs no more).
+ * Returns the names still to be signed off; an empty list when all are.
+ */
+export function signersNotCleared(signers: Array<{ name: string; status: string | null; expiresAt: string | Date | null; scope: "full" | "sanctions_only" | null }>,
+  fullChecks: boolean, now: Date = new Date()): string[] {
+  return signers.filter(s => {
+    if (String(s.status || "").toLowerCase() !== "approved") return true;
+    const until = s.expiresAt ? new Date(s.expiresAt).getTime() : NaN;
+    if (Number.isFinite(until) && until < now.getTime()) return true;
+    return fullChecks && s.scope === "sanctions_only";
+  }).map(s => s.name);
+}

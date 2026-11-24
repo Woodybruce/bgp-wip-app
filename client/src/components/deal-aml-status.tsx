@@ -664,6 +664,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
   const guarantors = party?.guarantors || [];
   const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
+  // The other companies that sign for the party (24 November 2026): the same way.
+  const otherSigners = party?.signers || [];
+  const signerOpen = otherSigners.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
   const signs = companyStepLine({
     missing: companyMissing,
     kind: !isCompany && !party?.company ? "a person" : isPublicBody ? "a UK public body"
@@ -676,11 +679,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       trustRecordedGaps.length ? "trust information to add" : null,
       facts.dobNeeded ? "date of birth to add" : null,
       guarantorOpen ? "guarantor checks to run" : null,
+      signerOpen ? "checks to run on the other company that signs" : null,
     ].filter((g): g is string => !!g),
     notes: [
       decision?.person?.details && decision.person.words ? decision.person.words.replace(/^Born /, "born ") : null,
       party?.person && !askNoEmail && !sanctionsOnly && !settled ? `ask ${party.person.name}` : null,
       ownedAbroad.length ? "owned from abroad" : null,
+      otherSigners.length ? `also signs: ${otherSigners.map(g => g.name).join(", ")}` : null,
       guarantors.length ? `guarantor${guarantors.length > 1 ? "s" : ""}: ${guarantors.map(g => g.name).join(", ")}` : null,
     ].filter((g): g is string => !!g),
   });

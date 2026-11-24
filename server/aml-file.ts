@@ -20,7 +20,7 @@
 // party (the company that signs when the deal names one), so Request KYC4U
 // check offers it with the other documents and the bookmark attaches it.
 
-import { guarantorLine, type DealGuarantorView } from "@shared/deal-guarantor";
+import { guarantorLine, signerLine, type DealGuarantorView } from "@shared/deal-guarantor";
 import { KYC4U_RETIRED_WORDS } from "@shared/kyc4u-portal";
 import type { JointAgentPartyView } from "@shared/joint-agent-checks";
 import { Router, type Request, type Response } from "express";
@@ -95,6 +95,8 @@ export interface AmlFileParty {
   registerExtract?: RegisterExtractFact | null;
   // A tenant's or buyer's guarantors, with where BGP's checks on each stand (23 November 2026).
   guarantors?: DealGuarantorView[];
+  // The other companies that sign for the party, with where BGP's checks on each stand (24 November 2026).
+  signers?: DealGuarantorView[];
 }
 
 export interface AmlFileData {
@@ -153,7 +155,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   // A trust or foundation is checked on its own record too (21 November 2026).
   const signsItself = new Set(kinds.map((r: any) => String(r.id)));
   const [states, marks, prechecks, flags, peopleRequests, requests, agentRows] = await Promise.all([
-    loadPartyKyc(pool, present.map(r => ({ role: r, brandId: text(deal[DEAL_PARTY_COLUMNS[r].brand]), entityId: signs[text(deal[DEAL_PARTY_COLUMNS[r].brand])] || null, fullChecks: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime === "full" }))).catch(() => ({} as Record<string, PartyKycState>)),
+    loadPartyKyc(pool, present.map(r => ({ role: r, brandId: text(deal[DEAL_PARTY_COLUMNS[r].brand]), entityId: signs[text(deal[DEAL_PARTY_COLUMNS[r].brand])] || null, fullChecks: amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime === "full", dealId }))).catch(() => ({} as Record<string, PartyKycState>)),
     loadNotRequired(pool, [dealId]).catch(() => new Map()),
     dealPrechecks(dealId, brandIds.map(id => ({ companyId: id, entityId: signs[id] || null, needsCompany: !signs[id] && !signsItself.has(id) })), { userId: me.id, autoStart: false }).catch(() => ({} as Record<string, any>)),
     loadDealRedFlags(dealId, brandIds, signs).catch(() => null),
@@ -238,6 +240,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       company: pv?.company ? { id: pv.company.id, name: pv.company.name, number: pv.company.companiesHouseNumber || null } : null,
       person: pv?.person ? { name: pv.person.name, email: pv.person.email || null } : null,
       guarantors: pv?.guarantors || [],
+      signers: pv?.signers || [],
       individual: kind === "individual",
       state: (states as Record<string, PartyKycState>)[role] || null,
       notRequired: mark && mark.companyId === brandId ? { reasonWords: mark.reasonWords, comment: mark.comment || null, by: mark.by || null, at: mark.at || null } : null,
@@ -585,6 +588,7 @@ export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = n
     jointGaps: p.joint?.gaps || [],
     trustGaps: p.trust && (p.trustStructure || []).some(l => /^No structure recorded/.test(l)) ? ["add the trust's information: what kind of trust, who set it up, the trustees and who benefits"] : [],
     guarantors: (p.guarantors || []).map(g => ({ name: g.name, state: g.checks.state })),
+    signers: (p.signers || []).map(g => ({ name: g.name, state: g.checks.state })),
     registerExtract: p.registerExtract || null,
   });
 }
@@ -601,6 +605,8 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   w.kv("Brand on the transaction", p.brand.name);
   w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
+  if (p.signers?.length) w.kv("Also signs", p.signers.map(g => signerLine(g)).join("\n"),
+    p.signers.some(g => g.checks.state !== "done") ? AMBER : INK);
   if (p.guarantors?.length) w.kv(p.guarantors.length > 1 ? "Guarantors" : "Guarantor", p.guarantors.map(g => guarantorLine(g)).join("\n"),
     p.guarantors.some(g => g.checks.state !== "done") ? AMBER : INK);
   if (p.trustStructure) w.kv("Trust structure (recorded by BGP)", p.trustStructure.join("\n"));

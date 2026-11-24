@@ -13,7 +13,7 @@ import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
 import { isPrecheckResult, normaliseStoredPrecheck } from "@shared/kyc-prechecks";
 import { dueDiligenceLevel, policyFactorsToWeigh, simplifiedCase, standardBasis, superPrimeWeigh, type PartyDueDiligence } from "@shared/aml-policy";
 import { payerRedFlags } from "@shared/deal-billing";
-import { guarantorRedFlags } from "@shared/deal-guarantor";
+import { guarantorRedFlags, signerRedFlags } from "@shared/deal-guarantor";
 import { DEAL_PARTY_COLUMNS, dealClientRole } from "@shared/deal-parties";
 import { SCREENED_INVESTIGATION_SQL } from "./kyc-prechecks";
 
@@ -165,6 +165,10 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
   const guarantors = ids.length && dealId
     ? await read("the guarantors", async () => (await import("./deal-guarantors")).guarantorRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
     : [];
+  // The other companies that sign for a party (24 November 2026): their flags join it the same way.
+  const signers = ids.length && dealId
+    ? await read("the other companies that sign", async () => (await import("./deal-guarantors")).signerRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
+    : [];
 
   const parties: Record<string, KycRedFlag[]> = {};
   const setAside: Record<string, SetAsideFlag[]> = {};
@@ -194,6 +198,10 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
     for (const g of guarantors.filter(g => g.companyId === id)) {
       const guarantorPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === g.entityId && isPrecheckResult(p.result)) || null;
       all.push(...guarantorRedFlags({ guarantor: { id: g.entityId, name: g.name }, precheck: guarantorPre?.result || null }));
+    }
+    for (const g of signers.filter(g => g.companyId === id)) {
+      const signerPre = prechecks.find((p: any) => p.crm_company_id === id && (p.trading_entity_id || null) === g.entityId && isPrecheckResult(p.result)) || null;
+      all.push(...signerRedFlags({ signer: { id: g.entityId, name: g.name }, precheck: signerPre?.result || null }));
     }
     oldMarks[id] = oldScreeningMarks({
       company: companyRow,

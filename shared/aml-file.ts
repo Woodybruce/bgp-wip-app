@@ -147,6 +147,8 @@ export interface StillNeededInput {
   trustGaps: string[];
   // A tenant's or buyer's guarantors and where BGP's checks on each stand (23 November 2026).
   guarantors?: Array<{ name: string; state: GuarantorChecksState }>;
+  // The other companies that sign for the party, the same way (24 November 2026).
+  signers?: Array<{ name: string; state: GuarantorChecksState }>;
   // A company registered abroad: its own register's extract (23 November 2026).
   registerExtract?: { needed: boolean; held: boolean; company: string; reasons: string[] } | null;
 }
@@ -169,6 +171,11 @@ export function amlStillNeeded(f: StillNeededInput): string[] {
     if (g.state === "not_run") out.push(`Run BGP's checks on the guarantor, ${g.name}.`);
     else if (g.state === "stale") out.push(`Run BGP's checks on the guarantor, ${g.name}, again: the last run is more than 30 days old.`);
     else if (g.state === "running") out.push(`Wait for BGP's checks on the guarantor, ${g.name}, to finish.`);
+  }
+  for (const g of f.signers || []) {
+    if (g.state === "not_run") out.push(`Run BGP's checks on ${g.name}, which also signs.`);
+    else if (g.state === "stale") out.push(`Run BGP's checks on ${g.name}, which also signs, again: the last run is more than 30 days old.`);
+    else if (g.state === "running") out.push(`Wait for BGP's checks on ${g.name}, which also signs, to finish.`);
   }
   for (const g of f.trustGaps) out.push(`Trust: ${g.replace(/\.$/, "")}.`);
   if (f.registerExtract?.needed && !f.registerExtract.held && !f.sanctionsOnly) {

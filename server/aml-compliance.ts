@@ -1437,7 +1437,7 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
     const { loadPartyKyc } = await import("./deal-gates");
     const { kycVerdict } = await import("@shared/party-kyc");
     const fullChecks = (await import("@shared/aml-policy")).amlRegime({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }).regime === "full";
-    const states = await loadPartyKyc(pool, counterpartyIds.map(cp => ({ role: cp.role, brandId: cp.id, entityId: signs[cp.id] || null, fullChecks })));
+    const states = await loadPartyKyc(pool, counterpartyIds.map(cp => ({ role: cp.role, brandId: cp.id, entityId: signs[cp.id] || null, fullChecks, dealId: String(d.id) })));
     const now = new Date();
     const counterparties: any[] = [];
     for (const cp of counterpartyIds) {

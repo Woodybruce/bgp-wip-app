@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "More than one company can sign for a party",
+    text: "When two companies, or a company and a person, sign for one party (joint landlords, a joint venture), the second is added with Another company signs too. Each is a customer: BGP's checks run on it, its owners give their identity check and proof of address, and its red flags count. The sign-off waits for its checks and approves each one; the party is cleared only while each is." },
   { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The risk assessment leads with a written view",
     text: "A party's risk assessment opens with a short written view by the app (Fable): what has been found, what is still needed, the risk under BGP's rules and the next steps. It uses only the facts on the file and BGP's rules, cites them, and decides nothing. The full record folds under it." },
   { date: "2026-11-24", who: ["Woody"], topic: "Emails and wording", title: "Jack, Layla and Woody are copied on every AML email",

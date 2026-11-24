@@ -108,12 +108,17 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   const guarantors = party.dealId
     ? await import("./deal-guarantors").then(m => m.guarantorsForParty(String(party.dealId), party.companyId)).catch(() => [])
     : [];
+  // The other companies that sign for the party (24 November 2026), the same way.
+  const signers = party.dealId
+    ? await import("./deal-guarantors").then(m => m.signersForParty(String(party.dealId), party.companyId)).catch(() => [])
+    : [];
   return partyPeople({
     companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
     // Documents BGP uploaded on the party, read and checked (23 November 2026).
     uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
     ...(trust !== undefined ? { trust } : {}),
     ...(guarantors.length ? { guarantors } : {}),
+    ...(signers.length ? { signers } : {}),
     ...(publicBody ? { publicBody: true } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });

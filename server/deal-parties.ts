@@ -40,7 +40,7 @@ import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-
 import { readsLikeCharity } from "@shared/charity-register";
 import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { kycPersonRoleWords } from "@shared/kyc-request";
-import { isGuaranteedRole } from "@shared/deal-guarantor";
+import { isGuaranteedRole, isSignerRole } from "@shared/deal-guarantor";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -213,6 +213,10 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
   const guarantors = roles.some(r => isGuaranteedRole(r))
     ? await import("./deal-guarantors").then(m => m.guarantorViews(deal.id, db)).catch(() => [])
     : [];
+  // The other companies that sign for a party, any party (24 November 2026).
+  const signers = roles.length
+    ? await import("./deal-guarantors").then(m => m.signerViews(deal.id, db)).catch(() => [])
+    : [];
 
   const parties: DealPartyView[] = [];
   for (const role of roles) {
@@ -264,6 +268,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       client: role === clientRoleOf(deal),
       billing: role === clientRoleOf(deal) ? partyBilling(deal, role, kind, company, filed) : null,
       ...(isGuaranteedRole(role) ? { guarantors: guarantors.filter(g => g.role === role).map(({ role: _r, companyId: _c, ...g }) => g) } : {}),
+      signers: signers.filter(g => g.role === role).map(({ role: _r, companyId: _c, ...g }) => g),
     });
   }
   return { deal: { id: deal.id, name: deal.name }, parties };
@@ -810,6 +815,10 @@ router.post("/api/deals/:id/guarantors", async (req: Request, res: Response) => 
     const entity = (await pool.query(`SELECT id, name, parent_company_id FROM crm_trading_entities WHERE id = $1`, [entityId])).rows[0];
     if (!entity || entity.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company or person filed under the ${label}, or find it at Companies House.` });
     if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is the company that signs. The guarantor is another company, or a person." });
+    // Before the boot migration adds kind (just after a deploy) every row is a guarantor.
+    const held = (await pool.query(`SELECT COALESCE(kind, 'guarantor') AS kind FROM deal_guarantors WHERE deal_id = $1 AND role = $2 AND entity_id = $3 AND removed_at IS NULL`,
+      [deal.id, role, entityId]).catch((e: any) => { if (e?.code === "42703") return { rows: [] as any[] }; throw e; })).rows[0];
+    if (held?.kind === "signer") return res.status(409).json({ message: `${entity.name} signs for the ${label} too. Take it off there first.` });
     const added = (await pool.query(
       `INSERT INTO deal_guarantors (deal_id, role, company_id, entity_id, added_by, added_by_name) VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (deal_id, role, entity_id) WHERE removed_at IS NULL DO NOTHING RETURNING id`,
@@ -830,7 +839,7 @@ router.delete("/api/deals/:id/guarantors/:guarantorId", async (req: Request, res
     const { pool } = await import("./db");
     const row = (await pool.query(
       `UPDATE deal_guarantors g SET removed_at = now(), removed_by_name = $3
-        WHERE g.id::text = $2 AND g.deal_id = $1 AND g.removed_at IS NULL
+        WHERE g.id::text = $2 AND g.deal_id = $1 AND g.removed_at IS NULL AND COALESCE(g.kind, 'guarantor') = 'guarantor'
         RETURNING g.entity_id, g.role, (SELECT name FROM crm_trading_entities e WHERE e.id = g.entity_id) AS name`,
       [String(req.params.id), String(req.params.guarantorId), me.name])).rows[0];
     if (!row) return res.status(404).json({ message: "That guarantor is not on this transaction." });
@@ -849,6 +858,91 @@ router.post("/api/deals/:id/guarantors/:guarantorId/checks", async (req: Request
     const { guarantorRows } = await import("./deal-guarantors");
     const g = (await guarantorRows([String(req.params.id)])).find(x => x.id === String(req.params.guarantorId));
     if (!g) return res.status(404).json({ message: "That guarantor is not on this transaction." });
+    const { startPrecheck } = await import("./kyc-prechecks");
+    res.json({ started: await startPrecheck(g.companyId, { entityId: g.entityId, dealId: g.dealId, userId: me.id, force: true }) });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not start the checks" });
+  }
+});
+
+// Another company that signs for the same party (Woody, 24 November 2026, on
+// #4664: "can we add 2 entities? maybe should disappear with just clear left
+// and also add another entity"): joint landlords on one title, a joint
+// venture, two people buying together. Any party; filed under it, never the
+// company that signs, and only beside one. Each is a customer: BGP's checks
+// start on it at once, its red flags and owners join the party's, the sign-off
+// waits for its checks and approves it too, and the party reads cleared only
+// once it is (shared/deal-guarantor.ts, server/deal-guarantors.ts).
+async function recomputeParty(brandId: string, by: string | null) {
+  const { recomputeDealKycApproved } = await import("./deal-gates");
+  await recomputeDealKycApproved(brandId, by).catch((e: any) => console.warn("[deal-parties] recompute failed:", e?.message));
+}
+
+router.post("/api/deals/:id/signers", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const role = req.body?.role;
+    if (!isSignerRole(role)) return res.status(400).json({ message: "Unknown party." });
+    const entityId = text(req.body?.companyId);
+    if (!entityId) return res.status(400).json({ message: "Pick the company or person that also signs." });
+    const { pool } = await import("./db");
+    const deal = await readDeal(pool, String(req.params.id));
+    if (!deal) return res.status(404).json({ message: "Transaction not found" });
+    const col = DEAL_PARTY_COLUMNS[role];
+    const label = DEAL_PARTY_LABEL[role].toLowerCase();
+    const brandId = text(deal[col.brand]);
+    if (!brandId) return res.status(400).json({ message: `Set the ${label} on the transaction first.` });
+    if (!text(deal[col.company])) return res.status(400).json({ message: `Set the company that signs for the ${label} first, then add the other.` });
+    const entity = (await pool.query(`SELECT id, name, parent_company_id FROM crm_trading_entities WHERE id = $1`, [entityId])).rows[0];
+    if (!entity || entity.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company or person filed under the ${label}, or find it at Companies House.` });
+    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is already the company that signs." });
+    const held = (await pool.query(`SELECT COALESCE(kind, 'guarantor') AS kind FROM deal_guarantors WHERE deal_id = $1 AND role = $2 AND entity_id = $3 AND removed_at IS NULL`,
+      [deal.id, role, entityId])).rows[0];
+    if (held?.kind === "guarantor") return res.status(409).json({ message: `${entity.name} is the guarantor. Take it off as guarantor first.` });
+    const added = held ? null : (await pool.query(
+      `INSERT INTO deal_guarantors (deal_id, role, company_id, entity_id, added_by, added_by_name, kind) VALUES ($1, $2, $3, $4, $5, $6, 'signer')
+       ON CONFLICT (deal_id, role, entity_id) WHERE removed_at IS NULL DO NOTHING RETURNING id`,
+      [deal.id, role, brandId, entityId, me.id, me.name])).rows[0];
+    if (added) {
+      await audit(pool, deal.id, "signer", null, entityId, `${entity.name} added as another company that signs for the ${label}`, me);
+      await recomputeParty(brandId, me.name);
+    }
+    const { startPrecheck } = await import("./kyc-prechecks");
+    const started = await startPrecheck(brandId, { entityId, dealId: deal.id, userId: me.id }).catch(() => null);
+    res.json({ ...(await loadDealParties(pool, deal.id)), started });
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not add the company that signs" });
+  }
+});
+
+router.delete("/api/deals/:id/signers/:signerId", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const { pool } = await import("./db");
+    const row = (await pool.query(
+      `UPDATE deal_guarantors g SET removed_at = now(), removed_by_name = $3
+        WHERE g.id::text = $2 AND g.deal_id = $1 AND g.removed_at IS NULL AND COALESCE(g.kind, 'guarantor') = 'signer'
+        RETURNING g.entity_id, g.role, g.company_id, (SELECT name FROM crm_trading_entities e WHERE e.id = g.entity_id) AS name`,
+      [String(req.params.id), String(req.params.signerId), me.name])).rows[0];
+    if (!row) return res.status(404).json({ message: "That company is not signing on this transaction." });
+    await audit(pool, String(req.params.id), "signer", String(row.entity_id), null,
+      `${row.name || "The other company that signs"} taken off as another company that signs for the ${String(row.role)}`, me);
+    await recomputeParty(String(row.company_id), me.name);
+    res.json(await loadDealParties(pool, String(req.params.id)));
+  } catch (err: any) {
+    res.status(500).json({ message: err?.message || "Could not take it off" });
+  }
+});
+
+router.post("/api/deals/:id/signers/:signerId/checks", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const { signerRows } = await import("./deal-guarantors");
+    const g = (await signerRows([String(req.params.id)])).find(x => x.id === String(req.params.signerId));
+    if (!g) return res.status(404).json({ message: "That company is not signing on this transaction." });
     const { startPrecheck } = await import("./kyc-prechecks");
     res.json({ started: await startPrecheck(g.companyId, { entityId: g.entityId, dealId: g.dealId, userId: me.id, force: true }) });
   } catch (err: any) {

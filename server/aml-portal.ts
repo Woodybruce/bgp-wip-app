@@ -451,7 +451,7 @@ async function ownersToLink(row: TokenRow): Promise<Array<{ key: string; name: s
   if (request.kind !== "company" || request.person || isTrustDocsRequest(request) || isJointRequest(request)) return stored;
   const found = await partyPeopleForRow(row).catch(() => null);
   const live = (found?.people || [])
-    .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner"))
+    .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner") || p.roles.includes("signer") || p.roles.includes("signer_owner"))
       && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, row.contact_name || ""))
     .map(p => ({ key: p.key, name: p.name }));
   return [...stored, ...live.filter(l => !stored.some(s => s.key === l.key))];
@@ -529,7 +529,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
   if (!request.person) {
     const found = await partyPeopleForRow(row).catch(() => null);
     // A guarantor, and the owners of a company that guarantees, are passed on the same way (23 November 2026).
-    const owners = (found?.people || []).filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && !personNamesMatch(p.name, row.contact_name || ""));
+    const owners = (found?.people || []).filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner") || p.roles.includes("signer") || p.roles.includes("signer_owner")) && !personNamesMatch(p.name, row.contact_name || ""));
     if (owners.length) {
       people = owners.map(p => {
         const ownLink = !!p.own && !p.own.isMain;
@@ -788,7 +788,7 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: "company", dealId },
       await dealPeopleRequests(dealId, pool, dealId ? undefined : { companyId: party.companyId, entityId: party.entityId })).catch(() => null);
     ownLinksFor = (people?.people || [])
-      .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner")) && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
+      .filter(p => (p.roles.includes("owner") || p.roles.includes("guarantor") || p.roles.includes("guarantor_owner") || p.roles.includes("signer") || p.roles.includes("signer_owner")) && p.outstanding.length && !(p.own && !p.own.isMain) && !personNamesMatch(p.name, contactName || ""))
       .map(p => ({ key: p.key, name: p.name }));
   }
 

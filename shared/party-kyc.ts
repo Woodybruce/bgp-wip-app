@@ -13,7 +13,7 @@
 // company is named: a rejection is never stepped round by naming a company.
 
 import { signedOffStatus } from "./kyc-status";
-import { guarantorChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
+import { guarantorChecksDenial, signerChecksDenial, type GuarantorChecksState } from "./deal-guarantor";
 import { countryInSentence } from "./kyc-prechecks";
 import { PERSON_DOB_AFTER_RUN, PERSON_DOB_NEEDED } from "./kyc-person-details";
 
@@ -23,6 +23,8 @@ export interface KycFacts {
   scope?: "sanctions_only" | null;
   /** Set when a sanctions-only approval stands but this transaction needs the full checks (applyCheckScope). */
   sanctionsOnly?: { by: string | null; at: string | Date | null; until: string | Date | null } | null;
+  /** Set when the company that signs is cleared but another company that signs for the party is not (applySigners). */
+  signersOpen?: string[] | null;
 }
 
 export interface PartyKycInput {
@@ -120,9 +122,22 @@ export function applyCheckScope<T extends KycFacts>(state: T, fullChecks: boolea
 
 export const SANCTIONS_ONLY_APPROVAL_WORDS = "signed off for sanctions checks only: this transaction needs the full checks";
 
+/**
+ * Another company that signs for the party (Woody, 24 November 2026): the
+ * party reads cleared only once each of them holds an approval of its own.
+ * `open` names those still to be signed off (shared/deal-guarantor.ts
+ * signersNotCleared).
+ */
+export function applySigners<T extends KycFacts>(state: T, open: string[] | null | undefined): T {
+  if (!open?.length || state.status !== "approved") return state;
+  return { ...state, status: null, expiresAt: null, approvedBy: null, approvedAt: null, signersOpen: open };
+}
+export const signersOpenWords = (open: string[]): string =>
+  `${open.join(", ")} also sign${open.length === 1 ? "s" : ""} and ${open.length === 1 ? "is" : "are"} not signed off yet`;
+
 /** Approved and current, else why not ("expired", "no checks run", the status). */
 export function kycVerdict(state: KycFacts, now: Date = new Date()): { approved: boolean; reason: string | null } {
-  if (state.status !== "approved") return { approved: false, reason: state.sanctionsOnly ? SANCTIONS_ONLY_APPROVAL_WORDS : state.status || "no checks run" };
+  if (state.status !== "approved") return { approved: false, reason: state.signersOpen?.length ? signersOpenWords(state.signersOpen) : state.sanctionsOnly ? SANCTIONS_ONLY_APPROVAL_WORDS : state.status || "no checks run" };
   if (state.expiresAt && new Date(state.expiresAt) < now) return { approved: false, reason: "expired" };
   return { approved: true, reason: null };
 }
@@ -184,6 +199,8 @@ export interface SignOffFacts {
   // guarantor is a party to the tenancy): the party is not signed off until
   // BGP's checks on each have run (shared/deal-guarantor.ts).
   guarantorChecks?: Array<{ name: string; state: GuarantorChecksState }>;
+  // The other companies that sign for the party (24 November 2026): the same.
+  signerChecks?: Array<{ name: string; state: GuarantorChecksState }>;
   // A company registered outside the UK (Woody, 23 November 2026: everything in
   // the app): its own register's extract must be on file and pass its check
   // (HMRC AMLG11400 14.6: "For a non-UK based company, you must obtain an
@@ -258,7 +275,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
     if (!f.precheck) return notRunDenial(f, "The sanctions checks have not run for this party. Press Run again first.");
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `The sanctions checks are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again first.`;
     if (f.dobAfterRun) return PERSON_DOB_AFTER_RUN;
-    return guarantorChecksDenial(f.guarantorChecks);
+    return guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);
   }
   // A company registered abroad: its own register's extract first, for any
   // sign-off on the full checks (23 November 2026).
@@ -277,7 +294,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
     if (f.precheckRunning) return "BGP's checks before asking are still running. Sign off once they finish.";
     if (!f.precheck) return notRunDenial(f, "BGP's checks before asking have not run for this party. Press Run again on the card first.");
     if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
-    const guarantorEdd = guarantorChecksDenial(f.guarantorChecks);
+    const guarantorEdd = guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);
     if (guarantorEdd) return guarantorEdd;
     if (f.trust && f.trustGaps?.length) return `The trust's file is not complete: ${f.trustGaps.map(g => g.replace(/\.$/, "")).join("; ")}.`;
     if (f.trust && f.clientChecksOutstanding?.length) return `The trust's people still owe their checks: ${f.clientChecksOutstanding.join("; ")}.`;
@@ -293,7 +310,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
   if (now.getTime() - Date.parse(f.precheck.ranAt) > SIGN_OFF_PRECHECK_DAYS * 86400000) {
     return `BGP's checks before asking are more than ${SIGN_OFF_PRECHECK_DAYS} days old. Press Run again on the card first.`;
   }
-  const guarantor = guarantorChecksDenial(f.guarantorChecks);
+  const guarantor = guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);
   if (guarantor) return guarantor;
   if (!f.clientChecksFinished && !f.sanctionsOnly && !f.reliance && text(f.note).length < SIGN_OFF_NOTE_MIN) {
     return f.clientChecksOutstanding?.length

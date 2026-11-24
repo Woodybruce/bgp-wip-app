@@ -44,9 +44,10 @@ test("deleting a sub company: never one that signs, pays, guarantees or holds AM
   const route = s.slice(s.indexOf('app.delete("/api/crm/trading-entities/:id"'));
   assert.match(route, /landlord_trading_entity_id = \$1 OR tenant_trading_entity_id = \$1 OR vendor_trading_entity_id = \$1 OR purchaser_trading_entity_id = \$1/);
   assert.match(route, /FROM crm_deals WHERE invoice_payer_entity_id = \$1/);
-  assert.match(route, /FROM deal_guarantors WHERE trading_entity_id = \$1 AND removed_at IS NULL/);
+  // deal_guarantors keys the company by entity_id (the guard read a column that does not exist until 24 November 2026).
+  assert.match(route, /FROM deal_guarantors WHERE entity_id = \$1 AND removed_at IS NULL/);
   for (const t of ["kyc_documents", "kyc_investigations", "kyc_client_files", "kyc_upload_tokens"]) {
-    assert.ok(route.slice(0, 4000).includes(`FROM ${t} WHERE trading_entity_id = $1`), t);
+    assert.ok(route.slice(0, 5000).includes(`FROM ${t} WHERE trading_entity_id = $1`), t);
   }
 });
 

@@ -3213,8 +3213,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (signs > 0) return res.status(409).json({ error: `This company signs ${plural(signs, "transaction", "transactions")}. Change who signs first.` });
       const pays = await pointing(`SELECT COUNT(*)::int AS n FROM crm_deals WHERE invoice_payer_entity_id = $1`);
       if (pays > 0) return res.status(409).json({ error: `This company pays on ${plural(pays, "transaction", "transactions")}. Take it off there first.` });
-      const guarantees = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE trading_entity_id = $1 AND removed_at IS NULL`);
+      // deal_guarantors keys the company by entity_id (the column was misnamed
+      // here until 24 November 2026, so the check never fired). A row of kind
+      // 'signer' is another company that signs for a party.
+      const guarantees = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL AND COALESCE(kind, 'guarantor') = 'guarantor'`);
       if (guarantees > 0) return res.status(409).json({ error: `This company guarantees ${plural(guarantees, "transaction", "transactions")}. Remove it as guarantor first.` });
+      const alsoSigns = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL AND kind = 'signer'`);
+      if (alsoSigns > 0) return res.status(409).json({ error: `This company signs ${plural(alsoSigns, "transaction", "transactions")} with another company. Take it off there first.` });
       const amlRecords = (await Promise.all([
         pointing(`SELECT COUNT(*)::int AS n FROM kyc_documents WHERE trading_entity_id = $1`),
         pointing(`SELECT COUNT(*)::int AS n FROM kyc_investigations WHERE trading_entity_id = $1`),

@@ -3689,6 +3689,69 @@ re-litigate. Rules: `shared/deal-guarantor.ts`; reads:
 - Not built: a guarantor of a landlord or a seller; source of funds asked of a
   guarantor that pays.
 
+## Another company signs too (Woody, 2026-11-24)
+
+Woody, on #4664's party box: "can we add 2 entities? maybe should disappear
+with just clear left and also add another entity or something?", then "yes".
+A second company or person signing for the same party: joint landlords on one
+title, a joint venture, two people buying together. Do not re-litigate.
+Rules: `shared/deal-guarantor.ts` (`SIGNER_ROLES`, `signerRedFlags`,
+`signerChecksDenial`, `signersNotCleared`); reads: `server/deal-guarantors.ts`
+(`signerRows`, `signerViews`, `signersForParty`, `signerApprovals`); routes in
+`server/deal-parties.ts`. Tests: `server/deal-signer.test.ts` (in `npm test`),
+`qa/regression/deal-signer-guards.test.mjs`.
+
+- **Kept with the guarantors**: a `deal_guarantors` row of `kind = 'signer'`
+  (boot migration adds `kind`, default `'guarantor'`). Any party role; filed
+  under the party, never the company that signs, and only beside one ("Set the
+  company that signs for the landlord first"). One live row per company per
+  party, so a company is a guarantor or another signer, never both (409 either
+  way). Each read and route filters by kind; a guarantor route never touches a
+  signer row and the other way round.
+- **Routes** (BGP staff signed in as themselves): `POST /api/deals/:id/signers
+  { role, companyId }` (BGP's checks start on it at once; a history line
+  `signer`; the brand's transactions are recomputed), `DELETE
+  /api/deals/:id/signers/:signerId`, `POST …/:signerId/checks` (Run checks).
+- **Each one is a customer**, checked as a guarantor is and approved as the
+  company that signs is: its findings are the party's red flags (`signer:<entity>:…`,
+  "Also signs, X: …", on the transaction and the AML board); a company's owners
+  (role `signer_owner`) and a person who signs (role `signer`) are People to
+  check, each owing an identity check and a proof of address, its other
+  directors screened only, and the person acting can pass them their links;
+  the sign-off waits until BGP's checks on each have run in the last 30 days
+  (`signerChecksDenial`, in all three sign-off paths), then **approves each one**
+  with the main company (`approveEntityKyc` on every signer, same level and
+  term).
+- **The party reads cleared only while each signer is**: `loadPartyKyc` takes the
+  transaction (`dealId`, and `signerKey` where the caller keys parties its own
+  way) and reads the signers' own approvals (`signerApprovals`); an approved
+  party with a signer not approved, expired, or approved for sanctions only on
+  a transaction that needs the full checks reads as not cleared
+  (`applySigners`, `signersOpen`; kycVerdict says "X also signs and is not
+  signed off yet"). A failed read reads as not cleared, never as approved. The
+  gate, the deal's `kyc_approved`, the AML box and board, the AML file, the
+  sign-off and the status route all pass the transaction. A signer added after
+  the party was cleared re-opens it until it is signed off. A company's own
+  approval change recomputes the transactions it signs for as another signer
+  too (`recomputeDealsForTradingEntity`).
+- **Screens**: in the party box, under the chosen company (Change, Clear),
+  **Also signs** lists each with its checks, **Run checks** and **Remove**,
+  and **Another company signs too** offers the brand's other companies, **Find
+  it at Companies House**, **Registered abroad** and **A person signs too**
+  (the billing entity dialog, no Xero contact). The Parties card and the AML
+  box's party lines show an **Also signs** row; the AML box's first step names
+  them ("also signs: X") and says when checks are still to run; the AML file
+  lists them and what is still needed on each.
+- **Billing is unchanged**: BGP bills the company that signs for its client
+  (or the party's billing entity), never the other signer.
+- Also fixed: the filed-company delete guard read `deal_guarantors.trading_entity_id`,
+  a column that does not exist, so the database error was read as zero and a
+  company guaranteeing a transaction could be deleted. It reads `entity_id`
+  now, and refuses a company that signs with another one too.
+- Not built: a separate person acting for the other company (the party's who
+  to ask acts for all its signers); heads of terms naming two landlords setting
+  the second one by themselves; a guarantor of a landlord or seller.
+
 ## KYC4U is no longer used (Woody, 2026-11-23)
 
 Woody: "We are no longer using KYC 4U update the app accross everyhting",
