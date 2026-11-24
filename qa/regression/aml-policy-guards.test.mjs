@@ -106,3 +106,14 @@ test('the client checks ask for the documents the policy lists, certified as it 
   assert.match(req, /council tax bill or mortgage statement dated in the last three months/);
   assert.match(req, /A structure chart up to the people at the top/);
 });
+
+// Risk assessment Issue 3: a super-prime price is weighed, never a red flag by itself.
+// The transaction save still marked every sale or purchase of £1m or more for
+// enhanced due diligence until 24 November 2026; a PEP still marks it.
+test('the transaction save marks enhanced due diligence for a PEP, never for its price', () => {
+  const crm = readFileSync(new URL('../../server/crm.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(crm, /eddReasons\.push\("super_prime"\)|superPrimeThreshold/);
+  assert.match(crm, /if \(pepStatus && pepStatus !== "clear" && !oldDeal\?\.amlEddRequired\) \{\s*req\.body\.amlEddRequired = true;\s*req\.body\.amlEddReason = "pep";/);
+  const flags = readFileSync(new URL('../../shared/kyc-red-flags.ts', import.meta.url), 'utf8');
+  assert.match(flags, /if \(deal\.aml_edd_required && !deal\.aml_edd_completed_at && !eddMarkIsSuperPrimeOnly\(deal\.aml_edd_reason\)\) \{/);
+});

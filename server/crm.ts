@@ -4165,19 +4165,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         req.body.kycApprovedBy = changedByName;
       }
 
-      // Auto-detect EDD requirement based on deal value and risk factors
+      // A PEP on the transaction marks it for enhanced due diligence. Its price
+      // no longer does (24 November 2026): a super-prime price is weighed on
+      // each party, never a red flag by itself (risk assessment Issue 3).
       if (req.body.pricing !== undefined || req.body.amlPepStatus !== undefined) {
-        const pricing = req.body.pricing ?? oldDeal?.pricing ?? 0;
         const pepStatus = req.body.amlPepStatus ?? oldDeal?.amlPepStatus;
-        const assetClass = req.body.assetClass ?? oldDeal?.assetClass ?? "";
-        const isLondon = (oldDeal?.name || "").toLowerCase().includes("london") || assetClass.toLowerCase().includes("london");
-        const superPrimeThreshold = isLondon ? 5_000_000 : 1_000_000;
-        const eddReasons: string[] = [];
-        if (pricing >= superPrimeThreshold) eddReasons.push("super_prime");
-        if (pepStatus && pepStatus !== "clear") eddReasons.push("pep");
-        if (eddReasons.length > 0 && !oldDeal?.amlEddRequired) {
+        if (pepStatus && pepStatus !== "clear" && !oldDeal?.amlEddRequired) {
           req.body.amlEddRequired = true;
-          req.body.amlEddReason = eddReasons.join(",");
+          req.body.amlEddReason = "pep";
         }
       }
 

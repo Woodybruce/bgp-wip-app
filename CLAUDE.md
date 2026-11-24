@@ -3877,7 +3877,16 @@ call for action countries only).
     party's factors to weigh (`server/kyc-red-flags.ts`,
     `server/aml-dashboard.ts`); `dealRedFlags` no longer adds it. Enhanced
     due diligence comes from another higher-risk factor or the agent's
-    judgement. `superPrimeFlag` stays the reading.
+    judgement. `superPrimeFlag` stays the reading. Until 24 November 2026
+    the transaction save (`PUT /api/crm/deals/:id`) still marked every sale
+    or purchase of £1m or more (£5m with "london" in its name) for enhanced
+    due diligence, reason `super_prime`, which came back as a "Marked for
+    enhanced due diligence" red flag (found when New Transaction's Use this
+    transaction saved a price). The save now marks only a PEP, and a mark
+    whose only reason is `super_prime` is no red flag
+    (`eddMarkIsSuperPrimeOnly`), so marks already saved on live clear on
+    read. Tests: `server/aml-policy.test.ts`,
+    `qa/regression/aml-policy-guards.test.mjs`.
   - **The counterparty on a joint instruction is always checked**, using the
     joint agent's documents or BGP's own checks, sale or letting. The
     joint agent reason for Not required is gone: `jointAgentNotRequiredRefusal`

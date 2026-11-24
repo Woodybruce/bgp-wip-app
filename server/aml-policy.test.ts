@@ -216,6 +216,19 @@ test("factors reach the red flags, the deal's flags and KYC4U's note, listed apa
   assert.match(note, /Higher-risk factors in BGP's AML policy \(enhanced due diligence\):/);
 });
 
+test("a transaction marked for enhanced due diligence only for its super-prime price has no red flag (24 November 2026)", () => {
+  // The transaction save wrote this mark on every sale or purchase of £1m or more until then.
+  assert.deepEqual(dealRedFlags({ aml_edd_required: true, aml_edd_reason: "super_prime" }), []);
+  assert.deepEqual(dealRedFlags({ aml_edd_required: true, aml_edd_reason: " super_prime " }), []);
+  // With another reason it stands, worded without the price.
+  const both = dealRedFlags({ aml_edd_required: true, aml_edd_reason: "super_prime,pep" });
+  assert.equal(both.length, 1);
+  assert.equal(both[0].detail, "Reason: a politically exposed person");
+  assert.equal(dealRedFlags({ aml_edd_required: true, aml_edd_reason: "pep" }).length, 1);
+  // A mark a person set with no reason still counts.
+  assert.equal(dealRedFlags({ aml_edd_required: true, aml_edd_reason: null }).length, 1);
+});
+
 test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is kept to recognise", () => {
   assert.ok(STANDARD_HOTS_TEMPLATE.includes(`38. Anti-money laundering\n${AML_HOTS_CLAUSE}`));
   assert.ok(!STANDARD_HOTS_TEMPLATE_37.includes("38. Anti-money laundering"));
