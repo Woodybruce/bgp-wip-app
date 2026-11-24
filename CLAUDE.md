@@ -4867,6 +4867,28 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   phone card shows the status beside the transaction.
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
   is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
+- **One line per transaction** (Woody, 24 November 2026: "on Transactions
+  lets combine the 2 (normally) AML checks into just one transaction board
+  or line we can see the individuals in companies. That way doesnt get too
+  crowded"; do not re-litigate). The feed still sends a row per party; the
+  page groups them with `groupAmlByTransaction` (`shared/aml-dashboard.ts`,
+  tested in `server/aml-dashboard.test.ts`): parties in the order landlord,
+  tenant, vendor, purchaser. **The pills pick transactions**
+  (`transactionBuckets`): To do, In progress, Expiring and Closed, not
+  checked when any party is on them (a transaction can be on more than
+  one); Not due yet when nothing else is outstanding and a party is not
+  due; Done only when every party is done. The counts are transactions
+  (`transactionBucketCounts`); Late, Mine and the search pick a
+  transaction through any party (`transactionMatches`). The table is one
+  `tbody` per transaction (`TransactionRows`): Transaction, Transaction
+  status and Agents once (`rowSpan`), then a line per party (Party, AML
+  stage, Due diligence and red flags, Waiting on, Last moved). A party's
+  line opens that party's trail; the transaction's own cells open the party
+  on the pill shown (`leadParty`). Cards and the phone: one card per
+  transaction (`AmlTransactionCard`), a line per party (`PartyLine`, the
+  shared chips). Order: a late party first, then the most red flags, then
+  the longest unmoved. The property page's AML on transactions here groups
+  with the same rule.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.

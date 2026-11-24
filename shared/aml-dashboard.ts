@@ -265,3 +265,82 @@ export function rowMatches(row: AmlDashboardRow, query: string): boolean {
 export function amlDealStatusWords(row: Pick<AmlDashboardRow, "dealStatus" | "dealType">): { code: DealStatusCode | null; words: string | null } {
   return { code: legacyToCode(row.dealStatus || ""), words: dealStatusLabel(row.dealStatus, row.dealType) };
 }
+
+// One line per transaction with its parties inside it (Woody, 24 November
+// 2026: "on Transactions lets combine the 2 (normally) AML checks into just
+// one transaction board or line we can see the individuals in companies. That
+// way doesnt get too crowded"). The AML page's Transactions view and the
+// property page's AML on transactions here both group with it.
+export interface AmlTransactionRow {
+  key: string;                         // the transaction's id
+  dealId: string;
+  dealName: string;
+  dealRef: number | null;
+  dealStatus: string | null;
+  dealType: string | null;
+  propertyName: string | null;
+  parties: AmlDashboardRow[];          // landlord, tenant, vendor, purchaser
+  buckets: AmlBucket[];                // the pills the transaction is on
+  late: boolean;                       // a party is late
+  redFlags: number;                    // across its parties
+  agents: string[];
+  mine: boolean;
+}
+
+const PARTY_ORDER = ["landlord", "tenant", "vendor", "purchaser"];
+const ACTIVE_BUCKETS: AmlBucket[] = ["todo", "in_progress", "expiring", "closed"];
+
+/**
+ * The pills a transaction is on, from its parties' pills: To do, In progress,
+ * Expiring and Closed, not checked when any party is on them; Not due yet when
+ * nothing else is outstanding and a party is not due; Done only when every
+ * party is done.
+ */
+export function transactionBuckets(partyBuckets: AmlBucket[]): AmlBucket[] {
+  const active = ACTIVE_BUCKETS.filter(b => partyBuckets.includes(b));
+  if (active.length) return active;
+  if (partyBuckets.includes("not_due")) return ["not_due"];
+  return partyBuckets.length ? ["done"] : [];
+}
+
+/** The board's party rows as one row per transaction, in the order the rows came. */
+export function groupAmlByTransaction(rows: AmlDashboardRow[]): AmlTransactionRow[] {
+  const byDeal = new Map<string, AmlDashboardRow[]>();
+  for (const r of rows) byDeal.set(r.dealId, [...(byDeal.get(r.dealId) || []), r]);
+  return [...byDeal.values()].map(list => {
+    const parties = [...list].sort((a, b) => PARTY_ORDER.indexOf(a.role) - PARTY_ORDER.indexOf(b.role));
+    const first = parties[0];
+    return {
+      key: first.dealId,
+      dealId: first.dealId,
+      dealName: first.dealName,
+      dealRef: first.dealRef,
+      dealStatus: first.dealStatus,
+      dealType: first.dealType,
+      propertyName: first.propertyName,
+      parties,
+      buckets: transactionBuckets(parties.map(p => p.bucket)),
+      late: parties.some(p => p.late),
+      redFlags: parties.reduce((n, p) => n + p.redFlags.length, 0),
+      agents: [...new Set(parties.flatMap(p => p.agents))],
+      mine: parties.some(p => p.mine),
+    };
+  });
+}
+
+/** The pills' counts: the transactions on each. */
+export function transactionBucketCounts(rows: Pick<AmlTransactionRow, "buckets">[]): Record<AmlBucket, number> {
+  const out: Record<AmlBucket, number> = { todo: 0, in_progress: 0, done: 0, expiring: 0, not_due: 0, closed: 0 };
+  for (const r of rows) for (const b of r.buckets) out[b]++;
+  return out;
+}
+
+/** The search finds a transaction when any of its parties' lines match. */
+export function transactionMatches(row: Pick<AmlTransactionRow, "parties">, query: string): boolean {
+  return row.parties.some(p => rowMatches(p, query));
+}
+
+/** The party a transaction opens on from a pill: the first one on it, else the first. */
+export function leadParty(row: Pick<AmlTransactionRow, "parties">, bucket?: AmlBucket | null): AmlDashboardRow {
+  return (bucket ? row.parties.find(p => p.bucket === bucket) : null) || row.parties[0];
+}

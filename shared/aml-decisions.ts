@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The AML board shows one line per transaction",
+    text: "Transactions, AML shows each transaction once, with each party's checks on a line inside it, so the board is not crowded. A transaction is on To do, In progress, Expiring or Closed, not checked when any of its parties is, and on Done only when every party is done. The counts are transactions." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "A private individual's date of birth on a small letting",
     text: "On a letting under £10,000 a month, a private individual's date of birth (and nationality, if known) is typed into step 1 of their AML, with no documents. The law asks only for the sanctions checks; the date of birth is what tells them from someone of the same name on the lists. Their sign-off waits for it, and the checks run again with it." },
   { date: "2026-11-24", who: ["Woody"], topic: "Who we check and when", title: "BGP's checks start when a building's owner is set up",
@@ -279,7 +281,8 @@ export const AML_DECISIONS: AmlDecision[] = [
   { date: "2026-11-18", who: ["Woody"], topic: "Officers and sign-off", title: "Approval is on the company that signs",
     text: "A party is approved on the company that signs, not on the brand." },
   { date: "2026-11-18", who: ["Woody"], topic: "Records and reports", title: "The AML board",
-    text: "Transactions, AML lists every party's checks: to do, in progress, done, expiring." },
+    text: "Transactions, AML lists every party's checks: to do, in progress, done, expiring.",
+    changed: "24 November 2026: one line per transaction, each party's checks inside it." },
 
   // 17 November 2026
   { date: "2026-11-17", who: ["Woody"], topic: "Who we check and when", title: "A transaction is not blocked for outstanding checks",

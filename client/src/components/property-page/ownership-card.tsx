@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { titleUseWords, type PropertyOwnershipView, type ProprietorView, type TitleView } from "@shared/property-ownership";
-import { type AmlDashboardRow } from "@shared/aml-dashboard";
+import { groupAmlByTransaction, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { AmlLateChip, AmlStageChip, RedFlagChip } from "@/components/aml-frame";
 import { ClientKycDialog } from "@/components/client-kyc/client-kyc-dialog";
 import type { AmlDialogDeal } from "@/components/deal-aml-dialog";
@@ -166,15 +166,15 @@ function TransactionsAml({ propertyId, onOpenAml }: { propertyId: string; onOpen
     queryKey: ["/api/aml-dashboard", { propertyId }],
     queryFn: async () => (await apiRequest("GET", `/api/aml-dashboard?propertyId=${encodeURIComponent(propertyId)}`)).json(),
   });
-  const byDeal = new Map<string, AmlDashboardRow[]>();
-  for (const r of data?.rows || []) byDeal.set(r.dealId, [...(byDeal.get(r.dealId) || []), r]);
+  // One line per transaction, its parties inside it: the AML page's own grouping (24 November 2026).
+  const transactions = groupAmlByTransaction(data?.rows || []);
   return (
     <div className="space-y-1.5" data-testid="ownership-transactions-aml">
       <div className={sectionHead}>AML on transactions here</div>
       {isLoading ? <div className="text-xs text-muted-foreground">Reading…</div>
         : isError ? <div className="text-xs text-muted-foreground">The transactions' AML could not be read.</div>
-        : byDeal.size === 0 ? <div className="text-xs text-muted-foreground">No open transactions. When an instruction comes in, its AML starts on the transaction, with the owner set up here offered as the company that signs.</div>
-        : [...byDeal.values()].map(rows => {
+        : transactions.length === 0 ? <div className="text-xs text-muted-foreground">No open transactions. When an instruction comes in, its AML starts on the transaction, with the owner set up here offered as the company that signs.</div>
+        : transactions.map(({ parties: rows }) => {
           const first = rows[0];
           return (
             <div key={first.dealId} className="flex flex-wrap items-start gap-2 rounded-md border border-border px-3 py-2 text-xs">

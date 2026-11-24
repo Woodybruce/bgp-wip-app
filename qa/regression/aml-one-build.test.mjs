@@ -47,7 +47,7 @@ test('the AML page has a Cards view on Transactions and Companies, like the CRM 
     // One card for the phone and the Cards view.
     assert.match(src, /isMobile \|\| view === "card" \? \(\s*<AmlCardGrid/);
   }
-  assert.match(page, /function AmlPartyCard\(/);
+  assert.match(page, /function AmlTransactionCard\(/);
   assert.match(companies, /function KycCompanyCard\(/);
   // Remembered in this browser, never relied on.
   assert.match(frame, /try \{ const v = window\.localStorage\.getItem\(`bgp_aml_view_\$\{key\}`\);/);

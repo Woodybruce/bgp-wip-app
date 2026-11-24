@@ -86,14 +86,14 @@ test('the table shows the transaction status, the red flags under due diligence 
   assert.match(page, /<th className="text-left font-medium px-3 py-2">AML stage<\/th>/);
   assert.match(page, /<th className="text-left font-medium px-3 py-2">Due diligence and red flags<\/th>/);
   assert.doesNotMatch(page, />Red flags<\/th>/, 'the red flags sit under due diligence, not in a column of their own');
-  assert.match(page, /<td className="px-3 py-2"><DealStatusChip row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 max-w-\[240px\]"><DiligenceCell row=\{r\} onOpen=\{setOpen\} \/><\/td>/);
+  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{block\}><DealStatusChip row=\{first\} \/><\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} max-w-\[240px\]`\}><DiligenceCell row=\{r\} onOpen=\{onOpen\} \/><\/td>/);
   // Every agent on a line of their own, never cut off.
-  assert.match(page, /\{row\.agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
+  assert.match(page, /\{agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
   // The party, transaction and waiting-on columns give way below 1536px so the agents fit a laptop screen.
-  assert.match(page, /<td className="px-3 py-2 max-w-\[170px\] 2xl:max-w-\[230px\]"><PartyCell row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 max-w-\[190px\] 2xl:max-w-\[260px\]"><DealCell row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 min-w-\[120px\] max-w-\[200px\]">\{r\.waitingOn\}<\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} max-w-\[170px\] 2xl:max-w-\[230px\]`\}><PartyCell row=\{r\} \/><\/td>/);
+  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{`\$\{block\} max-w-\[190px\] 2xl:max-w-\[260px\]`\}><DealCell row=\{first\} \/><\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} min-w-\[120px\] max-w-\[200px\]`\}>\{r\.waitingOn\}<\/td>/);
   assert.doesNotMatch(page, /r\.agents\.join\(", "\)/);
   // The status in the Transactions board's words, a letting's AVA as Marketing.
   assert.match(read('shared/aml-dashboard.ts'), /words: dealStatusLabel\(row\.dealStatus, row\.dealType\)/);
@@ -114,4 +114,22 @@ test('the top folds once the table scrolls, keeping the title and pills (Woody, 
   const panel = read('client/src/components/aml-policy-panel.tsx');
   assert.match(panel, /<div className="max-w-3xl space-y-4 text-sm" data-testid="aml-policy-panel">/);
   assert.doesNotMatch(panel, /data-testid="aml-policy-open"/);
+});
+
+// One line per transaction with its parties inside it (Woody, 24 November 2026:
+// "combine the 2 (normally) AML checks into just one transaction board or line").
+test('the board is one line per transaction, each party on a line of its own inside it', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(page, /const transactions = useMemo\(\(\) => groupAmlByTransaction\(data\?\.rows \|\| \[\]\), \[data\]\);/);
+  assert.match(page, /scoped\.filter\(t => t\.buckets\.includes\(bucket\)\)/);
+  assert.match(page, /const counts = useMemo\(\(\) => transactionBucketCounts\(scoped\), \[scoped\]\);/);
+  // The table: a group per transaction; its own cells once (rowSpan), a line per party.
+  assert.match(page, /\{shown\.map\(t => <TransactionRows key=\{t\.key\} t=\{t\} bucket=\{bucket\} onOpen=\{setOpen\} \/>\)\}/);
+  assert.match(page, /<tbody className="group\/txn border-t border-border" data-testid=\{`aml-transaction-\$\{t\.dealId\}`\}>/);
+  assert.match(page, /<tr key=\{r\.key\} onClick=\{\(\) => onOpen\(r\)\} className="cursor-pointer" data-testid=\{`aml-row-\$\{r\.key\}`\}>/);
+  // Cards and the phone: one card per transaction, a line per party.
+  assert.match(page, /render=\{t => <AmlTransactionCard key=\{t\.key\} t=\{t\} bucket=\{bucket\} onOpen=\{setOpen\} \/>\}/);
+  assert.doesNotMatch(page, /function AmlPartyCard\(/);
+  // The property page's AML on transactions here groups the same way.
+  assert.match(read('client/src/components/property-page/ownership-card.tsx'), /const transactions = groupAmlByTransaction\(data\?\.rows \|\| \[\]\);/);
 });
