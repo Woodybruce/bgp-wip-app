@@ -58,6 +58,8 @@ function makeHandler(method, url, staff = false) {
     require: name => name.includes('deal-status') ? statuses
       // BGP stopping acting on a deal (server/aml-stop.ts, 21 November 2026): none stopped here.
       : name.includes('aml-stop') ? { amlStopDenial: async () => null, stoppedDealIds: async () => new Set(), AML_STOP_REFUSAL: 'on hold' }
+      // Draft Xero invoices go with a deleted transaction (server/xero-invoice-actions.ts, 24 November 2026): none here.
+      : name.includes('xero-invoice-actions') ? { xeroBeforeDealDelete: async () => ({ ok: true }) }
       : { checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }), SENIOR_APPROVER_EMAILS: new Set() },
     isPropertyInScope: async (_, id) => ['owned-property', 'shared-property'].includes(id),
     isDealInScope: async (_, id) => ['owned-deal', 'shared-deal'].includes(id), storage,
