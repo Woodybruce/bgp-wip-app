@@ -91,7 +91,8 @@ export function SharePointWidget() {
       if (driveId) params.set("driveId", driveId);
       const res = await fetch(`/api/microsoft/files?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
-        const err = new Error(res.status === 401 ? "auth" : "server") as Error & { status: number };
+        // 428: their own Microsoft 365 is not connected (files open as them, never a colleague).
+        const err = new Error(res.status === 401 ? "auth" : res.status === 428 ? "own" : "server") as Error & { status: number };
         err.status = res.status;
         throw err;
       }
@@ -176,9 +177,16 @@ export function SharePointWidget() {
               <p className="text-sm text-muted-foreground">
                 {(error as any)?.message === "auth"
                   ? "Connect to Microsoft 365 to view SharePoint files"
-                  : "Couldn't load files — please try again"}
+                  : (error as any)?.message === "own"
+                    ? "Connect your own Microsoft 365 to see files here: they open as you, never as a colleague."
+                    : "Couldn't load files — please try again"}
               </p>
-              {(error as any)?.message !== "auth" && (
+              {(error as any)?.message === "own" && (
+                <Button variant="outline" size="sm" onClick={() => navigate("/sharepoint")} data-testid="button-sharepoint-connect">
+                  Open the SharePoint page
+                </Button>
+              )}
+              {(error as any)?.message !== "auth" && (error as any)?.message !== "own" && (
                 <Button variant="outline" size="sm" onClick={() => refetch()} data-testid="button-sharepoint-retry">
                   Retry
                 </Button>
