@@ -1,6 +1,7 @@
 // The client app's SharePoint surface — standard folder/file browsing,
 // jailed server-side to the company's own SharePoint folder (the Landsec
-// folder holding the per-property folder trees). See server/client-sharepoint.ts.
+// folder holding the per-property folder trees), and the folders BGP staff
+// shared with the company (24 November 2026). See server/client-sharepoint.ts.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Cloud, Download, Folder, File as FileIcon, Home } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { ClientSharedFolders } from "@/components/folders/client-shared-folders";
 
 interface SpItem {
   id: string;
@@ -74,10 +76,19 @@ export function ClientSharePointBrowser() {
     );
   }
   if (rootError || !root) {
+    // Folders BGP shared with the company show even with no root linked.
     return (
-      <div className="p-10 text-center text-muted-foreground" data-testid="client-sharepoint-empty">
-        <Cloud className="w-10 h-10 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">{(rootError as any)?.message || "No SharePoint folder is linked for your company yet — ask your BGP team."}</p>
+      <div className="p-4 md:p-6 space-y-4">
+        <h1 className="text-2xl font-bold tracking-tight">SharePoint</h1>
+        <ClientSharedFolders
+          title="Shared with you by BGP"
+          whenEmpty={
+            <div className="p-10 text-center text-muted-foreground" data-testid="client-sharepoint-empty">
+              <Cloud className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">{(rootError as any)?.message || "No SharePoint folder is linked for your company yet — ask your BGP team."}</p>
+            </div>
+          }
+        />
       </div>
     );
   }
@@ -103,6 +114,10 @@ export function ClientSharePointBrowser() {
           SharePoint
         </h1>
         <p className="text-sm text-muted-foreground">Your document library — property folder trees, shared by your BGP team.</p>
+      </div>
+
+      <div className="border rounded-lg p-4 empty:hidden">
+        <ClientSharedFolders title="Shared with you by BGP" />
       </div>
 
       <div className="flex items-center gap-1 text-sm flex-wrap" data-testid="client-sharepoint-breadcrumb">

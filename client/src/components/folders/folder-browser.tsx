@@ -25,6 +25,7 @@ import {
   useCopies, useUploads,
 } from "./folder-actions";
 import { FolderPicker } from "./folder-picker";
+import { FolderFollowMenuItem } from "./folder-share";
 
 export { formatBytes } from "./folder-actions";
 export interface FolderRoot { driveId: string; itemId: string; name: string; webUrl: string | null }
@@ -126,6 +127,7 @@ export function FolderBrowser({ root, testId = "folder-browser" }: { root: Folde
       <DropdownMenuContent align="end" className="w-48">
         {item.isFolder && <DropdownMenuItem onClick={() => setTrail(t => [...t, item])}><Folder className="w-3.5 h-3.5 mr-2" />Open</DropdownMenuItem>}
         {item.webUrl && <DropdownMenuItem asChild><a href={item.webUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-3.5 h-3.5 mr-2" />Open in SharePoint</a></DropdownMenuItem>}
+        {item.isFolder && <FolderFollowMenuItem driveId={item.driveId} itemId={item.itemId} name={item.name} testId={`${testId}-follow-${item.itemId}`} />}
         {!item.isFolder && <DropdownMenuItem onClick={() => setPreviewing(item)} data-testid={`${testId}-preview-${item.itemId}`}><Eye className="w-3.5 h-3.5 mr-2" />Preview</DropdownMenuItem>}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => setRenaming(item)} data-testid={`${testId}-rename-${item.itemId}`}><Pencil className="w-3.5 h-3.5 mr-2" />Rename</DropdownMenuItem>

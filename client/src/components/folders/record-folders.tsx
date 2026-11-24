@@ -22,6 +22,7 @@ import { FolderApiError, folderApi, recordFoldersKey, refreshFolders } from "./f
 import { FolderBrowser } from "./folder-browser";
 import { FolderDialog } from "./folder-dialog";
 import { RecordFolderPicker } from "./record-folder-picker";
+import { FolderFollowMenuItem, FolderShareMenuItems, SharedLine, SharedMark, ShareWithClientDialog } from "./folder-share";
 
 export { RecordFolderPicker } from "./record-folder-picker";
 
@@ -67,6 +68,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
   const [pickerOpen, setPickerOpen] = useState(false);
   const [relabel, setRelabel] = useState<FolderLinkView | null>(null);
   const [unlink, setUnlink] = useState<FolderLinkView | null>(null);
+  const [sharing, setSharing] = useState<FolderLinkView | null>(null);
 
   const change = async (link: FolderLinkView, patch: Record<string, unknown>, done: string) => {
     try {
@@ -84,6 +86,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
         {f.status !== "ok" && f.status !== "unknown" ? <AlertTriangle className="w-3 h-3 shrink-0" /> : null}
         {colourOf(f.colour) ? <span className={cn("h-2 w-2 shrink-0 rounded-full", colourOf(f.colour)!.dot)} aria-hidden data-testid={`folder-chip-colour-${f.id}`} /> : null}
         <span className="truncate">{f.label}</span>
+        <SharedMark link={f} />
         {f.legacy ? <span className="font-normal normal-case opacity-70">· old link</span> : null}
       </Pill>
       <DropdownMenu>
@@ -95,6 +98,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
         <DropdownMenuContent align="start" className="w-60">
           <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground break-words">{f.path || f.webUrl}</DropdownMenuLabel>
           {f.webUrl && <DropdownMenuItem onClick={() => window.open(f.webUrl!, "_blank", "noopener")}><ExternalLink className="w-3.5 h-3.5 mr-2" />Open in SharePoint</DropdownMenuItem>}
+          {view?.connected && f.status === "ok" && f.driveId && f.itemId && <FolderFollowMenuItem driveId={f.driveId} itemId={f.itemId} name={f.label} testId={`folder-chip-follow-${f.id}`} />}
           {f.legacy ? (
             <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">An old link, read only until it is moved into Folders.</DropdownMenuLabel>
           ) : from ? (
@@ -116,6 +120,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
               </div>
               {index > 0 && <DropdownMenuItem onClick={() => change(f, { position: index - 1 }, "Moved up")} data-testid={`folder-chip-up-${f.id}`}><ArrowUp className="w-3.5 h-3.5 mr-2" />Move up</DropdownMenuItem>}
               {index < count - 1 && <DropdownMenuItem onClick={() => change(f, { position: index + 1 }, "Moved down")} data-testid={`folder-chip-down-${f.id}`}><ArrowDown className="w-3.5 h-3.5 mr-2" />Move down</DropdownMenuItem>}
+              <FolderShareMenuItems link={f} onShare={setSharing} />
               <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setUnlink(f)} data-testid={`folder-chip-unlink-${f.id}`}><Unlink className="w-3.5 h-3.5 mr-2" />Unlink</DropdownMenuItem>
             </>
           )}
@@ -169,6 +174,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
               </span>
             ))}
           </div>
+          {current && <SharedLine link={current} />}
           {current && <OpenFolder link={current} onUnlink={() => setUnlink(current)} />}
         </>
       )}
@@ -180,6 +186,7 @@ function StaffRecordFolders({ recordType, recordId, recordName, propertyId, prop
         alt={recordType === "deal" && propertyId ? { type: "property", id: propertyId, name: propertyName || "the property" } : null}
       />
       <LabelDialog link={relabel} onClose={() => setRelabel(null)} onSave={(f, label) => change(f, { label }, "Label changed")} />
+      <ShareWithClientDialog link={sharing} recordType={recordType} onClose={() => setSharing(null)} />
       <FolderDialog
         open={!!unlink}
         onOpenChange={o => { if (!o) setUnlink(null); }}

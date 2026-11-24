@@ -3430,6 +3430,12 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS record_folders_live_uq ON record_folders (record_type, record_id, drive_id, item_id) WHERE removed_at IS NULL`,
     `CREATE INDEX IF NOT EXISTS record_folders_item_idx ON record_folders (drive_id, item_id)`,
+    // Shared with a client (Woody, 24 November 2026, decision 6): BGP staff
+    // share a linked folder with the client company whose logins can open the
+    // record; it then shows in that client's data room. server/folders/share.ts.
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_with_company_id text`,
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_by varchar`,
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_at timestamptz`,
     `CREATE TABLE IF NOT EXISTS folder_actions (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
       at timestamptz NOT NULL DEFAULT now(),

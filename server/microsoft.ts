@@ -497,45 +497,28 @@ export function setupMicrosoftRoutes(app: Express) {
     res.json({ message: "Disconnected from Microsoft 365" });
   });
 
-  app.get("/api/microsoft/shared-folder-probe", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+  // Files on the SharePoint page, the dashboard widget and the Excel add-in
+  // open as the person, on their own Microsoft 365, never a colleague's (Woody,
+  // 24 November 2026: decision 7 of docs/folders-review-2026-11-20.md). With
+  // none connected the screens say to connect it on the SharePoint page.
+  const CONNECT_OWN = "Connect your own Microsoft 365 first, on the SharePoint page: files open as you, never as a colleague.";
+  const ownFileToken = async (req: Request, res: Response): Promise<string | null> => {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) {
+      res.status(401).json({ message: "Not authenticated" });
+      return null;
     }
-    try {
-      const shareUrl = req.query.url as string;
-      if (!shareUrl) return res.status(400).json({ message: "url query param required" });
-      const encoded = Buffer.from(shareUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const shareToken = "u!" + encoded;
-      const driveItemUrl = `https://graph.microsoft.com/v1.0/shares/${shareToken}/driveItem?$expand=children`;
-      console.log("[SharePoint Probe] Accessing shared link:", driveItemUrl.substring(0, 120));
-      const r = await fetch(driveItemUrl, { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) {
-        const errText = await r.text();
-        console.log("[SharePoint Probe] Error:", r.status, errText.substring(0, 300));
-        return res.status(r.status).json({ error: errText });
-      }
-      const data = await r.json();
-      console.log("[SharePoint Probe] Success! Folder:", data.name, "Children:", data.children?.length);
-      const summary = {
-        name: data.name,
-        id: data.id,
-        driveId: data.parentReference?.driveId,
-        childCount: data.folder?.childCount,
-        children: data.children?.map((c: any) => ({ name: c.name, size: c.size, folder: !!c.folder, childCount: c.folder?.childCount })),
-      };
-      return res.json(summary);
-    } catch (err: any) {
-      console.error("[SharePoint Probe] Error:", err.message);
-      return res.status(500).json({ error: err.message });
+    const own = await getOwnMsAccess(String(userId));
+    if (!own) {
+      res.status(428).json({ message: CONNECT_OWN, connect: true });
+      return null;
     }
-  });
+    return own.token;
+  };
 
   app.get("/api/microsoft/files", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
 
     try {
       const folderId = req.query.folderId as string | undefined;
@@ -646,7 +629,7 @@ export function setupMicrosoftRoutes(app: Express) {
 
       const items = await listAllChildren(
         fetchPage,
-        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails",
+        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference",
       );
       if (items.length > 0 && items[0].parentReference?.driveId) {
         res.json({ items, driveId: items[0].parentReference.driveId });
@@ -663,10 +646,8 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/files/content", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = req.query.driveId as string;
       const itemId = req.query.itemId as string;
@@ -691,10 +672,8 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/files/thumbnail", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = req.query.driveId as string;
       const itemId = req.query.itemId as string;
@@ -805,80 +784,6 @@ export function setupMicrosoftRoutes(app: Express) {
     } catch (err: any) {
       console.error("Share invite error:", err.message);
       res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/microsoft/sharepoint/debug", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const results: any = {};
-
-      const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-      const siteRes = await fetch(siteUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      results.siteUrl = siteUrl;
-      results.siteStatus = siteRes.status;
-      results.siteData = await siteRes.json();
-
-      if (siteRes.ok) {
-        const drivesUrl = `https://graph.microsoft.com/v1.0/sites/${results.siteData.id}/drives`;
-        const drivesRes = await fetch(drivesUrl, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        results.drivesStatus = drivesRes.status;
-        results.drivesData = await drivesRes.json();
-      }
-
-      const searchUrl = `https://graph.microsoft.com/v1.0/sites?search=BGP`;
-      const searchRes = await fetch(searchUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      results.searchStatus = searchRes.status;
-      results.searchData = await searchRes.json();
-
-      res.json(results);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/microsoft/sharepoint/sites", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const search = req.query.search as string || "";
-      let url = "https://graph.microsoft.com/v1.0/sites?search=*";
-      if (search) {
-        url = `https://graph.microsoft.com/v1.0/sites?search=${encodeURIComponent(search)}`;
-      }
-
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
-        }
-        const errorText = await response.text();
-        console.error("SharePoint sites error:", errorText);
-        return res.json([]);
-      }
-
-      const data = await response.json();
-      res.json(data.value || []);
-    } catch (err: any) {
-      console.error("SharePoint sites error:", err);
-      res.json([]);
     }
   });
 
@@ -2216,10 +2121,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // Rename and/or move a file or folder. Graph does both in one PATCH:
   // a `name` renames, a `parentReference.id` moves. Pass either or both.
   app.patch("/api/microsoft/files/item", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const { driveId, itemId, name, parentId } = req.body || {};
       if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
@@ -2247,10 +2150,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // Create a folder in the current location (drive root when parentId is
   // omitted). Conflict on name returns 409 rather than silently renaming.
   app.post("/api/microsoft/files/folder", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const { driveId, parentId, name } = req.body || {};
       const trimmed = typeof name === "string" ? name.trim() : "";
@@ -2276,10 +2177,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // Delete a file or folder. Graph sends it to the SharePoint recycle bin
   // (recoverable), so this is a soft delete from the user's perspective.
   app.delete("/api/microsoft/files/item", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = (req.body?.driveId || req.query.driveId) as string;
       const itemId = (req.body?.itemId || req.query.itemId) as string;
@@ -2563,15 +2462,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     res.json(templates);
   });
 
-  app.get("/api/microsoft/company-folder-templates", requireAuth, async (_req: Request, res: Response) => {
-    const templates = Object.entries(COMPANY_FOLDER_TREES).map(([template, paths]) => ({
-      template,
-      folderCount: paths.length + 1,
-      structure: paths,
-    }));
-    res.json(templates);
-  });
-
   app.post("/api/microsoft/company-folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2758,73 +2648,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  app.post("/api/microsoft/team-folders/setup", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site. Make sure you have access." });
-      }
-
-      const results: { name: string; status: string; id?: string; webUrl?: string }[] = [];
-
-      for (const teamName of TEAM_FOLDERS) {
-        try {
-          const cleanParent = SHAREPOINT_ROOT_FOLDER.replace(/^\/+|\/+$/g, "");
-          const createUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(cleanParent).replace(/%2F/g, "/")}:/children`;
-          const createRes = await fetch(
-            createUrl,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                name: teamName,
-                folder: {},
-                "@microsoft.graph.conflictBehavior": "fail",
-              }),
-            }
-          );
-
-          if (createRes.ok) {
-            const folder = await createRes.json();
-            results.push({ name: teamName, status: "created", id: folder.id, webUrl: folder.webUrl });
-          } else if (createRes.status === 409) {
-            const teamPath = `${SHAREPOINT_ROOT_FOLDER}/${teamName}`;
-            const existingRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(teamPath).replace(/%2F/g, "/")}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (existingRes.ok) {
-              const existing = await existingRes.json();
-              results.push({ name: teamName, status: "exists", id: existing.id, webUrl: existing.webUrl });
-            } else {
-              results.push({ name: teamName, status: "exists" });
-            }
-          } else {
-            const errText = await createRes.text();
-            console.error(`Failed to create ${teamName} folder:`, createRes.status, errText);
-            results.push({ name: teamName, status: "error" });
-          }
-        } catch (folderErr: any) {
-          console.error(`Error creating ${teamName} folder:`, folderErr);
-          results.push({ name: teamName, status: "error" });
-        }
-      }
-
-      res.json({ folders: results, driveId: spInfo.driveId });
-    } catch (err: any) {
-      console.error("Team folders setup error:", err);
-      res.status(500).json({ message: "Failed to set up team folders" });
-    }
-  });
-
   app.get("/api/microsoft/property-folders/:team/:propertyName", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2943,47 +2766,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  app.get("/api/microsoft/team-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      const folders: { name: string; id: string; webUrl: string; childCount: number }[] = [];
-
-      for (const teamName of TEAM_FOLDERS) {
-        try {
-          const res = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(teamName)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (res.ok) {
-            const item = await res.json();
-            if (item.folder) {
-              folders.push({
-                name: item.name,
-                id: item.id,
-                webUrl: item.webUrl,
-                childCount: item.folder.childCount || 0,
-              });
-            }
-          }
-        } catch {}
-      }
-
-      res.json({ folders, driveId: spInfo.driveId });
-    } catch (err: any) {
-      console.error("Team folders error:", err);
-      res.status(500).json({ message: "Failed to fetch team folders" });
-    }
-  });
-
   app.get("/api/microsoft/company-folders/browse", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -3055,10 +2837,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   });
 
   app.post("/api/microsoft/files/upload", fileUpload.single("file"), async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
 
     try {
       const file = req.file;

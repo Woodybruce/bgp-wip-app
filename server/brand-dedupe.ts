@@ -14,6 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { moveCompanyFolders } from "./folders/merge";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -432,6 +433,8 @@ export async function mergeCompanyInto(client: { query: Function }, primaryId: s
 
   // Rewrite every FK reference
   const referenceUpdates = await repointCompanyRefs(client, secondaryId, primaryId);
+  // Its folder links, and the folders shared with it, go to the primary (server/folders/merge.ts).
+  Object.assign(referenceUpdates, await moveCompanyFolders(client, secondaryId, primaryId));
 
   // Soft-delete the secondary — it stays in the table so old URLs and
   // imports don't orphan, but it's hidden from queries that filter out

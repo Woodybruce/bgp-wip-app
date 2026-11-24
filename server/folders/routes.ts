@@ -11,6 +11,8 @@
 //   GET    /api/folders/search?q=&in=all|library|onedrive   folders by name
 //   PATCH  /api/folders/links/:id                      label, colour, position
 //   DELETE /api/folders/links/:id                      unlink (SharePoint untouched)
+//   GET    /api/folders/links/:id/share                who it is shared with, and the clients it may be shared with
+//   POST   /api/folders/links/:id/share                { companyId | null }: share it with that client, or stop (share.ts)
 //   GET    /api/folders/:recordType/:recordId          the record's folders, then its property's
 //   POST   /api/folders/:recordType/:recordId/links    link { driveId, itemId } or { url }; label, colour
 //   POST   /api/folders/:recordType/:recordId/create   make { driveId, parentId, name, template? }, then link it
@@ -29,6 +31,8 @@
 //   POST   /api/folders/items/:driveId/:itemId/share        { scope: anonymous|organization, edit } → a link
 //   POST   /api/folders/items/:driveId/:itemId/invite       { emails, write, message }
 //   POST   /api/folders/items/:driveId/:itemId/preview      → an address to show it in a frame
+//   POST   /api/folders/items/:driveId/:itemId/follow       follow it, as the person (the picker's Followed list)
+//   POST   /api/folders/items/:driveId/:itemId/unfollow     stop following it
 import { randomUUID } from "node:crypto";
 import express, { Router, type Request, type RequestHandler, type Response } from "express";
 import multer from "../utils/upload";
@@ -37,12 +41,13 @@ import {
   needsUploadSession, parseContentRange, pieceProblem, uploadProblem,
 } from "@shared/folders";
 import {
-  GraphError, bgpLibrary, cancelUploadSession, copyProgress, createFolder, createFolderTree, deleteItem, folderPlaces, getEntry,
+  GraphError, bgpLibrary, cancelUploadSession, copyProgress, createFolder, createFolderTree, deleteItem, folderPlaces, followItem, getEntry,
   invitePeople, itemForChange, listChildren, moveItem, previewUrl, renameItem, searchFolders, shareLink, startCopy, startUploadSession,
-  uploadPiece, uploadSmall,
+  unfollowItem, uploadPiece, uploadSmall,
 } from "./graph";
 import { folderRecord, folderStaff, type Db, type FolderStaff } from "./access";
 import { addFolderLink, changeFolderLink, folderRefusal, logFolderAction, readRecordFolders, unlinkFolder, type FolderActionEntry } from "./links";
+import { shareFolderLink, shareOptions, withSharing } from "./share";
 
 export interface FolderRouteDeps {
   db: Db;
@@ -129,6 +134,18 @@ export function foldersRouter(deps: FolderRouteDeps): Router {
 
   router.delete("/api/folders/links/:id", auth, handle("staff", async (req, res, ctx) => {
     res.json(await unlinkFolder(db, actorOf(ctx), String(req.params.id)));
+  }));
+
+  // Shared with a client (decision 6): sharing reads the folder again on the
+  // person's own Microsoft 365; stopping needs none.
+  router.get("/api/folders/links/:id/share", auth, handle("staff", async (req, res) => {
+    res.json(await shareOptions(db, String(req.params.id)));
+  }));
+
+  router.post("/api/folders/links/:id/share", auth, handle("maybe", async (req, res, ctx) => {
+    const companyId = req.body && typeof req.body === "object" ? (req.body as any).companyId ?? null : null;
+    if (companyId !== null && companyId !== "" && !ctx.ms) return res.status(428).json({ message: CONNECT_FIRST, connect: true });
+    res.json(await shareFolderLink(db, { ...actorOf(ctx), token: ctx.ms?.token ?? null }, String(req.params.id), companyId));
   }));
 
   // ── Inside a folder ───────────────────────────────────────────────────
@@ -322,10 +339,22 @@ export function foldersRouter(deps: FolderRouteDeps): Router {
     res.json({ url });
   }));
 
+  router.post("/api/folders/items/:driveId/:itemId/follow", auth, handle("microsoft", async (req, res, ctx) => {
+    const { driveId, itemId } = itemIds(req);
+    await logged(ctx, { action: "follow", driveId, itemId }, () => followItem(ctx.ms!.token, driveId, itemId));
+    res.json({ following: true });
+  }));
+
+  router.post("/api/folders/items/:driveId/:itemId/unfollow", auth, handle("microsoft", async (req, res, ctx) => {
+    const { driveId, itemId } = itemIds(req);
+    await logged(ctx, { action: "unfollow", driveId, itemId }, () => unfollowItem(ctx.ms!.token, driveId, itemId));
+    res.json({ following: false });
+  }));
+
   router.get("/api/folders/:recordType/:recordId", auth, handle("maybe", async (req, res, { staff, ms }) => {
     const record = await folderRecord(db, req.params.recordType, req.params.recordId);
     if (!record) throw folderRefusal(404, "Not found.");
-    res.json(await readRecordFolders(db, record, { userId: staff.userId, token: ms?.token ?? null }));
+    res.json(await withSharing(db, await readRecordFolders(db, record, { userId: staff.userId, token: ms?.token ?? null })));
   }));
 
   router.post("/api/folders/:recordType/:recordId/links", auth, handle("microsoft", async (req, res, ctx) => {

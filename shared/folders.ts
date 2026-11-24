@@ -49,7 +49,7 @@ export function isFolderRecordType(v: unknown): v is FolderRecordType {
 export const SHOWS_PROPERTY_FOLDERS: readonly FolderRecordType[] = ["deal", "scheme", "pla_matter", "pathway_run"];
 
 /** Everything done to a folder or a link is one row of folder_actions. */
-export const FOLDER_ACTIONS = ["link", "unlink", "change", "create", "rename", "move", "copy", "delete", "upload", "share", "invite", "preview"] as const;
+export const FOLDER_ACTIONS = ["link", "unlink", "change", "create", "rename", "move", "copy", "delete", "upload", "share", "invite", "preview", "follow", "unfollow", "share_client", "unshare_client"] as const;
 export type FolderAction = (typeof FOLDER_ACTIONS)[number];
 
 /** Where a link came from: picked in the picker, made there, pasted, or moved over from an old column. */
@@ -275,6 +275,8 @@ export interface FolderLinkView {
   linkedBy: string | null;
   linkedAt: string | null;
   alsoLinked: FolderRecordRef[];
+  /** The client company it is shared with (shared/folder-share.ts), when it is. */
+  sharedWith?: { id: string; name: string } | null;
 }
 export interface RecordFoldersView {
   record: FolderRecordRef;
