@@ -8,7 +8,7 @@
 import { listAllChildren } from "../microsoft-graph-pagination";
 import { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, sharesId } from "../sharepoint-graph";
 import {
-  SHARE_DRIVE_NAME, UPLOAD_SESSION_ABOVE, contentRange, copyState, driveKindOf, folderDisplayPath, folderTreeOrder, folderTreePaths,
+  SHARE_DRIVE_NAME, UPLOAD_PIECE, UPLOAD_SESSION_ABOVE, contentRange, copyState, driveKindOf, folderDisplayPath, folderTreeOrder, folderTreePaths,
   graphRefusalWords, type DriveEntry, type FolderPlaces,
 } from "@shared/folders";
 
@@ -22,6 +22,8 @@ export interface GraphRequest {
   json?: unknown;
   bytes?: Uint8Array;
   headers?: Record<string, string>;
+  /** A file's content: the answer comes back as bytes, not text. */
+  binary?: boolean;
 }
 export interface GraphResponse { status: number; body: any; location: string | null; retryAfter: number | null }
 export type GraphTransport = (r: GraphRequest) => Promise<GraphResponse>;
@@ -34,6 +36,7 @@ const fetchTransport: GraphTransport = async (r) => {
   else if (r.bytes) body = r.bytes;
   // A signed SharePoint address (no token) is never followed somewhere else.
   const res = await fetch(r.url, { method: r.method, headers, body, redirect: r.token ? "follow" : "manual", signal: AbortSignal.timeout(90_000) });
+  if (r.binary && res.ok) return { status: res.status, body: new Uint8Array(await res.arrayBuffer()), location: res.headers.get("Location"), retryAfter: null };
   const text = await res.text();
   let parsed: any = null;
   if (text) { try { parsed = JSON.parse(text); } catch { parsed = text; } }
@@ -379,4 +382,68 @@ export async function previewUrl(token: string, driveId: string, itemId: string)
   const url = String(res.body?.getUrl || "");
   if (!/^https:\/\//.test(url)) throw new GraphError(415, "SharePoint has no preview of that file: open it in SharePoint.");
   return url;
+}
+
+// ── Files, for the code that works by path (ChatBGP's tools, Model Studio, the MCP server, Pathway) ──
+/** Above this a file is not read into the app: it is opened in SharePoint. */
+export const DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * A file's content. Graph gives a short-lived address on BGP's SharePoint to
+ * fetch it from, which is asked with no token (graphTarget allows only BGP's
+ * own SharePoint there).
+ */
+export async function downloadFile(token: string, driveId: string, itemId: string, maxBytes = DOWNLOAD_MAX_BYTES): Promise<{ entry: DriveEntry; bytes: Uint8Array }> {
+  const item = await call(token, "GET", `/drives/${driveId}/items/${itemId}`);
+  const entry = driveEntry(item, driveId);
+  const tooLarge = () => new GraphError(413, `That file is over ${Math.round(maxBytes / 1024 / 1024)} MB: open it in SharePoint.`);
+  if (entry.isFolder) throw new GraphError(400, "That is a folder, not a file.");
+  if (entry.size !== null && entry.size > maxBytes) throw tooLarge();
+  const url = String(item?.["@microsoft.graph.downloadUrl"] || "");
+  const target = url ? graphTarget(url) : null;
+  if (!target || target.withToken) throw new GraphError(502, "SharePoint gave no download address the app may use.");
+  const res = await graph({ method: "GET", url, token: null, binary: true });
+  if (res.status >= 400) throw new GraphError(res.status);
+  const bytes = res.body instanceof Uint8Array ? res.body : new Uint8Array();
+  if (bytes.length > maxBytes) throw tooLarge();
+  return { entry, bytes };
+}
+
+/** Files and folders by name in one drive. */
+export async function searchDrive(token: string, driveId: string, q: string, top = 50): Promise<DriveEntry[]> {
+  const text = encodeURIComponent(q.replace(/'/g, "''"));
+  const res = await graph({ method: "GET", url: `/drives/${driveId}/root/search(q='${text}')?$top=${Math.max(1, Math.min(200, Math.trunc(top)))}&$select=${ITEM_SELECT}`, token });
+  if (res.status >= 400) throw new GraphError(res.status);
+  return ((res.body?.value || []) as any[]).map(i => driveEntry(i, driveId)).filter(e => e.driveId && e.itemId);
+}
+
+/** A file the server holds, into a folder: in one go up to 10 MB, in pieces above. A name already there gets a number added. */
+export async function uploadFile(token: string, driveId: string, parentId: string, name: string, bytes: Uint8Array): Promise<DriveEntry> {
+  if (bytes.length <= UPLOAD_SESSION_ABOVE) return uploadSmall(token, driveId, parentId, name, bytes);
+  const session = await startUploadSession(token, driveId, parentId, name);
+  try {
+    let start = 0;
+    while (start < bytes.length) {
+      const out = await uploadPiece(session.uploadUrl, bytes.subarray(start, Math.min(bytes.length, start + UPLOAD_PIECE)), start, bytes.length);
+      if (out.done) return out.done;
+      start = out.next;
+    }
+  } catch (e) {
+    await cancelUploadSession(session.uploadUrl);
+    throw e;
+  }
+  await cancelUploadSession(session.uploadUrl);
+  throw new GraphError(502, "SharePoint did not finish the upload.");
+}
+
+/**
+ * New content for a file the app keeps for a record (a model run's live copy
+ * that Embed Excel shows): the same file, its name and folder unchanged. Up
+ * to 10 MB; anything larger goes up as a new copy.
+ */
+export async function replaceFileContent(token: string, driveId: string, itemId: string, bytes: Uint8Array): Promise<DriveEntry> {
+  if (bytes.length > UPLOAD_SESSION_ABOVE) throw new GraphError(413, "Files over 10 MB go up as a new copy.");
+  const res = await graph({ method: "PUT", url: `/drives/${driveId}/items/${itemId}/content`, token, bytes, headers: { "Content-Type": "application/octet-stream" } });
+  if (res.status >= 400) throw new GraphError(res.status);
+  return driveEntry(res.body, driveId);
 }

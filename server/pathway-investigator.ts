@@ -389,29 +389,28 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
       }
 
       case "sharepoint_search": {
-        const { getValidMsToken } = await import("./microsoft");
-        const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
-        const token = await getValidMsToken(req);
-        if (!token) return { error: "Not authenticated to Microsoft" };
-        const driveId = await getSharePointDriveId(token);
-        if (!driveId) return { error: "No SharePoint drive" };
-        const resp = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${driveId}/root/search(q='${encodeURIComponent(input.query)}')`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (!resp.ok) return { error: `SharePoint search failed: ${resp.status}` };
-        const data: any = await resp.json();
-        return {
-          query: input.query,
-          results: (data.value || []).slice(0, 30).map((item: any) => ({
-            name: item.name,
-            path: item.parentReference?.path?.replace(/\/drive\/root:/, "") || "",
-            webUrl: item.webUrl,
-            modifiedAt: item.lastModifiedDateTime,
-            sizeMB: item.size ? Math.round((item.size / 1024 / 1024) * 100) / 100 : undefined,
-            type: item.folder ? "folder" : (item.file?.mimeType || "file"),
-          })),
-        };
+        // As the person running the investigation, on their own Microsoft 365, through the folder engine.
+        const { ownMicrosoft, entryFolderPath, folderErrorWords } = await import("./folders/by-path");
+        const { bgpLibrary, searchDrive } = await import("./folders/graph");
+        const own = await ownMicrosoft(req);
+        if (!own) return { error: "The person running this has not connected their own Microsoft 365, so SharePoint can't be searched." };
+        try {
+          const lib = await bgpLibrary(own.token);
+          const hits = await searchDrive(own.token, lib.driveId, String(input.query || ""), 30);
+          return {
+            query: input.query,
+            results: hits.slice(0, 30).map((e) => ({
+              name: e.name,
+              path: entryFolderPath(e),
+              webUrl: e.webUrl,
+              modifiedAt: e.modified,
+              sizeMB: e.size ? Math.round((e.size / 1024 / 1024) * 100) / 100 : undefined,
+              type: e.isFolder ? "folder" : (e.mimeType || "file"),
+            })),
+          };
+        } catch (e: any) {
+          return { error: `SharePoint search failed: ${folderErrorWords(e)}` };
+        }
       }
 
       case "land_registry_lookup": {

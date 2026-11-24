@@ -1813,9 +1813,9 @@ router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, re
   }
 });
 
-// Save the MLRO Report PDF to the deal's SharePoint folder. Path is built
-// from the deal's team so it lands in the correct team library, under
-// "AML/MLRO Reports/<Deal Name>/". Returns the SP webUrl.
+// Save the MLRO Report PDF into the team's folder in BGP - Share Drive, under
+// "AML/MLRO Reports/<Deal Name>/", as the person saving it on their own
+// Microsoft 365, through the folder engine. Returns the SP webUrl.
 router.post("/api/aml/deal/:id/mlro-report/save", requireAuth, async (req: any, res: Response) => {
   try {
     const result = await generateMlroReportBuffer(req.params.id);
@@ -1823,13 +1823,16 @@ router.post("/api/aml/deal/:id/mlro-report/save", requireAuth, async (req: any, 
     const team = result.deal.team || "Office";
     const dealNameSafe = String(result.deal.name).replace(/[^a-zA-Z0-9 -]/g, "");
     const folderPath = `${team}/AML/MLRO Reports/${dealNameSafe}`;
-    const { executeUploadFileToSharePoint } = await import("./utils/sharepoint-operations");
-    const upload = await executeUploadFileToSharePoint(
-      { folderPath, filename: result.filename, content: result.buffer, contentType: "application/pdf" },
+    const { saveToShareDrive } = await import("./chatbgp-folder-tools");
+    const saved = await saveToShareDrive(
       req,
+      { folderPath, name: result.filename, bytes: new Uint8Array(result.buffer), from: "mlro_report" },
+      undefined,
+      "aml",
     );
-    await pool.query(`UPDATE crm_deals SET aml_mlro_report_url = $1 WHERE id = $2`, [upload.file.webUrl, req.params.id]);
-    res.json({ ok: true, webUrl: upload.file.webUrl, filename: result.filename, sizeMB: upload.file.sizeMB });
+    if (!saved.success) return res.status(400).json({ error: saved.error });
+    await pool.query(`UPDATE crm_deals SET aml_mlro_report_url = $1 WHERE id = $2`, [saved.webUrl, req.params.id]);
+    res.json({ ok: true, webUrl: saved.webUrl, filename: saved.fileName, sizeMB: +(result.buffer.length / 1024 / 1024).toFixed(2) });
   } catch (err: any) {
     console.error("[aml/mlro-report/save] failed:", err?.message);
     res.status(500).json({ error: err?.message || "MLRO report save failed" });
