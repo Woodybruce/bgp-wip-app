@@ -5,6 +5,7 @@
 // through mergeCompanyInto, so they show (and can be undone) on the dedupe
 // screen.
 import { landsecFloorLabel, isLandsecFloorCode } from "@shared/landsec-floor";
+import { withoutFloorSuffix } from "@shared/unit-floor-suffix";
 
 type Querier = { query: Function };
 
@@ -142,6 +143,27 @@ export async function runUnitNameFixes(deps: { pool?: Querier } = {}) {
   const k = await q.query(`UPDATE property_units SET sqft = NULL WHERE sqft < 5 AND id IN (SELECT unit_id FROM available_units WHERE id = '9dcdde62-cbc1-43e7-92be-3de7c20382a9')`);
   await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ names: r.rowCount, sizes: k.rowCount, at: new Date().toISOString() })]);
   console.log(`[record-fixes] unit names ${r.rowCount}, sizes ${k.rowCount}`);
+}
+
+// Unit names that end in their own floor ("... OX1 1PE - Upper Level", from
+// Landsec's schedules; Woody, 2026-11-24: "can that be stopped"). Once,
+// flagged; each row only while it still holds the name read, and every old
+// name is kept in the flag's value.
+export async function runUnitFloorSuffixFix(deps: { pool?: Querier } = {}) {
+  const q: Querier = deps.pool ?? (await import("./db")).pool;
+  const KEY = "migration:unit_floor_suffix_2026_11_24_v1";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const { rows } = await q.query(`SELECT id, unit_number, floor_level FROM tenancy_schedule_units
+    WHERE floor_level IS NOT NULL AND trim(floor_level) <> '' AND unit_number ~ '[-–—]'`);
+  const changed: Array<{ id: string; from: string; to: string }> = [];
+  for (const r of rows) {
+    const to = withoutFloorSuffix(r.unit_number, r.floor_level);
+    if (!to || to === r.unit_number) continue;
+    const u = await q.query(`UPDATE tenancy_schedule_units SET unit_number = $1, updated_at = now() WHERE id = $2 AND unit_number = $3`, [to, r.id, r.unit_number]);
+    if (u.rowCount) changed.push({ id: r.id, from: r.unit_number, to });
+  }
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ changed, at: new Date().toISOString() })]);
+  console.log(`[record-fixes] unit names without their floor: ${changed.length}`);
 }
 
 // Covenant grades were read off small subsidiaries: Zara's UK stores trade

@@ -245,6 +245,7 @@ test('a replacement import is refused while a row on the property has a company 
   const compiled = ts.transpileModule(source('server/tenancy-import.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const unpaused = evaluate(compiled.replace(/^"use strict";/, ''), { require(name) {
     if (name === '@shared/feature-flags') return { LETTING_REPAIR_TOOLS_ENABLED: true, LETTING_REPAIR_PAUSED: 'Paused' };
+    if (name === '@shared/unit-floor-suffix') return { withoutFloorSuffix: (unitName) => String(unitName ?? '') };
     throw new Error(`Unexpected module: ${name}`);
   } });
   const log = [];
