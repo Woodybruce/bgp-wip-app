@@ -7095,6 +7095,63 @@ Tests: `server/kyc-person-details.test.ts` (in `npm test`),
 - Not built: a date of birth for someone named alongside a private individual;
   showing it on the AML file.
 
+## Fable's view of a party's AML file (Woody, 2026-11-24)
+
+Woody, on the risk assessment of Vodafone #4664: "we allready have all this
+info highlioghted in the parts above? shouldnt this be more an AI led
+commentry with fable 5 giving a proper view on whats been found and given to
+date and the risk profile given the rules?". Do not re-litigate. Rules and the
+checks on the answer: `shared/aml-commentary.ts`; the call, the saved views
+and the routes: `server/aml-commentary.ts`; the screen:
+`client/src/components/aml-commentary.tsx`. Tests:
+`server/aml-commentary.test.ts` (in `npm test`),
+`qa/regression/aml-commentary-guards.test.mjs`.
+
+- **What it reads**: every line of the party's risk assessment, numbered F1,
+  F2 and so on (`commentaryFacts`: the job, the level, the four risk
+  headings, the due diligence checklist, the structure and its evidence, the
+  owners, red flags, mitigating factors, the record's own conclusion, the
+  counterparty and the approvals), and BGP's AML rules in short, numbered
+  R1, R2 and so on (`commentaryRules`, from `shared/aml-rules.ts`). Nothing
+  else: no web, no CRM.
+- **What it writes** (`COMMENTARY_SCHEMA`, structured output): a headline,
+  a risk profile (lower, standard, higher or unclear: its reading under the
+  rules), one short paragraph for each of What has been found and given,
+  What is still needed, Risk profile under BGP's rules and Next steps, each
+  citing the facts and rules it rests on, and **Worth a look**: anything in
+  the facts that does not add up. `checkCommentary` keeps only the sections,
+  facts and rules given, drops a paragraph that cites no fact, and returns
+  nothing without a headline and a paragraph. It decides nothing and never
+  says a party is cleared unless a fact does.
+- **The call**: Fable 5.2 (`claude-fable-5-2`), called directly on the beta
+  endpoint with the API's refusal fallback (`fallbacks: "default"`), effort
+  high, the answer as JSON in the schema (Fable takes no forced tool), one
+  call a view, capped a day (`AML_COMMENTARY_DAILY_CAP`, default 60, 0 =
+  off), logged as `aml-commentary`. BGP staff signed in as themselves:
+  `GET /api/deals/:id/aml-commentary?role=` (the latest view and whether the
+  file has changed since) and `POST` the same `{ role, again? }` (write one).
+- **Kept** in `aml_risk_commentaries` (boot migration) with the facts and
+  rules it was written from and their fingerprint (`commentaryHash`): the
+  same view is shown until the file changes; then it says "The file has
+  changed since this view was written" with **Write again**. It is written by
+  itself only the first time the Risk assessment section is opened with no
+  view at all.
+- **Where**: the party's Risk assessment section (Sign-off step) leads with
+  it, the full record folded under **Show the full record**; the AML file
+  prints a current view first, then the record (`writeCommentary` in
+  `server/aml-file.ts`). Each cited fact shows its words on hover and under
+  **Sources**.
+- **The record's own wording was fixed the same day**: a company owned
+  through a listed one (`listedViaParent` on the company facts) is no longer
+  called listed, its structure chart reads "owned through one company at each
+  level by a listed company", and simplified due diligence is offered only
+  for a company listed itself; the conclusion no longer says "the checks
+  asked for are in" when no one has been asked anything (no one named: name
+  who acts for the company; named but not sent: the client checks have not
+  been sent); a letting under £10,000 a month concludes on the sanctions
+  checks; an empty owners list draws no empty line.
+- Not run against Anthropic from a build machine (no key here).
+
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 
 Jack: "We probably need to keep an up to date document of all these updates

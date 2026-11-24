@@ -36,6 +36,7 @@ import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PartyPeople } from "@shared/kyc-people";
 import type { PartyKycState, RegisterExtractFact } from "@shared/party-kyc";
 import { buildRiskAssessment, type RiskAssessment } from "@shared/aml-risk-assessment";
+import { COMMENTARY_PROFILE_WORDS, COMMENTARY_SECTION_TITLE } from "@shared/aml-commentary";
 import type { SolicitorCheck } from "@shared/solicitor-aml";
 
 const router = Router();
@@ -82,6 +83,8 @@ export interface AmlFileParty {
   trust: boolean;
   // The written risk assessment in KYC4U's shape (shared/aml-risk-assessment.ts, 21 November 2026).
   riskAssessment: RiskAssessment | null;
+  // Fable's written view, when one was written from the file as it is now (24 November 2026).
+  commentary?: Awaited<ReturnType<typeof import("./aml-commentary").currentCommentary>>;
   // What BGP recorded against a company abroad that owns it (21 November 2026).
   abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
   // The joint agent asked for their checks on this party, and what came back (22 November 2026).
@@ -286,6 +289,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   for (const p of data.parties) {
     try { p.riskAssessment = riskAssessmentFor(data, p); }
     catch (e: any) { p.unread.push("the risk assessment"); console.warn(`[aml-file] risk assessment for ${p.brand.id}: ${e?.message}`); }
+    const ra = p.riskAssessment;
+    if (ra) p.commentary = await import("./aml-commentary").then(m => m.currentCommentary(dealId, p.role, ra)).catch(() => null);
   }
   return data;
 }
@@ -329,6 +334,7 @@ export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAsses
     dealFlags: data.dealFlags,
     agents: data.agents,
     solicitors: data.solicitors,
+    sanctionsOnly: data.regime.regime === "sanctions_only" && !p.trust,
   });
 }
 
@@ -467,6 +473,17 @@ class Writer {
 const RISK_COLOUR = { ok: GREEN, attention: AMBER, info: INK } as const;
 
 /** BGP's written risk assessment (21 November 2026). */
+// Fable's written view, first, when one was written from the file as it is now.
+function writeCommentary(w: Writer, c: NonNullable<AmlFileParty["commentary"]>) {
+  w.sub("BGP's view of the file");
+  w.para(`Written by Fable from the checks below and BGP's AML rules in short, ${when(c.at)}${c.by ? `, for ${c.by}` : ""}. It gives a view; it decides nothing. The numbers in brackets are the facts and rules it rests on, listed under Sources.`, MUTED, 8.5);
+  w.kv("Risk profile", COMMENTARY_PROFILE_WORDS[c.commentary.profile], c.commentary.profile === "higher" ? AMBER : INK);
+  w.para(c.commentary.headline);
+  for (const para of c.commentary.paragraphs) w.kv(COMMENTARY_SECTION_TITLE[para.section], `${para.text} [${[...para.facts, ...para.rules].join(", ")}]`);
+  if (c.commentary.queries.length) w.kv("Worth a look", c.commentary.queries.map(q => `${q.text} [${q.facts.join(", ")}]`).join("\n"), AMBER);
+  if (c.sources.length) w.kv("Sources", c.sources.map(x => `${x.id}. ${x.text}`).join("\n"), MUTED);
+}
+
 function writeRiskAssessment(w: Writer, ra: RiskAssessment) {
   w.sub("Risk assessment");
   w.para("BGP's written risk assessment. Every line is read from the checks below.", MUTED, 8.5);
@@ -576,6 +593,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   const doc = w.doc;
   const name = p.company?.name || p.brand.name;
   w.title(`${DEAL_PARTY_LABEL[p.role]}: ${name}`);
+  if (p.commentary) writeCommentary(w, p.commentary);
   if (p.riskAssessment) {
     writeRiskAssessment(w, p.riskAssessment);
     w.sub("The checks in detail");

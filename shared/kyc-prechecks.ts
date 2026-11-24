@@ -996,6 +996,9 @@ export interface PrecheckCompany {
   // Listed on a market, in words, and what that means for the checks.
   listing: string | null;
   listingNote: string | null;
+  // Not listed itself: owned through one company at each level by a listed
+  // one (standard due diligence under BGP's policy, not simplified).
+  listedViaParent?: boolean;
   directors: string[];
   owners: Array<{ name: string; control: string }>;
   ownerNote: string | null;
@@ -1061,6 +1064,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     business: (ch.sicCodes || []).map(sicWords),
     listing,
     listingNote,
+    listedViaParent: !!ch.listing?.viaParent,
     directors: ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name),
     owners: ch.owners.map(o => ({ name: o.name, control: ownerControlLine(o) || "significant control" })),
     ownerNote: ch.listing ? null : ch.owners.length ? null : ch.statements.length ? ch.statements.map(s => s.words).join("; ") : "No one with significant control is on the register.",

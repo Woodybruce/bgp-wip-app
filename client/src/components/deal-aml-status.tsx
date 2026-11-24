@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register";
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
+import { AmlCommentaryView } from "@/components/aml-commentary";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import type { PersonDetailsView } from "@shared/kyc-person-details";
 import { PersonDetailsLine } from "@/components/aml-person-details";
@@ -185,10 +186,27 @@ function PartyCharityFacts({ data, companyId }: { data: DealAmlStatus; companyId
   );
 }
 
+// The risk assessment (Woody, 24 November 2026, on Vodafone #4664: "we
+// allready have all this info highlighted in the parts above? shouldnt this
+// be more an AI led commentary with fable 5"): Fable's written view first
+// (aml-commentary.tsx), and the full record, in KYC4U's shape, folded under it.
+function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string }) {
+  const [showRecord, setShowRecord] = useState(false);
+  return (
+    <div className="space-y-2" data-testid={`aml-risk-assessment-${role}`}>
+      <AmlCommentaryView dealId={dealId} role={role} />
+      <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setShowRecord(v => !v)} data-testid={`aml-risk-record-toggle-${role}`}>
+        {showRecord ? "Hide the full record" : "Show the full record"}
+      </button>
+      {showRecord && <PartyRiskRecord dealId={dealId} role={role} />}
+    </div>
+  );
+}
+
 // BGP's written risk assessment for the party, in KYC4U's shape (Woody,
 // 21 November 2026: "yes lets do 1 to 4"). The same builder as the AML file
 // (shared/aml-risk-assessment.ts), read from GET /api/deals/:id/aml-risk-assessment.
-function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string }) {
+function PartyRiskRecord({ dealId, role }: { dealId: string; role: string }) {
   const { data, isLoading, error } = useQuery<{ riskAssessment: RiskAssessment | null; unread: string[] }>({
     queryKey: ["/api/deals", dealId, "aml-risk-assessment", role],
     queryFn: async () => {
@@ -209,8 +227,8 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
   );
   const H = ({ children }: { children: ReactNode }) => <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
   return (
-    <div className="space-y-1.5" data-testid={`aml-risk-assessment-${role}`}>
-      <p className="text-[11px] text-muted-foreground">BGP's written risk assessment, read from the checks above. The AML file prints it first.</p>
+    <div className="space-y-1.5" data-testid={`aml-risk-record-${role}`}>
+      <p className="text-[11px] text-muted-foreground">The full record, read from the checks above. The AML file prints it after BGP's view.</p>
       <Rows rows={ra.job} />
       <H>Risk details</H>
       <ul className="text-xs space-y-0.5">
@@ -227,9 +245,9 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
       </>}
       <H>Beneficial owners</H>
       {ra.ownersNote && <p className="text-xs text-muted-foreground">{ra.ownersNote}</p>}
-      <ul className="text-xs space-y-1">
+      {ra.owners.length > 0 && <ul className="text-xs space-y-1">
         {ra.owners.map(o => <li key={o.name}><span className="font-medium">{o.name}</span> <span className="text-muted-foreground">· {o.nationality} · {o.residence}</span> · <span className={o.idMethod.startsWith("Not verified") ? "text-amber-800 dark:text-amber-300" : ""}>{o.idMethod}</span> <span className="text-muted-foreground">· risk {o.risk.toLowerCase()} · PEP {o.pep.toLowerCase()}</span></li>)}
-      </ul>
+      </ul>}
       <H>Risk identified</H>
       <ul className="text-xs space-y-0.5">{(ra.riskIdentified.length ? ra.riskIdentified : ["No risk identified."]).map(x => <li key={x} className={ra.riskIdentified.length ? "text-amber-800 dark:text-amber-300" : ""}>{x}</li>)}</ul>
       {ra.mitigating.length > 0 && <><H>Mitigating factors</H><ul className="text-xs space-y-0.5">{ra.mitigating.map(x => <li key={x}>{x}</li>)}</ul></>}

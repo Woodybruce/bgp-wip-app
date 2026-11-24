@@ -35,7 +35,7 @@ test('the alert goes to the agents on the request (the admin on a test), never t
   // With the Nominated Officer and the Deputy (BGP's AML policy, 19 November 2026), never on a test.
   assert.match(fn, /const officers = row\.is_test \? \[\] : await \(await import\("\.\/aml-authority"\)\)\.amlOfficerEmails\(\)/);
   assert.match(fn, /const to = \[\.\.\.new Set\(\[\.\.\.kycReplyAddresses\(row, request\.cc\), \.\.\.officers\]\)\];/);
-  assert.match(fn, /sendKycEmail\(\{\s*to,\s*build:/);
+  assert.match(fn, /sendKycEmail\(\{\s*to, test: !!row\.is_test,\s*build:/);
   assert.doesNotMatch(fn, /cc:/);
   assert.match(fn, /ALERTED\.includes\(f\.kind\) && !done\.includes\(redFlagAlertKey\(f\)\)/);
   assert.match(fn, /'\{redFlagAlerts\}'/);

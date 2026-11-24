@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 24 November 2026
+  { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The risk assessment leads with a written view",
+    text: "A party's risk assessment opens with a short written view by the app (Fable): what has been found, what is still needed, the risk under BGP's rules and the next steps. It uses only the facts on the file and BGP's rules, cites them, and decides nothing. The full record folds under it." },
   { date: "2026-11-24", who: ["Woody"], topic: "Emails and wording", title: "Jack, Layla and Woody are copied on every AML email",
     text: "Every AML email the app sends, to a client, another agent or BGP's own agents, copies the AML officers: the Nominated Officer and the Deputies (today Jack, Layla and Woody). The transaction's agents are still copied as before. An admin's test email copies nobody else." },
   { date: "2026-11-24", who: ["Woody"], topic: "Records and reports", title: "The AML board shows one line per transaction",

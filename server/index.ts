@@ -3177,6 +3177,24 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       recorded_at timestamptz NOT NULL DEFAULT now()
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS kyc_person_details_party_idx ON kyc_person_details (company_id, COALESCE(trading_entity_id, ''))`,
+    // Fable's written view of a party's AML file (Woody, 24 November 2026:
+    // "an AI led commentary with fable 5 giving a proper view on whats been
+    // found"): one row per view written, kept against the facts it was
+    // written from (facts_hash), so it is shown again until the file changes.
+    // server/aml-commentary.ts.
+    `CREATE TABLE IF NOT EXISTS aml_risk_commentaries (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      role varchar NOT NULL,
+      facts_hash varchar(64) NOT NULL,
+      commentary jsonb NOT NULL,
+      facts jsonb NOT NULL,
+      model text,
+      created_by varchar,
+      created_by_name text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS aml_risk_commentaries_deal_idx ON aml_risk_commentaries (deal_id, role, created_at DESC)`,
     // Documents BGP uploads on a party (Woody, 23 November 2026: "upload
     // documents ... the app must read these and check they are acceptable"):
     // the reading of each (server/kyc-documents.ts), whether an agent saw the
@@ -4678,6 +4696,7 @@ import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
+import amlCommentaryRouter from "./aml-commentary";
 import amlSecondReadRouter from "./aml-second-read";
 import trustStructureRouter from "./trust-structure";
 import amlPolicyRouter from "./aml-policy";
@@ -6085,6 +6104,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(amlDashboardRouter);
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);
+  app.use(amlCommentaryRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);
   app.use(trustStructureRouter);
