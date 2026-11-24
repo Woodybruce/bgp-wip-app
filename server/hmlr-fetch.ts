@@ -26,6 +26,7 @@ import { pipeline } from "stream/promises";
 import AdmZip from "adm-zip";
 import { parse } from "csv-parse";
 import { pool } from "./db";
+import { hmlrLoadDue, hmlrStaleOwnersRemovable, HMLR_RUN_STALE_MS } from "@shared/hmlr-update";
 
 const HMLR_API_BASE = "https://use-land-property-data.service.gov.uk/api/v1";
 
@@ -356,6 +357,27 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
   updated: number;
   skipped: number;
 }> {
+  // One load of a list at a time, whether the nightly update or an admin started it.
+  if (loadingNow.has(dataset)) throw new Error(`${dataset.toUpperCase()} is already loading`);
+  loadingNow.add(dataset);
+  try {
+    return await syncHmlrDatasetOnce(dataset, batchSize);
+  } finally {
+    loadingNow.delete(dataset);
+  }
+}
+
+const loadingNow = new Set<HmlrDataset>();
+
+async function syncHmlrDatasetOnce(dataset: HmlrDataset, batchSize: number): Promise<{
+  runId: string;
+  filename: string;
+  sizeBytes: number;
+  processed: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+}> {
   console.log(`[hmlr-fetch] starting sync for ${dataset}`);
 
   // Reserve a run id so any failure below has somewhere to record itself.
@@ -442,6 +464,68 @@ export async function syncHmlrDataset(dataset: HmlrDataset, batchSize = 500): Pr
     try { if (csvPath && fs.existsSync(csvPath)) fs.unlinkSync(csvPath); } catch { /* ignore */ }
     try { if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath); } catch { /* ignore */ }
   }
+}
+
+// ── Kept up to date by itself (Woody, 24 November 2026: "we dont need a
+// button just auto") ───────────────────────────────────────────────────────
+//
+// The nightly job "hmlr-datasets" (server/index.ts, 00:20 London) runs this:
+// for each list, one small request for its newest full file; a load only when
+// no finished load has taken that file (once a month per list, when HM Land
+// Registry publishes); after a load that read the whole file, the owners it no
+// longer lists are removed (shared/hmlr-update.ts). HMLR_AUTO_UPDATE=off stops it.
+
+export type HmlrAutoOutcome = {
+  dataset: HmlrDataset;
+  outcome: "loaded" | "up_to_date" | "busy" | "failed" | "off";
+  file?: string;
+  removed?: number;
+  why?: string;
+};
+
+export async function autoUpdateHmlrDatasets(): Promise<HmlrAutoOutcome[]> {
+  const datasets: HmlrDataset[] = ["ocod", "ccod"];
+  if (String(process.env.HMLR_AUTO_UPDATE || "").trim().toLowerCase() === "off") {
+    return datasets.map(dataset => ({ dataset, outcome: "off" as const, why: "HMLR_AUTO_UPDATE=off" }));
+  }
+  if (!process.env.HMLR_API_KEY) return datasets.map(dataset => ({ dataset, outcome: "off" as const, why: "HMLR_API_KEY not set" }));
+  // A load cut off by a restart stays "running" for ever: close it so the
+  // next night tries the file again.
+  await pool.query(
+    `UPDATE hmlr_ingest_runs SET status = 'error', error = 'Interrupted: the app restarted while it ran', finished_at = now()
+      WHERE dataset IN ('ccod', 'ocod') AND status = 'running' AND started_at < now() - ($1::int * interval '1 millisecond')`,
+    [HMLR_RUN_STALE_MS],
+  ).catch((e: any) => console.warn("[hmlr-datasets] could not close interrupted loads:", e?.message));
+  const out: HmlrAutoOutcome[] = [];
+  for (const dataset of datasets) {
+    try {
+      const latest = await getLatestFullFilename(dataset);
+      const runs = (await pool.query(
+        `SELECT status, source_filename, started_at FROM hmlr_ingest_runs WHERE dataset = $1 ORDER BY started_at DESC LIMIT 30`, [dataset])).rows;
+      const due = hmlrLoadDue(latest.filename, runs.map((r: any) => ({
+        status: String(r.status || ""), filename: r.source_filename || null, startedAt: r.started_at ? new Date(r.started_at).toISOString() : null,
+      })));
+      if (!due.due || loadingNow.has(dataset)) {
+        out.push({ dataset, outcome: due.busy || loadingNow.has(dataset) ? "busy" : "up_to_date", file: latest.filename, why: due.why });
+        continue;
+      }
+      const titlesBefore = Number((await pool.query(
+        `SELECT count(DISTINCT title_number)::int AS n FROM hmlr_proprietors WHERE dataset = $1`, [dataset])).rows[0]?.n || 0);
+      const result = await syncHmlrDataset(dataset);
+      let removed = 0;
+      if (hmlrStaleOwnersRemovable({ filename: result.filename, processed: result.processed, titlesBefore })) {
+        const del = await pool.query(
+          `DELETE FROM hmlr_proprietors WHERE dataset = $1 AND ingest_run_id IS DISTINCT FROM $2`, [dataset, result.runId]);
+        removed = del.rowCount || 0;
+        await pool.query(`UPDATE hmlr_ingest_runs SET notes = $1 WHERE id = $2`,
+          [`Removed ${removed} owner row${removed === 1 ? "" : "s"} the file no longer lists`, result.runId]).catch(() => {});
+      }
+      out.push({ dataset, outcome: "loaded", file: result.filename, removed });
+    } catch (err: any) {
+      out.push({ dataset, outcome: "failed", why: err?.message || String(err) });
+    }
+  }
+  return out;
 }
 
 /**

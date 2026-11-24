@@ -7185,6 +7185,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         ];
         if (prod) {
           jobs.push(
+            // Land Registry's company ownership lists (CCOD, OCOD) — 00:20.
+            // Loads each month's new file by itself and removes owners it no
+            // longer lists (Woody, 2026-11-24: "we dont need a button just
+            // auto"); other nights one small request per list.
+            // HMLR_AUTO_UPDATE=off stops it.
+            { key: "hmlr-datasets", due: dailyAt(0, 20), run: () =>
+              import("./hmlr-fetch").then(m => m.autoUpdateHmlrDatasets())
+                .then(r => console.log(`[hmlr-datasets] ${r.map(x => `${x.dataset}: ${x.outcome}${x.file ? ` ${x.file}` : ""}${x.removed ? `, ${x.removed} removed` : ""}${x.why && x.outcome !== "up_to_date" ? ` (${x.why})` : ""}`).join("; ")}`)) },
             // Nightly KYC refresh — 01:00. 120/night so the parked backlog
             // clears in days; well inside CH rate limits.
             { key: "kyc-refresh", due: dailyAt(1), run: async () => {

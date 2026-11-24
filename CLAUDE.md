@@ -6341,6 +6341,26 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   were loaded and when the monthly update last failed (live: 4.55 million rows;
   the June 2026 refresh failed because the Land Registry licence was not signed).
   A building owned by a person is not in those lists.
+- **The lists update by themselves** (Woody, 24 November 2026, once both
+  licences were agreed on use-land-property-data.service.gov.uk and the
+  `HMLR_API_KEY` on Railway checked: "we dont need a button just auto").
+  Rules `shared/hmlr-update.ts`, run `autoUpdateHmlrDatasets` in
+  `server/hmlr-fetch.ts`, job `hmlr-datasets` (00:20 London, production
+  only), tests `server/hmlr-update.test.ts` (in `npm test`). Each night, for
+  OCOD then CCOD, one request for the newest full file; a load only when no
+  finished load (`hmlr_ingest_runs`, status ok) took that file, so about once
+  a month per list, when HM Land Registry publishes. After a load that read
+  the whole list (a full file, and at least nine in ten of the titles held
+  before), the owner rows that load did not touch are deleted
+  (`ingest_run_id`), so a title sold on to a person or a second owner taken
+  off stops showing; the count goes in the run's notes. A load left
+  "running" over six hours by a restart is closed as interrupted, so the next
+  night tries again, and one list loads at a time (the admin
+  `POST /api/admin/hmlr/sync` included). `HMLR_AUTO_UPDATE=off` stops it.
+  There is no button. The May 2026 loads read every row and then stopped at
+  the file's closing "Row Count" line (fixed in September:
+  `relax_column_count_less`, and a row with no owner is skipped), so live had
+  no finished load and the card read "has not loaded since 22 Jun 2026".
 - **Use this owner** (`POST …/ownership/use { titleNumber, dataset, position }`):
   the owner is read again from the lists on the server, never from the request
   (`titleUsePlan`): the title goes on the property (`title_number`,
