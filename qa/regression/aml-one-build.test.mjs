@@ -81,3 +81,14 @@ test('every other AML and KYC chip is the shared one', () => {
   // The party lines inside "The company" use the shared label and value look.
   assert.match(read('client/src/components/deal-parties.tsx'), /<div className="grid grid-cols-\[8rem_minmax\(0,1fr\)\] gap-x-3 text-xs" data-testid=\{testId\}>/);
 });
+
+// Woody, 25 November 2026, on the grey "!" circles in Screening: "it looks like
+// they are a problem but I think they are just actions? Maybe better just to be
+// a green tick ... all we care about is a issue".
+test('a screening line that only says what happened is a green tick; only an issue looks like one', () => {
+  const line = frame.slice(frame.indexOf('export function AmlCheckLine('), frame.indexOf('export function AmlCheckLines('));
+  assert.match(line, /line\.state === "attention" \? <Flag className="h-3\.5 w-3\.5 text-amber-600" \/>/);
+  assert.match(line, /: line\.failed \? <AlertCircle className="h-3\.5 w-3\.5 text-amber-600" \/>/);
+  assert.match(line, /: <CheckCircle2 className="h-3\.5 w-3\.5 text-emerald-600" \/>;/);
+  assert.doesNotMatch(line, /<AlertCircle className="h-3\.5 w-3\.5 text-muted-foreground" \/>/, 'no grey warning circle for information');
+});

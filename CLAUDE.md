@@ -5290,7 +5290,8 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
   could not be read (`unread`, or an older match with no profile id: nothing
   to judge it by). An older check that kept only the kinds of profile stays
   a flag. **Every other match is a possible namesake to check**: listed on
-  the AML card ("Possible namesakes to check: N", under Show, with the count
+  the AML card ("Possible namesakes, not red flags: N" since 25 November
+  2026, with a green tick, under Show, with the count
   beside the summary) and in KYC4U's note, never a red flag, never in the
   sign-off's red flags or Kick off AML's KYC4U switch. The split is worked
   out when the flags are read, so stored checks change without a re-run.
@@ -6295,6 +6296,16 @@ flags: `client/src/components/aml-red-flags.tsx`. Tests:
   `AML_CHIP_BASE`; one set of colours, `AML_STAGE_TONE`, `KYC_CHIP_TONE`) and
   the card (`AmlCard`, `AmlCardGrid`). A new AML look goes there, never a
   second copy on a screen.
+- **Only an issue looks like one** (Woody, 25 November 2026, on the grey "!"
+  circles in Screening: "it looks like they are a problem ... better just to
+  be a green tick ... all we care about is a issue"). A screening line that
+  only says what was done or found (state `info`: GLEIF, who was screened,
+  identity verification at Companies House, possible namesakes, names spelt
+  differently) is a green tick, as a clear check is (`AmlCheckLine`). A
+  finding to review (`attention`) is the amber flag, a screen that should have
+  run and did not (`failed`) the amber circle, and a check not run the grey
+  clock. Issues sort first; the rest keep the checks' own order. Guard:
+  `qa/regression/aml-one-build.test.mjs`.
 - **One rule for each step's line** (`shared/aml-steps.ts`):
   `companyStepLine`, `screeningStepLine`, `sanctionsStepLine`,
   `documentsStepLine`, `signOffStepLine`, each giving a state (done, todo,
@@ -10830,7 +10841,19 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   (`precheckRedFlags(..., { publicBody })`, passed by `partyRedFlags` from
   `aml_subject_type`), so it stays on simplified due diligence. Adverse media
   about it, and a person's public role, still count. Read on stored checks, so
-  no re-run is needed. Test in `server/kyc-prechecks.test.ts`.
+  no re-run is needed. Test in `server/kyc-prechecks.test.ts`. The screening
+  line does the same (`precheckCardLines(result, { publicBody })`, from
+  `dealPrechecks` and the client KYC window): that finding is not one to
+  review, and the line says "Owned by the state, as a UK public body is: not a
+  finding".
+- **It signs for itself, everywhere** (Woody, 25 November 2026: Send client
+  checks to Wirral Council at Tunsgate Quarter was refused "Set the company
+  that owns the property on the transaction first"). `createClientCheck`
+  excuses a recorded public body as it does a trust; the party lines read
+  "Signs as: Itself · a UK public body, no company needed" with no Choose the
+  company and no billing line (as the party box); a recorded trust reads "None
+  needed: checked as a trust"; the AML file prints "Signs as" and does not ask
+  for a company that signs. Guard: `qa/regression/deal-parties-guards.test.mjs`.
 
 ## The sign-off note for a listed company (Woody, 2026-11-24)
 

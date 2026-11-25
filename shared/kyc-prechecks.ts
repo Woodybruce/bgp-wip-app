@@ -1947,7 +1947,11 @@ export interface PrecheckCardLine {
 }
 
 // What the deal's AML card lists under "Checked before asking".
-export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[] {
+// publicBody: the party is recorded as a UK public body, so the web search
+// finding it owned or controlled by the state is no finding to review (25
+// November 2026, Wirral Council read "1 to review" for exactly that), as it is
+// no red flag (precheckRedFlags).
+export function precheckCardLines(result: KycPrecheckResult, opts: { publicBody?: boolean } = {}): PrecheckCardLine[] {
   const out: PrecheckCardLine[] = [];
   const ch = result.companiesHouse;
   if (ch) {
@@ -2063,12 +2067,14 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   }
   if (result.web.ran) {
     const searched = result.web.lines.filter(l => l.ran);
-    const findings = searched.flatMap(l => webFindingsOf(l).filter(f => !webFindingUnsure(l, f)).map(f => ({ l, f })));
+    const stateOwned = (l: WebSearchLine, f: { kind: string }) => !!opts.publicBody && f.kind === "public_role" && webLineIsCompany(l);
+    const findings = searched.flatMap(l => webFindingsOf(l).filter(f => !webFindingUnsure(l, f) && !stateOwned(l, f)).map(f => ({ l, f })));
+    const ownedByState = searched.some(l => webFindingsOf(l).some(f => !webFindingUnsure(l, f) && stateOwned(l, f)));
     const failed = result.web.lines.filter(l => !l.ran);
     out.push({
       key: "web", label: `Public roles and adverse media: ${searched.length} searched, ${findings.length ? `${findings.length} to review` : "nothing found"}`,
       state: findings.length ? "attention" : failed.length && !searched.length ? "not_run" : "ok",
-      detail: [searched.map(l => l.name).join(", "), failed.length ? `Not searched: ${failed.map(l => l.name).join(", ")}` : "", searched.some(l => l.unsourced) ? "Anything the search said without a source was left out." : ""].filter(Boolean).join(". "),
+      detail: [searched.map(l => l.name).join(", "), ownedByState ? "Owned by the state, as a UK public body is: not a finding" : "", failed.length ? `Not searched: ${failed.map(l => l.name).join(", ")}` : "", searched.some(l => l.unsourced) ? "Anything the search said without a source was left out." : ""].filter(Boolean).join(". "),
       links: findings.slice(0, 8).map(({ l, f }) => ({ label: `${l.name}: ${f.summary}`.slice(0, 140), url: f.url })),
     });
   } else {
@@ -2090,7 +2096,7 @@ export function precheckCardLines(result: KycPrecheckResult): PrecheckCardLine[]
   const namesakes = precheckNamesakes(result);
   if (namesakes.length) {
     out.push({
-      key: "namesakes", label: `Possible namesakes to check: ${namesakes.length}`, state: "info",
+      key: "namesakes", label: `Possible namesakes, not red flags: ${namesakes.length}`, state: "info",
       detail: `ComplyAdvantage profiles nothing ties to the person (no date of birth to set against the one Companies House gives, or under its bars of 60% for a public role and 90% for anything else when the person's date of birth is not known) and web results that may be about someone else of the same name, or only about their company. Not red flags. ${namesakes.filter(n => !n.url).slice(0, 8).map(n => `${n.name}: ${n.what}`).join("; ")}`.trim(),
       links: namesakes.filter(n => n.url).slice(0, 8).map(n => ({ label: `${n.name}: ${n.what}`.slice(0, 140), url: n.url! })),
     });

@@ -222,7 +222,7 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     },
     precheck: stored || running ? {
       ranAt: stored?.ranAt || null, running: !!running,
-      lines: stored ? precheckCardLines(stored.result) : [],
+      lines: stored ? precheckCardLines(stored.result, { publicBody: !subject.entityId && String(subject.accountSubjectType || "").trim().toLowerCase() === "public_body" }) : [],
       company: stored ? precheckCompany(stored.result) : null,
     } : null,
     flags: { live, setAside: flags.setAside?.[subject.brandId] || [], level: flags.levels?.[subject.brandId] || null, unchecked: flags.unchecked || [] },

@@ -224,3 +224,16 @@ test('reading heads of terms keeps the property in the deal name', () => {
   const deals = read('client/src/pages/deals.tsx');
   assert.match(deals, /applyAutoName\(\{ \.\.\.form, \.\.\.\(propId \? \{ propertyId: propId \} : \{\}\), \.\.\.patch \}\);/);
 });
+
+// Woody, 25 November 2026: client checks to Wirral Council (recorded as a UK
+// public body) at Tunsgate Quarter were refused "Set the company that owns the
+// property on the transaction first"; the party lines read "Not set ...".
+test('a UK public body signs for itself: the client checks send, and the party lines say so', () => {
+  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust && !party\.publicBody\) \{/);
+  const ui = read('client/src/components/deal-parties.tsx');
+  assert.match(ui, /const publicBody = !party\.company && !!party\.brand\.recordPublicBody;/);
+  assert.match(ui, /data-testid=\{`deal-party-public-body-signs-\$\{role\}`\}>Itself/);
+  assert.match(ui, /!party\.company && party\.brand\.kind === "company" && !publicBody && !trust && <PartyCompanyChoice /);
+  const file = read('server/aml-file.ts');
+  assert.match(file, /needsCompany: !p\.individual && !p\.trust && !p\.publicBody,/);
+});

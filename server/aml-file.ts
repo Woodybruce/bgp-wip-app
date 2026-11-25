@@ -78,9 +78,11 @@ export interface AmlFileParty {
   documents: AmlFileDoc[];
   // A record that could not be read: the report says so, never that there was nothing.
   unread: string[];
-  // BGP acts for this party (dealClientRole), and it is recorded as a trust.
+  // BGP acts for this party (dealClientRole), and it is recorded as a trust,
+  // or as a UK public body (it signs for itself, 25 November 2026).
   client: boolean;
   trust: boolean;
+  publicBody?: boolean;
   // The written risk assessment in KYC4U's shape (shared/aml-risk-assessment.ts, 21 November 2026).
   riskAssessment: RiskAssessment | null;
   // Fable's written view, when one was written from the file as it is now (24 November 2026).
@@ -152,6 +154,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
   const kinds = (await pool.query(
     `SELECT id, lower(COALESCE(aml_subject_type, '')) AS kind FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) IN ('individual', 'trust', 'public_body')`, [brandIds])).rows;
   const individuals = new Set(kinds.filter((r: any) => r.kind === "individual").map((r: any) => String(r.id)));
+  const publicBodies = new Set(kinds.filter((r: any) => r.kind === "public_body").map((r: any) => String(r.id)));
   // A trust or foundation is checked on its own record too (21 November 2026).
   const signsItself = new Set(kinds.map((r: any) => String(r.id)));
   const [states, marks, prechecks, flags, peopleRequests, requests, agentRows] = await Promise.all([
@@ -263,6 +266,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       unread,
       client: role === clientRole,
       trust: trusts.has(brandId),
+      publicBody: publicBodies.has(brandId),
       riskAssessment: null,
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
       joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
@@ -567,7 +571,7 @@ export function stillNeededFor(data: AmlFileData, p: AmlFileParty, now: Date = n
   return amlStillNeeded({
     deadline: amlDeadline(p.role, data.deal.status, p.client ? p.role : "other"),
     settled,
-    needsCompany: !p.individual && !p.trust,
+    needsCompany: !p.individual && !p.trust && !p.publicBody,
     companySet: !!p.company,
     precheck,
     flags: p.flags.map(f => ({ label: f.label, factor: !!f.factor })),
@@ -603,7 +607,10 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
     w.sub("The checks in detail");
   }
   w.kv("Brand on the transaction", p.brand.name);
-  w.kv(p.individual ? "Who signs" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual") : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}` : "Not set on the transaction", p.individual || p.company ? INK : AMBER);
+  const signsItself = !p.company && (p.publicBody || p.trust);
+  w.kv(p.individual ? "Who signs" : signsItself ? "Signs as" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual")
+    : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}`
+    : p.publicBody ? "Itself, a UK public body" : p.trust ? "The trust, through its trustees" : "Not set on the transaction", p.individual || p.company || signsItself ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
   if (p.signers?.length) w.kv("Also signs", p.signers.map(g => signerLine(g)).join("\n"),
     p.signers.some(g => g.checks.state !== "done") ? AMBER : INK);

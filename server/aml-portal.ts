@@ -767,8 +767,10 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
   if (!party) throw Object.assign(new Error("That company is not a party to this transaction. Set it on the transaction first."), { status: 400 });
   // The checks are about the company that signs, not the brand (Woody,
   // 19 November 2026: "We must have the company taking the lease or who owns
-  // the property to be able to do a check").
-  if (input.kind === "company" && !party.entityId && !party.trust) {
+  // the property to be able to do a check"). A trust, and a UK public body
+  // (Woody, 25 November 2026, on Wirral Council at Tunsgate Quarter: refused
+  // here although recorded as one), sign for themselves.
+  if (input.kind === "company" && !party.entityId && !party.trust && !party.publicBody) {
     const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
     throw Object.assign(new Error(`Set ${what} on the transaction first: the client checks are about that company, not ${party.name}.`), { status: 409 });
   }

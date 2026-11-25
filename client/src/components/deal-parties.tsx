@@ -791,10 +791,19 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
   // has to be asked, so who to ask is not a gap (Woody, 23 November 2026, on The Ugly Duck).
   const askQuiet = !!aml && (aml.sanctionsOnly || !!aml.done);
   const gaps = askQuiet ? party.gaps.filter(g => g.key !== "person" && g.key !== "email") : party.gaps;
+  // A UK public body signs for itself, and a trust is checked on its own
+  // record (25 November 2026, Wirral Council at Tunsgate Quarter read "Not
+  // set ... needed for the AML checks" here although recorded as one).
+  const publicBody = !party.company && !!party.brand.recordPublicBody;
+  const trust = !party.company && !!party.brand.recordTrust;
   return (
     <div className="space-y-2" data-testid={`deal-party-lines-${role}`}>
       <dl className="space-y-1">
-        {party.brand.kind === "company" || party.company ? (
+        {publicBody ? (
+          <PartyRow label="Signs as" testId={`deal-party-row-company-${role}`}>
+            <span data-testid={`deal-party-public-body-signs-${role}`}>Itself <span className="text-muted-foreground">· a UK public body, no company needed</span></span>
+          </PartyRow>
+        ) : party.brand.kind === "company" || party.company ? (
           <PartyRow label={party.company?.kind === "individual" ? "Who signs" : "Company that signs"} testId={`deal-party-row-company-${role}`}>
             {party.company ? (
               <span data-testid={`deal-party-company-${role}`}>
@@ -806,6 +815,8 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
                     ? <span className="ml-1.5 text-muted-foreground">{companyRegisterWords(party.company)}</span>
                     : party.company.companiesHouseNumber && <span className="ml-1.5 font-mono tabular-nums text-muted-foreground">{party.company.companiesHouseNumber}</span>}
               </span>
+            ) : trust ? (
+              <span className="text-muted-foreground" data-testid={`deal-party-company-trust-${role}`}>None needed: checked as a trust</span>
             ) : (
               <span className="text-amber-700 dark:text-amber-400" data-testid={`deal-party-company-missing-${role}`}>Not set: {SIGNING_COMPANY_WORDS[role]}, needed for the AML checks</span>
             )}
@@ -813,8 +824,8 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
         ) : (
           <PartyRow label="Signs as">A private individual</PartyRow>
         )}
-        {/* Only BGP's client is billed (20 November 2026): as its company that signs, unless the deal says otherwise. */}
-        {party.client && party.billing && party.billing.state !== "individual" && (
+        {/* Only BGP's client is billed (20 November 2026): as its company that signs, unless the deal says otherwise. A public body with no company has none to bill, as in the party box. */}
+        {party.client && party.billing && party.billing.state !== "individual" && !(publicBody && party.billing.state === "no_company") && (
           <PartyRow label="Billed to" testId={`deal-party-row-billing-${role}`}>
             <PartyBillingDetail dealId={dealId} party={party} compact={!fullBilling} />
           </PartyRow>
@@ -838,7 +849,7 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
         )}
       </dl>
       <PeopleToReachLine party={party} people={people} aml={aml} onOpen={() => setOpen(true)} />
-      {!party.company && party.brand.kind === "company" && <PartyCompanyChoice dealId={dealId} party={party} onChoose={() => setOpen(true)} />}
+      {!party.company && party.brand.kind === "company" && !publicBody && !trust && <PartyCompanyChoice dealId={dealId} party={party} onChoose={() => setOpen(true)} />}
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`deal-party-edit-${role}`}>
         {gaps.length ? "Fill in" : "Change"}
       </Button>
