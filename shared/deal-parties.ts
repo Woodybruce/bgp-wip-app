@@ -391,9 +391,14 @@ export function partyAmlQuietWords(aml: PartyAmlFacts | null | undefined): strin
  * Disposal, BGP acting for the tenant, the Tenant Rep team), else the
  * landlord. The Deals table's Client cell reads the same rule.
  */
-export function dealClientRole(deal: { dealType?: string | null; bgpActingFor?: string | null; team?: unknown }): DealPartyRole {
+export function dealClientRole(deal: { dealType?: string | null; bgpActingFor?: string | null; bgp_acting_for?: string | null; team?: unknown }): DealPartyRole {
   const dt = text(deal.dealType);
   const team = (Array.isArray(deal.team) ? deal.team.join(",") : text(deal.team)).toLowerCase();
+  // On a sale or purchase, who BGP acts for is chosen on the transaction
+  // (Woody, 25 November 2026: "we are acting for the purchaser here and the
+  // app is acting like we are acting automatically for the Vendor").
+  const side = text(deal.bgpActingFor ?? deal.bgp_acting_for).toLowerCase();
+  if ((side === "vendor" || side === "purchaser") && (dt === "Sale" || dt === "Purchase" || dt === "Investment")) return side;
   if (dt === "Sale") return "vendor";
   if (dt === "Purchase") return "purchaser";
   if (dt === "Lease Acquisition" || dt === "Lease Disposal") return "tenant";
