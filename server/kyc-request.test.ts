@@ -400,3 +400,13 @@ test("a list made before BGP's checks last read the register is out of date (24 
   assert.equal(listMadeBeforeChecks("2026-11-20T09:00:00.000Z", "2026-11-24T17:47:26.846Z"), true, "made from an older run");
   assert.equal(listMadeBeforeChecks("not a date", "2026-11-24T17:47:26.846Z"), true);
 });
+
+test("the dialog's preview names the same contact as the email sent, and nobody named reads plainly", () => {
+  // Never "reply to this email" (Woody, 25 November 2026): nobody named reads "your contact at Bruce Gillingham Pollard".
+  assert.match(kycRequestEmail(ctx({ agents: [] })).html, />Speak to your contact at Bruce Gillingham Pollard\.</);
+  assert.doesNotMatch(kycRequestEmail(ctx({ agents: [] })).html, /Speak to reply/);
+  const portal = readFileSync("server/aml-portal.ts", "utf8");
+  assert.match(portal, /contact: \(await primeAmlContact\(\), amlContact\(/);
+  const dialog = readFileSync("client/src/components/kyc-client-checks.tsx", "utf8");
+  assert.equal((dialog.match(/agents: data\??\.contact\?\.length \? data\??\.contact :/g) || []).length, 2);
+});

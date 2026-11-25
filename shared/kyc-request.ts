@@ -417,6 +417,13 @@ function agentContactHtml(agents: KycAgent[]): string {
   return shown.map(one).join(", or ");
 }
 
+// The Questions? line. With nobody named it reads "Reply to this email."
+// (it read "Speak to reply to this email." until 25 November 2026).
+function questionsLine(agents: KycAgent[]): string {
+  // Never "reply to this email" (Woody, 25 November 2026: "should ask layla or jack"): the server names them.
+  return `Speak to ${agentContactHtml(agents)}.`;
+}
+
 function agentNamesText(agents: KycAgent[]): string {
   const names = agents.map(a => a.name).filter(Boolean).slice(0, 2);
   return names.length ? names.join(" and ") : "your contact at Bruce Gillingham Pollard";
@@ -598,7 +605,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor(ctx, "Please complete your identity checks for"), html: frame("Identity checks", inner, footerFor(ctx), ctx.test, undefined, ctx.testBy) };
@@ -656,7 +663,7 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor(ctx, `Documents about ${ctx.partyName} for`), html: frame("Trust documents", inner, footerFor(ctx), ctx.test, undefined, ctx.testBy) };
@@ -734,7 +741,7 @@ export function kycReminderEmail(ctx: KycEmailContext & { progress: KycProgress 
     button("Continue your checks", ctx.link),
     p(`Your link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor(ctx, ctx.purpose === "trust_structure" ? `Reminder: documents about ${ctx.partyName} for` : "Reminder: your identity checks for"), html: frame("Identity checks reminder", inner, footerFor(ctx), ctx.test) };
@@ -752,7 +759,7 @@ export function kycIdCheckEmail(ctx: Omit<KycEmailContext, "docs" | "needsIdChec
     p("Veriff runs the check for us. The link is personal to you.", `font-size:13px;color:${MUTED}`),
     whyWeAsk(),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   const subject = `${ctx.test ? "[Test] " : ""}Please complete a quick identity check${ctx.dealName ? ` for ${ctx.dealName}` : ""}`;
@@ -841,7 +848,7 @@ export function jointAgentRequestEmail(ctx: JointAgentEmailContext): { subject: 
     noteBlock(ctx.note, ctx.noteFrom),
     p(`We use what you send only for our anti-money laundering checks, and keep it securely for five years.`, `font-size:13px;color:${BODY}`),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor({ dealName: ctx.dealName, ref: ctx.ref, test: ctx.test }, `Finalising our KYC on ${ctx.partyName}:`), html: frame("AML checks", inner, footerFor(ctx), ctx.test, own ? "the other side's agent receives" : "a joint agent receives") };
@@ -869,7 +876,7 @@ export function jointAgentMissingEmail(ctx: JointAgentEmailContext & { missing: 
     button(ctx.nothingYet ? "Upload the documents" : "Send what's missing", ctx.link),
     p(`Or reply to this email with the documents attached. The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   const prefix = ctx.nothingYet ? `Reminder: finalising our KYC on ${ctx.partyName}:` : `Still needed: our KYC on ${ctx.partyName}:`;
@@ -962,7 +969,7 @@ export function kycViaAgentRequestEmail(ctx: KycViaAgentEmailContext): { subject
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor(ctx, `Please pass on: our checks on ${ctx.partyName} for`), html: frame("Identity checks", inner, footerFor(ctx), ctx.test, "the other side's agent receives") };
@@ -980,7 +987,7 @@ export function kycViaAgentReminderEmail(ctx: KycViaAgentEmailContext & { progre
     button("Open the checks", ctx.link),
     p(`The link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>.`, `font-size:13px;color:${MUTED}`),
     h2("Questions?"),
-    p(`Speak to ${agentContactHtml(ctx.agents)}.`, `font-size:14px;color:${BODY}`),
+    p(questionsLine(ctx.agents), `font-size:14px;color:${BODY}`),
     linkFallback(ctx.link),
   ].join("\n");
   return { subject: subjectFor(ctx, `Reminder: our checks on ${ctx.partyName} for`), html: frame("Identity checks reminder", inner, footerFor(ctx), ctx.test, "the other side's agent receives") };

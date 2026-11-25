@@ -69,7 +69,7 @@ export interface ClientCheckRequest {
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
 }
 export interface ClientChecks {
-  dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[];
+  dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; contact?: Array<{ name: string; email: string; phone: string | null }>; senderName?: string | null; parties: Party[]; requests: ClientCheckRequest[];
   // BGP's client on the transaction (23 November 2026).
   clientRole?: string | null; clientName?: string | null;
   // The people to check per party (null when they could not be read).
@@ -880,7 +880,7 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
     const { html } = kycRequestEmail({
       recipientName: person.name, partyName: party.name, kind: "individual", dealName: data.dealName, ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/their-link", expiresAt: new Date(Date.now() + 14 * 86400000),
-      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note, agents: data.agents.map(a => ({ name: a.name, email: a.email, phone: null })),
+      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note, agents: data.contact?.length ? data.contact : data.agents.map(a => ({ name: a.name, email: a.email, phone: null })), noteFrom: data.senderName || null,
       sentFrom: data.mailbox, askPep: true, person: { roles: person.roles },
     });
     return html.split(`cid:${KYC_LOGO_CID}`).join("/bgp-logo.png");
@@ -1074,7 +1074,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
       partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this transaction", ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/your-link", expiresAt: new Date(Date.now() + 14 * 86400000),
       needsIdCheck: wantId, docs: chosenDocs,
-      note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
+      note, agents: data?.contact?.length ? data.contact : (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), noteFrom: data?.senderName || null, sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
       confirmOwners, ownerNames: chosenDocs.includes("owner_ids") ? asks?.ownerNames || [] : [],
       // Our client or the other side, as the email will say it (25 November 2026).
       work: party.work || null,

@@ -1608,7 +1608,8 @@ const adminOnly = (req: Request, res: Response, next: NextFunction) => {
 // A client file's own (24 November 2026): the same answer, about its one party.
 kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:companyId/subjects/:entity/client-checks"], signedIn, async (req: Request, res: Response) => {
   try {
-    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const sender = await staffMe(req);
+    if (!sender) return res.status(403).json({ message: STAFF_ONLY });
     const scope = scopeOf(req);
     const dealId = scope.dealId;
     const found = await partiesFor(scope);
@@ -1631,6 +1632,11 @@ kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:compa
       mailbox: KYC_MAILBOX,
       veriff,
       agents: agents.map(a => ({ name: a.name, email: a.email })),
+      // Who the email's Questions? names (the Nominated Officer), so the
+      // dialog's preview shows what is sent (Jack, 25 November 2026: the
+      // preview read the transaction's agents and showed nobody).
+      senderName: sender.name || null,
+      contact: (await primeAmlContact(), amlContact(agents.map(a => ({ name: a.name, email: a.email, phone: a.phone })))),
       parties: await Promise.all(found.parties.map(async ({ personField: _column, ...p }) => {
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
