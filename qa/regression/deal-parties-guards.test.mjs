@@ -237,3 +237,32 @@ test('a UK public body signs for itself: the client checks send, and the party l
   const file = read('server/aml-file.ts');
   assert.match(file, /needsCompany: !p\.individual && !p\.trust && !p\.publicBody,/);
 });
+
+// Woody, 25 November 2026, on #4600: the City of London Corporation's record
+// held ALAXIA LIMITED's Companies House number (put there by the old in-app
+// screening), so the app offered ALAXIA as "the brand's main company" and never
+// suggested the public body. Two startup jobs copied it back as the main company
+// on every restart, so recording the public body must take the link off.
+test('a wrong Companies House link on a public body is not offered, and recording the body takes it off', () => {
+  assert.match(parties, /const wrongLink = wrongCompaniesHouseLink\(brandRow\.name, \{ number: brandRow\.companies_house_number, name: brandRow\.legal_name \}\);/);
+  assert.match(parties, /const offerable = wrongLink \? filed\.filter\(c => !filedFromWrongLink\(c, wrongLink\)\) : filed;/);
+  assert.match(parties, /offer: company \? null : companyOffer\(offerable, /);
+  assert.match(parties, /publicBodyHint: !brandNumber && !company && publicBodyMarkInName\(brandRow\.name\),/);
+  // The record route: refused only for a link that is the body's own; the link comes off guarded on the number read,
+  // with its stored name and data, so the startup copy cannot bring it back.
+  const route = parties.slice(parties.indexOf('router.put("/api/deals/:id/parties/:role/public-body"'));
+  assert.match(route, /if \(text\(brand\.companies_house_number\) && !wrongLink\) return res\.status\(409\)/);
+  assert.match(route, /SET companies_house_number = NULL, companies_house_data = NULL, uk_entity_name = NULL\s+WHERE id = \$1 AND companies_house_number = \$2/);
+  assert.match(route, /await client\.query\("BEGIN"\);/);
+  // A filed company tied to anything stays, no longer the main company.
+  const plan = parties.slice(parties.indexOf('async function wrongLinkPlan('), parties.indexOf('router.put("/api/deals/:id/parties/:role/public-body"'));
+  for (const t of ['crm_deals', 'deal_guarantors', 'tenancy_schedule_units', 'crm_properties', 'crm_entity_kyc', 'kyc_upload_tokens']) assert.match(plan, new RegExp(t), t);
+  assert.match(route, /UPDATE crm_trading_entities SET is_default = false WHERE id = \$1/);
+  // Nothing looks a recorded public body up at Companies House again.
+  const ch = read('server/companies-house.ts');
+  assert.match(ch, /if \(String\(\(company as any\)\.amlSubjectType \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "public_body"\) \{/);
+  assert.match(ch, /AND lower\(COALESCE\(aml_subject_type, ''\)\) <> 'public_body'/);
+  const ui = read('client/src/components/deal-parties.tsx');
+  assert.match(ui, /if \(party\.brand\.companiesHouseNumber && !wrong\) return null;/);
+  assert.match(ui, /data-testid=\{`deal-party-wrong-ch-\$\{party\.role\}`\}/);
+});

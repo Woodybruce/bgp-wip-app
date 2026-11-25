@@ -10881,6 +10881,36 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   company and no billing line (as the party box); a recorded trust reads "None
   needed: checked as a trust"; the AML file prints "Signs as" and does not ask
   for a company that signs. Guard: `qa/regression/deal-parties-guards.test.mjs`.
+- **The City of London Corporation, and a wrong Companies House number**
+  (Woody, 25 November 2026, on #4600: "its a public body this and cant be
+  found on companies house but its suggesting a random company name and not
+  picking up the actual mayor"). The landlord's record, "The Mayor and
+  Commonalty and Citizens of the City of London" (type Billing, so not in the
+  CRM search), held ALAXIA LIMITED's number (07932290, a restaurant company
+  dissolved in 2021), written by the old in-app screening on 30 September;
+  the startup copy of `uk_entity_name` (`server/index.ts`) then filed ALAXIA
+  under it as its main company, and the hint and the record route both
+  stopped at any number on the record. Now (`shared/aml-sdd.ts`): the City is
+  a known body ("City of London", "City of London Corporation", "Corporation
+  of London" and its legal name), councils' corporate names read as public
+  bodies ("The Mayor and Burgesses of ...", "The Lord Mayor and Citizens of
+  ...", "The Mayor, Aldermen and Burgesses of ...", "Secretary of State"),
+  and "... as Trustees of ..." never does (the trust is the party).
+  `wrongCompaniesHouseLink` reads a number on a public body's record whose
+  registered name is not the body's own as a mistake: the party box and the
+  AML box show the hint with a line naming it, neither it nor a company filed
+  from it (`filedFromWrongLink`) is offered or listed, and **Yes, record as a
+  public body** takes it off the record (number, Companies House data and
+  stored name, guarded on the number read, in one transaction) and takes the
+  company filed from it off too, unless a transaction, guarantee, lease,
+  bill, sign-off or request sent ties it (then it stays, no longer the main
+  company); checks already run on it stay on the record, and an open client
+  file on it is closed. `performAutoKyc` and the nightly refresh never look a
+  recorded public body up at Companies House. On live the same mistake sits
+  on London Borough of Hackney (Ideal Technology Services Limited) and
+  Westminster City Council (CityWest Homes Limited): each is put right by
+  recording it as a public body on a transaction. Tests:
+  `server/aml-sdd.test.ts`, `qa/regression/deal-parties-guards.test.mjs`.
 
 ## The sign-off note for a listed company (Woody, 2026-11-24)
 

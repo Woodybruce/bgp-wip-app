@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "The City of London Corporation is a public body, with no Companies House number",
+    text: "The City of London Corporation (legally The Mayor and Commonalty and Citizens of the City of London) is a UK public body, as is a council under its corporate name. A Companies House number on a public body's record naming another company is a mistake: it is never offered, and recording the body as a public body takes it off." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "AML is worked on the AML page; the transaction page shows it",
     text: "Every AML check is done on the AML page, which has the full board with the parties and who BGP acts for. A transaction's Parties and AML shows the same board read only, with Open the AML board, so there is one place to work and nothing differs between the two." },
   { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "Every owner up the chain is followed, and a dead end is said",
