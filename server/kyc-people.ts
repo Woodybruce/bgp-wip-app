@@ -8,7 +8,7 @@ import { pool } from "./db";
 import type { PartyReliance } from "@shared/aml-reliance";
 import { ID_CHECK_REUSE_YEARS, partyPeople, verifiedLicenceAddress, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PriorAddressProof, type PriorIdCheck, type PublicFigureCheck } from "@shared/kyc-people";
 import { verifiedPersonName } from "@shared/kyc-prechecks";
-import { dealOrClientFileTokensSql, isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
+import { dealOrClientFileTokensSql, tokenPartyCompanySql, isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -22,7 +22,7 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
   if (!dealId && !client) return [];
   const rows = (await db.query(
     dealId
-      ? `SELECT token, company_id, contact_name, contact_email, request, revoked_at, expires_at, completed_at
+      ? `SELECT token, ${tokenPartyCompanySql("$1")} AS company_id, contact_name, contact_email, request, revoked_at, expires_at, completed_at
            FROM kyc_upload_tokens WHERE ${dealOrClientFileTokensSql("$1")} AND request IS NOT NULL AND is_test IS NOT TRUE
             AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`
       : `SELECT token, company_id, contact_name, contact_email, request, revoked_at, expires_at, completed_at

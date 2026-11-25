@@ -35,7 +35,7 @@ import {
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
-import { dealOrClientFileTokensSql, kycAsksOwners, kycDocWords } from "@shared/kyc-request";
+import { dealOrClientFileTokensSql, tokenPartyCompanySql, kycAsksOwners, kycDocWords } from "@shared/kyc-request";
 import { personKey, personRequestAsks, priorIdCheckFor, priorIdCheckWords, verifiedLicenceAddress, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
@@ -1146,7 +1146,9 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
   // The joint agent's requests are listed apart (server/joint-agent-checks.ts).
   const rows = (dealId
     ? await pool.query(
-      `SELECT * FROM kyc_upload_tokens WHERE ${dealOrClientFileTokensSql("$1")} AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [dealId])
+      `SELECT *, ${tokenPartyCompanySql("$1")} AS company_id,
+              (SELECT json_build_object('id', d.id, 'name', d.name, 'ref', d.deal_ref) FROM crm_deals d WHERE d.id = kyc_upload_tokens.deal_id AND kyc_upload_tokens.deal_id <> $1) AS other_deal
+         FROM kyc_upload_tokens WHERE ${dealOrClientFileTokensSql("$1")} AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [dealId])
     : client ? await pool.query(
       `SELECT * FROM kyc_upload_tokens WHERE deal_id IS NULL AND company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2::varchar
           AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [client.companyId, client.entityId])
@@ -1165,6 +1167,8 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
     const link = kycLinkFor(row.token);
     out.push({
       token: row.token, ref: request.ref, companyId: row.company_id, partyName: request.partyName, role: request.role,
+      // Sent on another transaction where the same company signs (25 November 2026).
+      onTransaction: (row as any).other_deal ? { id: String((row as any).other_deal.id), name: String((row as any).other_deal.name || ""), ref: (row as any).other_deal.ref ?? null } : null,
       recipientName: row.contact_name, recipientEmail: row.contact_email, mobile: request.mobile,
       sentAt: request.sentAt, sentFrom: request.sentFrom, sendError: request.sendError, sentBy: request.sentBy.name,
       cc: request.cc, openedAt: request.openedAt, expiresAt: new Date(row.expires_at).toISOString(),

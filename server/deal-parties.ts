@@ -39,7 +39,7 @@ import {
 import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { readsLikeCharity } from "@shared/charity-register";
 import { billingState, billingWords, payerInput, payerRelationshipWords, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
-import { kycPersonRoleWords } from "@shared/kyc-request";
+import { chNumberSql, kycPersonRoleWords } from "@shared/kyc-request";
 import { isGuaranteedRole, isSignerRole } from "@shared/deal-guarantor";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
@@ -140,6 +140,26 @@ async function leaseCompanyId(db: Db, deal: DealRow): Promise<string | null> {
   return row?.tenant_entity_id || null;
 }
 
+// The person asked for the same company's checks on another transaction: who
+// to ask there is set, or a client checks request went to them (Woody, 25
+// November 2026, The Royal Exchange Investments Limited with Peter Wood).
+async function askedElsewhere(db: Db, dealId: string, number: string): Promise<any | null> {
+  const key = number.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+(?=[0-9])/, "");
+  if (!key) return null;
+  return (await db.query(
+    `SELECT k.id, k.company_id, k.name, k.email, k.phone_mobile, k.phone, k.role, c.name AS firm, d.id AS deal_id, d.name AS deal_name, d.deal_ref
+       FROM crm_deals d
+       CROSS JOIN LATERAL (VALUES (d.landlord_trading_entity_id, d.landlord_contact_id), (d.tenant_trading_entity_id, d.tenant_contact_id),
+         (d.vendor_trading_entity_id, d.vendor_contact_id), (d.purchaser_trading_entity_id, d.purchaser_contact_id)) p(e, ct)
+       JOIN crm_trading_entities te ON te.id = p.e
+       JOIN crm_contacts k ON k.id = p.ct
+       LEFT JOIN crm_companies c ON c.id = k.company_id
+      WHERE d.id <> $1 AND ${chNumberSql("te.companies_house_number")} = $2
+      ORDER BY (EXISTS (SELECT 1 FROM kyc_upload_tokens u WHERE u.deal_id = d.id AND u.revoked_at IS NULL AND lower(u.contact_email) = lower(k.email))) DESC,
+               d.updated_at DESC NULLS LAST
+      LIMIT 1`, [dealId, key])).rows[0] || null;
+}
+
 const personOf = (r: any): DealPartyPerson => ({
   id: String(r.id), name: text(r.name) || "Unnamed", email: text(r.email) || null,
   mobile: text(r.phone_mobile) || text(r.phone) || null, jobTitle: text(r.role) || null,
@@ -235,9 +255,13 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     // A person who signs is asked themselves when nobody else is named.
     const signerPerson = company?.kind === "individual" && company.contactId ? named.find((p: any) => p.id === company.contactId) : undefined;
     const relation: AskRelation = isAskRelation(deal.aml_ask_as?.[role]) ? deal.aml_ask_as[role] : "party";
+    const elsewhere = !setPerson && !clientPerson && !signerPerson && company?.companiesHouseNumber
+      ? await askedElsewhere(db, String(deal.id), company.companiesHouseNumber).catch(() => null) : null;
     const person = setPerson ? { ...personOf(setPerson), from: "party" as const, relation, firm: text(setPerson.firm) || null }
       : clientPerson ? { ...personOf(clientPerson), from: "client" as const }
-      : signerPerson ? { ...personOf(signerPerson), from: "signer" as const } : null;
+      : signerPerson ? { ...personOf(signerPerson), from: "signer" as const }
+      : elsewhere ? { ...personOf(elsewhere), from: "elsewhere" as const, firm: text(elsewhere.firm) || null,
+          onTransaction: { id: String(elsewhere.deal_id), name: text(elsewhere.deal_name), ref: elsewhere.deal_ref ?? null } } : null;
     // A person who signs is checked as a private individual (20 November 2026).
     const kind = partySubjectKind(brandRow.aml_subject_type, company);
     // A public body's record holding another company's Companies House number

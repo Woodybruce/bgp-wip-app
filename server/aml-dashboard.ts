@@ -20,6 +20,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
+import { chNumberSql } from "@shared/kyc-request";
 import { DEAL_PARTY_COLUMNS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, isDealPartyRole } from "@shared/deal-parties";
 import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, investmentDealSql, statusSpellingsFor } from "@shared/deal-status";
 import { amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
@@ -147,7 +148,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadNotRequired } = await import("./aml-policy");
   // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors, recordHistory, signers] = await Promise.all([
+  const [states, companies, investigations, prechecks, tokens, signerNumbers, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors, recordHistory, signers] = await Promise.all([
     loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId, fullChecks: amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "full",
       dealId: String(p.deal.id), signerKey: `${p.deal.id}:${p.role}` }))),
     read("KYC records", async () => (await pool.query(
@@ -163,11 +164,19 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none),
     read("client checks", async () => (await pool.query(
       `SELECT u.deal_id, u.company_id, u.trading_entity_id, u.request, u.created_at, u.completed_at, u.last_used_at, u.revoked_at, u.expires_at,
-              (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files
+              (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files,
+              (SELECT ${chNumberSql("te.companies_house_number")} FROM crm_trading_entities te WHERE te.id = u.trading_entity_id) AS signer_number
          FROM kyc_upload_tokens u
-        WHERE (u.deal_id = ANY($1::varchar[]) OR (u.deal_id IS NULL AND u.company_id = ANY($2::varchar[])))
+        WHERE (u.deal_id = ANY($1::varchar[]) OR (u.deal_id IS NULL AND u.company_id = ANY($2::varchar[]))
+            -- The same company signing on another transaction (25 November 2026).
+            OR (u.deal_id IS NOT NULL AND u.revoked_at IS NULL AND u.trading_entity_id IN (
+              SELECT te2.id FROM crm_trading_entities te1, crm_trading_entities te2 WHERE te1.id = ANY($3::varchar[])
+                 AND ${chNumberSql("te1.companies_house_number")} <> '' AND ${chNumberSql("te2.companies_house_number")} = ${chNumberSql("te1.companies_house_number")})))
           AND u.is_test IS NOT TRUE AND u.request IS NOT NULL
-        ORDER BY u.created_at DESC`, [dealIds, brandIds])).rows, none),
+        ORDER BY u.created_at DESC`, [dealIds, brandIds, [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))]])).rows, none),
+    read("signing companies' numbers", async () => (await pool.query(
+      `SELECT id, ${chNumberSql("companies_house_number")} AS num FROM crm_trading_entities WHERE id = ANY($1::varchar[])`,
+      [[...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))]])).rows, none),
     read("identity checks", async () => (await pool.query(
       `SELECT company_id, status, decision_reason, received_at, first_name, last_name FROM veriff_sessions
         WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
@@ -231,8 +240,11 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const partyInHouse = inHouse || isTrust;
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
     // A transaction's own requests, and the client file's for the same contracting entity (25 November 2026).
-    const allTokens = tokens.filter((t: any) => t.company_id === p.brandId
-      && (t.deal_id ? String(t.deal_id) === String(p.deal.id) : (t.trading_entity_id || null) === (p.entityId || null)));
+    const signerNumber = p.entityId ? String(signerNumbers.find((r: any) => String(r.id) === p.entityId)?.num || "") : "";
+    const allTokens = tokens.filter((t: any) => (t.company_id === p.brandId
+      && (t.deal_id ? String(t.deal_id) === String(p.deal.id) : (t.trading_entity_id || null) === (p.entityId || null)))
+      // Sent on another transaction where the same company signs (25 November 2026).
+      || (!!signerNumber && !!t.deal_id && String(t.deal_id) !== String(p.deal.id) && !t.revoked_at && t.signer_number === signerNumber));
     // The joint agent's request (22 November 2026) is not the party's own client checks.
     const isJoint = (t: any) => t.request?.audience === "joint_agent";
     const partyTokens = allTokens.filter((t: any) => !isJoint(t));

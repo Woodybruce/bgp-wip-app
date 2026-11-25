@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "Checks started for a company count on all its transactions",
+    text: "When the same company signs on more than one transaction (the same Companies House number, whatever CRM record it is filed under), a client checks request sent on one counts on the others: the person asked becomes who to ask, the request and its documents show with the transaction it was sent on, and finishing it counts for every one. Nothing is sent twice." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A new company's parent accounts stand in for its own",
     text: "When a company that signs has no accounts of its own to download, BGP's checks download its parent's latest accounts from Companies House and file them on the party. For a tenant, accounts made up in the last 24 months mean the client is not asked where the money comes from (BGP's AML policy 4.4). A buyer is still asked." },
   { date: "2026-11-25", who: ["Woody"], topic: "Officers and sign-off", title: "One company, one sign-off",

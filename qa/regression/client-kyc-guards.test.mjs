@@ -70,7 +70,7 @@ test("a client file's requests are its own: no transaction, that company and sub
   assert.match(flags, /const deal = !dealId \? null :/);
   const sign = read("server/deal-party-aml.ts");
   assert.match(sign, /guarantorChecks: !party\.dealId \? \[\] :/);
-  assert.match(sign, /WHERE \(deal_id IS NOT DISTINCT FROM \$1::varchar OR deal_id IS NULL\) AND company_id = \$2 AND trading_entity_id IS NOT DISTINCT FROM \$3/);
+  assert.match(sign, /WHERE \(\(\(deal_id IS NOT DISTINCT FROM \$1::varchar OR deal_id IS NULL\) AND company_id = \$2 AND trading_entity_id IS NOT DISTINCT FROM \$3\)/);
 });
 
 test("the schema: a client file table, and requests that need no transaction", () => {

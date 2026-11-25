@@ -50,6 +50,8 @@ interface Party {
 }
 export interface ClientCheckRequest {
   token: string; ref: string; companyId: string | null; partyName: string; role: string | null;
+  // Sent on another transaction where the same company signs (25 November 2026).
+  onTransaction?: { id: string; name: string; ref: number | null } | null;
   recipientName: string | null; recipientEmail: string | null; mobile: string | null;
   sentAt: string | null; sentFrom: string | null; sendError: string | null; sentBy: string | null; cc: string[];
   openedAt: string | null; expiresAt: string; finishedAt: string | null;
@@ -152,6 +154,7 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
         <span className="text-muted-foreground">
           {request.sentAt ? `sent ${shortDate(request.sentAt)}` : "not sent"}{steps ? ` · ${stepsDone} of ${steps} done` : ""}
         </span>
+        {request.onTransaction && <span className="text-muted-foreground" data-testid={`client-check-elsewhere-${request.ref}`}>· on {request.onTransaction.name}{request.onTransaction.ref ? ` (#${request.onTransaction.ref})` : ""}</span>}
         {warning && <span className="inline-flex items-center gap-0.5 text-amber-800 dark:text-amber-300"><AlertCircle className="w-3.5 h-3.5 text-amber-600" />{warning}</span>}
         <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>

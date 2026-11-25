@@ -1405,5 +1405,29 @@ export function dealOrClientFileTokensSql(param: string, tokens = "kyc_upload_to
   return `(${tokens}.deal_id = ${param} OR (${tokens}.deal_id IS NULL AND EXISTS (
     SELECT 1 FROM crm_deals d0, LATERAL (VALUES (d0.landlord_id, d0.landlord_trading_entity_id), (d0.tenant_id, d0.tenant_trading_entity_id),
       (d0.vendor_id, d0.vendor_trading_entity_id), (d0.purchaser_id, d0.purchaser_trading_entity_id)) p0(c, e)
-    WHERE d0.id = ${param} AND p0.c IS NOT NULL AND p0.c = ${tokens}.company_id AND p0.e IS NOT DISTINCT FROM ${tokens}.trading_entity_id)))`;
+    WHERE d0.id = ${param} AND p0.c IS NOT NULL AND p0.c = ${tokens}.company_id AND p0.e IS NOT DISTINCT FROM ${tokens}.trading_entity_id))
+    OR (${tokens}.deal_id IS NOT NULL AND ${tokens}.deal_id <> ${param} AND ${tokens}.revoked_at IS NULL AND ${sameSignerPartySql(param, tokens)} IS NOT NULL))`;
+}
+
+/** A Companies House number as one key: upper case, letters and digits only, no leading noughts. */
+export const chNumberSql = (col: string): string =>
+  `regexp_replace(regexp_replace(upper(coalesce(${col}, '')), '[^A-Z0-9]', '', 'g'), '^0+(?=[0-9])', '')`;
+
+/**
+ * The party brand on transaction ${param} that a request on ANOTHER transaction
+ * counts for: the same company signs on both, by its Companies House number
+ * (Woody, 25 November 2026, on The Royal Exchange Investments Limited: the
+ * checks started with Peter Wood on one transaction "should be mirrored in all
+ * accross the app once its clear they are the contracting entity").
+ */
+export function sameSignerPartySql(param: string, tokens = "kyc_upload_tokens"): string {
+  return `(SELECT p1.c FROM crm_deals d1, LATERAL (VALUES (d1.landlord_id, d1.landlord_trading_entity_id), (d1.tenant_id, d1.tenant_trading_entity_id),
+      (d1.vendor_id, d1.vendor_trading_entity_id), (d1.purchaser_id, d1.purchaser_trading_entity_id)) p1(c, e), crm_trading_entities te1, crm_trading_entities te2
+    WHERE d1.id = ${param} AND p1.c IS NOT NULL AND te1.id = p1.e AND te2.id = ${tokens}.trading_entity_id
+      AND ${chNumberSql("te1.companies_house_number")} <> '' AND ${chNumberSql("te1.companies_house_number")} = ${chNumberSql("te2.companies_house_number")} LIMIT 1)`;
+}
+
+/** The party brand a request read for transaction ${param} counts for: its own, or the party's when it came from another transaction. */
+export function tokenPartyCompanySql(param: string, tokens = "kyc_upload_tokens"): string {
+  return `(CASE WHEN ${tokens}.deal_id IS NOT NULL AND ${tokens}.deal_id <> ${param} THEN COALESCE(${sameSignerPartySql(param, tokens)}, ${tokens}.company_id) ELSE ${tokens}.company_id END)`;
 }

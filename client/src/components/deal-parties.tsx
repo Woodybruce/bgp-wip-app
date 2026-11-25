@@ -1267,6 +1267,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}{askListed ? <span className="font-normal text-muted-foreground"> · details above</span> : null}</div>
                     {!askListed && <div className="text-muted-foreground">{[party.person.email || "no email", party.person.mobile].filter(Boolean).join(" · ")}</div>}
                     {party.person.from === "client" && <div className="text-muted-foreground italic">The transaction's client contact</div>}
+                    {party.person.from === "elsewhere" && party.person.onTransaction && <div className="text-muted-foreground" data-testid="deal-party-person-elsewhere">Asked for the same company on <a className="underline" href={`/deals/${party.person.onTransaction.id}?section=parties`}>{party.person.onTransaction.name}{party.person.onTransaction.ref ? ` (#${party.person.onTransaction.ref})` : ""}</a></div>}
                     {party.person.relation && party.person.relation !== "party" && <div className="text-muted-foreground">{ASK_RELATION_WORDS[party.person.relation]}{party.person.firm ? `, ${party.person.firm}` : ""}</div>}
                   </div>
                   <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" disabled={busy} onClick={() => setChangingPerson(true)} data-testid="deal-party-person-change">Change</Button>

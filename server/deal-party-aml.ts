@@ -31,6 +31,7 @@
 // bookmark brings in (list "manual"), applied by the KYC4U mirror, so a
 // later KYC4U status for the same party replaces it as before.
 
+import { chNumberSql } from "@shared/kyc-request";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import crypto from "crypto";
@@ -184,7 +185,11 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
   // A person's own request finishing is not the party's checks finishing.
   const mainFinished = (await db.query(
     `SELECT 1 FROM kyc_upload_tokens
-      WHERE (deal_id IS NOT DISTINCT FROM $1::varchar OR deal_id IS NULL) AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
+      WHERE (((deal_id IS NOT DISTINCT FROM $1::varchar OR deal_id IS NULL) AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3)
+          -- The same company signing on another transaction (25 November 2026).
+          OR ($3::varchar IS NOT NULL AND revoked_at IS NULL AND trading_entity_id IN (
+            SELECT te2.id FROM crm_trading_entities te1, crm_trading_entities te2 WHERE te1.id = $3
+               AND ${chNumberSql("te1.companies_house_number")} <> '' AND ${chNumberSql("te2.companies_house_number")} = ${chNumberSql("te1.companies_house_number")})))
         AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
         AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object'
         AND COALESCE(request->>'audience', 'client') <> 'joint_agent' LIMIT 1`,

@@ -226,7 +226,9 @@ export interface DealPartyView {
   // Who the client checks and KYC4U go to: set for this party on the deal,
   // or the deal's client contact when that person is filed under the brand,
   // or the person who signs, when a person does.
-  person: (DealPartyPerson & { from: "party" | "client" | "signer"; relation?: AskRelation; firm?: string | null }) | null;
+  person: (DealPartyPerson & { from: "party" | "client" | "signer" | "elsewhere"; relation?: AskRelation; firm?: string | null;
+    // from "elsewhere": the person asked on another transaction where the same company signs (25 November 2026).
+    onTransaction?: { id: string; name: string; ref: number | null } }) | null;
   // The people filed under the brand.
   people: DealPartyPerson[];
   // What stops the checks from starting, in the order to fill it.
