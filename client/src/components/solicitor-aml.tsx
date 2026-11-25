@@ -128,12 +128,15 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
   const { data } = useDealSolicitorsAml(dealId);
   const [firm, setFirm] = useState<Record<SolicitorSide, string>>({ client: "", other: "" });
   const [choice, setChoice] = useState<ChoiceAnswer | null>(null);
+  // One firm of solicitors per side (Woody, 25 November 2026): once checked, the box hides behind Change.
+  const [changing, setChanging] = useState<Record<SolicitorSide, boolean>>({ client: false, other: false });
   const check = useMutation({
     mutationFn: async (ask: CheckAsk) => ({ ...(await (await apiRequest("POST", `/api/deals/${dealId}/solicitors-aml/check`, ask)).json()), side: ask.side }),
     onSuccess: (answer: any) => {
       if (answer?.choose) { setChoice(answer as ChoiceAnswer); return; }
       setChoice(null);
       setFirm(f => ({ ...f, [answer.side as SolicitorSide]: "" }));
+      setChanging(c => ({ ...c, [answer.side as SolicitorSide]: false }));
       queryClient.invalidateQueries({ queryKey: keyFor(dealId) });
     },
     onError: (e: any) => toast({ title: "Not checked", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
@@ -144,7 +147,6 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
   const usesSra = !!choice || data.checks.some(c => c.register.source === "sra_data");
   return (
     <div className="space-y-3 text-xs" data-testid="deal-solicitors-aml">
-      <p className="text-muted-foreground">Each firm is checked against the SRA's own data on the firms it regulates. The other side's are also searched on the web for regulatory action or misconduct, as BGP's policy asks. Only what a source it read says is kept.</p>
       {choice && (
         <div className="rounded border px-2 py-1.5 space-y-1" data-testid="sra-choose">
           <p>{choice.candidates.length + choice.more} entries on the SRA's register match <span className="font-medium">{choice.firm}</span>. Which firm is acting for {choice.side === "client" ? "our client" : "the other side"}?</p>
@@ -158,9 +160,10 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
         </div>
       )}
       {SOLICITOR_SIDES.map(side => {
-        const mine = data.checks.filter(c => c.side === side);
+        // The latest check on this side is its firm: one firm of solicitors per side.
+        const mine = data.checks.filter(c => c.side === side).sort((a, b) => String(b.ranAt).localeCompare(String(a.ranAt))).slice(0, 1);
         // Our client's solicitors as the transaction records them, offered until they are checked.
-        const onDeal = side === "client" && data.onDeal && !mine.some(c => sameSolicitorFirm(c.firm, data.onDeal)) ? data.onDeal : null;
+        const onDeal = side === "client" && data.onDeal && !mine.length && !mine.some(c => sameSolicitorFirm(c.firm, data.onDeal)) ? data.onDeal : null;
         const typed = firm[side].trim();
         return (
           <div key={side} className="space-y-1.5" data-testid={`solicitors-${side}`}>
@@ -197,15 +200,19 @@ export function DealSolicitorsAmlPanel({ dealId }: { dealId: string }) {
                 </div>
               );
             })}
+            {mine.length > 0 && !changing[side] ? (
+              <button type="button" className="underline text-muted-foreground" onClick={() => setChanging(c => ({ ...c, [side]: true }))} data-testid={`solicitors-change-${side}`}>Change the firm</button>
+            ) : (
             <div className="flex flex-wrap items-center gap-1.5">
               <Input value={firm[side]} onChange={e => setFirm(f => ({ ...f, [side]: e.target.value }))}
-                placeholder={`${mine.length ? "Another firm" : side === "client" ? "Our client's solicitors" : "The other side's solicitors"} (firm name or SRA number)`}
+                placeholder={`${mine.length ? "The firm acting now" : side === "client" ? "Our client's solicitors" : "The other side's solicitors"} (firm name or SRA number)`}
                 className="h-8 max-w-xs text-xs" data-testid={`solicitors-firm-input-${side}`}
                 onKeyDown={e => { if (e.key === "Enter" && typed.length >= 3) run({ firm: typed, side }); }} />
               <Button size="sm" variant="outline" className="h-8 px-2 text-xs" disabled={typed.length < 3 || check.isPending} onClick={() => run({ firm: typed, side })} data-testid={`solicitors-check-${side}`}>
                 {busyFor(typed, side) ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Search className="w-3 h-3 mr-1" />}Check
               </Button>
             </div>
+            )}
           </div>
         );
       })}
