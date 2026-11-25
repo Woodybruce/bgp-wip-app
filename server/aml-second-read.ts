@@ -66,7 +66,7 @@ export function partyRecordText(p: AmlFileParty): string {
   for (const f of p.flags) lines.push(`Red flag: ${f.label}${f.detail ? `: ${f.detail}` : ""}`);
   for (const a of p.aside) lines.push(`Set aside: ${(a as any).label || ""}${(a as any).comment ? `, comment: ${(a as any).comment}` : ""}`);
   for (const person of p.people?.people || []) {
-    lines.push(`Person to check: ${person.name} (${person.roles.join(", ")}); identity check ${person.id.state}; proof of address ${person.address.done ? "done" : "not done"}; sanctions ${person.sanctions}`);
+    lines.push(`Person to check: ${person.name} (${person.roles.join(", ")}); identity check ${person.id.state}; proof of address ${person.address.done ? "done" : person.address.notNeeded ? "not needed" : "not done"}; sanctions ${person.sanctions}`);
   }
   for (const r of p.kyc4u.records || []) lines.push(`KYC4U: ${[(r as any).status, (r as any).reference, (r as any).note, (r as any).date].filter(Boolean).join(", ")}`);
   for (const d of p.kyc4u.drafts || []) lines.push(`KYC4U request: ${[(d as any).status, (d as any).created_at || (d as any).createdAt].filter(Boolean).join(", ")}`);

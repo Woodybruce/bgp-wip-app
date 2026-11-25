@@ -467,7 +467,7 @@ export function TrustStructureDialog({ companyId, dealId, partyName, initial, re
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto" data-testid="trust-structure-dialog">
         <DialogHeader>
           <DialogTitle>Trust information: {partyName}</DialogTitle>
-          <DialogDescription>From the trust deed. The settlor, the trustees, any protector and anyone else with control each do their own identity check and proof of address; beneficiaries too unless the trust is discretionary. Everyone named is screened.</DialogDescription>
+          <DialogDescription>From the trust deed. The settlor, the trustees, any protector and anyone else with control each do their own identity check; beneficiaries too unless the trust is discretionary. Everyone named is screened.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
           {reading?.read && <DeedReadBack reading={reading} />}

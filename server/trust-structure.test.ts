@@ -58,7 +58,10 @@ test("People to check on a trust: the ones to verify each get a link; the rest a
   assert.equal(people.basis, "trust");
   assert.deepEqual(people.people.map(p => [p.name, p.roles]), [["Margaret Ellis", ["settlor"]], ["David Ellis", ["trustee", "beneficiary"]]]);
   assert.equal(people.people[0].born, "April 1951");
-  assert.deepEqual(people.people[0].outstanding, ["identity check", "proof of address"]);
+  // A trust's people do an identity check only (25 November 2026: HMRC asks a
+  // trust's beneficial owners for their identity, not a proof of address).
+  assert.deepEqual(people.people[0].outstanding, ["identity check"]);
+  assert.equal(people.people[0].address.notNeeded, true);
   assert.deepEqual(people.trustNamed?.map(t => t.name), ["Sarah Ellis", "Ellis Trustees Limited"]);
   assert.ok(people.outstanding.some(o => o.startsWith("Margaret Ellis")));
   assert.equal(partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [], trust: null }).basis, "trust_unrecorded");
@@ -66,10 +69,11 @@ test("People to check on a trust: the ones to verify each get a link; the rest a
 });
 
 test("the client checks for a trust ask for its own documents, and skip what the file holds", () => {
-  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
+  // No proof of address from the person acting for a trust (25 November 2026: HMRC).
+  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
   const asks = precheckAsks(null, { kind: "company", role: "purchaser", idCheck: true, contactName: "David Ellis", trust: { deed: true, trs: false, trsNotRequired: false, trustees: ["David Ellis"] } });
-  assert.deepEqual(asks.docs, ["proof_of_address", "trs_excerpt", "trust_wealth", "source_of_funds"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["trust_deed", "trust_authority"]);
+  assert.deepEqual(asks.docs, ["trs_excerpt", "trust_wealth", "source_of_funds"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["trust_deed", "trust_authority", "proof_of_address"]);
 });
 
 test("screening a trust: the people on its structure in full, under reg 6", () => {
@@ -191,7 +195,7 @@ test("the trust's representative is not a person to check, and a request for doc
   const asTrustee = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ recipientName: "David Ellis" })], trust: structure() });
   const david = asTrustee.people.find(p => p.name === "David Ellis")!;
   assert.equal(david.own, null);
-  assert.deepEqual(david.outstanding, ["identity check", "proof of address"]);
+  assert.deepEqual(david.outstanding, ["identity check"]);
   // An ordinary request to the person acting still names them.
   const acting = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ trustDocs: false })], trust: structure() });
   assert.ok(acting.people.some(p => p.name === "Adam Harvey" && p.roles.includes("acting")));
@@ -220,7 +224,7 @@ test("the request asks for the trust's documents in plain words, and the ready n
   assert.match(ready.html, /HMRC&#39;s proof of registration|HMRC's proof of registration/);
 });
 
-test("every request email offers certified copies with both lists (Jack, 23 November 2026)", () => {
+test("every request email offers certified copies: List A, and List B only where a proof of address is asked (Jack, 23 November 2026)", () => {
   const base = {
     recipientName: "Adam Harvey", partyName: "Acme Ltd", dealName: "1 High Street", ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/x",
     expiresAt: new Date("2026-12-07"), needsIdCheck: true, docs: ["proof_of_address"] as any, agents: [], sentFrom: "kyc@chatbgp.app", askPep: true,
@@ -232,14 +236,16 @@ test("every request email offers certified copies with both lists (Jack, 23 Nove
   assert.match(company, /Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official/);
   assert.match(company, /sign and date it, and print their name, occupation, address and telephone number/);
   assert.match(company, /residence permit issued by the Home Office/);
-  assert.match(company, /council tax bill less than 3 months old/);
+  // A company's people send no proof of address (25 November 2026), so no List B.
+  assert.doesNotMatch(company, /List B/);
   const person = kycRequestEmail({ ...base, kind: "individual" as any }).html;
   assert.match(person, /upload certified copies instead/);
   assert.doesNotMatch(person, /25%/);
+  assert.match(person, /council tax bill less than 3 months old/);
   const trust = kycRequestEmail({ ...base, kind: "company" as any, needsIdCheck: false, askPep: false, docs: [...TRUST_REQUEST_DOCS], purpose: "trust_structure" }).html;
   assert.match(trust, /What happens next/);
   assert.match(trust, /gets an email from us with their own secure link/);
-  assert.match(trust, /List B<\/strong> \(one\)/);
+  assert.doesNotMatch(trust, /List B/, "a trust's people send no proof of address");
   // Optional: not one of the trust request's own documents.
   assert.equal(TRUST_REQUEST_DOCS.includes("certified_ids" as any), false);
 });

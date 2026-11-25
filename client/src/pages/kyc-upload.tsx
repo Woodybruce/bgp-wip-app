@@ -238,9 +238,9 @@ function OwnersCard({ n, owners, onSave }: {
 }
 
 // The owners the person acting passes a link of their own to (Woody, 19
-// November 2026: each owner does their own identity check and proof of
-// address). Copy a link, or have it emailed; it asks the owner only what is
-// still outstanding for them.
+// November 2026: each owner does their own identity check; since 25 November
+// no proof of address, as HMRC asks of an owner). Copy a link, or have it
+// emailed; it asks the owner only what is still outstanding for them.
 function OwnerLinksCard({ n, token, people, onView }: {
   n: number; token: string; people: NonNullable<KycPortalView["people"]>; onView: (view: KycPortalView) => void;
 }) {
@@ -252,7 +252,7 @@ function OwnerLinksCard({ n, token, people, onView }: {
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-base leading-snug">{KYC_OWNER_LINKS_TITLE}</h3>
           <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
-            Each owner does their own identity check and proof of address, on their own page. Send them their link, or give us their email and we'll send it. You can also upload a recent bill or bank statement in their name for them.
+            Each owner does their own identity check, on their own page. Send them their link, or give us their email and we'll send it.
           </p>
           <ul className="mt-3 space-y-3">
             {people.map(person => <OwnerLinkRow key={person.key} token={token} person={person} onView={onView} />)}
@@ -963,8 +963,10 @@ export default function KycUploadPage() {
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{view.certifiedWords}</p>
               <p className="mt-2 text-sm font-medium">List A (one, certified)</p>
               <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_A.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
-              <p className="mt-2 text-sm font-medium">List B (one)</p>
-              <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_B.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
+              {view.certifiedListB && <>
+                <p className="mt-2 text-sm font-medium">List B (one)</p>
+                <ul className="ml-5 list-disc text-sm text-muted-foreground">{CERTIFIED_LIST_B.map(i => <li key={i}>{i[0].toUpperCase() + i.slice(1)}</li>)}</ul>
+              </>}
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{CERTIFIED_WHO}</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{CERTIFIED_HOW}</p>
             </>}

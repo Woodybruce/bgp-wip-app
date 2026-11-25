@@ -84,6 +84,8 @@ export interface RiskAssessmentInput {
     state: { status: string | null; approvedBy: string | null; approvedAt: string | Date | null; expiresAt: string | Date | null } | null;
     notRequired: { reasonWords: string } | null;
     documents: Array<{ type: string; name: string }>;
+    // Our signed terms of engagement on the party's record, in words (25 November 2026).
+    authorityTerms?: string | null;
     kyc4u: RiskAssessmentKyc4u | null;
     // What BGP recorded against a company abroad that owns it (21 November 2026).
     abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
@@ -169,6 +171,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const contact = p.person?.name || null;
   const authority: RiskRow = p.individual ? { label: "Authority to instruct", value: "Not applicable: the party deals with BGP itself", tone: "info" }
     : contact && c && isRegisterDirector(contact, c.directors) ? { label: "Authority to instruct", value: `${contact} is a director at Companies House`, tone: "ok" }
+    : p.authorityTerms ? { label: "Authority to instruct", value: `Our signed terms of engagement are on file (${p.authorityTerms})`, tone: "ok" }
     : docsDone("authority") ? { label: "Authority to instruct", value: `Confirmed by the client${contact ? ` for ${contact}` : ""}`, tone: "ok" }
     : { label: "Authority to instruct", value: contact ? `Not confirmed yet for ${contact}` : "No one named to deal with BGP yet", tone: "attention" };
   const adverseLive = live.filter(f => f.kind === "web_adverse" || (f.kind === "provider_screen" && /adverse|media/i.test(`${f.label} ${f.key}`)));
@@ -283,7 +286,8 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
         x.ownerDetail ? cap(x.ownerDetail) : "",
         x.born ? `Born ${x.born}` : "",
         x.publicFigure ? `${x.publicFigure.method === "certified" ? "Certified documents" : "Public sources"}: ${x.publicFigure.note}` : "",
-        x.address.done ? `Proof of address: ${x.address.proof?.summary || "received"}` : x.publicFigure || x.reliedOn ? "" : "Proof of address not received yet",
+        x.address.done ? `Proof of address: ${x.address.proof?.summary || (x.address.fromLicence ? `the driving licence their identity check read (${x.address.fromLicence})` : "received")}`
+          : x.publicFigure || x.reliedOn || x.address.notNeeded ? "" : "Proof of address not received yet",
         `Sanctions: ${x.sanctions === "clear" ? "no match" : x.sanctions === "discounted" ? "a namesake, set aside on the date of birth" : x.sanctions === "possible" ? "possible match: see the red flags" : "not screened yet"}`,
         reg && reg.name !== x.name ? `On the register as ${reg.name}` : "",
       ].filter(Boolean),

@@ -64,7 +64,8 @@ test("a person who signs too and the owners of a contracting entity too are peop
   assert.deepEqual(ana.roles, ["signer_owner"]);
   assert.match(ana.ownerDetail || "", /owns or controls BLUECAP TWO LIMITED, which also signs/);
   assert.equal(ana.sanctions, "clear", "screened by BGP's checks on the other company");
-  assert.deepEqual(ana.outstanding, ["identity check", "proof of address"]);
+  // An owner of the other company does an identity check only (25 November 2026: HMRC).
+  assert.deepEqual(ana.outstanding, ["identity check"]);
   const sam = byName("Sam Signer")!;
   assert.deepEqual(sam.roles, ["signer"]);
   assert.deepEqual(sam.outstanding, ["identity check", "proof of address"]);

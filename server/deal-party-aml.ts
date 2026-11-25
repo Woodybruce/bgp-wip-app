@@ -273,6 +273,7 @@ async function fileNoteFor(party: AmlSubject, f: {
     acting: main ? {
       name: acting?.name || main.recipientName || null, sentAt: main.sentAt, finished: f.mainFinished,
       idState: acting?.id.state || null, authoritySent: main.files.some(x => x.docKey === "authority"),
+      authorityTerms: !!(await import("./kyc-documents").then(m => m.termsOfEngagementFor(party.brandId, party.entityId)).catch(() => null)),
     } : null,
     outstanding: f.mainFinished ? f.people.outstanding : [],
   });

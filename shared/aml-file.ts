@@ -34,6 +34,7 @@ const DOC_WORDS: Record<string, string> = {
   source_of_funds: "Source of funds",
   source_of_wealth: "Source of wealth",
   structure_chart: "Structure chart",
+  terms_of_engagement: "Signed terms of engagement",
   trs_excerpt: "Trust Registration Service",
   trust_deed: "Trust deed",
   trust_structure: "Who is who in the trust",

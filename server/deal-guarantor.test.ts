@@ -99,7 +99,8 @@ test("the guarantor's owners and a person who guarantees are people to check; it
   assert.deepEqual(jones.roles, ["guarantor_owner"]);
   assert.match(jones.ownerDetail || "", /owns or controls the guarantor, Inception Ventures Group Limited/);
   assert.equal(jones.sanctions, "clear", "screened by BGP's checks on the guarantor");
-  assert.deepEqual(jones.outstanding, ["identity check", "proof of address"]);
+  // An owner of the guarantor does an identity check only (25 November 2026: HMRC).
+  assert.deepEqual(jones.outstanding, ["identity check"]);
   // A person who guarantees.
   const sam = byName("Sam Guarantor")!;
   assert.deepEqual(sam.roles, ["guarantor"]);

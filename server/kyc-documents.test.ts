@@ -83,10 +83,14 @@ test("an upload that passes, or that an officer accepted, counts for the person 
   const up = (reading: KycDocumentReading, accepted: KycUploadEvidence["accepted"] = null): KycUploadEvidence => ({
     documentId: "d1", fileName: "passport.pdf", uploadedAt: "2026-11-23T10:00:00Z", seenOriginal: false, reading, accepted,
   });
-  assert.equal(uploadCountsFor(up(passport()), people[0], TODAY), "identity");
-  assert.equal(uploadCountsFor(up(passport()), people[1], TODAY), null, "not their passport");
-  assert.equal(uploadCountsFor(up(passport({ certified: false, certification: null })), people[0], TODAY), null);
-  assert.equal(uploadCountsFor(up(passport({ certified: false, certification: null }), { by: "Jack Barratt", at: "t", note: "Original seen at the meeting" }), people[0], TODAY), "identity");
+  assert.deepEqual(uploadCountsFor(up(passport()), people[0], TODAY), ["identity"]);
+  assert.deepEqual(uploadCountsFor(up(passport()), people[1], TODAY), [], "not their passport");
+  assert.deepEqual(uploadCountsFor(up(passport({ certified: false, certification: null })), people[0], TODAY), []);
+  assert.deepEqual(uploadCountsFor(up(passport({ certified: false, certification: null }), { by: "Jack Barratt", at: "t", note: "Original seen at the meeting" }), people[0], TODAY), ["identity"]);
+  // A photocard driving licence that shows an address verifies both (HMRC AMLG11400 14.2; 25 November 2026).
+  const licence = passport({ kind: "driving_licence", kindWords: "UK photocard driving licence", address: "12 High Street, Guildford GU1 3AA" });
+  assert.deepEqual(uploadCountsFor(up(licence), people[0], TODAY), ["identity", "address"]);
+  assert.deepEqual(uploadCountsFor(up({ ...licence, address: null }), people[0], TODAY), ["identity"], "no address read on it");
 
   const input: PartyPeopleInput = {
     companyId: "brand", kind: "individual", precheck: null,
@@ -145,4 +149,39 @@ test("who may certify: solicitors, lawyers and notaries, chartered accountants, 
   assert.match(checkKycDocument(passport({ certification: old }), people, opts).reasons.join(" "), /their address, their telephone number/, "a reading from before the rule is read again");
   const r = cleanKycDocumentReading({ kind: "passport", names: [], certified: true, certification: { name: "S", address: " 1 High St ", phone: "020", signed: true } }, "t");
   assert.deepEqual([r.certification?.address, r.certification?.phone, r.certification?.signed], ["1 High St", "020", true]);
+});
+
+// Our signed terms of engagement show the authority to act (Woody, 25 November
+// 2026: "make them count"; HMRC AMLG11400 14.7: "Legal or contractual documentation").
+test("signed terms of engagement count as the authority to act; unsigned ones wait for an officer", async () => {
+  const { authorityFromTerms } = await import("../shared/kyc-documents");
+  const { precheckAsks } = await import("../shared/kyc-prechecks");
+  const terms = (over: Partial<KycDocumentReading> = {}): KycDocumentReading => ({
+    ...passport(), kind: "terms_of_engagement", kindWords: "Terms of engagement", names: ["Acme Holdings Limited"], dob: null, expires: null,
+    issued: null, date: "2026-11-01", certified: false, certification: null, signed: true, ...over,
+  });
+  const signed = checkKycDocument(terms(), people, { uploadedAt: "2026-11-23T10:00:00Z", seenOriginal: false, today: TODAY });
+  assert.equal(signed.use, "authority");
+  assert.equal(signed.ok, true);
+  assert.equal(signed.summary, "Terms of engagement, Acme Holdings Limited, 1 Nov 2026, signed");
+  assert.deepEqual(checkKycDocument(terms({ signed: false }), people, { uploadedAt: "2026-11-23T10:00:00Z", seenOriginal: false, today: TODAY }).reasons, ["Not signed"]);
+  assert.deepEqual(checkKycDocument(terms({ signed: null }), people, { uploadedAt: "2026-11-23T10:00:00Z", seenOriginal: false, today: TODAY }).reasons, ["No signature found on it: check it is signed"]);
+  const up = (reading: KycDocumentReading, accepted: KycUploadEvidence["accepted"] = null, id = "t1"): KycUploadEvidence => ({
+    documentId: id, fileName: "terms.pdf", uploadedAt: "2026-11-23T10:00:00Z", seenOriginal: false, reading, accepted,
+  });
+  assert.equal(authorityFromTerms([up(terms())], TODAY)?.documentId, "t1");
+  assert.equal(authorityFromTerms([up(terms({ signed: null }))], TODAY), null, "not seen to be signed");
+  assert.equal(authorityFromTerms([up(terms({ signed: null }), { by: "Jack Barratt", at: "t", note: "DocuSign certificate seen" })], TODAY)?.documentId, "t1", "an officer accepted it");
+  assert.equal(authorityFromTerms([up(passport())], TODAY), null, "not terms of engagement");
+  // An upload never counts for a person's identity or address.
+  assert.deepEqual(uploadCountsFor(up(terms()), people[0], TODAY), []);
+  // With them on file, the client checks do not ask for a director's confirmation.
+  const asks = precheckAsks(null, { kind: "company", role: "landlord", idCheck: true, contactName: "Sam Lee", termsOfEngagement: signed.summary });
+  assert.ok(!asks.docs.includes("authority"));
+  assert.match(asks.notAsked.find(n => n.key === "authority")!.reason, /Our signed terms of engagement are on file \(Terms of engagement, Acme Holdings Limited, 1 Nov 2026, signed\): HMRC accepts them as evidence of authority to act\./);
+  const trust = precheckAsks(null, { kind: "company", role: "vendor", idCheck: true, contactName: "Sam Lee", trust: { deed: false, trs: false, trsNotRequired: false, trustees: [] }, termsOfEngagement: "Terms of engagement, signed" });
+  assert.ok(!trust.docs.includes("trust_authority"));
+  const body = precheckAsks(null, { kind: "company", role: "landlord", idCheck: true, contactName: "Sam Lee", publicBody: true, termsOfEngagement: "Terms of engagement, signed" });
+  assert.deepEqual(body.docs, []);
+  assert.ok(precheckAsks(null, { kind: "company", role: "landlord", idCheck: true, contactName: "Sam Lee" }).docs.includes("authority"), "without them, still asked");
 });

@@ -24,7 +24,7 @@ import { pool } from "./db";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 import { kycUploadAllowed } from "@shared/kyc-request";
 import {
-  KYC_DOCUMENT_ACCEPT_NOTE_MIN, KYC_DOCUMENT_DOC_TYPE, KYC_DOCUMENT_KINDS, checkKycDocument, cleanKycDocumentReading, unreadableKycDocument,
+  KYC_DOCUMENT_ACCEPT_NOTE_MIN, KYC_DOCUMENT_DOC_TYPE, KYC_DOCUMENT_KINDS, authorityFromTerms, checkKycDocument, cleanKycDocumentReading, unreadableKycDocument,
   type KycDocumentReading, type KycUploadEvidence,
 } from "@shared/kyc-documents";
 import { foreignOnCompaniesHouse, type ExtractSubject } from "@shared/foreign-company";
@@ -53,7 +53,7 @@ export const KYC_DOCUMENT_TOOL = {
       kind: {
         type: "string",
         enum: [...KYC_DOCUMENT_KINDS],
-        description: "passport, driving_licence (photocard), national_id, firearms_certificate, residence_permit; utility_bill, bank_statement, building_society_statement, mortgage_statement, council_tax_bill; certificate_of_incorporation, register_extract, structure_chart, accounts, authority_letter (someone confirming who can act for a company), source_of_funds; or other",
+        description: "passport, driving_licence (photocard), national_id, firearms_certificate, residence_permit; utility_bill, bank_statement, building_society_statement, mortgage_statement, council_tax_bill; certificate_of_incorporation, register_extract, structure_chart, accounts, authority_letter (someone confirming who can act for a company), source_of_funds, terms_of_engagement (Bruce Gillingham Pollard's terms of engagement, instruction letter or fee agreement with its client); or other",
       },
       kindWords: { type: "string", description: "what the document says it is, in a few words, e.g. 'British passport' or 'British Gas electricity bill'" },
       issuer: { type: "string", description: "who issued it: the country, the authority, the company or the council" },
@@ -78,6 +78,7 @@ export const KYC_DOCUMENT_TOOL = {
           signed: { type: "boolean", description: "true when the certification carries a signature" },
         },
       },
+      signed: { type: "boolean", description: "for terms of engagement or another agreement: true when it carries the client's signature, handwritten or electronic (such as DocuSign), false when the signature lines are blank" },
       language: { type: "string", description: "the language the document is written in, in English, e.g. 'English', 'German', 'French', 'Dutch'" },
       english: { type: "boolean", description: "true when the document is written in English (a passport printed in English and another language counts as English)" },
       company: {
@@ -133,7 +134,9 @@ Record what the document is, who issued it, the names it shows exactly as printe
 
 The document may be in any language. Say which language it is in. Record names, numbers and addresses exactly as printed, in their own spelling; give everything else (what the document is, a role, a status) in English.
 
-For a company document, such as an extract from a company register in any country (a Handelsregisterauszug, an extrait Kbis or RCS extract, a KvK uittreksel, a certificate of good standing or incumbency): record the company it is about (its name, registration number, legal form, country, the register that keeps it, its registered address, its status in English, when it was incorporated, and the date the extract was issued), everyone on its board or management with their role and date of birth when shown, and its shareholders or owners with their holdings. A register extract is kind register_extract.`;
+For a company document, such as an extract from a company register in any country (a Handelsregisterauszug, an extrait Kbis or RCS extract, a KvK uittreksel, a certificate of good standing or incumbency): record the company it is about (its name, registration number, legal form, country, the register that keeps it, its registered address, its status in English, when it was incorporated, and the date the extract was issued), everyone on its board or management with their role and date of birth when shown, and its shareholders or owners with their holdings. A register extract is kind register_extract.
+
+Terms of engagement, an instruction letter or a fee agreement between Bruce Gillingham Pollard (BGP) and its client are kind terms_of_engagement: record the client it is with (as the company, or in names), its date, and whether the client has signed it.`;
 
 export interface KycDocumentDeps {
   hasKey?: () => boolean;
@@ -192,6 +195,15 @@ export async function uploadsFor(companyId: string, entityId: string | null, db:
     accepted: r.accepted_at ? { by: String(r.accepted_by_name || "an officer"), at: new Date(r.accepted_at).toISOString(), note: String(r.accepted_note || "") } : null,
     about: r.about && typeof r.about === "object" && typeof r.about.name === "string" ? r.about as ExtractSubject : null,
   }));
+}
+
+/**
+ * Our signed terms of engagement on the party's record (25 November 2026):
+ * the latest read as signed, or accepted by an officer. They are the authority
+ * to act of whoever instructs us for the party (HMRC, AMLG11400 14.7).
+ */
+export async function termsOfEngagementFor(companyId: string, entityId: string | null, db: Db = pool): Promise<{ documentId: string; fileName: string; summary: string } | null> {
+  return authorityFromTerms(await uploadsFor(companyId, entityId, db), new Date());
 }
 
 /**

@@ -12,10 +12,9 @@
 // control, and the people found up the ownership chain: MLR 2017 reg 5) and
 // the person dealing with us for the company (reg 28(10)). A company listed
 // on a regulated market has no owners to identify (reg 28(5)). The directors
-// who are neither are screened against the sanctions lists only. What each
-// person sends is BGP's policy for individuals (Issue 2, "Individuals"): one
-// proof of identity (the online check, on the UK DVS register) and one proof
-// of residential address from the last three months.
+// who are neither are screened against the sanctions lists only. Each person
+// does an identity check (the online check, on the UK DVS register); only a
+// customer in person also sends a proof of address (owesProofOfAddress).
 //
 // Pure: the server builds the input from the requests, their files and their
 // identity checks, and the deal card, the client page and the sign-off read
@@ -24,7 +23,8 @@
 import { controlWords, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
 import { sameCompany } from "./foreign-owners";
 import { relianceWords, type PartyReliance } from "./aml-reliance";
-import type { KycDocKey, KycIdState, KycPartyKind, KycPersonRole } from "./kyc-request";
+import { owesProofOfAddress, type KycDocKey, type KycIdState, type KycPartyKind, type KycPersonRole } from "./kyc-request";
+export { owesProofOfAddress, NO_ADDRESS_WORDS } from "./kyc-request";
 import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
 import { trusteePersonName, trusteesInOrder } from "./charity-register";
 import { uploadCountsFor, type KycUploadEvidence } from "./kyc-documents";
@@ -35,10 +35,28 @@ export { personDisplayName };
 /** A person's key: the words of their name, sorted ("BRUCE, David" and "Mr David Bruce" are "bruce david"). */
 export const personKey = (name: string): string => nameTokens(name).sort().join(" ");
 
+
+
 /** The date of birth Veriff read off the document (YYYY-MM-DD), or null. */
 export function verifiedPersonDob(verdictPerson: unknown): string | null {
   const dob = (verdictPerson as Record<string, unknown> | null)?.dateOfBirth;
   return typeof dob === "string" && /^\d{4}-\d{2}-\d{2}/.test(dob) ? dob.slice(0, 10) : null;
+}
+
+/**
+ * The address the online check read off a UK photocard driving licence
+ * (Veriff's decision: document.type DRIVERS_LICENSE from GB, and the address
+ * on person.addresses), or null for any other document or when none was read.
+ * It verifies the person's address too (HMRC, AMLG11400 14.2).
+ */
+export function verifiedLicenceAddress(verdictDocument: unknown, verdictPerson: unknown): string | null {
+  const doc = (verdictDocument && typeof verdictDocument === "object" ? verdictDocument : null) as Record<string, unknown> | null;
+  if (!doc || String(doc.type || "").toUpperCase().replace(/[^A-Z]/g, "") !== "DRIVERSLICENSE") return null;
+  if (String(doc.country || "").toUpperCase() !== "GB") return null;
+  const addresses = (verdictPerson as Record<string, unknown> | null)?.addresses;
+  const first = Array.isArray(addresses) ? addresses.find(a => a && typeof a === "object") as Record<string, unknown> | undefined : undefined;
+  const full = typeof first?.fullAddress === "string" ? first.fullAddress.replace(/\s+/g, " ").trim() : "";
+  return full ? full.slice(0, 300) : null;
 }
 
 type Dob = { month?: number | null; year?: number | null } | null | undefined;
@@ -62,6 +80,10 @@ export interface PeopleIdCheck {
   state: KycIdState;
   verifiedName: string | null;
   verifiedDob: string | null;
+  // The address the online check read off a UK photocard driving licence (25
+  // November 2026): it verifies the address too. Null for any other document,
+  // or when the check did not read one.
+  licenceAddress?: string | null;
 }
 
 /** A client checks request on the deal, as the people rule reads it. */
@@ -182,11 +204,11 @@ export interface KycPartyPerson {
   };
   address: {
     done: boolean; ref: string | null; asked: boolean;
-    // Not asked of them: the person dealing with us for a company who is not
-    // also an owner (Woody, 23 November 2026: for a listed group, "If HMRC
-    // don't require it then stop it"; then for every company, "If they don't
-    // need it then let's not require it"). HMRC asks for their identity and authority.
+    // Not asked of them: anyone who is not a customer in person (Woody,
+    // 25 November 2026: "mirror hmrc about proof of address"; owesProofOfAddress).
     notNeeded?: boolean;
+    // Verified from the UK photocard driving licence their identity check read: the address on it.
+    fromLicence?: string | null;
     // The proof that counts, else the latest one sent, as read against them
     // (shared/kyc-address-proof.ts): it counts when the reading passes or
     // the Nominated Officer or a Deputy accepted it.
@@ -238,14 +260,14 @@ export interface PartyPeople {
 }
 
 export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
-  owners: "The owners the register names, up the ownership chain, each do an identity check and send a proof of address. The person dealing with us does an identity check and shows their authority to act.",
-  listed: "Listed on a regulated market, or owned through a listed company: no owners to identify. The person dealing with us does an identity check and shows their authority to act. No proof of address is asked of them.",
+  owners: "The owners the register names, up the ownership chain, each do an identity check. The person dealing with us does an identity check and shows their authority to act.",
+  listed: "Listed on a regulated market, or owned through a listed company: no owners to identify. The person dealing with us does an identity check and shows their authority to act.",
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
-  individual: "Private individuals: each person named on the transaction does an identity check and sends a proof of address. When more than one person is buying, selling or renting together, add each of them.",
+  individual: "Private individuals: each person named on the transaction does an identity check and sends a proof of address (a photocard driving licence showing their current address covers both). When more than one person is buying, selling or renting together, add each of them.",
   abroad_company: "Registered outside the UK, so Companies House has no record of it. The client is asked for an extract from its own register and the people who own or control it. The app looks it up in GLEIF (under Owners abroad), and each person found is recorded there and does their own check.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. BGP's officers find them. The app traces what it can (the accounts and GLEIF, under Owners abroad in The company), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
-  trust: "A trust: the people its structure records (the settlor, the trustees, any protector, and the beneficiaries of a trust that is not discretionary) each do an identity check and send a proof of address. Everyone named is screened.",
+  trust: "A trust: the people its structure records (the settlor, the trustees, any protector, and the beneficiaries of a trust that is not discretionary) each do an identity check. Everyone named is screened.",
   trust_unrecorded: "A trust: record its structure (the settlor, the trustees, any protector and the beneficiaries) and each person who has to be verified is listed here with their own link. The person dealing with us does their own check.",
   public_body: "A UK public body: simplified due diligence. There are no owners to identify and nobody is asked for ID. The person instructing us shows they have authority to act for it.",
   charity: "A registered charity: the Charity Commission's register names its trustees, who control it. Each is screened (sanctions, public roles and adverse media) and listed here. The person dealing with us does their own check and confirms their authority to act for the charity.",
@@ -397,7 +419,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       }
       if (isOwn && r.files.some(f => f.docKey === "photo_id")) better("document", r.ref, null);
     }
-    const uploads = (input.uploads || []).map(u => uploadCountsFor(u, { name: d.name, dob: d.dob }, input.today || new Date()));
+    const uploads = (input.uploads || []).flatMap(u => uploadCountsFor(u, { name: d.name, dob: d.dob }, input.today || new Date()));
     if (uploads.includes("identity")) better("document", "upload", null);
     if (id.state === "passed" || id.state === "waiting") id = { ...id, someoneElse: null };
     const idDone = id.state === "passed" || id.state === "waiting" || id.state === "document";
@@ -428,15 +450,24 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       .filter(x => x.counts || x.sentFor);
     const counting = proofs.find(x => x.counts) || others.find(x => x.counts) || null;
     const shown = counting || proofs[proofs.length - 1] || others[others.length - 1] || null;
-    // The person dealing with us for a company gives no proof of address unless
-    // they are also an owner (or a guarantor): HMRC asks for their identity and
-    // their authority to act (MLR 2017 reg 28(10)), and policy Issue 4 asks for
-    // one only from the party or an owner. A trust keeps its own rule.
-    const actingOnly = input.kind === "company" && input.trust === undefined && [...d.roles].every(r => r === "acting" || r === "director");
+    // Only a customer in person sends a proof of address (owesProofOfAddress:
+    // HMRC's line, 25 November 2026). Until then an owner, a trust's people and
+    // the person acting who was also an owner were asked for one.
+    const noAddress = !owesProofOfAddress(input.kind, d.roles);
+    // A UK photocard driving licence the identity check read, with the address
+    // on it, verifies the address too (HMRC: ID evidence, one document or more).
+    let fromLicence: { ref: string; address: string } | null = null;
+    if (!noAddress) for (const r of input.requests) for (const c of r.idChecks) {
+      if (fromLicence || c.state !== "approved" || !c.licenceAddress) continue;
+      const theirs = c.verifiedName ? samePerson(c.verifiedName, d.name) && dobAgrees(d.dob, c.verifiedDob) : own(r);
+      if (theirs) fromLicence = { ref: r.ref, address: c.licenceAddress };
+    }
     const address: KycPartyPerson["address"] = {
-      done: !!counting || uploads.includes("address"), ref: counting?.r.ref || (uploads.includes("address") ? "upload" : null),
+      done: !!counting || uploads.includes("address") || !!fromLicence,
+      ref: counting?.r.ref || (uploads.includes("address") ? "upload" : fromLicence ? fromLicence.ref : null),
       asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")),
-      ...(actingOnly ? { notNeeded: true } : {}),
+      ...(noAddress ? { notNeeded: true } : {}),
+      ...(fromLicence && !counting ? { fromLicence: fromLicence.address } : {}),
       proof: shown ? {
         token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
         read: !!shown.f.reading?.read, ok: shown.check.ok, summary: shown.check.summary, reasons: shown.check.reasons,
@@ -451,7 +482,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const relied = input.reliance ? relianceWords(input.reliance) : null;
     // A public body's simplified due diligence does not cover its guarantor, or another company that signs.
     const coveredByBody = publicBody && !d.roles.has("guarantor") && !d.roles.has("guarantor_owner") && !d.roles.has("signer") && !d.roles.has("signer_owner");
-    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied || coveredByBody ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done || actingOnly ? [] : ["proof of address" as const])];
+    const outstanding: KycPartyPerson["outstanding"] = publicFigure || relied || coveredByBody ? [] : [...(idDone ? [] : ["identity check" as const]), ...(address.done || noAddress ? [] : ["proof of address" as const])];
     const ownLink = live.find(r => r.person) || live.find(r => !r.person) || null;
     return {
       key: personKey(d.name), name, roles,

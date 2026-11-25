@@ -14,7 +14,7 @@
 // the deal's agents, the Nominated Officer and the Deputy do, with KYC4U
 // (BGP's outsourced KYC provider) for enhanced due diligence.
 
-import { defaultKycDocs, type KycDocKey, type KycPartyKind } from "./kyc-request";
+import { defaultKycDocs, termsAuthorityWords, type KycDocKey, type KycPartyKind } from "./kyc-request";
 import type { PrecheckAbroad, PrecheckGleif } from "./foreign-owners";
 import { gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords } from "./foreign-owner-words";
 import { charityConcerns, charityLines, charityRegisterUrl, type PrecheckCharity } from "./charity-register";
@@ -1181,8 +1181,8 @@ const monthsSince = (iso: string | null, today: Date): number | null => {
   return Number.isNaN(d.getTime()) ? null : (today.getTime() - d.getTime()) / (30.44 * 86400000);
 };
 
-/** Why the person dealing with us for a company is not asked for a proof of address. */
-export const ACTING_NO_ADDRESS = "The person dealing with us: HMRC asks for their identity check and their authority, not a proof of address. They give one only if they are also an owner.";
+/** Why the person dealing with us for a company or a trust is not asked for a proof of address. */
+export const ACTING_NO_ADDRESS = "HMRC asks for a proof of address only from a customer who is a person: the person dealing with us gives their identity check and their authority to act, and each owner their identity check.";
 
 export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
@@ -1190,19 +1190,23 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   trust?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
   // Recorded as a UK public body: simplified due diligence (23 November 2026).
   publicBody?: boolean;
+  // Our signed terms of engagement on the party's record, in words: they show
+  // the authority to act (25 November 2026; HMRC AMLG11400 14.7).
+  termsOfEngagement?: string | null;
 }): PrecheckAsks {
   const docs = defaultKycDocs(ctx.kind, ctx.role, ctx.idCheck, !!ctx.trust, !!ctx.publicBody);
   const notAsked: PrecheckAsks["notAsked"] = [];
-  if (ctx.publicBody && ctx.kind === "company") {
-    const reason = "A UK public body: simplified due diligence, with no beneficial owners to verify.";
-    return { docs, notAsked: (["ownership", "owner_ids", "proof_of_address"] as KycDocKey[]).map(key => ({ key, reason })), confirmOwners: null, ownerNames: [] };
-  }
   const drop = (key: KycDocKey, reason: string) => {
     const at = docs.indexOf(key);
     if (at < 0) return;
     docs.splice(at, 1);
     notAsked.push({ key, reason });
   };
+  if (ctx.termsOfEngagement) for (const key of ["authority", "trust_authority"] as KycDocKey[]) drop(key, termsAuthorityWords(ctx.termsOfEngagement));
+  if (ctx.publicBody && ctx.kind === "company") {
+    const reason = "A UK public body: simplified due diligence, with no beneficial owners to verify.";
+    return { docs, notAsked: [...notAsked, ...(["ownership", "owner_ids", "proof_of_address"] as KycDocKey[]).map(key => ({ key, reason }))], confirmOwners: null, ownerNames: [] };
+  }
   // A trust is on no register: its own documents are asked for, unless the
   // file holds them; its people each get a link of their own.
   if (ctx.trust && ctx.kind === "company") {
@@ -1210,11 +1214,13 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     if (ctx.trust.trs) drop("trs_excerpt", "HMRC's proof of registration is already on the trust's KYC record.");
     else if (ctx.trust.trsNotRequired) drop("trs_excerpt", "The trust's structure records that it does not need to register with HMRC.");
     if (ctx.contactName && ctx.trust.trustees.some(t => personNamesMatch(ctx.contactName!, t))) drop("trust_authority", `${ctx.contactName} is a trustee, as the trust's structure records.`);
+    notAsked.push({ key: "proof_of_address", reason: ACTING_NO_ADDRESS });
     return { docs, notAsked, confirmOwners: null, ownerNames: [] };
   }
-  // The person dealing with us for a company gives a proof of address only as
-  // one of its owners (Woody, 23 November 2026: "If they don't need it then
-  // let's not require it"): HMRC asks for their identity and authority.
+  // Nobody acting for a company sends a proof of address, an owner included
+  // (Woody, 25 November 2026: "mirror hmrc about proof of address"): HMRC asks
+  // the person acting for their identity and authority, the owners for their
+  // identity. Until then the person asked gave one as an owner.
   const noAddress = () => {
     if (ctx.kind === "company" && !docs.includes("proof_of_address")) notAsked.push({ key: "proof_of_address", reason: ACTING_NO_ADDRESS });
   };
@@ -1222,11 +1228,6 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   const today = ctx.today || new Date();
   let confirmOwners: PrecheckAsks["confirmOwners"] = null;
   let ownerNames: string[] = [];
-  // The person asked is one of the owners the register names: as an owner
-  // they give a proof of address, after the photo ID when that is asked.
-  const askAddressAsOwner = (names: string[]) => {
-    if (ctx.contactName && names.some(n => personNamesMatch(ctx.contactName!, n)) && !docs.includes("proof_of_address")) docs.splice(docs.indexOf("photo_id") + 1, 0, "proof_of_address");
-  };
 
   if (input.listing) {
     const where = LISTING_WORDS[input.listing.market];
@@ -1248,7 +1249,6 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     // The owners' IDs step is for the people behind the company abroad, so
     // it names nobody: a person the register names has a link of their own.
     confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
-    askAddressAsOwner([...input.owners.filter(o => o.kind === "individual").map(o => o.name), ...input.peopleUpChain.map(p => p.name)]);
   } else if (input.owners.length) {
     confirmOwners = input.owners.map(o => ({ name: o.name, detail: ownerControlLine(o) || "a person with significant control" }));
     const people = [
@@ -1257,14 +1257,13 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     ];
     ownerNames = [...new Set(people)];
     drop("ownership", `Companies House lists ${input.owners.length === 1 ? "its owner" : `its ${input.owners.length} owners`}: the client is asked to confirm the list instead.`);
-    // Each owner the register names does their own identity check and sends
-    // their own proof of address, on a link of their own (Woody, 19 November
-    // 2026: one upload step for every owner ticked itself on the first file).
-    // The person acting is one of the owners when their name is on the list.
+    // Each owner the register names does their own identity check, on a link
+    // of their own (Woody, 19 November 2026: one upload step for every owner
+    // ticked itself on the first file). The person acting is one of the
+    // owners when their name is on the list.
     const others = ownerNames.filter(n => !(ctx.contactName && personNamesMatch(ctx.contactName, n)));
-    askAddressAsOwner(ownerNames);
-    if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the transaction's AML card, or the client passes them on from their page.`);
-    else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check and proof of address cover it.");
+    if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the transaction's AML card, or the client passes them on from their page.`);
+    else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check covers it.");
   }
 
   if (isRegisterDirector(ctx.contactName, input.directors)) {

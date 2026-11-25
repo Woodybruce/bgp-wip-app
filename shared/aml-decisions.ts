@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Proof of address only where HMRC asks for it",
+    text: "A proof of address comes only from a customer who is a person: a private individual, someone buying or renting alongside them, or a person who signs or guarantees in their own name. A photocard driving licence showing their current address covers both. A company's owners, a trust's people and the person acting do an identity check only. Requests already sent stop asking them for one." },
+  { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Signed terms of engagement show the authority to act",
+    text: "Our terms of engagement, signed for the client and uploaded on the party, are the evidence that the person instructing us can act for it, as HMRC allows. The client checks then stop asking for a director's email or letter. The identity check is still asked. Terms with no signature read wait for an officer to accept them." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "The City of London Corporation is a public body, with no Companies House number",
     text: "The City of London Corporation (legally The Mayor and Commonalty and Citizens of the City of London) is a UK public body, as is a council under its corporate name. A Companies House number on a public body's record naming another company is a mistake: it is never offered, and recording the body as a public body takes it off." },
   { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Company that signs is now contracting entity",
@@ -140,7 +144,8 @@ export const AML_DECISIONS: AmlDecision[] = [
   { date: "2026-11-23", who: ["Woody"], topic: "Companies owned abroad", title: "A company abroad on the overseas register is read as listed",
     text: "When an overseas entity's only registered owners are companies abroad, such as TPG Inc., they are read as listed: the Register of Overseas Entities takes a company as an owner only when it has its own disclosure duties. No people behind them are asked for. The officers confirm the listing." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a company",
-    text: "The person dealing with us for any company does an identity check and shows their authority to act. They send a proof of address only if they are also one of its owners. HMRC asks only for their identity and authority. A trust's representative and a private individual are asked as before. Requests already sent keep the step." },
+    text: "The person dealing with us for any company does an identity check and shows their authority to act. They send a proof of address only if they are also one of its owners. HMRC asks only for their identity and authority. A trust's representative and a private individual are asked as before. Requests already sent keep the step.",
+    changed: "25 November 2026: no company's owners send one either (see Proof of address only where HMRC asks for it)." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a listed group",
     text: "The person dealing with us for a company listed on a regulated market, or a company owned through one, does an identity check and shows their authority to act. They are not asked for a proof of address: HMRC asks only for their identity and authority (MLR 2017 regulation 28(10)), and the policy asks for one only from the party or an owner.",
     changed: "23 November 2026: the same now applies to every company (see No proof of address from the person acting for a company)." },

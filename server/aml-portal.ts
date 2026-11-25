@@ -36,14 +36,14 @@ import {
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
 import { kycAsksOwners, kycDocWords } from "@shared/kyc-request";
-import { personKey, personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
+import { personKey, personRequestAsks, verifiedLicenceAddress, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
 import { clientFileName, clientFileRole, clientSubjectEntity, recordIsOwnSubject } from "@shared/client-kyc";
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords, kycCopyList, kycChecksRunningWords, KYC_CHECKS_UPDATED_WORDS, listMadeBeforeChecks } from "@shared/kyc-request";
+import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords, requestOwesProofOfAddress, docsStillAsked, kycCopyList, kycChecksRunningWords, KYC_CHECKS_UPDATED_WORDS, listMadeBeforeChecks } from "@shared/kyc-request";
 import { agentWords, jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 // AML emails come from BGP's own KYC mailbox (Woody, 2026-11-23: "the email
@@ -374,10 +374,10 @@ function veriffConfigured(): boolean {
   return !!(key && secret);
 }
 
-async function latestSession(request: KycRequestDetails): Promise<{ session_id: string; status: string | null; verification_url: string | null; verdict_person: unknown } | null> {
+async function latestSession(request: KycRequestDetails): Promise<{ session_id: string; status: string | null; verification_url: string | null; verdict_person: unknown; verdict_document?: unknown } | null> {
   const id = request.veriffSessionIds[request.veriffSessionIds.length - 1];
   if (!id) return null;
-  const r = await pool.query(`SELECT session_id, status, verification_url, verdict_person FROM veriff_sessions WHERE session_id = $1`, [id]);
+  const r = await pool.query(`SELECT session_id, status, verification_url, verdict_person, verdict_document FROM veriff_sessions WHERE session_id = $1`, [id]);
   return r.rows[0] || null;
 }
 
@@ -482,6 +482,14 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
   const idState = request.needsIdCheck ? kycIdStateFor(session?.status) : null;
   const idPerson = request.needsIdCheck && session ? idPersonOf(row, session) : null;
   const docsDone = request.docs.filter(key => list.some(f => f.docKey === key));
+  // Our signed terms of engagement filed on the party show the authority to
+  // act, for a request sent before they were (25 November 2026).
+  const authorityOpen = (["authority", "trust_authority"] as KycDocKey[]).filter(k => request.docs.includes(k) && !docsDone.includes(k));
+  if (authorityOpen.length && row.company_id && !isJointRequest(request)
+    && await import("./kyc-documents").then(m => m.termsOfEngagementFor(row.company_id!, row.trading_entity_id || null)).catch(() => null)) docsDone.push(...authorityOpen);
+  // A proof of address asked before 25 November 2026 of someone HMRC asks only
+  // for their identity: no longer asked, so nothing waits on it.
+  for (const key of request.docs) if (!docsStillAsked(request).includes(key) && !docsDone.includes(key)) docsDone.push(key);
   const pepAnswered = !request.askPep || !!request.answers?.pep;
   const ownersAnswered = !request.confirmOwners?.length || !!request.ownersAnswer;
   // Someone else's identity check is not the client's.
@@ -491,6 +499,10 @@ async function progressOf(row: TokenRow, files?: UploadedFile[]): Promise<KycPro
     && await import("./kyc-people").then(async m => (await m.publicFiguresFor(row.company_id!, row.trading_entity_id || null)).some(f => personNamesMatch(f.name, row.contact_name!))).catch(() => false);
   if (accepted) for (const k of ["photo_id", "proof_of_address"] as KycDocKey[]) if (request.docs.includes(k) && !docsDone.includes(k)) docsDone.push(k);
   const idDone = accepted || ((idState === "approved" || idState === "submitted") && idPerson?.isThePerson !== false);
+  // A UK photocard driving licence the passed check read, with its address, is
+  // the proof of address too (HMRC AMLG11400 14.2; 25 November 2026).
+  if (idState === "approved" && idPerson?.isThePerson !== false && request.docs.includes("proof_of_address") && !docsDone.includes("proof_of_address")
+    && verifiedLicenceAddress(session?.verdict_document, session?.verdict_person)) docsDone.push("proof_of_address");
   const toLink = await ownersToLink(row).catch(() => request.ownLinksFor || []);
   const ownersLinked = !toLink.length
     || await linkedPeople(row).then(keys => toLink.every(o => keys.has(o.key))).catch(() => false);
@@ -579,7 +591,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     idCheck,
     question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
     owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
-    docs: request.docs.map(key => ({
+    docs: docsStillAsked(request).map(key => ({
       ...kycDocWords(key, { ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, publicBody: !!request.work?.publicBody, partyName: request.partyName }), key,
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
@@ -600,6 +612,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     // Certified copies in place of the online check, on every request but the joint agent's (23 November 2026).
     ...(isJointRequest(request) ? {} : {
       certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose, work: request.work || null }),
+      certifiedListB: requestOwesProofOfAddress({ kind: request.kind, person: request.person, purpose: request.purpose }),
       optionalDocs: TRUST_OPTIONAL_DOCS.filter(k => !request.docs.includes(k)).map(key => ({
         key, title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail,
         files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -835,7 +848,9 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     throw Object.assign(new Error(KYC_CHECKS_UPDATED_WORDS), { status: 409, code: "CHECKS_UPDATED" });
   }
   const trustAsk = party.trust && input.kind === "company" ? await import("./trust-structure").then(m => m.trustAskFor(party.companyId)).catch(() => null) : null;
-  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party.publicBody && input.kind === "company" });
+  // Our signed terms of engagement on the party's record show the authority to act (25 November 2026).
+  const terms = await import("./kyc-documents").then(m => m.termsOfEngagementFor(party.companyId, party.entityId)).catch(() => null);
+  const asks = precheckAsks(pre?.input || null, { kind: input.kind, role: party.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party.publicBody && input.kind === "company", termsOfEngagement: terms?.summary || null });
   const confirmOwners = !trustDocs && input.kind === "company" && !docs.includes("ownership") && asks.confirmOwners?.length ? asks.confirmOwners : null;
   // The owners other than the person asked, who each get a link of their own
   // (19 November 2026): the person asked can pass them on from their page.
@@ -1147,7 +1162,7 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
       ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
       // The old single step for every owner's ID: files there do not say
       // whose they are (Woody, 19 November 2026), so it is never ticked here.
-      docs: request.docs.map(key => {
+      docs: docsStillAsked(request).map(key => {
         const names = request.ownerNames || [];
         if (key !== "owner_ids" || !names.length) return { key, title: KYC_DOCS[key].title, done: progress.docsDone.includes(key), note: null as string | null };
         const count = progress.files.filter(f => f.docKey === "owner_ids").length;
@@ -1180,7 +1195,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
   await primeAmlContact();
   const common = {
     partyName: request.partyName, kind: request.kind, dealName: request.dealName,
-    ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs,
+    ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request),
     agents: amlContact(request.agents), progress, test: !!row.is_test, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
     person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
@@ -1641,10 +1656,12 @@ kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:compa
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;
         const trustAsk = p.trust ? await import("./trust-structure").then(m => m.trustAskFor(p.companyId)).catch(() => null) : null;
-        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody });
+        const terms = await import("./kyc-documents").then(m => m.termsOfEngagementFor(p.companyId, p.entityId)).catch(() => null);
+        const termsOfEngagement = terms?.summary || null;
+        const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody, termsOfEngagement });
         // While BGP's checks are reading the register, the send window waits (24 November 2026).
         const precheckRunning = !!(await import("./kyc-prechecks").then(m => m.precheckRunning(p.companyId, p.entityId)).catch(() => null));
-        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, precheckRunning, trustAsk, work: workFor(found, p) };
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, precheckRunning, trustAsk, termsOfEngagement, work: workFor(found, p) };
       })),
       requests: await clientChecksForDeal(dealId, scope.client || undefined),
       people,
@@ -2049,7 +2066,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/pass-on", async (req: Request, res
       to: [email], cc: [cleanEmail(row.contact_email), ...request.cc], test: !!row.is_test,
       build: sentFrom => kycRequestEmail({
         recipientName: name, partyName: request.partyName, kind: request.kind, dealName: request.dealName, ref: request.ref, link,
-        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
+        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request), note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
         askPep: !!request.askPep, confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad,
         ownLinksFor: (request.ownLinksFor || []).map(o => o.name), passedOnBy: { name: via.name, firm: via.firm },
       }),
