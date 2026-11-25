@@ -23,6 +23,7 @@ import {
   KYC_CHECKS_UPDATED_WORDS, KYC_DOCS, KYC_LETTING_SCOPE, KYC_LOGO_CID, KYC_PEP_QUESTION, KYC_TIMING, kycOwnersWords, kycPepWords, kycRequestEmail, kycViaAgentRequestEmail, kycWhatsAppHref, kycWhatsAppText,
   type KycDocKey, type KycIdState, type KycOwnersAnswer, type KycPartyKind, type KycPepAnswer,
 } from "@shared/kyc-request";
+import type { KycWork } from "@shared/kyc-work-words";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
 import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
 import type { PublicRecordsResult, PublicRecordsSuggestion } from "@shared/public-records";
@@ -40,6 +41,8 @@ interface Party {
   // A trust (23 November 2026): its documents held and its trustees recorded.
   publicBody?: boolean;
   trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
+  // What the email says about the work: our client or the other side (25 November 2026).
+  work?: KycWork | null;
 }
 export interface ClientCheckRequest {
   token: string; ref: string; companyId: string | null; partyName: string; role: string | null;
@@ -1064,6 +1067,8 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
       needsIdCheck: wantId, docs: chosenDocs,
       note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
       confirmOwners, ownerNames: chosenDocs.includes("owner_ids") ? asks?.ownerNames || [] : [],
+      // Our client or the other side, as the email will say it (25 November 2026).
+      work: party.work || null,
     };
     const { html } = via
       ? kycViaAgentRequestEmail({ ...common, recipientName: toAgentName || "Sam Agent", agentFirm: agentFirm.trim() || "the agent", partyRole: party.role, clientRole: data?.clientRole || null, clientName: data?.clientName || null, personName: toName || null })

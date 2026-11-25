@@ -607,6 +607,25 @@ test("web results: one flag per person and kind with every source, and a company
   assert.match(web[1].label, /^Possibly owned or controlled by the state or a politically exposed person: Acme Holdings Limited$/, "an older line is read from the name");
 });
 
+test("a UK public body is the state: its own state-ownership finding is no red flag, adverse media still is (25 November 2026)", () => {
+  const f = (kind: "public_role" | "adverse_media", summary: string, url: string) => ({ kind, summary, url, source: "Site", date: null, category: null, unsureIdentity: false });
+  const run = result({
+    web: { ran: true, skipped: null, lines: [
+      { name: "Wirral Metropolitan Borough Council (as administering authority for Merseyside Pension Fund)", role: "the company", person: false, ran: true,
+        publicRole: "possible", adverseMedia: "possible", unsourced: 0,
+        findings: [f("public_role", "A local authority, part of the state", "https://a.example/1"), f("adverse_media", "Fined for fraud", "https://b.example/2")] },
+      { name: "Jane Officer", role: "named alongside", person: true, ran: true, publicRole: "possible", adverseMedia: "none_found", unsourced: 0,
+        findings: [f("public_role", "A serving minister", "https://c.example/3")] },
+    ] },
+  });
+  const asBody = precheckRedFlags(run, { sanctionsCurrent: true, publicBody: true });
+  assert.ok(!asBody.some(x => /Possibly owned or controlled by the state/.test(x.label)), "the body itself");
+  assert.ok(asBody.some(x => x.kind === "web_adverse"), "adverse media about the body still counts");
+  assert.ok(asBody.some(x => x.label === "Possible public role for Jane Officer"), "a person's public role still counts");
+  // Not recorded as a public body: as before.
+  assert.ok(precheckRedFlags(run, { sanctionsCurrent: true }).some(x => /Possibly owned or controlled by the state/.test(x.label)));
+});
+
 // Owners behind a company registered abroad (Woody, 20 November 2026, on
 // Tureddi Group Limited, owned 75%+ by a Monaco société civile: "the app hasn't
 // flagged this as an issue but the holding company for this business is in

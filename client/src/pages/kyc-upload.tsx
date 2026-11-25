@@ -850,7 +850,7 @@ export default function KycUploadPage() {
       ) : null}
 
       <p className="text-base">Hello{firstName(view.recipientName) && !view.viaAgent ? ` ${firstName(view.recipientName)}` : ""},</p>
-      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.trustDocs ? <>Documents about {view.partyName}</> : view.viaAgent ? <>Identity checks on {view.partyName}</> : <>Your identity checks for {view.dealName}</>}</h1>
+      <h1 className="mt-2 text-2xl font-bold leading-tight text-[#6E0C25] dark:text-[#e8a3b3]">{view.trustDocs ? <>Documents about {view.partyName}</> : view.viaAgent ? <>Identity checks on {view.partyName}</> : <>Your identity checks for {view.work?.place || view.dealName}</>}</h1>
       {view.trustDocs ? (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-trust-intro">
           <strong className="text-foreground">{view.partyName}</strong> is a party to {view.dealName}. Before it can go ahead, the law requires us to know who stands behind the trust: who set it up, who the trustees are and who benefits. Upload each document below.
@@ -862,6 +862,17 @@ export default function KycUploadPage() {
             : <>You are {view.person.words}. The law requires us to confirm your identity.</>}
           {" "}It takes about five minutes.
         </p>
+      ) : view.workOpening?.length ? (
+        // Our client or the other side, in the email's own words (25 November 2026).
+        <div className="mt-3 space-y-2 text-sm leading-relaxed text-muted-foreground" data-testid="kyc-work-intro">
+          {view.workOpening.map((para, i) => (
+            <p key={i}>
+              {para.map((part, j) => part.strong ? <strong key={j} className="text-foreground">{part.text}</strong> : <span key={j}>{part.text}</span>)}
+              {i === 0 ? " It takes about ten minutes." : null}
+              {i === 0 && view.kind === "company" && !view.work?.publicBody ? " We read the company's Companies House record ourselves." : null}
+            </p>
+          ))}
+        </div>
       ) : (
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           Before the transaction can go ahead, the law requires us to confirm who we're dealing with
@@ -968,7 +979,7 @@ export default function KycUploadPage() {
 
         {view.question && (() => {
           step++;
-          return <QuestionCard n={step} kind={view.kind} answer={view.question.pep} detail={view.question.pepDetail} onSave={saveAnswer} />;
+          return <QuestionCard n={step} kind={view.work?.publicBody ? "individual" : view.kind} answer={view.question.pep} detail={view.question.pepDetail} onSave={saveAnswer} />;
         })()}
 
         {view.otherFiles.length > 0 && (

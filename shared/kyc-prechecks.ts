@@ -1671,7 +1671,10 @@ const DISTRESS = /liquidation|receivership|administration|insolvency|voluntary-a
 
 // sanctionsCurrent: this pre-check is the party's latest screening, so its
 // sanctions lines stand (a later screening replaces them).
-export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCurrent: boolean }): KycRedFlag[] {
+// publicBody: the party is recorded as a UK public body (25 November 2026, Wirral
+// Metropolitan Borough Council for Merseyside Pension Fund): it IS the state,
+// so the web search finding it owned or controlled by the state is no red flag.
+export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCurrent: boolean; publicBody?: boolean }): KycRedFlag[] {
   const flags: KycRedFlag[] = [];
   const at = result.ranAt || null;
   const source = "BGP's checks before asking";
@@ -1726,6 +1729,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   }
   for (const line of result.web.lines) {
     for (const kind of ["public_role", "adverse_media"] as const) {
+      if (opts.publicBody && kind === "public_role" && webLineIsCompany(line)) continue;
       const sure = webFindingsOf(line).filter(f => f.kind === kind && !webFindingUnsure(line, f));
       if (!sure.length) continue;
       // For a company the search asks whether the state or a politically exposed person owns or controls it.

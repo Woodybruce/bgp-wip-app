@@ -39,6 +39,11 @@ export interface AmlDecision {
 }
 
 export const AML_DECISIONS: AmlDecision[] = [
+  // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Our client is checked once; the other side is told the transaction",
+    text: "A request to our own client says: by law, before we can act for you as estate agents, we have to confirm who we are dealing with, names the property and town, and says we only ask once (it covers our future work until our next review). A request to the other side spells out the transaction, who we act for, and that both sides are checked." },
+  { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "A UK public body is not a red flag for being the state",
+    text: "For a party recorded as a UK public body, such as a council, the web search finding it owned or controlled by the state is not a red flag: it is the state, and stays on simplified due diligence. Adverse media about it, and a person's public role, still count. Its emails never mention owners or directors." },
   // 24 November 2026
   { date: "2026-11-24", who: ["Woody"], topic: "ID and documents", title: "Anyone on the transaction can send a proof of address",
     text: "A proof of address can be sent by anyone with a link on the transaction, such as the person acting for an owner. The law asks that it is genuine, recent, an accepted kind and in the person's own name, not who hands it over. It is read and counts for the person it names. Each person still does their own identity check." },

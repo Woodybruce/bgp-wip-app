@@ -34,6 +34,8 @@ import {
   type KycAgent, type KycAnswers, type KycDocKey, type KycIdState, type KycOwnersReply, type KycPartyKind, type KycPortalView, type KycProgress, type KycRequestPerson,
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
+import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
+import { kycAsksOwners, kycDocWords } from "@shared/kyc-request";
 import { personKey, personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
@@ -129,6 +131,9 @@ export interface KycRequestDetails {
   // Structure"): no identity check or question, and when the documents are in
   // the agents and the officers hear it is ready for due diligence.
   purpose?: "trust_structure" | null;
+  // What the request says about the work: our client or the other side, the
+  // place and the transaction spelt out (Woody, 25 November 2026).
+  work?: KycWork | null;
   // Sent through the party's own agent to pass on to their client (Woody,
   // 23 November 2026: "with the agent acting for the tenant or against us we
   // need them to pass on the standard KYC requests for their clients to
@@ -559,12 +564,17 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     partyName: request.partyName,
     kind: request.kind,
     dealName: request.dealName,
+    // Our client or the other side, in the request's own words (25 November 2026).
+    work: request.work || null,
+    workOpening: request.work && !request.person && !isJointRequest(request)
+      ? kycWorkOpening(request.work, { name: request.partyName, kind: request.kind }, kycAsksOwners({ docs: request.docs, confirmOwners: request.confirmOwners, ownLinksFor: (request.ownLinksFor || []).map(o => o.name) }))
+      : null,
     expiresAt: new Date(row.expires_at).toISOString(),
     idCheck,
     question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
     owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
     docs: request.docs.map(key => ({
-      key, title: KYC_DOCS[key].title, detail: kycDocDetail(key, request.ownerNames, request.ownersAbroad),
+      ...kycDocWords(key, { ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, publicBody: !!request.work?.publicBody, partyName: request.partyName }), key,
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
     })),
     otherFiles: progress.files.filter(f => !f.docKey || !(requested.has(f.docKey) || (!isJointRequest(request) && TRUST_OPTIONAL_DOCS.includes(f.docKey)))).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -583,7 +593,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     ...(isTrustDocsRequest(request) ? { trustDocs: true } : {}),
     // Certified copies in place of the online check, on every request but the joint agent's (23 November 2026).
     ...(isJointRequest(request) ? {} : {
-      certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose }),
+      certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose, work: request.work || null }),
       optionalDocs: TRUST_OPTIONAL_DOCS.filter(k => !request.docs.includes(k)).map(key => ({
         key, title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail,
         files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -634,9 +644,14 @@ const PARTY_COLUMNS: Array<{ role: string; company: string; contact: string; ent
 async function dealParties(dealId: string) {
   const d = (await pool.query(
     `SELECT id, name, client_contact_id, landlord_id, landlord_contact_id, tenant_id, tenant_contact_id, vendor_id, vendor_contact_id, purchaser_id, purchaser_contact_id,
-            landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id, deal_type, bgp_acting_for, team
+            landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id, deal_type, bgp_acting_for, team,
+            property_id, unit_id
        FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
   if (!d) return null;
+  // The property, its town and the unit: the request spells the transaction out (25 November 2026).
+  const property = d.property_id ? (await pool.query(`SELECT name, address FROM crm_properties WHERE id = $1`, [d.property_id]).catch(() => ({ rows: [] as any[] }))).rows[0] || null : null;
+  const unit = d.unit_id ? (await pool.query(`SELECT unit_name FROM property_units WHERE id = $1`, [d.unit_id]).catch(() => ({ rows: [] as any[] }))).rows[0] || null : null;
+  const addressText = (a: any): string | null => !a ? null : typeof a === "string" ? a : String(a.formatted || a.line1 || a.address || a.text || "") || null;
   const parties: Array<{ companyId: string; name: string; brandName: string; role: string; kind: KycPartyKind; contactId: string | null;
     entityId: string | null; entityNumber: string | null; personField: string;
     // Recorded as a trust or foundation: checked on its own record, so no company that signs is needed (21 November 2026).
@@ -672,7 +687,26 @@ async function dealParties(dealId: string) {
     });
   }
   const clientRole = dealClientRole({ dealType: d.deal_type, bgpActingFor: d.bgp_acting_for, team: d.team });
-  return { deal: { id: d.id as string, name: d.name as string, clientRole, clientName: parties.find(x => x.role === clientRole)?.name || null }, parties };
+  return {
+    deal: {
+      id: d.id as string, name: d.name as string, clientRole, clientName: parties.find(x => x.role === clientRole)?.name || null,
+      dealType: (d.deal_type as string | null) || null, propertyName: (property?.name as string | null) || null,
+      propertyAddress: addressText(property?.address), unitName: (unit?.unit_name as string | null) || null,
+    },
+    parties,
+  };
+}
+
+// What a request to one party says about the work (25 November 2026).
+function workFor(found: { deal: { id: string | null; name: string; clientRole: string | null; clientName: string | null; dealType?: string | null; propertyName?: string | null; propertyAddress?: string | null; unitName?: string | null };
+  parties: Array<{ role: string; name: string; brandName?: string; publicBody?: boolean }> }, party: { role: string; publicBody?: boolean }): KycWork {
+  const named = (role: string) => { const x = found.parties.find(q => q.role === role); return x ? x.brandName || x.name : null; };
+  return kycWorkFor({
+    dealType: found.deal.dealType || null, unitName: found.deal.unitName || null, propertyName: found.deal.propertyName || null, propertyAddress: found.deal.propertyAddress || null,
+    parties: { landlord: named("landlord"), tenant: named("tenant"), vendor: named("vendor"), purchaser: named("purchaser") },
+    clientRole: found.deal.clientRole, clientName: found.deal.clientName, partyRole: party.role, dealName: found.deal.name,
+    clientFile: !found.deal.id, publicBody: !!party.publicBody,
+  });
 }
 
 // dealId null: a client file, BGP's client checked with no transaction (Woody,
@@ -830,6 +864,7 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     notAsked: trustDocs ? [] : asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
     ownLinksFor, ...(trustDocs ? { purpose: "trust_structure" as const } : {}),
     ...(viaAgent ? { viaAgent } : {}),
+    work: workFor(found, party),
   };
   // Someone typed rather than picked is saved to the CRM under the brand
   // (Woody, 2026-11-18: "need the ability to add in all the info"), and
@@ -882,7 +917,7 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
     needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(agentList), askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: ownLinksFor.map(o => o.name),
-    purpose: request.purpose || null,
+    purpose: request.purpose || null, work: request.work || null,
   };
   const sent = await sendKycEmail({
     to: [email], cc,
@@ -1141,6 +1176,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
     agents: amlContact(request.agents), progress, test: !!row.is_test, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
     person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
+    work: request.work || null,
   };
   const sent = await sendKycEmail({
     to: [passed ? passed.email : row.contact_email || ""],
@@ -1594,7 +1630,7 @@ kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:compa
         const asks = precheckAsks(pre?.input || null, { kind: p.kind, role: p.role, idCheck: veriff && !p.publicBody, contactName: contact?.name || null, trust: trustAsk, publicBody: !!p.publicBody });
         // While BGP's checks are reading the register, the send window waits (24 November 2026).
         const precheckRunning = !!(await import("./kyc-prechecks").then(m => m.precheckRunning(p.companyId, p.entityId)).catch(() => null));
-        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, precheckRunning, trustAsk };
+        return { ...p, defaultDocs: asks.docs, askInput: pre?.input || null, precheckRanAt: pre?.ranAt || null, precheckRunning, trustAsk, work: workFor(found, p) };
       })),
       requests: await clientChecksForDeal(dealId, scope.client || undefined),
       people,

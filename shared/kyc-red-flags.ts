@@ -347,7 +347,10 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
     flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null,
       key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history });
   }
-  if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
+  if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, {
+    sanctionsCurrent: facts.precheck.current,
+    publicBody: String(facts.company?.aml_subject_type || "").trim().toLowerCase() === "public_body",
+  }));
   flags.push(...policyFactorFlags({ precheck: facts.precheck?.result || null, companyType: facts.company?.company_type, subjectType: facts.company?.aml_subject_type }));
   return flags;
 }

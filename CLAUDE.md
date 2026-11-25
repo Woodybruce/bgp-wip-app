@@ -7128,6 +7128,45 @@ person who typed that message so fix that bug". Do not re-litigate.
 - Tests in `server/kyc-request.test.ts`, guards in
   `qa/regression/kyc-client-checks.test.mjs`.
 
+## What a client checks request says: our client, the other side (Woody, 2026-11-25)
+
+Woody, on the request to Jack Sullivan (CBRE) for Wirral Metropolitan Borough
+Council on Tunsgate Quarter: "wording here for clients is a bit weird",
+"By law to act on your behalf in an estate agency capacity we need to", then
+"the our client one is good. we should add the town Tunsgate Quarter,
+Guildford", and of the other side "Before it can go ahead ... we need to spell
+out the transaction". Do not re-litigate. Rules: `shared/kyc-work-words.ts`
+(`kycWorkFor`, `kycPlace`, `kycWorkOpening`, `kycWorkReminder`); tests
+`server/kyc-work-words.test.ts` (in `npm test`).
+
+- **Kept on the request** (`request.work`, made in `createClientCheck` by
+  `workFor` from the transaction's type, property, town and unit, read by
+  `dealParties`): whether we act for the party (`client`: its role is the
+  transaction's client role, or a client file), the place ("Tunsgate Quarter,
+  Guildford": the property and the town from its address, `townFromAddress`),
+  the transaction spelt out ("the letting of 98-100 High Street, Tunsgate
+  Quarter, Guildford, to Rodd & Gunn"; a sale "to", a purchase "from", a lease
+  renewal "with") and its one word ("letting", "sale" ...). The email, the
+  reminders, the client's page and the send window's preview all read it; a
+  request made before has none and keeps the old wording.
+- **Our client**: "By law, before we can act for you as estate agents, we have
+  to confirm who we are dealing with. We act for <party> on <place>, so we need
+  a few things from you." and "We only ask once: it then covers our future work
+  for <party>, until our next review." (a sign-off counts on every transaction
+  until its re-check date).
+- **The other side**: "We act for <client>, the <role>, on <the transaction>.
+  Before the <letting> can go ahead, the law requires us to confirm who is on
+  each side. That's you, for <party>, and the people who own or control it"
+  (the owners only when the request asks about them). The email to the other
+  side's agent says the same.
+- **The title and subject** name the place ("Identity checks for Tunsgate
+  Quarter, Guildford"), not the transaction's internal name.
+- **A UK public body** (`work.publicBody`): no owners or directors anywhere.
+  The authority step is "Confirmation you can act for the council" (or "the
+  organisation"): an email or letter from someone authorised at it
+  (`kycDocWords`); the public roles question and the certified copies are about
+  the person only; no "Companies House record" line.
+
 ## Only a sign-off counts (Woody, 2026-11-24)
 
 Woody, once the old screening's flag on Coq d'Argent #3492 was explained:
@@ -10784,6 +10823,14 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   named The Crown Estate: the suggestion, recording it, the draft, saving
   it). Not run on live: #3965's landlord still has to be recorded as a
   public body by a person.
+- **Not a red flag for being the state** (Woody, 25 November 2026, on Wirral
+  Metropolitan Borough Council for Merseyside Pension Fund, which showed
+  Enhanced): for a party recorded as a UK public body, the web search's "Possibly
+  owned or controlled by the state" finding on the body itself is not a red flag
+  (`precheckRedFlags(..., { publicBody })`, passed by `partyRedFlags` from
+  `aml_subject_type`), so it stays on simplified due diligence. Adverse media
+  about it, and a person's public role, still count. Read on stored checks, so
+  no re-run is needed. Test in `server/kyc-prechecks.test.ts`.
 
 ## The sign-off note for a listed company (Woody, 2026-11-24)
 
