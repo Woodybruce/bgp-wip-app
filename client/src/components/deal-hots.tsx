@@ -8,6 +8,7 @@
 // (server/deal-hots.ts) refuses anyone else. The rules are shared/deal-hots.ts.
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { looksOverseasName } from "@shared/kyc-prechecks";
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Plus, Search, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -198,7 +199,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
   // click choose company and it went back to previous board nothing saved"):
   // the company found at Companies House, or the person named, is saved under
   // the party and becomes the one who signs.
-  const [finding, setFinding] = useState<{ role: DealPartyRole; mode: "company" | "person"; name: string; brand: { id: string; name: string } } | null>(null);
+  const [finding, setFinding] = useState<{ role: DealPartyRole; mode: "company" | "person" | "abroad"; name: string; brand: { id: string; name: string } } | null>(null);
   const [filed, setFiled] = useState(false);
   const reading = reply.reading;
   const parties: HotsParty[] = reply.parties.map(p => p.read);
@@ -507,9 +508,10 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
           open
           onOpenChange={v => { if (!v) setFinding(null); }}
           brand={finding.brand}
-          initialQuery={finding.mode === "company" ? finding.name : ""}
+          initialQuery={finding.mode !== "person" ? finding.name : ""}
           initialPersonName={finding.mode === "person" ? finding.name : ""}
           startAsPerson={finding.mode === "person"}
+          startAs={finding.mode}
           xero={false}
           onCreated={(_contact, company) => { if (company) signsFound(finding.role, company); else setFinding(null); }}
           onSavedWithoutXero={company => signsFound(finding.role, company)}
@@ -582,7 +584,7 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
   onAdd: (role: DealPartyRole, brandId: string, number: string, name: string) => void;
   onSetParty: (role: DealPartyRole, brandId: string, brandName: string, entityId: string | null) => void;
   onAddParty: (role: DealPartyRole, name: string) => void;
-  onFind: (role: DealPartyRole, mode: "company" | "person", name: string) => void;
+  onFind: (role: DealPartyRole, mode: "company" | "person" | "abroad", name: string) => void;
   chooseWords: string;
   onChoose: (role: DealPartyRole) => void;
 }) {
@@ -662,6 +664,13 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
               {person && (
                 <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onFind(role, "person", person)} data-testid={`deal-hots-person-${role}`}>
                   <UserRound className="mr-1 h-3.5 w-3.5" />{person} signs personally
+                </Button>
+              )}
+              {/* A company abroad is not on Companies House (Woody, 25 November 2026:
+                  "google LLC i cant find on the app why not": an American company). */}
+              {!person && looksOverseasName(read.name) && (
+                <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onFind(role, "abroad", read.name)} data-testid={`deal-hots-abroad-${role}`}>
+                  <Plus className="mr-1 h-3.5 w-3.5" />{read.name} is registered abroad
                 </Button>
               )}
               <Button type="button" size="sm" variant="outline" className={quiet} disabled={busy}

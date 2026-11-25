@@ -331,7 +331,9 @@ async function lookUpRegister(read: HotsParty, lookups: RegisterLookups | null):
         : `${read.number} is its number where it is registered abroad. Companies House has no live company called ${read.name}, on the Register of Overseas Entities or otherwise.`)
       : hits.length
         ? (other ? "Found by its name instead." : read.number ? `Companies House has no company numbered ${read.number}; found by its name instead.` : null)
-        : `Companies House has no live company called ${read.name}.`;
+        : looksOverseasName(read.name)
+          ? `Companies House has no live company called ${read.name}: its name reads as a company registered abroad, which Companies House does not hold unless it owns UK property or has a UK branch.`
+          : `Companies House has no live company called ${read.name}.`;
     return { register: hits, note, numberIsAnother: other, byName: hits.length > 0 };
   } catch (e) {
     return { register: [], note: registerProblem(e), numberIsAnother: null };
