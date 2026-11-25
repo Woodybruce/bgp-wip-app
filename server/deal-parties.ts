@@ -30,7 +30,7 @@
 // filled, nothing is overwritten. Every change is a line in deal_audit_log.
 
 import { Router, type Request, type Response } from "express";
-import { PUBLIC_BODY_SUBJECT, isPublicBodyRecord, knownPublicBody, publicBodyMarkInName } from "@shared/aml-sdd";
+import { PUBLIC_BODY_SUBJECT, filedFromWrongLink, isPublicBodyRecord, knownPublicBody, publicBodyMarkInName, wrongCompaniesHouseLink } from "@shared/aml-sdd";
 import {
   ASK_RELATION_WORDS, DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, askIsAgent, isAskRelation, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
   privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, registeredOwnerAmong, sameCompaniesHouseNumber, signerKindOf,
@@ -240,7 +240,12 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
       : signerPerson ? { ...personOf(signerPerson), from: "signer" as const } : null;
     // A person who signs is checked as a private individual (20 November 2026).
     const kind = partySubjectKind(brandRow.aml_subject_type, company);
-    const brandNumber = text(brandRow.companies_house_number);
+    // A public body's record holding another company's Companies House number
+    // (ALAXIA LIMITED on the City of London Corporation, 25 November 2026): the
+    // number is a mistake, so neither it nor the company filed from it is offered.
+    const wrongLink = wrongCompaniesHouseLink(brandRow.name, { number: brandRow.companies_house_number, name: brandRow.legal_name });
+    const offerable = wrongLink ? filed.filter(c => !filedFromWrongLink(c, wrongLink)) : filed;
+    const brandNumber = wrongLink ? "" : text(brandRow.companies_house_number);
     const registered = (role === "landlord" || role === "vendor") && kind === "company" && !company ? landRegistry : null;
     const brandOwn = kind === "company" && !company && brandNumber && !filed.some(c => sameCompaniesHouseNumber(c.companiesHouseNumber, brandNumber))
       ? { name: text(brandRow.legal_name) || text(brandRow.name), number: brandNumber, ...(registered?.number && sameCompaniesHouseNumber(registered.number, brandNumber) ? { registeredOwner: true } : {}) } : null;
@@ -252,16 +257,17 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
         recordIndividual: String(brandRow.aml_subject_type || "").toLowerCase() === "individual", privateMark: privateMarkInName(brandRow.name),
         recordTrust: isTrustRecord(brandRow.aml_subject_type),
         recordPublicBody: isPublicBodyRecord(brandRow.aml_subject_type),
-        publicBodyHint: !text(brandRow.companies_house_number) && !company && publicBodyMarkInName(brandRow.name),
+        publicBodyHint: !brandNumber && !company && publicBodyMarkInName(brandRow.name),
         publicBodyKnown: knownPublicBody(brandRow.name)?.legalName || null,
+        wrongCompaniesHouse: wrongLink,
         trustHint: trustMarkInName(brandRow.name) || trustMarkInName(company?.name) || foundationHintFor(brandRow, company?.name) || charityHintFor(brandRow, company),
         foundationHint: foundationHintFor(brandRow, company?.name),
         charityHint: charityHintFor(brandRow, company) },
       company,
-      offer: company ? null : companyOffer(filed, role === "tenant" ? lease : null, registered),
+      offer: company ? null : companyOffer(offerable, role === "tenant" ? lease : null, registered),
       brandOwn,
       titleOwner,
-      companies: filed,
+      companies: offerable,
       xero: text(deal[col.xeroId]) ? { contactId: String(deal[col.xeroId]), name: text(deal[col.xeroName]) || null } : null,
       person,
       people: people.rows.filter((p: any) => p.company_id === brandRow.id).map(personOf),
@@ -552,6 +558,35 @@ router.put("/api/deals/:id/parties/:role/trust", async (req: Request, res: Respo
 // a red flag makes it enhanced. A record with a Companies House number is a
 // company, never the body itself, and is refused. The record is shared, so
 // every transaction with it follows.
+// The companies filed under a public body's record from a wrong Companies House
+// link (the startup copy of the stored name): each is taken off with the link,
+// unless something ties it to a transaction, a lease, a bill, a sign-off or a
+// request sent to someone; then it stays, no longer the main company. Checks
+// BGP's own lookups ran on it stay on the record.
+async function wrongLinkPlan(db: Db, brandId: string, link: { number: string; name: string }) {
+  const filed = (await db.query(`SELECT id, name, companies_house_number FROM crm_trading_entities WHERE parent_company_id = $1`, [brandId])).rows
+    .filter((c: any) => filedFromWrongLink({ name: c.name, companiesHouseNumber: c.companies_house_number }, link));
+  const count = (sql: string, id: string) => db.query(sql, [id]).then((r: any) => Number(r.rows[0]?.n) || 0,
+    (e: any) => { if (e?.code === "42P01" || e?.code === "42703") return 0; throw e; });
+  const remove: Array<{ id: string; name: string }> = [];
+  const keep: Array<{ id: string; name: string; why: string }> = [];
+  for (const c of filed) {
+    const id = String(c.id), name = text(c.name);
+    const ties: Array<[string, string]> = [
+      [`SELECT COUNT(*)::int AS n FROM crm_deals WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1 OR invoice_payer_entity_id = $1`, "a transaction names it"],
+      [`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL`, "it guarantees or signs a transaction"],
+      [`SELECT COUNT(*)::int AS n FROM tenancy_schedule_units WHERE tenant_entity_id = $1`, "it is on a lease on a tenancy schedule"],
+      [`SELECT COUNT(*)::int AS n FROM crm_properties WHERE billing_entity_id = $1`, "a property bills it"],
+      [`SELECT COUNT(*)::int AS n FROM crm_entity_kyc WHERE entity_id = $1`, "it has a KYC sign-off"],
+      [`SELECT COUNT(*)::int AS n FROM kyc_upload_tokens WHERE trading_entity_id = $1`, "checks were sent to someone about it"],
+    ];
+    let why = "";
+    for (const [sql, words] of ties) { if (await count(sql, id) > 0) { why = words; break; } }
+    if (why) keep.push({ id, name, why }); else remove.push({ id, name });
+  }
+  return { remove, keep };
+}
+
 router.put("/api/deals/:id/parties/:role/public-body", async (req: Request, res: Response) => {
   try {
     const me = await staffMe(req);
@@ -565,25 +600,63 @@ router.put("/api/deals/:id/parties/:role/public-body", async (req: Request, res:
     if (!deal) return res.status(404).json({ message: "Transaction not found" });
     const brandId = text(deal[DEAL_PARTY_COLUMNS[role].brand]);
     if (!brandId) return res.status(400).json({ message: `Set the ${role} on the transaction first.` });
-    const brand = (await pool.query(`SELECT id, name, aml_subject_type, companies_house_number FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
+    const brand = (await pool.query(`SELECT id, name, aml_subject_type, companies_house_number,
+        COALESCE(NULLIF(companies_house_data->'profile'->>'companyName', ''), NULLIF(companies_house_data->>'company_name', ''), NULLIF(uk_entity_name, '')) AS legal_name
+      FROM crm_companies WHERE id = $1`, [brandId])).rows[0];
     if (!brand) return res.status(404).json({ message: "Party not found" });
     const before = text(brand.aml_subject_type) || null;
     const is = isPublicBodyRecord(before);
+    // A Companies House number naming another company is a mistake on a public
+    // body's record (25 November 2026): it does not stop the record, and comes off.
+    const wrongLink = wanted && !is ? wrongCompaniesHouseLink(brand.name, { number: brand.companies_house_number, name: brand.legal_name }) : null;
     if (wanted && !is) {
-      if (text(brand.companies_house_number)) return res.status(409).json({ message: `${text(brand.name)} has a Companies House number, so it is a company, not the public body itself. A company or joint venture a public body has an interest in needs standard checks.` });
+      if (text(brand.companies_house_number) && !wrongLink) return res.status(409).json({ message: `${text(brand.name)} has a Companies House number, so it is a company, not the public body itself. A company or joint venture a public body has an interest in needs standard checks.` });
       if (before) return res.status(409).json({ message: `${text(brand.name)} is recorded as ${before === "trust" ? "a trust" : before === "individual" ? "a private individual" : before}. Undo that first.` });
     }
+    let unlinked: { number: string; name: string; removed: string[]; kept: Array<{ name: string; why: string }> } | null = null;
     if (wanted !== is) {
       const after = wanted ? PUBLIC_BODY_SUBJECT : null;
-      await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
+      const plan = wrongLink ? await wrongLinkPlan(pool, brandId, wrongLink) : null;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
+        if (wrongLink && plan) {
+          // Guarded on the number read, so a link someone changed since stays.
+          const cleared = await client.query(`UPDATE crm_companies SET companies_house_number = NULL, companies_house_data = NULL, uk_entity_name = NULL
+             WHERE id = $1 AND companies_house_number = $2`, [brandId, brand.companies_house_number]);
+          if (cleared.rowCount) {
+            for (const r of plan.remove) {
+              await client.query(`UPDATE kyc_client_files SET closed_at = now(), closed_by_name = $2, outcome = 'not this company'
+                 WHERE trading_entity_id = $1 AND closed_at IS NULL`, [r.id, me.name || me.id]);
+              await client.query(`DELETE FROM crm_trading_entities WHERE id = $1 AND parent_company_id = $2`, [r.id, brandId]);
+            }
+            for (const k of plan.keep) await client.query(`UPDATE crm_trading_entities SET is_default = false WHERE id = $1`, [k.id]);
+            unlinked = { ...wrongLink, removed: plan.remove.map(r => r.name), kept: plan.keep.map(k => ({ name: k.name, why: k.why })) };
+          }
+        }
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      } finally { client.release(); }
       const words = wanted
         ? `${text(brand.name)} recorded as a UK public body: simplified due diligence, no contracting entity and no beneficial owners to verify`
         : `${text(brand.name)} no longer recorded as a public body`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
-      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
-        [brandId, me.name || me.id, `${words} (on ${deal.name})`]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
+      const history = [`${words} (on ${deal.name})`];
+      if (unlinked) {
+        history.push(`Companies House link taken off: ${unlinked.number} is ${unlinked.name}, another company. A UK public body has no Companies House record`);
+        for (const n of unlinked.removed) history.push(`${n} taken off the companies filed under it: it was filed from that link. Any checks already run on it stay on this record`);
+        for (const k of unlinked.kept) history.push(`${k.name} stays filed under it: ${k.why}`);
+      }
+      for (const line of history) {
+        await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+          [brandId, line === history[0] ? "aml_subject_type" : "companies_house_unlinked", me.name || me.id, line]).catch((e: any) => console.warn(`[deal-parties] KYC history line not written: ${e?.message}`));
+      }
     }
-    res.json(await loadDealParties(pool, deal.id));
+    const view = await loadDealParties(pool, deal.id);
+    res.json(unlinked ? { ...view, unlinked } : view);
   } catch (err: any) {
     res.status(err?.status || 500).json({ message: err?.message || "Could not record the party" });
   }

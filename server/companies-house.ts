@@ -518,6 +518,18 @@ export async function performAutoKyc(companyId: string, opts: {
 
   const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, companyId)).limit(1);
   if (!company) throw new Error("Company not found");
+  // A UK public body has no Companies House record, so nothing is looked up for
+  // one and no number can be put back on it (25 November 2026: the old screening
+  // had put a dissolved restaurant company's number on the City of London
+  // Corporation). Stamped as checked so the nightly refresh moves on.
+  if (String((company as any).amlSubjectType || "").trim().toLowerCase() === "public_body") {
+    await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+    return {
+      success: false, kycStatus: "not_found",
+      message: `${company.name} is recorded as a UK public body, which has no Companies House record.`,
+      diagnostics: [{ step: "public_body", outcome: "skipped", detail: "Recorded as a UK public body: no Companies House look-up" }],
+    } as any;
+  }
 
   let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
   let resolvedFrom: "stored" | "website" | "deal_documents" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
@@ -1337,6 +1349,7 @@ export async function runBatchReKyc({ limit = 40, forceAll = false, dealTenantsO
           AND companies_house_data->'profile'->>'companyStatus' != 'active')
     )`}
       AND COALESCE(kyc_status, '') <> 'rejected'
+      AND lower(COALESCE(aml_subject_type, '')) <> 'public_body'
     ORDER BY kyc_checked_at ASC NULLS FIRST
     LIMIT ${limit}
   `);

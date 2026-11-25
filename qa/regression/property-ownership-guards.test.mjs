@@ -70,7 +70,8 @@ test("the property page: Ownership & KYC, investment beside the BGP take, no Pro
 test("the AML box offers the building's registered owner for a landlord or a seller, never sets it", () => {
   const s = read("server/deal-parties.ts");
   assert.match(s, /const registered = \(role === "landlord" \|\| role === "vendor"\) && kind === "company" && !company \? landRegistry : null;/);
-  assert.match(s, /companyOffer\(filed, role === "tenant" \? lease : null, registered\)/);
+  // From the companies filed under it, less one filed from a wrong Companies House link (25 November 2026).
+  assert.match(s, /companyOffer\(offerable, role === "tenant" \? lease : null, registered\)/);
   // The contracting entity is worked out by itself only from the unit's lease.
   assert.doesNotMatch(read("client/src/components/deal-parties.tsx"), /why === "land_registry"[^\n]*mutate/);
 });

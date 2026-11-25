@@ -127,18 +127,38 @@ function useMarkTrust(dealId: string, role: DealPartyRole) {
   });
 }
 
+type PublicBodyReply = DealParties & { unlinked?: { number: string; name: string; removed: string[]; kept: Array<{ name: string; why: string }> } };
+
 function useMarkPublicBody(dealId: string, role: DealPartyRole) {
   const { toast } = useToast();
   return useMutation({
     mutationFn: async (publicBody: boolean) =>
-      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/public-body`, { publicBody })).json() as Promise<DealParties>,
+      (await apiRequest("PUT", `/api/deals/${dealId}/parties/${role}/public-body`, { publicBody })).json() as Promise<PublicBodyReply>,
     onSuccess: (d) => {
+      // A wrong Companies House link taken off with it (25 November 2026): say what went.
+      if (d.unlinked) {
+        const u = d.unlinked;
+        toast({
+          title: "Recorded as a UK public body",
+          description: [`Took off ${u.number} (${u.name}), another company's number.`,
+            ...u.removed.map(n => `${n} is no longer filed under it.`),
+            ...u.kept.map(k => `${k.name} stays filed under it: ${k.why}.`)].join(" "),
+        });
+      }
       refresh(dealId, d);
       queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
       queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0] || "").startsWith(`/api/kyc/deal/${dealId}`) });
     },
     onError: (e) => toast({ title: "Not recorded", description: plain(e), variant: "destructive" }),
   });
+}
+
+// The body named once: "The Mayor and Commonalty ... (the City of London
+// Corporation) is a UK public body", not "X is X (...)" (25 November 2026).
+function publicBodyHeadline(name: string, known: string | null | undefined): string {
+  if (!known) return "Reads like a UK public body.";
+  const key = (v: string) => v.toLowerCase().replace(/^the\s+/, "").trim();
+  return key(known).startsWith(key(name)) ? `${known} is a UK public body.` : `${name} is ${known}, a UK public body.`;
 }
 
 // A UK public body (Layla, 23 November 2026, on #3965, The Crown Estate: "this
@@ -159,7 +179,8 @@ export function PublicBodyLine({ dealId, party, compact }: { dealId: string; par
       </div>
     );
   }
-  if (party.brand.companiesHouseNumber) return null;
+  const wrong = party.brand.wrongCompaniesHouse;
+  if (party.brand.companiesHouseNumber && !wrong) return null;
   if (!party.brand.publicBodyHint) {
     if (compact) return null;
     return (
@@ -172,7 +193,12 @@ export function PublicBodyLine({ dealId, party, compact }: { dealId: string; par
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100" data-testid={`deal-party-public-body-hint-${party.role}`}>
       <span className="min-w-0 flex-1">
-        <strong>{party.brand.publicBodyKnown ? `${party.brand.name} is ${party.brand.publicBodyKnown}, a UK public body.` : "Reads like a UK public body."}</strong> It only needs simplified due diligence (SDD): no company to find, no owners to verify. Confirm it is the body itself, not a joint venture or company it has an interest in.
+        <strong>{publicBodyHeadline(party.brand.name, party.brand.publicBodyKnown)}</strong> It only needs simplified due diligence (SDD): no company to find, no owners to verify. Confirm it is the body itself, not a joint venture or company it has an interest in.
+        {wrong && (
+          <span className="mt-1 block" data-testid={`deal-party-wrong-ch-${party.role}`}>
+            {wrong.number} on this record is {wrong.name}, another company: a public body has no Companies House record. Recording it takes that off.
+          </span>
+        )}
       </span>
       <Button type="button" size="sm" className="h-7 text-xs" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-public-body-${party.role}`}>
         {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Yes, record as a public body

@@ -200,6 +200,9 @@ export interface DealPartyView {
     // A UK public body (shared/aml-sdd.ts): recorded by a person; a name that
     // reads like one is a suggestion. publicBodyKnown: its legal name, when known.
     recordPublicBody?: boolean; publicBodyHint?: boolean; publicBodyKnown?: string | null;
+    // A Companies House link on a public body's record naming another company:
+    // a mistake, never offered, taken off when it is recorded (25 November 2026).
+    wrongCompaniesHouse?: { number: string; name: string } | null;
     // charityHint: a UK party with no company record whose name reads like a
     // charity or foundation: recorded, its register entry is read (21 November 2026).
     charityHint?: boolean };

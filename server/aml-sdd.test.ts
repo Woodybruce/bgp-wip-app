@@ -2,7 +2,7 @@
 // (Layla, 23 November 2026, on #3965, The Crown Estate).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { knownPublicBody, publicBodyMarkInName, publicBodyCase, sddNoteDraft, sddNoteProblem, signsItself, isPublicBodyRecord } from "../shared/aml-sdd";
+import { knownPublicBody, publicBodyMarkInName, publicBodyCase, sddNoteDraft, sddNoteProblem, signsItself, isPublicBodyRecord, wrongCompaniesHouseLink, filedFromWrongLink } from "../shared/aml-sdd";
 import { dueDiligenceLevel, simplifiedCase } from "../shared/aml-policy";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 import { defaultKycDocs } from "../shared/kyc-request";
@@ -18,6 +18,55 @@ test("The Crown Estate is known by its own name only, never a vehicle with the w
   assert.equal(publicBodyMarkInName("Westminster City Council"), true);
   assert.equal(publicBodyMarkInName("Design Council Enterprises Limited"), false);
   assert.equal(publicBodyMarkInName("Regent Street LP"), false);
+});
+
+// Woody, 25 November 2026, on #4600: "its a public body this and cant be found
+// on companies house but its suggesting a random company name".
+test("a local authority's corporate name reads as a public body; the City of London Corporation is known", () => {
+  for (const n of ["The Mayor and Commonalty and Citizens of the City of London", "City of London", "City of London Corporation", "Corporation of London"]) {
+    assert.equal(knownPublicBody(n)?.key, "city_of_london", n);
+    assert.equal(publicBodyMarkInName(n), true, n);
+  }
+  for (const n of ["The Lord Mayor and Citizens of the City of Westminster", "The Mayor and Burgesses of the London Borough of Camden",
+    "The Mayor, Aldermen and Burgesses of the Borough of Reading", "The Secretary of State for Transport", "London Borough of Hackney"]) {
+    assert.equal(publicBodyMarkInName(n), true, n);
+  }
+  // The body acting as trustee of a trust is the trust's case, and a company is never the body.
+  assert.equal(publicBodyMarkInName("The Mayor and Commonalty and Citizens of the City of London as Trustees of The Bridge House Estates"), false);
+  assert.equal(publicBodyMarkInName("City of London Investment Trust plc"), false);
+  assert.equal(knownPublicBody("City of London Investment Trust"), null);
+  assert.equal(publicBodyMarkInName("The Mayor Gallery"), false);
+});
+
+test("a Companies House number on a public body's record naming another company is a mistake", () => {
+  const city = "The Mayor and Commonalty and Citizens of the City of London";
+  const link = wrongCompaniesHouseLink(city, { number: "07932290", name: "ALAXIA LIMITED" });
+  assert.deepEqual(link, { number: "07932290", name: "ALAXIA LIMITED" });
+  assert.deepEqual(wrongCompaniesHouseLink("Westminster City Council", { number: "04383394", name: "CITYWEST HOMES LIMITED" }), { number: "04383394", name: "CITYWEST HOMES LIMITED" });
+  // Its own name on the register (a Royal Charter body), a number with no name, or a company record: not this.
+  assert.equal(wrongCompaniesHouseLink("Arts Council England", { number: "RC000748", name: "ARTS COUNCIL ENGLAND" }), null);
+  assert.equal(wrongCompaniesHouseLink(city, { number: "07932290", name: "" }), null);
+  assert.equal(wrongCompaniesHouseLink("Bill's Restaurants", { number: "05722125", name: "BILLS RESTAURANTS LTD." }), null);
+  assert.equal(wrongCompaniesHouseLink(city, { number: "", name: "ALAXIA LIMITED" }), null);
+  // The company filed from it: by its number (padded), else by its name.
+  assert.equal(filedFromWrongLink({ name: "ALAXIA LIMITED", companiesHouseNumber: "7932290" }, link), true);
+  assert.equal(filedFromWrongLink({ name: "Alaxia Ltd", companiesHouseNumber: null }, link), true);
+  assert.equal(filedFromWrongLink({ name: "City Surveyor's Department", companiesHouseNumber: null }, link), false);
+  assert.equal(filedFromWrongLink({ name: "ALAXIA LIMITED", companiesHouseNumber: "01234567" }, link), false);
+  assert.equal(filedFromWrongLink({ name: "ALAXIA LIMITED", companiesHouseNumber: "07932290" }, null), false);
+});
+
+test("the SDD note for the City of London Corporation uses its own words; The Crown Estate's are unchanged", () => {
+  const city = "The Mayor and Commonalty and Citizens of the City of London";
+  const sdd = publicBodyCase(city, true);
+  assert.match(sdd.basis, /the local authority for the City of London/);
+  const note = sddNoteDraft({ sdd, partyName: city, roleLabel: "Landlord", dealName: "Z to A Enterprises – TBC London", dealRef: 4600, isClient: true, today: new Date("2026-11-25T12:00:00Z") });
+  assert.match(note, /the City of London Corporation itself, not a joint venture/);
+  assert.match(note, /\[names of the officers, such as the City Surveyor\]/);
+  assert.doesNotMatch(note, /Crown Estate|Commissioners/);
+  const crown = sddNoteDraft({ sdd: publicBodyCase("The Crown Estate", true), partyName: "The Crown Estate", roleLabel: "Landlord", dealName: "The Crown Estate", today: new Date("2026-11-25T12:00:00Z") });
+  assert.match(crown, /The Crown Estate Commissioners themselves, not a joint venture/);
+  assert.match(crown, /\[names of the Commissioners or officers\]/);
 });
 
 test("a recorded public body is simplified, with what the file should hold and the joint venture caveat", () => {

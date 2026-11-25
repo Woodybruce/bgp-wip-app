@@ -35,6 +35,10 @@ export interface KnownPublicBody {
   board: string;
   // Where its identity is evidenced.
   evidence: string;
+  // What the SDD note says was checked ("... the party is <self>"), and who the
+  // note asks to be named as the people BGP deals with.
+  self: string;
+  people: string;
 }
 
 // Bodies BGP deals with whose statutory basis is known. A name must be the
@@ -51,6 +55,26 @@ const KNOWN: Array<{ names: string[]; body: KnownPublicBody }> = [
       ownership: "The estate is held by the monarch in right of the Crown and managed by the Commissioners, with its net revenue profit paid to the Treasury, so there is no beneficial owner in the usual sense",
       board: "the Commissioners (its board)",
       evidence: "gov.uk or The Crown Estate's latest annual report",
+      self: "The Crown Estate Commissioners themselves",
+      people: "names of the Commissioners or officers",
+    },
+  },
+  // The City of London Corporation (Woody, 25 November 2026, on #4600: "its a
+  // public body this and cant be found on companies house"). Its legal name is
+  // "The Mayor and Commonalty and Citizens of the City of London"; "City of
+  // London" alone is how BGP's CRM names it as a landlord.
+  {
+    names: ["city of london", "city of london corporation", "corporation of london", "mayor and commonalty and citizens of the city of london"],
+    body: {
+      key: "city_of_london",
+      legalName: "The Mayor and Commonalty and Citizens of the City of London (the City of London Corporation)",
+      statute: "its charters and the Acts of Parliament that govern it",
+      what: "the local authority for the City of London",
+      ownership: "It is a local authority, run by its elected Court of Common Council, so there is no beneficial owner in the usual sense",
+      board: "its senior officers (the Town Clerk, the Chamberlain and the City Surveyor)",
+      evidence: "cityoflondon.gov.uk or its latest statement of accounts",
+      self: "the City of London Corporation itself",
+      people: "names of the officers, such as the City Surveyor",
     },
   },
 ];
@@ -64,16 +88,58 @@ export function knownPublicBody(name: unknown): KnownPublicBody | null {
 }
 
 // A name that reads like a UK public body (BGP's policy 4.3; HMRC: "a public
-// authority or publicly owned body in the UK").
-const PUBLIC_BODY_NAME = /\b(council|london borough of|royal borough of|city of london corporation|greater london authority|transport for london|combined authority|nhs|ministry of|department (?:for|of)|homes england|police and crime commissioner|fire and rescue authority)\b/i;
+// authority or publicly owned body in the UK"). A local authority often signs
+// under its corporate name: "The Mayor and Commonalty and Citizens of the City
+// of London", "The Lord Mayor and Citizens of the City of Westminster", "The
+// Mayor and Burgesses of the London Borough of Camden", "The Mayor, Aldermen
+// and Burgesses of the Borough of ..." (25 November 2026).
+const PUBLIC_BODY_NAME = /\b(council|london borough of|royal borough of|city of london corporation|corporation of london|greater london authority|transport for london|combined authority|nhs|ministry of|department (?:for|of)|secretary of state|homes england|police and crime commissioner|fire and rescue authority|(?:lord )?mayor,? (?:aldermen,? )?and (?:commonalty|citizens|burgesses))\b/i;
 // A company or partnership is never the body itself.
 const VEHICLE = /\b(limited|ltd|llp|plc|lp|partnership|unit trust|nominees?|gp|holdings?|jv|joint venture)\b/i;
+// Nor is a trust the body acts for as trustee ("... as Trustees of The Bridge
+// House Estates"): the trust is the party, checked as a trust.
+const AS_TRUSTEE = /\bas (?:the )?(?:sole )?trustees? (?:of|for)\b/i;
 
 /** A name that reads like a public body: a suggestion a person confirms, never applied by itself. */
 export function publicBodyMarkInName(name: unknown): boolean {
   const n = text(name);
-  if (!n || VEHICLE.test(n)) return false;
+  if (!n || VEHICLE.test(n) || AS_TRUSTEE.test(n)) return false;
   return !!knownPublicBody(n) || PUBLIC_BODY_NAME.test(n);
+}
+
+// A registered name without case, punctuation, a leading "The" or its legal form.
+const registeredKey = (v: unknown): string => text(v).toLowerCase().replace(/&/g, " and ").replace(/['\u2019]/g, "")
+  .replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "")
+  .replace(/\s*\b(limited|ltd|public limited company|plc|llp|limited liability partnership)$/, "").replace(/\s+/g, " ").trim();
+
+export interface CompaniesHouseLink { number: string; name: string }
+
+/**
+ * A Companies House link stored on a record whose name reads as a UK public
+ * body, naming another company. A public body has no Companies House record of
+ * its own, so such a link is a mistake: the old in-app screening put ALAXIA
+ * LIMITED, a restaurant company dissolved in 2021, on the City of London
+ * Corporation's record (Woody, 25 November 2026, on #4600), and two startup
+ * jobs then filed it under the City as its main company. A link whose registered
+ * name is the body's own (a Royal Charter body on the register) is not this, nor
+ * is a number held with no registered name: nothing says it is wrong.
+ */
+export function wrongCompaniesHouseLink(name: unknown, link: { number?: unknown; name?: unknown }): CompaniesHouseLink | null {
+  const number = text(link.number), registered = text(link.name);
+  if (!number || !registered || !publicBodyMarkInName(name)) return null;
+  const known = knownPublicBody(name);
+  const own = new Set([registeredKey(name), ...(known ? [registeredKey(known.legalName.replace(/\s*\(.*\)\s*$/, ""))] : [])]);
+  return own.has(registeredKey(registered)) ? null : { number, name: registered };
+}
+
+/** A company filed under the record from the wrong link: its number, or, with no number, its name. */
+export function filedFromWrongLink(company: { name?: unknown; companiesHouseNumber?: unknown }, link: CompaniesHouseLink | null): boolean {
+  if (!link) return false;
+  const number = text(company.companiesHouseNumber).replace(/\s+/g, "").toUpperCase();
+  const wrong = link.number.replace(/\s+/g, "").toUpperCase();
+  const pad = (n: string) => (/^\d+$/.test(n) ? n.padStart(8, "0") : n);
+  if (number) return pad(number) === pad(wrong);
+  return !!registeredKey(company.name) && registeredKey(company.name) === registeredKey(link.name);
 }
 
 export type SddKind = "public_body" | "listed" | "listed_abroad" | "fund";
@@ -174,12 +240,12 @@ export function sddNoteDraft(input: {
       "",
       `Why SDD: HMRC lists a public authority or publicly owned body in the UK as a customer that may indicate lower risk, and BGP's AML policy (4.3) allows simplified due diligence for a UK public body. No higher-risk factor was found: no sanctions match, no adverse media and nothing unusual about the transaction.`,
       "",
-      k ? `Beneficial owners: ${k.ownership}. The people we deal with: [names of the Commissioners or officers].`
+      k ? `Beneficial owners: ${k.ownership}. The people we deal with: [${k.people}].`
         : `Beneficial owners: none in the usual sense. It is controlled by [its members, board or senior officers: names].`,
       "",
       `Authority: ${contact || "[name]"} instructs us for ${name}. Evidence of their authority to act: [what was seen, and when].`,
       "",
-      `Checked that the party is ${k ? "The Crown Estate Commissioners themselves" : "the public body itself"}, not a joint venture, partnership or company it has an interest in (which would need standard due diligence).`,
+      `Checked that the party is ${k ? k.self : "the public body itself"}, not a joint venture, partnership or company it has an interest in (which would need standard due diligence).`,
     );
   } else if (sdd.kind === "fund") {
     lines.push(
