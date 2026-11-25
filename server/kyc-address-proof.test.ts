@@ -7,7 +7,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressNameMatches, checkAddressProof, cleanAddressProofReading, unreadableAddressProof, type AddressProofReading,
+  addressNameMatches, addressProofExpiry, checkAddressProof, cleanAddressProofReading, unreadableAddressProof, type AddressProofReading,
 } from "../shared/kyc-address-proof";
 import { addressProofParts, readAddressProof } from "./kyc-address-proof";
 
@@ -104,4 +104,12 @@ test("the reader never throws, says why it could not read, and spends only on a 
   assert.equal(sent[0].type, "document");
   assert.equal((await readAddressProof(file, { hasKey: () => true, claim, now, ask: async () => { throw new Error("down"); } })).unreadable, "the reader failed; read it again later");
   assert.equal((await readAddressProof(file, { hasKey: () => true, claim, now, ask: async () => ({ input: null, model: "m" }) })).unreadable, "the reader gave no answer");
+});
+
+test("a proof of address goes out of date three months on (a council tax bill a year), a licence when its photocard expires", () => {
+  assert.equal(addressProofExpiry(bill({ date: "2026-10-30" })), "2027-01-30");
+  assert.equal(addressProofExpiry(bill({ kind: "council_tax_bill", date: "2026-04-01" })), "2027-05-02");
+  // A licence's issue date says nothing about the address: the card's own expiry does (25 November 2026).
+  assert.equal(addressProofExpiry(bill({ kind: "driving_licence", date: "2019-03-01", expires: "2029-03-01" })), "2029-03-01");
+  assert.equal(addressProofExpiry(bill({ kind: "driving_licence", date: "2019-03-01", expires: null })), null);
 });

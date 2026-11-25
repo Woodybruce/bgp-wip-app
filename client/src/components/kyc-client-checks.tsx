@@ -5,6 +5,7 @@
 // Shown while the client checks are on (clientChecks on the deal's KYC
 // status: their own switch since 18 November 2026, not in-app AML's);
 // otherwise KYC4U does the checks.
+import { CrmFirmInput } from "@/components/crm-firm-input";
 import { CrmEmailInput } from "@/components/crm-email-input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAmlUrls } from "@/lib/aml-scope";
@@ -756,7 +757,7 @@ function AddressProofLine({ dealId, person, canDecide }: { dealId: string; perso
       <div className="flex items-start gap-1">
         <Tick ok={counts} />
         <span>
-          {counts ? "Proof of address" : "Proof of address to check"} ({proof.ref}):{" "}
+          {counts ? "Proof of address" : proof.expired ? "Proof of address out of date" : "Proof of address to check"} ({proof.ref}):{" "}
           {proof.url ? <a href={proof.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" data-testid={`person-address-file-${testKey}`}>{proof.summary}</a> : proof.summary}
           {proof.accepted ? <span className="text-muted-foreground"> · accepted by {proof.accepted.by}: {proof.accepted.note}</span> : null}
           {proof.elsewhere ? <span className="text-muted-foreground" data-testid={`person-address-elsewhere-${testKey}`}> · sent {proof.elsewhere}</span> : null}
@@ -975,10 +976,12 @@ export interface ClientChecksAgent {
   words: string;
 }
 
-export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className, quiet, agent, viaAgent }: {
+export function SendClientChecksButton({ dealId, companyId, partyName, label = "Send client checks", size = "sm", className, quiet, agent, viaAgent, onJointAgent }: {
   dealId: string; companyId: string; partyName: string; label?: string; size?: "sm" | "default"; className?: string; quiet?: boolean;
   // Offer sending them through the party's own agent; viaAgent opens on it.
   agent?: ClientChecksAgent | null; viaAgent?: boolean;
+  // Offer the joint agent, who uploads the party's documents (25 November 2026).
+  onJointAgent?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -986,7 +989,8 @@ export function SendClientChecksButton({ dealId, companyId, partyName, label = "
       <Button type="button" size={size} variant={quiet ? "ghost" : "outline"} className={className} onClick={() => setOpen(true)} data-testid={viaAgent ? `button-client-checks-agent-${companyId}` : `button-client-checks-${companyId}`}>
         {viaAgent ? <Send className="w-3.5 h-3.5 mr-1.5" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1.5" />}{label}
       </Button>
-      {open && <SendClientChecksDialog dealId={dealId} companyId={companyId} partyName={partyName} agent={agent || null} startViaAgent={!!viaAgent && !!agent} onClose={() => setOpen(false)} />}
+      {open && <SendClientChecksDialog dealId={dealId} companyId={companyId} partyName={partyName} agent={agent || null} startViaAgent={!!viaAgent && !!agent} onClose={() => setOpen(false)}
+        onJointAgent={onJointAgent ? () => { setOpen(false); onJointAgent(); } : undefined} />}
     </>
   );
 }
@@ -994,8 +998,9 @@ export function SendClientChecksButton({ dealId, companyId, partyName, label = "
 const SOMEONE_ELSE = "__other__";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaAgent, onClose }: {
+function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaAgent, onClose, onJointAgent }: {
   dealId: string; companyId: string; partyName: string; agent: ClientChecksAgent | null; startViaAgent: boolean; onClose: () => void;
+  onJointAgent?: () => void;
 }) {
   const urls = useAmlUrls();
   const { toast } = useToast();
@@ -1014,6 +1019,8 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const [via, setVia] = useState(startViaAgent);
   const agentPeople = (agent?.contacts || []).filter(c => c.email);
   const [agentFirm, setAgentFirm] = useState(agent?.firm || "");
+  // The agent's firm picked from the CRM, or added to it from the box (25 November 2026).
+  const [agentFirmId, setAgentFirmId] = useState<string | null>(agent?.companyId || null);
   const [agentContactId, setAgentContactId] = useState<string>(agent?.contactId && agentPeople.some(c => c.id === agent.contactId) ? agent.contactId : agentPeople[0]?.id ?? SOMEONE_ELSE);
   const [agentName, setAgentName] = useState("");
   const [agentEmail, setAgentEmail] = useState("");
@@ -1097,7 +1104,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
       const body = via ? {
         companyId, contactId: null, name: toName, email: "", mobile: null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null, basedOn,
         viaAgent: {
-          firm: agentFirm.trim(), firmCompanyId: agent?.companyId && agentFirm.trim() === agent.firm ? agent.companyId : null,
+          firm: agentFirm.trim(), firmCompanyId: agentFirmId || (agent?.companyId && agentFirm.trim() === agent.firm ? agent.companyId : null),
           contactId: agentPicked?.id || null, name: toAgentName, email: toAgentEmail,
         },
       } : {
@@ -1174,12 +1181,14 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
               {KYC_TIMING[party.role] && <p>{KYC_TIMING[party.role]}</p>}
               <p>{KYC_LETTING_SCOPE}</p>
             </div>
-            {agent && (
+            {(agent || onJointAgent) && (
               <div className="space-y-1.5">
                 <Label>Send to</Label>
                 <div className="flex flex-wrap gap-2" data-testid="client-checks-send-to">
                   <Button type="button" size="sm" variant={!via ? "default" : "outline"} onClick={() => setVia(false)}>{shownName}</Button>
-                  <Button type="button" size="sm" variant={via ? "default" : "outline"} onClick={() => setVia(true)} data-testid="client-checks-via-agent">Their agent, to pass on</Button>
+                  {agent && <Button type="button" size="sm" variant={via ? "default" : "outline"} onClick={() => setVia(true)} data-testid="client-checks-via-agent">Their agent, to pass on</Button>}
+                  {/* The joint agent uploads the party's documents (Woody, 25 November 2026: "we need to send to joint agent"). */}
+                  {onJointAgent && <Button type="button" size="sm" variant="outline" onClick={onJointAgent} data-testid="client-checks-joint-agent">The joint agent, to upload the documents</Button>}
                 </div>
               </div>
             )}
@@ -1187,7 +1196,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
               <div className="space-y-3" data-testid="client-checks-agent">
                 <div className="space-y-1.5">
                   <Label htmlFor="client-checks-agent-firm">Their agent's firm</Label>
-                  <Input id="client-checks-agent-firm" value={agentFirm} onChange={e => setAgentFirm(e.target.value)} maxLength={160} placeholder="Savills" data-testid="input-client-checks-agent-firm" />
+                  <CrmFirmInput value={agentFirm} companyId={agentFirmId} onChange={(n, id) => { setAgentFirm(n); setAgentFirmId(id); }} placeholder="Savills" testId="input-client-checks-agent-firm" />
                 </div>
                 {agentPeople.length > 0 && agentFirm.trim() === agent?.firm && (
                   <div className="space-y-1.5">

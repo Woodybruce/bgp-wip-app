@@ -1142,7 +1142,7 @@ function StaffPartiesAml({ dealId, dealBgpTeam, onChangeTeam }: {
   return (
     <>
       {/* Everyone on the transaction with their email and phone (Woody, 24 November 2026). */}
-      <DealPeopleCard dealId={dealId} bgpTeam={dealBgpTeam} onChangeTeam={onChangeTeam} />
+      <DealPeopleCard dealId={dealId} bgpTeam={dealBgpTeam} onChangeTeam={onChangeTeam} readOnly />
       <DealAmlBoard dealId={dealId} mirror />
     </>
   );

@@ -206,6 +206,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
     blocked: view.signOff.blocked, edd: view.signOff.edd, canDecide: view.signOff.canDecide, canSignOff: view.signOff.canSignOff, needsNote: view.signOff.needsNote,
   }) : null;
   const signOffStep = sanctionsOnly ? 3 : 4;
+  const alreadyCleared = !!view?.signOff.blocked && /^Already approved/.test(view.signOff.blocked);
   const isPerson = view?.subject.kind === "individual";
   // Owned through a company abroad, or anything traced past Companies House: the section to record the people behind it.
   const ownedAbroad = pre?.company?.ownersAbroad || [];
@@ -306,8 +307,14 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
 
               <AmlStep n={signOffStep} label={AML_STEP_LABEL.signOff} testId="client-kyc-step-sign-off" open={step(signOffStep)} onToggle={() => toggle(signOffStep)}
                 state={signOffLine.state} summary={signOffLine.words}>
-                {view.signOff.blocked && <p className="text-xs text-amber-800 dark:text-amber-300">{view.signOff.blocked}</p>}
-                {view.signOff.canSignOff ? (
+                {/* Already cleared and in date (Woody, 25 November 2026: "why cant I sign this off?"): nothing to
+                    sign off, so no note box or greyed button; it comes up again at its re-check date. */}
+                {alreadyCleared ? (
+                  <p className="text-xs text-muted-foreground" data-testid="client-kyc-already-cleared">
+                    {view.signOff.blocked!.replace(/\.$/, "")}: nothing to sign off now. It comes up for sign-off again at its re-check date.
+                  </p>
+                ) : view.signOff.blocked && <p className="text-xs text-amber-800 dark:text-amber-300">{view.signOff.blocked}</p>}
+                {alreadyCleared ? null : view.signOff.canSignOff ? (
                   <div className="space-y-2">
                     {view.signOff.fileNote && (
                       <div className="space-y-1" data-testid="client-kyc-sign-off-file-note">

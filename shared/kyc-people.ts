@@ -25,7 +25,7 @@ import { sameCompany } from "./foreign-owners";
 import { relianceWords, type PartyReliance } from "./aml-reliance";
 import { owesProofOfAddress, type KycDocKey, type KycIdState, type KycPartyKind, type KycPersonRole } from "./kyc-request";
 export { owesProofOfAddress, NO_ADDRESS_WORDS } from "./kyc-request";
-import { checkAddressProof, type AddressProofAcceptance, type AddressProofReading } from "./kyc-address-proof";
+import { addressProofDateWords, addressProofExpiry, checkAddressProof, type AddressProofAcceptance, type AddressProofCheck, type AddressProofReading } from "./kyc-address-proof";
 import { trusteePersonName, trusteesInOrder } from "./charity-register";
 import { uploadCountsFor, type KycUploadEvidence } from "./kyc-documents";
 import { trustPersonOwesChecks, trustRoleWords, type TrustStructure } from "./trust-structure";
@@ -77,6 +77,7 @@ export function dobAgrees(registerDob: Dob, documentDob: string | null | undefin
 // ── The input ───────────────────────────────────────────────────────────────
 
 export interface PeopleIdCheck {
+  sessionId?: string;
   state: KycIdState;
   verifiedName: string | null;
   verifiedDob: string | null;
@@ -92,6 +93,9 @@ export interface PeopleRequest {
   ref: string;
   companyId: string | null;
   recipientName: string | null;
+  // The address the request went to (25 November 2026: an earlier identity
+  // check by the same address counts for them on another transaction).
+  email?: string | null;
   // A person's own request (null for the request to the person acting).
   person: { key: string; name: string; roles: KycPersonRole[] } | null;
   // A request for a trust's documents (23 November 2026): its recipient is the
@@ -138,8 +142,102 @@ export const personVerifiedWords = (c: Pick<PublicFigureCheck, "method"> | null 
 export const PUBLIC_FIGURE_NOTE_MIN = 10;
 export const PUBLIC_FIGURE_MAX_LINKS = 6;
 
+/**
+ * An identity check a person passed on another transaction or client file
+ * (Woody, 25 November 2026: "if I send someone an email from the app that has
+ * had their identity already confirmed for something else it wont ask them to
+ * do it again?"). HMRC lets a verified identity be reused from BGP's records;
+ * it counts for 3 years (the re-check period), only when Veriff approved it
+ * and the person is plainly the same one: the same name and a date of birth
+ * agreeing with the register's, or, with no register date, the same name and
+ * the same email address the check was asked at.
+ */
+export const ID_CHECK_REUSE_YEARS = 3;
+export interface PriorIdCheck {
+  sessionId: string;
+  verifiedName: string;
+  verifiedDob: string | null;
+  email: string | null;
+  at: string;
+  // Where it was done, in words ("Bill's · Unit 7a").
+  where: string;
+  ref: string | null;
+}
+
+/** The earlier check that counts for a person, if any (the newest). */
+export function priorIdCheckFor(
+  person: { name: string; dob?: Dob; emails: string[] },
+  prior: PriorIdCheck[] | undefined,
+  today: Date = new Date(),
+): PriorIdCheck | null {
+  const emails = new Set(person.emails.map(e => e.trim().toLowerCase()).filter(Boolean));
+  const cutoff = new Date(today); cutoff.setFullYear(cutoff.getFullYear() - ID_CHECK_REUSE_YEARS);
+  const fits = (prior || []).filter(p => {
+    if (!p.verifiedName || !samePerson(p.verifiedName, person.name)) return false;
+    const at = new Date(p.at);
+    if (Number.isNaN(at.getTime()) || at < cutoff) return false;
+    if (person.dob?.year) return !!p.verifiedDob && dobAgrees(person.dob, p.verifiedDob);
+    return !!p.email && emails.has(p.email.trim().toLowerCase());
+  });
+  return fits.sort((a, b) => b.at.localeCompare(a.at))[0] || null;
+}
+
+/** The proof of address from elsewhere that counts for a person (or the newest, out of date). */
+export function priorAddressProofFor(
+  person: { name: string; dob?: Dob; emails: string[] },
+  prior: PriorAddressProof[] | undefined,
+  today: Date = new Date(),
+): { proof: PriorAddressProof; check: AddressProofCheck; expired: string | null } | null {
+  const emails = new Set(person.emails.map(e => e.trim().toLowerCase()).filter(Boolean));
+  const key = personKey(person.name);
+  const day = today.toISOString().slice(0, 10);
+  const fits = (prior || []).flatMap(p => {
+    if (p.forKey && p.forKey !== key) return [];
+    const check = checkAddressProof(p.reading, person.name, p.uploadedAt);
+    if (!check.ok) return [];
+    const same = (!!p.email && emails.has(p.email.trim().toLowerCase())) || !!priorIdCheckFor(person, p.idChecks, today);
+    if (!same) return [];
+    const until = addressProofExpiry(p.reading);
+    return [{ proof: p, check, expired: until && until < day ? until : null, until: until || "" }];
+  });
+  // One in date first, then the one that went out of date last.
+  fits.sort((a, b) => (a.expired ? 1 : 0) - (b.expired ? 1 : 0) || b.until.localeCompare(a.until));
+  const best = fits[0];
+  return best ? { proof: best.proof, check: best.check, expired: best.expired } : null;
+}
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
+export const priorIdCheckWords = (p: PriorIdCheck): string =>
+  `checked on ${p.where}${p.ref ? ` (${p.ref})` : ""}, ${shortDate(p.at)}`;
+
+/**
+ * A proof of address sent on another transaction or client file (Woody,
+ * 25 November 2026). It counts for a person while it is still in date (three
+ * months from the date on it, a year for a council tax bill), when it reads as
+ * theirs and the person is plainly the same one: the same email address the
+ * request went to, or a passed identity check of theirs on the same request.
+ * Out of date, it is shown as expired and asked for again.
+ */
+export interface PriorAddressProof {
+  token: string;
+  ref: string | null;
+  where: string;
+  email: string | null;
+  documentId: string | null;
+  fileName: string;
+  url: string | null;
+  uploadedAt: string;
+  reading: AddressProofReading | null;
+  forKey: string | null;
+  // Identity checks passed on the same request (to tie the bill to the person).
+  idChecks: PriorIdCheck[];
+}
+
 export interface PartyPeopleInput {
   companyId: string;
+  priorAddressProofs?: PriorAddressProof[];
+  // Identity checks passed elsewhere (another transaction or client file).
+  priorIdChecks?: PriorIdCheck[];
   kind: KycPartyKind;
   // Verified from public sources, for this party (the brand and the company that signs).
   publicFigures?: PublicFigureCheck[];
@@ -218,6 +316,9 @@ export interface KycPartyPerson {
       accepted: AddressProofAcceptance | null;
       // Sent on someone else's link: "on Kenneth Tam's link" (24 November 2026); the proof's ref says which.
       elsewhere?: string | null;
+      // Sent on another transaction (25 November 2026), and the day it went out of date when it has.
+      earlier?: boolean;
+      expired?: string | null;
     } | null;
   };
   sanctions: PersonSanctions;
@@ -419,6 +520,10 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       }
       if (isOwn && r.files.some(f => f.docKey === "photo_id")) better("document", r.ref, null);
     }
+    if (id.state !== "passed") {
+      const earlier = priorIdCheckFor({ name: d.name, dob: d.dob, emails: mine.map(r => r.email || "") }, input.priorIdChecks, input.today || new Date());
+      if (earlier) better("passed", earlier.ref || "earlier", priorIdCheckWords(earlier));
+    }
     const uploads = (input.uploads || []).flatMap(u => uploadCountsFor(u, { name: d.name, dob: d.dob }, input.today || new Date()));
     if (uploads.includes("identity")) better("document", "upload", null);
     if (id.state === "passed" || id.state === "waiting") id = { ...id, someoneElse: null };
@@ -462,13 +567,23 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       const theirs = c.verifiedName ? samePerson(c.verifiedName, d.name) && dobAgrees(d.dob, c.verifiedDob) : own(r);
       if (theirs) fromLicence = { ref: r.ref, address: c.licenceAddress };
     }
+    // One sent on another transaction, when none here counts and one is owed.
+    const earlierProof = !counting && !fromLicence && !noAddress ? priorAddressProofFor({ name: d.name, dob: d.dob, emails: mine.map(r => r.email || "") }, input.priorAddressProofs, input.today || new Date()) : null;
+    const earlierCounts = !!earlierProof && !earlierProof.expired;
     const address: KycPartyPerson["address"] = {
-      done: !!counting || uploads.includes("address") || !!fromLicence,
-      ref: counting?.r.ref || (uploads.includes("address") ? "upload" : fromLicence ? fromLicence.ref : null),
+      done: !!counting || uploads.includes("address") || !!fromLicence || earlierCounts,
+      ref: counting?.r.ref || (uploads.includes("address") ? "upload" : fromLicence ? fromLicence.ref : earlierCounts ? earlierProof!.proof.ref || "earlier" : null),
       asked: live.some(r => !r.finished && r.docs.includes("proof_of_address")),
       ...(noAddress ? { notNeeded: true } : {}),
       ...(fromLicence && !counting ? { fromLicence: fromLicence.address } : {}),
-      proof: shown ? {
+      proof: earlierProof && (earlierCounts || !shown) ? {
+        token: earlierProof.proof.token, ref: earlierProof.proof.ref || "earlier", documentId: null, fileName: earlierProof.proof.fileName,
+        url: earlierProof.proof.url, uploadedAt: earlierProof.proof.uploadedAt,
+        read: true, ok: earlierCounts, summary: earlierProof.check.summary,
+        reasons: earlierProof.expired ? [`Out of date since ${addressProofDateWords(earlierProof.expired)}: ask for a new one`] : [],
+        address: earlierProof.proof.reading?.address || null, accepted: null,
+        elsewhere: `on ${earlierProof.proof.where}`, earlier: true, expired: earlierProof.expired,
+      } : shown ? {
         token: shown.r.token, ref: shown.r.ref, documentId: shown.f.documentId || null, fileName: shown.f.name, url: shown.f.url, uploadedAt: shown.f.uploadedAt,
         read: !!shown.f.reading?.read, ok: shown.check.ok, summary: shown.check.summary, reasons: shown.check.reasons,
         address: shown.f.reading?.address || null,

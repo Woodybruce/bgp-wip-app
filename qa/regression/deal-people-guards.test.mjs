@@ -45,7 +45,7 @@ test("the card's history lines and the link table columns: kept from client logi
 
 test("the People card leads Parties & AML for BGP staff, with the team changed in Fees & invoicing", () => {
   const detail = read("client/src/components/deal-detail.tsx");
-  assert.match(detail, /<DealPeopleCard dealId=\{dealId\} bgpTeam=\{dealBgpTeam\} onChangeTeam=\{onChangeTeam\} \/>/);
+  assert.match(detail, /<DealPeopleCard dealId=\{dealId\} bgpTeam=\{dealBgpTeam\} onChangeTeam=\{onChangeTeam\} readOnly \/>/);
   assert.match(detail, /onChangeTeam=\{\(\) => goTo\("fees"\)\}/);
   assert.match(detail, /\{!jointAgent && !staffView && <LinkedContactsCard deal=\{deal\} \/>\}/);
   const card = read("client/src/components/deal-people.tsx");

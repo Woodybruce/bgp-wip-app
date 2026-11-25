@@ -65,11 +65,12 @@ test("a client file's requests are its own: no transaction, that company and sub
   const people = read("server/kyc-people.ts");
   assert.match(people, /WHERE deal_id IS NULL AND company_id = \$1 AND \(\$2::boolean OR trading_entity_id IS NOT DISTINCT FROM \$3::varchar\)/);
   const flags = read("server/kyc-red-flags.ts");
-  assert.match(flags, /WHERE deal_id IS NOT DISTINCT FROM \$1::varchar AND company_id = ANY\(\$2::varchar\[\]\)/);
+  // A transaction also reads its contracting entities' client file requests (25 November 2026).
+  assert.match(flags, /WHERE \(deal_id IS NOT DISTINCT FROM \$1::varchar OR deal_id IS NULL\) AND company_id = ANY\(\$2::varchar\[\]\)/);
   assert.match(flags, /const deal = !dealId \? null :/);
   const sign = read("server/deal-party-aml.ts");
   assert.match(sign, /guarantorChecks: !party\.dealId \? \[\] :/);
-  assert.match(sign, /WHERE deal_id IS NOT DISTINCT FROM \$1::varchar AND company_id = \$2 AND trading_entity_id IS NOT DISTINCT FROM \$3/);
+  assert.match(sign, /WHERE \(deal_id IS NOT DISTINCT FROM \$1::varchar OR deal_id IS NULL\) AND company_id = \$2 AND trading_entity_id IS NOT DISTINCT FROM \$3/);
 });
 
 test("the schema: a client file table, and requests that need no transaction", () => {

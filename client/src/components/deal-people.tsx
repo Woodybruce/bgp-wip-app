@@ -51,8 +51,9 @@ function ContactLine({ person }: { person: Pick<DealPerson, "email" | "phones" |
   );
 }
 
-function PersonRow({ person, onAdd, onDetails, onRemove }: {
+function PersonRow({ person, onAdd, onDetails, onRemove, readOnly }: {
   person: DealPerson;
+  readOnly?: boolean;
   onAdd: (group: DealPeopleGroup, company: string | null) => void;
   onDetails: (person: DealPerson) => void;
   onRemove: (person: DealPerson) => void;
@@ -63,7 +64,7 @@ function PersonRow({ person, onAdd, onDetails, onRemove }: {
       ? <Link href={`/companies/${person.companyId}`} className="font-semibold truncate hover:underline">{person.name}</Link>
       : <span className="font-semibold truncate">{person.name}</span>;
   const sub = [person.jobTitle, person.company].filter(Boolean).join(" at ");
-  const missing = !!person.contactId && (!person.email || !person.phones.length);
+  const missing = !readOnly && !!person.contactId && (!person.email || !person.phones.length);
   return (
     <div className="flex items-start gap-2 text-sm rounded px-1 py-1 -mx-1 hover:bg-muted/50 transition-colors min-w-0" data-testid={`deal-person-${person.key}`}>
       <Initials name={person.name} />
@@ -84,7 +85,7 @@ function PersonRow({ person, onAdd, onDetails, onRemove }: {
         )}
       </div>
       <div className="flex items-center shrink-0">
-        {person.noPerson && (person.group === "client" || person.group === "other_side" || person.group === "agents" || person.group === "solicitors") && (
+        {!readOnly && person.noPerson && (person.group === "client" || person.group === "other_side" || person.group === "agents" || person.group === "solicitors") && (
           <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onAdd(person.group, person.name)} data-testid={`deal-person-add-at-${person.key}`}>
             <Plus className="w-3.5 h-3.5 mr-1" />Add someone
           </Button>
@@ -99,7 +100,7 @@ function PersonRow({ person, onAdd, onDetails, onRemove }: {
             <DropdownMenuContent align="end" className="text-xs w-56">
               <DropdownMenuItem asChild><Link href={`/contacts/${person.contactId}`}>Open their contact page</Link></DropdownMenuItem>
               {missing && <DropdownMenuItem onSelect={() => onDetails(person)}>Add their details</DropdownMenuItem>}
-              {person.linked && <DropdownMenuItem onSelect={() => onRemove(person)} data-testid={`deal-person-remove-${person.key}`}>Take them off this transaction</DropdownMenuItem>}
+              {person.linked && !readOnly && <DropdownMenuItem onSelect={() => onRemove(person)} data-testid={`deal-person-remove-${person.key}`}>Take them off this transaction</DropdownMenuItem>}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -258,7 +259,11 @@ function DetailsDialog({ dealId, person, onClose }: { dealId: string; person: De
   );
 }
 
-export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam }: { dealId: string; bgpTeam: BgpTeamPerson[]; onChangeTeam?: () => void }) {
+// readOnly: the transaction page's copy (Woody, 25 November 2026: "remove the ability
+// to add a contact that should also be reserved for the AML board. this is view only
+// in transactions"). People are added and changed on the AML board. bgpTeam left out
+// draws no BGP team group (the AML board's copy).
+export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam, readOnly }: { dealId: string; bgpTeam?: BgpTeamPerson[]; onChangeTeam?: () => void; readOnly?: boolean }) {
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<DealPeopleView>({
     queryKey: peopleKey(dealId),
@@ -272,7 +277,7 @@ export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam }: { dealId: stri
     onError: (e: Error) => toast({ title: "Not taken off", description: e.message, variant: "destructive" }),
   });
   const people = data?.people || [];
-  const named = people.filter(p => !p.noPerson).length + bgpTeam.length;
+  const named = people.filter(p => !p.noPerson).length + (bgpTeam?.length || 0);
   const heading = (g: DealPeopleGroup) => {
     if (g !== "client" && g !== "other_side") return DEAL_PEOPLE_GROUP_LABEL[g];
     const ps = (data?.parties || []).filter(p => (g === "client") === p.client);
@@ -283,11 +288,13 @@ export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam }: { dealId: stri
       <CardContent className="p-4 space-y-3" data-testid="deal-people">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">People <span className="font-mono tabular-nums text-muted-foreground">{named}</span></h3>
-          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setAdding({ group: "advisers", company: null })} data-testid="deal-people-add">
-            <UserPlus className="w-3.5 h-3.5 mr-1" />Add a contact
-          </Button>
+          {!readOnly && (
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setAdding({ group: "advisers", company: null })} data-testid="deal-people-add">
+              <UserPlus className="w-3.5 h-3.5 mr-1" />Add a contact
+            </Button>
+          )}
         </div>
-        <BgpTeamGroup
+        {bgpTeam && <BgpTeamGroup
           people={bgpTeam}
           details
           emptyText="No BGP agent on the transaction yet."
@@ -296,7 +303,7 @@ export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam }: { dealId: stri
               Change the team (Fees &amp; invoicing)
             </button>
           ) : null}
-        />
+        />}
         {isLoading ? <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Reading who is on the transaction…</p>
           : error ? <p className="text-xs text-amber-800 dark:text-amber-300">{String((error as Error).message)}</p>
           : DEAL_PEOPLE_GROUPS.map(g => {
@@ -306,9 +313,9 @@ export function DealPeopleCard({ dealId, bgpTeam, onChangeTeam }: { dealId: stri
               <div key={g} className="space-y-0.5 min-w-0" data-testid={`deal-people-group-list-${g}`}>
                 <div className="flex items-center justify-between gap-2 pb-0.5">
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{heading(g)}</h4>
-                  <button type="button" data-no-min-touch className="text-[11px] text-primary hover:underline shrink-0" onClick={() => setAdding({ group: g, company: null })} data-testid={`deal-people-add-${g}`}>Add</button>
+                  {!readOnly && <button type="button" data-no-min-touch className="text-[11px] text-primary hover:underline shrink-0" onClick={() => setAdding({ group: g, company: null })} data-testid={`deal-people-add-${g}`}>Add</button>}
                 </div>
-                {rows.map(p => <PersonRow key={p.key} person={p} onAdd={(group, company) => setAdding({ group, company })} onDetails={setDetails} onRemove={person => remove.mutate(person)} />)}
+                {rows.map(p => <PersonRow key={p.key} person={p} readOnly={readOnly} onAdd={(group, company) => setAdding({ group, company })} onDetails={setDetails} onRemove={person => remove.mutate(person)} />)}
               </div>
             );
           })}

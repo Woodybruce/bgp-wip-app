@@ -5625,6 +5625,26 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+- **A person checked before is not asked again** (Woody, 25 November 2026:
+  "if I send someone an email from the app that has had their identity
+  allready confimred for something else it wont ask them to do it again?",
+  then "yes", and "proof of address should have an expiry flag so cant be
+  used but should be iffpossible"). Rules: `priorIdCheckFor`,
+  `priorAddressProofFor` in `shared/kyc-people.ts`; read: `priorEvidence` in
+  `server/kyc-people.ts` (test requests and the requests in hand left out).
+  A Veriff check passed on another transaction or client file in the last
+  three years (`ID_CHECK_REUSE_YEARS`) counts for a person when the name
+  Veriff read is theirs and the date of birth agrees with the register's, or,
+  with no register date, when it was asked at the same email address; the row
+  reads "checked on another transaction, <name> (ref), <date>". A proof of
+  address sent elsewhere counts when it reads as theirs (the same checks) and
+  is tied to them (the same email, or their passed check on that request),
+  while in date (`addressProofExpiry`: three months from its date, a year for
+  a council tax bill); out of date it shows as "Proof of address out of date
+  ... ask for a new one" and is owed again. Their own link then asks only for
+  what is left; the request to the person acting (`createClientCheck`) drops
+  the identity check for a contact already checked by the same name and email
+  (`idCheckNote` says so). Tests in `server/kyc-people.test.ts`.
 - **Anyone on the transaction may send a proof of address** (Woody,
   24 November 2026: "Let's allow others to drop proof of address? Is that
   technical? Or legal": technical; the law asks that it is genuine, recent,
@@ -7468,7 +7488,10 @@ the identity", with no proof of address.
   every use); and a passed online check on a UK licence counts when Veriff's
   decision carries the address (`verifiedLicenceAddress`: document type
   DRIVERS_LICENSE from GB and `person.addresses`; Veriff may not send it, in
-  which case nothing changes). The proof of address step says so.
+  which case nothing changes). The proof of address step says so. A licence
+  holds good until its photocard expires (`addressProofExpiry`), also when it
+  is reused from another transaction; an earlier proof is looked for only for
+  someone who owes one.
 - **Signed terms of engagement are the authority to act** (HMRC: "Legal or
   contractual documentation"). Uploaded on the party's **Upload documents**,
   the reader records them as `terms_of_engagement` (filed under that type) and

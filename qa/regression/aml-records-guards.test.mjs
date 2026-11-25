@@ -98,7 +98,7 @@ test('agents: BGP staff record the check, and the deal box lists every agent on 
   const card = read('client/src/components/deal-aml-status.tsx');
   assert.match(card, /<DealAgentsAml dealId=\{dealId\} bare \/>/);
   // The transaction's own lines in the parties' card and step look (24 November 2026).
-  assert.match(card, /\{staffView && data\.counterparties\.length > 0 && \([\s\S]{0,120}<div className="rounded-lg border border-border bg-card px-4 py-1" data-testid="aml-deal-sections">/);
+  assert.match(card, /\{staffView && data\.counterparties\.length > 0 && \([\s\S]{0,120}<div className=\{`rounded-lg border border-border bg-card px-4 py-1\$\{mirror \? " aml-view-only" : ""\}`\} data-testid="aml-deal-sections"/);
   assert.match(card, /<AmlStep id=\{`aml-\$\{dealId\}-agents`\} testId="aml-section-agents" label="Agents"/);
   // Reporting a concern is in the box's menu for every BGP person (22 November 2026).
   assert.match(card, /<DropdownMenuItem onSelect=\{\(\) => setReport\(true\)\} data-testid="deal-aml-raise-report">Report a concern to the Nominated Officer<\/DropdownMenuItem>/);

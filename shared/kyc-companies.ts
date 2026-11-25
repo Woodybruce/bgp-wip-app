@@ -175,11 +175,13 @@ export function kycCompanyMatchesFilter(row: Pick<KycCompanyRow, "kind" | "entit
   }
 }
 
-const fold = (v: unknown) => clean(v).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, "");
+// Punctuation aside too, "&" as "and" (25 November 2026: "Marks & Spencer" finds "Marks and Spencer").
+const fold = (v: unknown) => clean(v).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[’'`]/g, "")
+  .replace(/&/g, " and ").replace(/[^a-z0-9#@.\s]+/g, " ").replace(/\s+/g, " ").trim();
 
 /** One search over a company, its contracting entities, website, transactions and Refs. */
 export function kycCompanyMatchesSearch(row: Pick<KycCompanyRow, "name" | "website" | "entities" | "transactions" | "agents" | "people">, query: string): boolean {
-  const words = fold(query).split(/\s+/).filter(Boolean);
+  const words = fold(query).split(/\s+/).filter(w => w && w !== "and");
   if (!words.length) return true;
   const hay = fold([
     row.name, row.website,

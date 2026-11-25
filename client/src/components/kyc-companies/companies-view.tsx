@@ -152,6 +152,8 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
   const [query, setQuery] = useState("");
   // A letter down the right picks the companies under it (Woody, 25 November 2026).
   const [letter, setLetter] = useState<IndexLetter | null>(null);
+  // A search looks past the letter picked (25 November 2026): typing clears it.
+  useEffect(() => { if (query.trim()) setLetter(null); }, [query]);
   const [openId, setOpenId] = useState<string | null>(null);
   // Add a company on the bar at the top opens it here, from either view (24 November 2026).
   const [adding, setAdding] = useState(startAdding);

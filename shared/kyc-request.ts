@@ -1393,3 +1393,15 @@ export function kycUploadAllowed(fileName: string, mime: string | null | undefin
   // Phones send HEIC with a blank or generic type; the name decides then.
   return !m || m === "application/octet-stream" || m in KYC_UPLOAD_TYPES;
 }
+
+
+// A transaction reads the client file's requests for the same contracting entity
+// too (Woody, 25 November 2026, on Tokoro Capital: "still not saying these have
+// been sent?"): links sent from the company's own KYC window count on its
+// transactions. tokens is the alias of kyc_upload_tokens; $param is the deal's id.
+export function dealOrClientFileTokensSql(param: string, tokens = "kyc_upload_tokens"): string {
+  return `(${tokens}.deal_id = ${param} OR (${tokens}.deal_id IS NULL AND EXISTS (
+    SELECT 1 FROM crm_deals d0, LATERAL (VALUES (d0.landlord_id, d0.landlord_trading_entity_id), (d0.tenant_id, d0.tenant_trading_entity_id),
+      (d0.vendor_id, d0.vendor_trading_entity_id), (d0.purchaser_id, d0.purchaser_trading_entity_id)) p0(c, e)
+    WHERE d0.id = ${param} AND p0.c IS NOT NULL AND p0.c = ${tokens}.company_id AND p0.e IS NOT DISTINCT FROM ${tokens}.trading_entity_id)))`;
+}

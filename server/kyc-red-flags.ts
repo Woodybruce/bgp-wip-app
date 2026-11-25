@@ -136,7 +136,7 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
     .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none) : none;
   const requests = ids.length ? await read("client checks", async () => (await pool.query(
     `SELECT company_id, request FROM kyc_upload_tokens
-      WHERE deal_id IS NOT DISTINCT FROM $1::varchar AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
+      WHERE (deal_id IS NOT DISTINCT FROM $1::varchar OR deal_id IS NULL) AND company_id = ANY($2::varchar[]) AND is_test IS NOT TRUE AND request IS NOT NULL
         AND COALESCE(request->>'audience', 'client') <> 'joint_agent'
       ORDER BY created_at DESC`, [dealId, ids])).rows, none) : none;
   const idChecks = ids.length ? await read("identity checks", async () => (await pool.query(

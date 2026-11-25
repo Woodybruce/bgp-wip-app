@@ -53,7 +53,7 @@ export function AmlChip({ className, title, testId, children, onClick }: {
   className: string; title?: string; testId?: string; children: ReactNode; onClick?: (e: React.MouseEvent) => void;
 }) {
   if (onClick) {
-    return <button type="button" data-no-min-touch className={cn(CHIP, className, "hover:opacity-90")} title={title} data-testid={testId} onClick={onClick}>{children}</button>;
+    return <button type="button" data-no-min-touch data-view-ok className={cn(CHIP, className, "hover:opacity-90")} title={title} data-testid={testId} onClick={onClick}>{children}</button>;
   }
   return <span className={cn(CHIP, className)} title={title} data-testid={testId}>{children}</span>;
 }
@@ -137,7 +137,7 @@ export function AmlStep({ id, n, label, state, summary, open, onToggle, children
 }) {
   return (
     <section id={id} className="scroll-mt-4 border-t border-border first:border-t-0" data-testid={testId}>
-      <button type="button" onClick={onToggle} aria-expanded={open} data-testid={`${testId}-toggle`}
+      <button type="button" data-view-ok onClick={onToggle} aria-expanded={open} data-testid={`${testId}-toggle`}
         className="flex w-full items-center gap-2 rounded py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <AmlStepIcon n={n} state={state} />
         {/* On a phone the line sits under the name, so it has the width. */}
@@ -192,7 +192,7 @@ export function CompanyFactsList({ company: c, testKey }: { company: PrecheckCom
       {directors.length > 0 && (
         <AmlFact label="Directors">
           {directors.join(", ")}
-          {c.directors.length > 4 && <button type="button" className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}
+          {c.directors.length > 4 && <button type="button" data-view-ok className="ml-1 text-primary hover:underline" onClick={() => setMore(m => !m)}>{more ? "fewer" : `and ${c.directors.length - 4} more`}</button>}
         </AmlFact>
       )}
       {c.owners.length > 0 && <AmlFact label="Owners">{c.owners.map(o => `${o.name}${o.control ? ` (${o.control})` : ""}`).join("; ")}</AmlFact>}
@@ -336,7 +336,7 @@ export function AmlCardGrid<T>({ items, render, page = 90, testId }: { items: T[
       <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid={testId}>{items.slice(0, shown).map(render)}</div>
       {items.length > shown && (
         <div className="text-center">
-          <button type="button" className="rounded-md border bg-background px-3 py-1.5 text-sm hover:bg-muted" onClick={() => setShown(n => n + page)} data-testid={testId ? `${testId}-more` : undefined}>
+          <button type="button" data-view-ok className="rounded-md border bg-background px-3 py-1.5 text-sm hover:bg-muted" onClick={() => setShown(n => n + page)} data-testid={testId ? `${testId}-more` : undefined}>
             Show more ({(items.length - shown).toLocaleString("en-GB")} left)
           </button>
         </div>

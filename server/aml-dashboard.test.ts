@@ -227,3 +227,24 @@ test("a transaction leads with the building, or with the brand when BGP acts for
   assert.equal(nameWithout("Grand Centrality – Unit 1", "Grand Central"), "Grand Centrality – Unit 1");
   assert.equal(nameWithout("Elephant Park - Mikos Mikos", "Elephant Park"), "Mikos Mikos");
 });
+
+// Woody, 25 November 2026: "the search box in the AML dash board page needs to have a
+// slightly wider search function as its not picking up".
+test("the AML search reads words in any order, across the transaction's parties, punctuation aside", async () => {
+  const { transactionMatches, rowMatches } = await import("../shared/aml-dashboard");
+  const party = (over: Record<string, unknown>) => ({
+    key: "d:landlord", dealId: "d", dealName: "Lewisham Shopping Centre · Unit 12", dealRef: 4664, dealStatus: "NEG", dealType: "New Letting",
+    propertyName: "Lewisham Shopping Centre", role: "landlord", brandId: "b", brandName: "Landsec", signsAs: "LS LEWISHAM LIMITED",
+    level: "standard", levelWhy: [], stage: "not_started", bucket: "todo", due: true, deadline: "", late: false, redFlags: [],
+    waitingOn: "BGP", movedDays: 2, approvedBy: null, expiresAt: null, agents: ["Woody Bruce"], mine: true, ...over,
+  }) as any;
+  const tx = { lead: "Lewisham Shopping Centre", parties: [party({}), party({ role: "tenant", brandName: "Marks & Spencer", signsAs: "MARKS AND SPENCER PLC" })] };
+  assert.equal(transactionMatches(tx, "lewisham marks"), true);
+  assert.equal(transactionMatches(tx, "marks & spencer"), true);
+  assert.equal(transactionMatches(tx, "spencer lewisham"), true);
+  assert.equal(transactionMatches(tx, "4664"), true);
+  assert.equal(transactionMatches(tx, "#4664"), true);
+  assert.equal(transactionMatches(tx, "ls lewisham ltd"), false);
+  assert.equal(rowMatches(party({ brandName: "St George's Estates" }), "st georges"), true);
+  assert.equal(transactionMatches(tx, "nothing like it"), false);
+});
