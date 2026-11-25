@@ -14,7 +14,8 @@
 // etc.) are Xero ContactIDs and are never read here.
 import { pool } from "./db";
 import { amlRegime } from "@shared/aml-policy";
-import { applyCheckScope, applySigners, brandSignOffScope, entitySignOffScope, kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
+import { applyCheckScope, applySigners, brandSignOffScope, entitySignOffScope, kycVerdict, partyKycState, type KycFacts, type PartyKycState } from "@shared/party-kyc";
+import { signedOffStatus } from "@shared/kyc-status";
 import { signersNotCleared } from "@shared/deal-guarantor";
 
 export type AmlGateInput = {
@@ -91,6 +92,36 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
             evidence->'bgpSignOff'->>'regime' AS signoff_regime, evidence->'bgpSignOff'->>'at' AS signoff_at
        FROM crm_entity_kyc
       WHERE entity_kind = 'trading_entity' AND entity_id = ANY($1::text[])`, [entityIds]).catch(() => ({ rows: [] as any[] }))).rows : [];
+  // The same company's sign-off on another CRM record (25 November 2026): another
+  // company filed with its Companies House number, or a record that is that
+  // company. The newest decision wins; a failed read reads as none.
+  const numberKey = (v: unknown) => String(v ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+(?=\d)/, "");
+  const numbers = [...new Set(entities.map((e: any) => numberKey(e.companies_house_number)).filter(Boolean))];
+  const elsewhereRows: any[] = numbers.length ? (await q.query(
+    `SELECT 'entity' AS kind, e.id, e.companies_house_number AS number, k.kyc_status AS status, k.expires_at, k.approved_by, k.approved_at,
+            k.evidence->'bgpSignOff'->>'regime' AS signoff_regime, k.evidence->'bgpSignOff'->>'at' AS signoff_at, NULL::text AS notes, NULL::timestamptz AS logged_at
+       FROM crm_trading_entities e JOIN crm_entity_kyc k ON k.entity_kind = 'trading_entity' AND k.entity_id = e.id
+       JOIN crm_companies c ON c.id = e.parent_company_id AND c.merged_into_id IS NULL
+      WHERE regexp_replace(regexp_replace(upper(coalesce(e.companies_house_number, '')), '[^A-Z0-9]', '', 'g'), '^0+(?=[0-9])', '') = ANY($1::text[])
+     UNION ALL
+     SELECT 'record', c.id, c.companies_house_number, c.kyc_status, c.kyc_expires_at, c.kyc_approved_by, c.kyc_checked_at, NULL, NULL,
+            (SELECT notes FROM kyc_audit_log l WHERE l.company_id = c.id AND l.action = 'kyc_approved' ORDER BY l.created_at DESC NULLS LAST, l.id DESC LIMIT 1),
+            (SELECT created_at FROM kyc_audit_log l WHERE l.company_id = c.id AND l.action = 'kyc_approved' ORDER BY l.created_at DESC NULLS LAST, l.id DESC LIMIT 1)
+       FROM crm_companies c
+      WHERE c.merged_into_id IS NULL
+        AND regexp_replace(regexp_replace(upper(coalesce(c.companies_house_number, '')), '[^A-Z0-9]', '', 'g'), '^0+(?=[0-9])', '') = ANY($1::text[])`,
+    [numbers]).catch(() => ({ rows: [] as any[] }))).rows : [];
+  const elsewhereFor = (e: any): KycFacts | null => {
+    const n = numberKey(e?.companies_house_number);
+    if (!n) return null;
+    const rows = elsewhereRows.filter(r => numberKey(r.number) === n && !(r.kind === "entity" && r.id === e.id) && signedOffStatus(r.status));
+    rows.sort((a, b) => new Date(b.approved_at || 0).getTime() - new Date(a.approved_at || 0).getTime());
+    const r = rows[0];
+    if (!r) return null;
+    return { status: r.status, expiresAt: r.expires_at || null, approvedBy: r.approved_by || null, approvedAt: r.approved_at || null,
+      scope: r.kind === "entity" ? entitySignOffScope({ regime: r.signoff_regime, signedOffAt: r.signoff_at, approvedAt: r.approved_at })
+        : brandSignOffScope({ notes: r.notes, loggedAt: r.logged_at, checkedAt: r.approved_at }) };
+  };
   // Each brand's latest approval line, to tell a sign-off for sanctions checks only.
   const approvalLines = brandIds.length && parties.some(p => p.fullChecks) ? (await q.query(
     `SELECT DISTINCT ON (company_id) company_id, notes, created_at FROM kyc_audit_log
@@ -117,7 +148,8 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
         scope: line ? brandSignOffScope({ notes: line.notes, loggedAt: line.created_at, checkedAt: b.kyc_checked_at }) : null },
       company: e ? { id: e.id, name: e.name, companiesHouseNumber: e.companies_house_number || null,
         kyc: k ? { status: k.kyc_status || null, expiresAt: k.expires_at || null, approvedBy: k.approved_by || null, approvedAt: k.approved_at || null,
-          scope: entitySignOffScope({ regime: k.signoff_regime, signedOffAt: k.signoff_at, approvedAt: k.approved_at }) } : null } : null,
+          scope: entitySignOffScope({ regime: k.signoff_regime, signedOffAt: k.signoff_at, approvedAt: k.approved_at }) } : null,
+        elsewhere: elsewhereFor(e) } : null,
     }), !!p.fullChecks), open);
   }
   return out;

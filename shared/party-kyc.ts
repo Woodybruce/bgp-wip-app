@@ -29,7 +29,12 @@ export interface KycFacts {
 
 export interface PartyKycInput {
   brand: { id: string; name: string; companiesHouseNumber: string | null; legalName: string | null } & KycFacts;
-  company: null | { id: string; name: string; companiesHouseNumber: string | null; kyc: KycFacts | null };
+  company: null | { id: string; name: string; companiesHouseNumber: string | null; kyc: KycFacts | null;
+    // The same company's sign-off held on another CRM record (another company
+    // filed with the same Companies House number, or a record that is that
+    // company): one company, one sign-off (Woody, 25 November 2026, on Sheet
+    // Anchor Evolve (London) Limited, filed under two records).
+    elsewhere?: KycFacts | null };
 }
 
 export type PartyKycSource = "brand" | "company" | "same_company" | "brand_rejected";
@@ -82,8 +87,11 @@ export function partyKycState(input: PartyKycInput): PartyKycState {
   if (brandStatus === "rejected") return { name: brand.name, source: "brand_rejected", ...brandFacts, ...about };
   const own = company.kyc && signedOffStatus(company.kyc.status) ? company.kyc : null;
   if (own) return { name: company.name, source: "company", ...own, status: signedOffStatus(own.status), approvedBy: approverWords(own.approvedBy), ...about };
-  if (sameLegalCompany(brand, company)) return { name: company.name, source: "same_company", ...brandFacts, ...about };
-  return { name: company.name, source: "company", ...NOT_SIGNED_OFF, ...about };
+  const sameAsBrand = sameLegalCompany(brand, company);
+  if (sameAsBrand && brandStatus) return { name: company.name, source: "same_company", ...brandFacts, ...about };
+  const other = company.elsewhere && signedOffStatus(company.elsewhere.status) ? company.elsewhere : null;
+  if (other) return { name: company.name, source: "company", ...other, status: signedOffStatus(other.status), approvedBy: approverWords(other.approvedBy), ...about };
+  return sameAsBrand ? { name: company.name, source: "same_company", ...brandFacts, ...about } : { name: company.name, source: "company", ...NOT_SIGNED_OFF, ...about };
 }
 
 // ── A sign-off for sanctions checks only ────────────────────────────────────

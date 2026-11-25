@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Officers and sign-off", title: "One company, one sign-off",
+    text: "A company signed off on one CRM record counts on every transaction where the same company signs, whatever record it is filed under: the same Companies House number is the same company. A company's own decision on its record still comes first." },
   { date: "2026-11-25", who: ["Woody"], topic: "Trusts and charities", title: "A trust in the ownership is recorded and asked for",
     text: "When BGP's checks find a trust holding the party, or a company above it, the transaction's AML asks to record that trust. Its information (kind, settlor, trustees, beneficiaries) is kept as for a trust that is the party, asked of its trustees or added by BGP, and the officers' sign-off waits for it. Not on a sanctions-only letting." },
   { date: "2026-11-25", who: ["Woody"], topic: "Policy", title: "Policy Issue 6 agreed and in the app",

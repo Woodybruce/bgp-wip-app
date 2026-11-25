@@ -248,3 +248,16 @@ test("with no contracting entity, the sign-off says to set it first, not to run 
   assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, sanctionsOnly: true }))!, /^Set the contracting entity first/);
   assert.match(signOffDenial(facts({ precheck: null }))!, /have not run for this party\. Press Run again/);
 });
+
+test("the same company's sign-off on another record counts (Sheet Anchor, 25 November 2026)", async () => {
+  const { partyKycState } = await import("../shared/party-kyc");
+  const brand = { id: "b", name: "Sheet Anchor", companiesHouseNumber: "02269601", legalName: "SHEET ANCHOR PROPERTIES LIMITED", status: null, expiresAt: null, approvedBy: null };
+  const elsewhere = { status: "approved", expiresAt: "2029-11-25", approvedBy: "KYC4U (MLRO)", approvedAt: "2026-11-25" };
+  const s = partyKycState({ brand, company: { id: "e", name: "SHEET ANCHOR EVOLVE (LONDON) LIMITED", companiesHouseNumber: "09555070", kyc: null, elsewhere } });
+  assert.equal(s.status, "approved");
+  assert.equal(s.approvedBy, "KYC4U");
+  const own = partyKycState({ brand, company: { id: "e", name: "X", companiesHouseNumber: "09555070", kyc: { status: "rejected", expiresAt: null, approvedBy: "Jack" }, elsewhere } });
+  assert.equal(own.status, "rejected");
+  const none = partyKycState({ brand, company: { id: "e", name: "X", companiesHouseNumber: "09555070", kyc: null, elsewhere: null } });
+  assert.equal(none.status, null);
+});
