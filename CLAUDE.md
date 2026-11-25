@@ -7508,6 +7508,20 @@ the identity", with no proof of address.
   and the AML file say authority comes from our signed terms. The identity
   check is still asked. The client's authority step also says our terms
   signed for the company will do.
+- **A trust's people send a proof of address** (Jack, Nominated Officer,
+  25 November 2026, overruling the line above for trusts: "A trust isn't a
+  legal person, so when you act for one, the trustees are in practice your
+  customer ... One rule for every trust individual"; trusts are enhanced due
+  diligence, so asking more than HMRC's minimum is deliberate). Do not
+  re-litigate. `owesProofOfAddress` is true for any of `TRUST_PERSON_ROLES`
+  (a beneficiary only where the trust rules verify them at all), and
+  `requestOwesProofOfAddress` for a trust's documents request, so its email
+  and page list List B again and say each person's link asks for an identity
+  check and a proof of address. The person acting for a trust who is not one
+  of its people still sends none. `TRUST_PERSON_EVIDENCE` and the rules in
+  short say so. **Issue 6 of the policy and Issue 2 of the trust checklist
+  still say identity only for a trust's people: a new issue is Jack's to
+  approve.**
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in

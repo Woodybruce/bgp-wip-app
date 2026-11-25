@@ -312,7 +312,7 @@ test("a proof of address counts only when it reads as theirs, in date and accept
 
 // Who sends a proof of address (Woody, 25 November 2026: "mirror hmrc about
 // proof of address we dont want to request more than we need").
-test("only a customer in person owes a proof of address: never an owner, a trust's people or the person acting", () => {
+test("a customer in person and a trust's people owe a proof of address: never an owner or the person acting", () => {
   assert.equal(owesProofOfAddress("individual", ["acting"]), true, "a private individual");
   assert.equal(owesProofOfAddress("individual", ["joint"]), true, "someone named alongside them");
   assert.equal(owesProofOfAddress("company", ["guarantor"]), true, "a person who guarantees");
@@ -321,7 +321,8 @@ test("only a customer in person owes a proof of address: never an owner, a trust
   assert.equal(owesProofOfAddress("company", ["owner", "acting", "director"]), false);
   assert.equal(owesProofOfAddress("company", ["guarantor_owner"]), false, "the owner of a company that guarantees");
   assert.equal(owesProofOfAddress("company", ["signer_owner"]), false);
-  assert.equal(owesProofOfAddress("company", ["trustee", "settlor"]), false);
+  assert.equal(owesProofOfAddress("company", ["trustee", "settlor"]), true, "a trust's people (Jack, 25 November 2026)");
+  assert.equal(owesProofOfAddress("company", ["protector"]), true);
   assert.equal(owesProofOfAddress("individual", ["guarantor_owner"]), false, "a guarantor company's owner on a private individual's side");
 });
 

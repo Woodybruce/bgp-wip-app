@@ -58,10 +58,9 @@ test("People to check on a trust: the ones to verify each get a link; the rest a
   assert.equal(people.basis, "trust");
   assert.deepEqual(people.people.map(p => [p.name, p.roles]), [["Margaret Ellis", ["settlor"]], ["David Ellis", ["trustee", "beneficiary"]]]);
   assert.equal(people.people[0].born, "April 1951");
-  // A trust's people do an identity check only (25 November 2026: HMRC asks a
-  // trust's beneficial owners for their identity, not a proof of address).
-  assert.deepEqual(people.people[0].outstanding, ["identity check"]);
-  assert.equal(people.people[0].address.notNeeded, true);
+  // A trust's people send a proof of address too (Jack, 25 November 2026).
+  assert.deepEqual(people.people[0].outstanding, ["identity check", "proof of address"]);
+  assert.notEqual(people.people[0].address.notNeeded, true);
   assert.deepEqual(people.trustNamed?.map(t => t.name), ["Sarah Ellis", "Ellis Trustees Limited"]);
   assert.ok(people.outstanding.some(o => o.startsWith("Margaret Ellis")));
   assert.equal(partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [], trust: null }).basis, "trust_unrecorded");
@@ -195,7 +194,7 @@ test("the trust's representative is not a person to check, and a request for doc
   const asTrustee = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ recipientName: "David Ellis" })], trust: structure() });
   const david = asTrustee.people.find(p => p.name === "David Ellis")!;
   assert.equal(david.own, null);
-  assert.deepEqual(david.outstanding, ["identity check"]);
+  assert.deepEqual(david.outstanding, ["identity check", "proof of address"]);
   // An ordinary request to the person acting still names them.
   const acting = partyPeople({ companyId: "t1", kind: "company", precheck: null, requests: [trustReq({ trustDocs: false })], trust: structure() });
   assert.ok(acting.people.some(p => p.name === "Adam Harvey" && p.roles.includes("acting")));
@@ -245,7 +244,8 @@ test("every request email offers certified copies: List A, and List B only where
   const trust = kycRequestEmail({ ...base, kind: "company" as any, needsIdCheck: false, askPep: false, docs: [...TRUST_REQUEST_DOCS], purpose: "trust_structure" }).html;
   assert.match(trust, /What happens next/);
   assert.match(trust, /gets an email from us with their own secure link/);
-  assert.doesNotMatch(trust, /List B/, "a trust's people send no proof of address");
+  assert.match(trust, /List B/, "a trust's people send a proof of address");
+  assert.match(trust, /identity check and a proof of address/);
   // Optional: not one of the trust request's own documents.
   assert.equal(TRUST_REQUEST_DOCS.includes("certified_ids" as any), false);
 });

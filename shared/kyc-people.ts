@@ -556,8 +556,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     const counting = proofs.find(x => x.counts) || others.find(x => x.counts) || null;
     const shown = counting || proofs[proofs.length - 1] || others[others.length - 1] || null;
     // Only a customer in person sends a proof of address (owesProofOfAddress:
-    // HMRC's line, 25 November 2026). Until then an owner, a trust's people and
-    // the person acting who was also an owner were asked for one.
+    // HMRC's line, 25 November 2026) and a trust's people (Jack, the same day).
+    // Until then an owner and the person acting who was also an owner were asked for one.
     const noAddress = !owesProofOfAddress(input.kind, d.roles);
     // A UK photocard driving licence the identity check read, with the address
     // on it, verifies the address too (HMRC: ID evidence, one document or more).

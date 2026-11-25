@@ -179,17 +179,25 @@ export const CERTIFIED_IDS_A_ONLY = "Upload each person's certified List A docum
  * So only a customer in person sends a proof of address: a private individual
  * party and anyone named alongside them, and a person who signs or guarantees in their own name.
  * Owners (up the chain, behind a company abroad, of a company that signs or
- * guarantees), a trust's people and the person acting for a company or trust
- * do an identity check only.
+ * guarantees) and the person acting for a company or trust do an identity
+ * check only.
+ *
+ * A trust's people send one too (Jack, Nominated Officer, 25 November 2026:
+ * "A trust isn't a legal person, so when you act for one, the trustees are in
+ * practice your customer ... One rule for every trust individual"): the
+ * settlor, each trustee, a protector, a beneficiary who is verified and anyone
+ * else with control. Trusts are enhanced due diligence under BGP's policy, so
+ * this goes further than HMRC's minimum on purpose.
  */
 export function owesProofOfAddress(kind: KycPartyKind, roles: Iterable<KycPersonRole>): boolean {
   const set = new Set(roles);
   if (set.has("signer") || set.has("guarantor")) return true;
+  if (TRUST_PERSON_ROLES.some(r => set.has(r))) return true;
   return kind === "individual" && (set.has("acting") || set.has("joint"));
 }
 
 /** Why someone is not asked for a proof of address. */
-export const NO_ADDRESS_WORDS = "HMRC asks for a proof of address only from a private individual, or a person who signs or guarantees in their own name.";
+export const NO_ADDRESS_WORDS = "We ask for a proof of address only from a private individual, a person who signs or guarantees in their own name, or a trust's people.";
 
 /** Why authority to act is not asked for: our signed terms of engagement are on file (25 November 2026). */
 export const termsAuthorityWords = (summary: string): string =>
@@ -648,8 +656,8 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
 // What follows a trust's documents (Jack, 23 November 2026): each person's
 // own link, or certified copies sent now. The email and the page say both.
 export const TRUST_NEXT_WORDS = {
-  links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check, and takes about five minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
-  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified.",
+  links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check and a proof of address (one document from List B below), and takes about five minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
+  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified. Either way, each person sends one document from List B as their proof of address.",
 };
 // Certified copies in place of the online check, on every request (Jack, 23
 // November 2026: "these need to be sent on all AML request emails"). Who
@@ -661,15 +669,16 @@ export const TRUST_NEXT_WORDS = {
  * List B (address) document too.
  */
 export function requestOwesProofOfAddress(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): boolean {
-  if (ctx.purpose === "trust_structure") return false;
+  // A trust's people each send one (Jack, 25 November 2026), so its documents request lists List B.
+  if (ctx.purpose === "trust_structure") return true;
   const roles = (ctx.person as { roles?: unknown } | null | undefined)?.roles;
   if (Array.isArray(roles)) return owesProofOfAddress(ctx.kind, roles as KycPersonRole[]);
   return ctx.kind === "individual";
 }
 /**
  * A request's document steps as asked now: a proof of address asked before
- * 25 November 2026 of someone HMRC asks only for their identity (an owner, a
- * trust's people, the person acting for a company) is no longer asked, shown
+ * 25 November 2026 of someone HMRC asks only for their identity (an owner,
+ * the person acting for a company) is no longer asked, shown
  * or chased, and nothing waits on it.
  */
 export function docsStillAsked(request: { kind: KycPartyKind; person?: unknown; purpose?: string | null; docs: KycDocKey[] }): KycDocKey[] {
@@ -711,7 +720,7 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     h2("What happens next"),
     p(escHtml(TRUST_NEXT_WORDS.links), `font-size:14px;color:${BODY}`),
     p(escHtml(TRUST_NEXT_WORDS.certified), `font-size:14px;color:${BODY}`),
-    certifiedLists(false),
+    certifiedLists(true),
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),

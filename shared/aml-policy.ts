@@ -81,7 +81,7 @@ export const TRUST_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 10, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the trust and on every individual named above (sections 3.10 and 4.12)." },
   { n: 11, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.5.3 and H)." },
 ];
-export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from the online identity check or one valid photo ID (passport or photocard driving licence). No proof of address: HMRC asks for one only from a customer who is a person. Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.9).";
+export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from the online identity check or one valid photo ID (passport or photocard driving licence). And a proof of address from the last three months (a photocard licence showing the address covers both): a trust's people are treated as the customer (Jack, 25 November 2026). Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.9).";
 
 // Any other enhanced party: what the officers' second read looks for (BGP's
 // AML policy, Issue 2, sections 3.7 and F.a).

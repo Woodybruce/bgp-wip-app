@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Jack"], topic: "Trusts and charities", title: "A trust's people send a proof of address",
+    text: "Every individual on a trust who is verified (the settlor, each trustee, a protector, a verified beneficiary, anyone else with control) sends a proof of address as well as their identity check. The trustees are in practice the customer, and trusts are enhanced due diligence. The trust's request email lists List B for both routes, the online check and certified copies. Everyone else follows the rule of the same day." },
   { date: "2026-11-25", who: ["Woody", "Jack"], topic: "Who we check and when", title: "A company abroad owned by a US-listed group",
     text: "When GLEIF shows a company abroad is owned by a company on Nasdaq, NYSE or Cboe (checked against the SEC's own list), it reads as owned through a listed company: no owners to find, and the US exchange counts as an equivalent market. HMRC still asks for the company's own register entry; the app says which register and number to search." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "Checks started for a company count on all its transactions",
@@ -53,7 +55,8 @@ export const AML_DECISIONS: AmlDecision[] = [
   { date: "2026-11-25", who: ["Woody"], topic: "Policy", title: "Policy Issue 6 agreed and in the app",
     text: "Issue 6 of the AML policy is agreed and replaces Issue 5 on the Policy pill: a proof of address comes only from an individual who is a customer, a photocard licence showing the address covers both, and our signed terms of engagement show authority to act. Everyone confirms Issue 6 in AML training. The trust checklist is Issue 2 to match." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Proof of address only where HMRC asks for it",
-    text: "A proof of address comes only from a customer who is a person: a private individual, someone buying or renting alongside them, or a person who signs or guarantees in their own name. A photocard driving licence showing their current address covers both. A company's owners, a trust's people and the person acting do an identity check only. Requests already sent stop asking them for one." },
+    text: "A proof of address comes only from a customer who is a person: a private individual, someone buying or renting alongside them, or a person who signs or guarantees in their own name. A photocard driving licence showing their current address covers both. A company's owners, a trust's people and the person acting do an identity check only. Requests already sent stop asking them for one.",
+    changed: "25 November 2026: a trust's people send a proof of address (Jack)." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Signed terms of engagement show the authority to act",
     text: "Our terms of engagement, signed for the client and uploaded on the party, are the evidence that the person instructing us can act for it, as HMRC allows. The client checks then stop asking for a director's email or letter. The identity check is still asked. Terms with no signature read wait for an officer to accept them." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A person checked before is not asked again",

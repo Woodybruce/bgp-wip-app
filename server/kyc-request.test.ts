@@ -421,7 +421,8 @@ test("a request asks for a proof of address only from a customer in person, and 
   assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["owner"] } }), false, "an owner's own link");
   assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["guarantor"] } }), true, "a person who guarantees");
   assert.equal(requestOwesProofOfAddress({ kind: "individual", person: { roles: ["joint"] } }), true, "someone named alongside a private individual");
-  assert.equal(requestOwesProofOfAddress({ kind: "company", purpose: "trust_structure" }), false);
+  assert.equal(requestOwesProofOfAddress({ kind: "company", purpose: "trust_structure" }), true, "a trust's people send one");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["trustee"] } }), true, "a trustee's own link");
   // An owner's link sent before today asked for one: it is no longer asked, shown or chased.
   assert.deepEqual(docsStillAsked({ kind: "company", person: { roles: ["owner"] }, docs: ["proof_of_address"] }), []);
   assert.deepEqual(docsStillAsked({ kind: "company", docs: ["proof_of_address", "authority"] }), ["authority"]);
