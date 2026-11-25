@@ -99,7 +99,8 @@ import {
   Mail,
   CalendarDays,
 } from "lucide-react";
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef, lazy, Suspense } from "react";
+const DealHotsAfterSave = lazy(() => import("@/components/deal-hots").then(m => ({ default: m.DealHotsAfterSave })));
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { useTeam } from "@/lib/team-context";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -2126,13 +2127,15 @@ function SimplifiedCreateBody({
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal, onUseLiveInvestment, usingLiveInvestment = null,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
-  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null, autoHotsFile = null,
+  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null, autoHotsFile = null, onHotsRead,
 }: {
   // The note's address, to open the property picker with it typed (2026-11-20).
   propertySeed?: { text: string; key: number } | null;
   // Heads of terms handed in when the form opens (the AML page's New
   // transaction box, 24 November 2026): read once, as Add heads of terms reads them.
   autoHotsFile?: File | null;
+  /** The heads of terms read into the form, opened again on the transaction once it is saved. */
+  onHotsRead?: (file: File) => void;
   // A handover (Promote, the Heads of Terms' Convert): the property and unit
   // are the tracker unit's, shown as one line in place of the pickers.
   place?: { propertyName: string; unitName: string } | null;
@@ -2389,6 +2392,7 @@ function SimplifiedCreateBody({
       }
       const fields = Object.values(ex).filter(v => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)).length;
       setHotsParsed({ fileName: file.name, fields });
+      onHotsRead?.(file);
       comboToast({
         title: hotsUnitId ? "Heads of terms filed and read" : "Heads of terms read",
         description: place
@@ -3379,6 +3383,13 @@ export function DealFormDialog({
   type AmlParty = { role: "landlord" | "tenant" | "vendor" | "purchaser"; label: string; id: string; name: string };
   const [amlStep, setAmlStep] = useState<{ dealId: string; dealRef: string | number | null; parties: AmlParty[] } | null>(null);
   useEffect(() => { if (!open) setAmlStep(null); }, [open]);
+  // The heads of terms read into New Transaction, opened again in the
+  // transaction's own heads of terms window once it is saved (25 November
+  // 2026): the companies that sign, solicitors, agents, who to ask, the
+  // guarantor and the terms, checked against the document.
+  const [hotsReadFile, setHotsReadFile] = useState<File | null>(null);
+  const [hotsAfterSave, setHotsAfterSave] = useState(false);
+  useEffect(() => { if (!open) { setHotsReadFile(null); setHotsAfterSave(false); } }, [open]);
   // While the client checks are on (their own switch since 18 November
   // 2026), Kick off AML sends them (one email from the KYC mailbox, the
   // deal's agents copied). A party with a red flag gets them too: its
@@ -3772,6 +3783,7 @@ export function DealFormDialog({
       .map(([role, label, id]) => ({ role, label, id, name: companies.find(c => c.id === id)?.name || label }));
     if (!parties.length) return false;
     setAmlStep({ dealId, dealRef: dealRef ?? null, parties });
+    if (hotsReadFile) setHotsAfterSave(true);
     return true;
   };
 
@@ -4069,6 +4081,18 @@ export function DealFormDialog({
                 );
               })}
             </div>
+            {hotsReadFile && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs" data-testid="deal-aml-hots">
+                <span className="min-w-0 flex-1 text-muted-foreground">Heads of terms: {hotsReadFile.name}. Set who signs, the solicitors and agents from them.</span>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setHotsAfterSave(true)} data-testid="deal-aml-hots-open">Check the heads of terms</Button>
+              </div>
+            )}
+            {hotsAfterSave && hotsReadFile && (
+              <Suspense fallback={null}>
+                <DealHotsAfterSave dealId={amlStep.dealId} file={hotsReadFile}
+                  onClose={() => { setHotsAfterSave(false); queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", amlStep.dealId] }); }} />
+              </Suspense>
+            )}
             <p className="text-[11px] text-muted-foreground">
               {clientChecks
                 ? "Each button opens the client checks: pick who to ask, see the email, send. Progress shows on the transaction's AML."
@@ -4172,6 +4196,7 @@ export function DealFormDialog({
               setForm={setForm}
               hideFees={isClientCreate}
               autoHotsFile={!handover && !isClientCreate ? initialHotsFile : null}
+              onHotsRead={isClientCreate ? undefined : setHotsReadFile}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}

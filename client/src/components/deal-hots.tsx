@@ -79,6 +79,24 @@ function useHotsReader(dealId: string, opts: { inEditor?: boolean; onOpenChange?
   return { busy, read, dialog };
 }
 
+/**
+ * The heads of terms New Transaction read, opened on the transaction it has
+ * just saved (Woody, 25 November 2026: New Transaction's reading "really
+ * doesn't work as well ... use this tool"). Read once on mount; closing it
+ * hands back to the Kick off AML step.
+ */
+export function DealHotsAfterSave({ dealId, file, onClose }: { dealId: string; file: File; onClose: () => void }) {
+  const { read, dialog } = useHotsReader(dealId, { onOpenChange: o => { if (!o) onClose(); } });
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    void read({ file }).then(ok => { if (!ok) onClose(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return dialog;
+}
+
 export const HOTS_ACCEPT = ".pdf,.docx,.doc,.txt,.rtf";
 
 /** The button: choose the document, read it, show the dialog. */
@@ -474,6 +492,9 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
               </ul>
             </details>
           )}
+          <div className="flex justify-end border-t pt-3">
+            <Button type="button" onClick={onClose} disabled={busy} data-testid="deal-hots-done">Done</Button>
+          </div>
         </DialogContent>
       </Dialog>
       {editing && (
