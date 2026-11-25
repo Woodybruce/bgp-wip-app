@@ -39,8 +39,9 @@ test("a trust or foundation is checked on its own record: no company that signs 
   assert.match(read("server/aml-file.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
   assert.match(read("server/kyc-prechecks.ts"), /aml_subject_type, ''\)\) IN \('individual', 'trust', 'public_body'\)/);
   const portal = read("server/aml-portal.ts");
-  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust\)/);
-  assert.match(portal, /if \(party\.kind === "company" && !party\.entityId && !party\.trust\)/);
+  // A UK public body signs for itself too (25 November 2026, Wirral Council at Tunsgate Quarter).
+  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust && !party\.publicBody\)/);
+  assert.match(portal, /if \(party\.kind === "company" && !party\.entityId && !party\.trust && !party\.publicBody\)/);
 });
 
 test("enhanced due diligence is always in-house (KYC4U is no longer used, 23 November 2026), and only the officers sign it off", () => {

@@ -978,7 +978,7 @@ export async function createPersonCheck(dealId: string | null, input: z.infer<ty
   if (!found) throw Object.assign(new Error(dealId ? "Transaction not found" : "Company not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this transaction."), { status: 400 });
-  if (party.kind === "company" && !party.entityId && !party.trust) {
+  if (party.kind === "company" && !party.entityId && !party.trust && !party.publicBody) {
     throw Object.assign(new Error("Set the company that signs on the transaction first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");

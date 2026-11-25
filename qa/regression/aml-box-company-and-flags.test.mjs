@@ -52,8 +52,8 @@ test('no check runs on a company party until the deal names the company that sig
   const board = read('server/aml-dashboard.ts');
   assert.match(board, /const pre = needsCompany \? null : prechecks\.find/);
   const portal = read('server/aml-portal.ts');
-  // A trust or foundation is checked on its own record (21 November 2026).
-  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust\) \{/, 'the client checks refuse it');
+  // A trust or foundation (21 November 2026) and a UK public body (25 November 2026) are checked on their own record.
+  assert.match(portal, /if \(input\.kind === "company" && !party\.entityId && !party\.trust && !party\.publicBody\) \{/, 'the client checks refuse it');
   const kyc4u = read('server/kyc4u.ts');
   assert.match(kyc4u, /if \(deal && partyRole && !entity\) \{/, 'the KYC4U request refuses it');
   const card = read('client/src/components/deal-aml-status.tsx');
