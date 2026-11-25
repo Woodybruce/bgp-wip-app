@@ -14,6 +14,7 @@ function load(registers) {
   const src = [
     find(FILE, (n, ast) => n.kind && n.getText(ast).startsWith('const chainDob')),
     find(FILE, (n, ast) => n.kind && n.getText(ast).startsWith('const pscRegister')),
+    find(FILE, (n, ast) => n.kind && n.getText(ast).startsWith('const keepsNoPscRegister')),
     find(FILE, (n, ast) => n.kind && n.getText(ast).startsWith('export async function discoverUltimateParent')),
   ].join('\n');
   const { ownerRegister } = require('../../shared/kyc-prechecks.ts');
@@ -36,7 +37,8 @@ test('a joint venture: both owners are walked, and the people behind the one wit
     '07000000': [{ kind: 'individual-person-with-significant-control', name: 'Mr Killian HURLEY', nationality: 'Irish', natures_of_control: ['ownership-of-shares-25-to-50-percent'], date_of_birth: { month: 1, year: 1966 } }],
   });
   const r = JSON.parse(JSON.stringify(await walk('OC443074')));
-  assert.deepEqual(r.chain.map(c => c.name), ['Mount Anvil SJH Limited', 'Mount Anvil Group Limited']);
+  // The registered society is a dead end, named in the chain, not a failed read.
+  assert.deepEqual(r.chain.map(c => [c.name, !!c.unread]), [['Peabody Developments Limited', false], ['Mount Anvil SJH Limited', false], ['Mount Anvil Group Limited', false]]);
   assert.deepEqual(r.ubos.map(u => [u.name, u.foundAt]), [['Mr Killian HURLEY', 'Mount Anvil Group Limited']]);
 });
 
@@ -50,4 +52,10 @@ test('a single line is walked as before, and its top stays the ultimate parent',
   const r = JSON.parse(JSON.stringify(await walk('11111111')));
   assert.deepEqual(r.ultimateParent, { name: 'Topco Limited', number: '44444444' });
   assert.deepEqual(r.chain.map(c => c.name), ['Holdco Limited', 'Topco Limited', 'Minority Limited']);
+});
+
+test('an owner Companies House cannot be read for is listed as not read', async () => {
+  const walk = load({ '11111111': [corp('Holdco Limited', '22222222', '75-to-100')] });
+  const r = JSON.parse(JSON.stringify(await walk('11111111')));
+  assert.deepEqual(r.chain.map(c => [c.name, !!c.unread]), [['Holdco Limited', true]]);
 });

@@ -88,5 +88,5 @@ test("the full checks on a small letting: asked for by name, signed off as full"
   assert.match(read("server/account-entities.ts"), /scope: row\.kyc_status === "approved" \? entitySignOffScope\(/);
   const panel = read("client/src/components/account-entities-panel.tsx");
   assert.match(panel, /Sanctions only · under £10k a month/);
-  assert.match(panel, /\?section=parties&full=\$\{encodeURIComponent\(/);
+  assert.match(panel, /amlBoardHref\(t\.id, t\.role\)\}&full=\$\{encodeURIComponent\(/);
 });

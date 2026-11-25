@@ -104,7 +104,7 @@ test('the screen saves only through the routes that already exist', () => {
 
 test('the box is on the AML box for BGP staff and the button in the party box, which stays open under it', () => {
   // Type it out or drop the heads of terms (Woody, 23 November 2026).
-  assert.match(amlBox, /\{staffView && slots && <DealDescribeBox dealId=\{dealId\} \/>\}/);
+  assert.match(amlBox, /\{staffView && slots && !mirror && <DealDescribeBox dealId=\{dealId\} \/>\}/);
   assert.match(screen, /export function DealDescribeBox/);
   // The box takes a dropped file itself and keeps it from the app-wide import (23 November 2026).
   assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);

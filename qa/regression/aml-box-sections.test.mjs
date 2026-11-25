@@ -57,26 +57,32 @@ test('the officers can open everything, remembered per browser and never relied 
 
 test('the AML checks page opens the trail on its own party; on a deal a party still being checked opens on its steps', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
-  assert.match(page, /<DealAmlStatusCard dealId=\{row\.dealId\} dealStatus=\{row\.dealStatus\} focusCompanyId=\{row\.brandId\} \/>/);
+  assert.match(page, /<DealAmlBoard dealId=\{row\.dealId\} focusCompanyId=\{row\.brandId\} \/>/);
   assert.match(box, /startOpen=\{focusCompanyId \? cp\.id === focusCompanyId : !isSettled\(cp\)\}/);
   // Folded unless it starts open, all are open, or the address names it (?full=<role>, 23 November 2026).
   assert.match(box, /const \[folded, setFolded\] = useState\(\(\) => \{\n\s+if \(startOpen \|\| openAll\.all\) return false;\n\s+try \{ return new URLSearchParams\(window\.location\.search\)\.get\("full"\) !== cp\.role; \}/);
   // One set of stage colours for the page and the box.
-  assert.match(page, /import \{ DealAmlStatusCard \} from "@\/components\/deal-aml-status";/);
+  assert.match(page, /import \{ DealAmlBoard \} from "@\/components\/deal-aml-board";/);
   assert.match(page, /<AmlStageChip stage=\{row\.stage\} expiresAt=\{row\.expiresAt\} testId=\{`aml-stage-\$\{row\.key\}`\} \/>/);
   assert.doesNotMatch(page, /const STAGE_TONE/);
 });
 
 test('the Parties card is in the box for BGP staff: one card per party slot, BGP acts for in its heading', () => {
   const deal = read('client/src/components/deal-detail.tsx');
+  const board = read('client/src/components/deal-aml-board.tsx');
   assert.match(deal, /\{staffView \? \(\s*<div className="space-y-3" data-testid="deal-kyc">\s*<StaffPartiesAml/);
-  assert.match(deal, /<DealAmlStatusCard dealId=\{dealId\} dealStatus=\{deal\.status\} slots=\{slots\} actingFor=\{actingForControl\} footer=\{footer\} \/>/);
+  // One board (Woody, 25 November 2026): worked on the AML page, shown read only on the transaction page.
+  assert.match(deal, /<DealAmlBoard dealId=\{dealId\} mirror \/>/);
+  assert.match(board, /slots=\{slots\} actingFor=\{actingFor\} footer=\{footer\}/);
+  assert.match(board, /mirror=\{mirror \? \(role\) => navigate\(amlBoardHref\(dealId, role\)\) : undefined\}/);
+  assert.match(box, /data-testid="aml-open-board">Open the AML board<\/Button>/);
+  assert.match(read('client/src/components/deal-aml-dialog.tsx'), /<DealAmlBoard dealId=\{deal\.id\} \/>/);
   // Clients keep the read-only Parties card.
   assert.match(deal, /\) : \(\s*<DealPartiesCard/);
   // An unset slot shows its picker; a set one has its card.
-  assert.match(box, /return cp \? box\(cp, slot\) : <UnsetPartyRow key=\{`unset-\$\{slot\.role\}`\} slot=\{slot\} \/>;/);
+  assert.match(box, /return cp \? box\(cp, slot\) : <UnsetPartyRow key=\{`unset-\$\{slot\.role\}`\} slot=\{slot\} mirror=\{mirror\} \/>;/);
   // A party change refreshes the box.
-  assert.match(deal, /function refreshDealAml\(dealId: string\) \{/);
+  assert.match(board, /export function refreshDealAml\(dealId: string\) \{/);
 });
 
 test('a person and a request each open on one line', () => {

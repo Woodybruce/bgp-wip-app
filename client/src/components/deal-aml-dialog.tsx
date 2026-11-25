@@ -14,7 +14,7 @@
 import { Link } from "wouter";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { DealAmlBoard } from "@/components/deal-aml-board";
 import { ExternalLink } from "lucide-react";
 
 export type AmlDialogDeal = { id: string; name?: string | null; dealRef?: number | string | null; status?: string | null; reason?: "solicitors" | "marketing" };
@@ -38,10 +38,10 @@ export function DealAmlDialog({ deal, reason, onClose }: {
             </DialogTitle>
             <DialogDescription>
               For each party: set the company that signs and who to ask, add the owners' contact details, then send the client checks.
-              Nothing is sent until you press a button. You can come back to it from the transaction's Parties &amp; AML.
+              Nothing is sent until you press a button. You can come back to it from the AML page, or from the transaction's Parties &amp; AML.
             </DialogDescription>
           </DialogHeader>
-          <DealAmlStatusCard dealId={deal.id} dealStatus={deal.status} />
+          <DealAmlBoard dealId={deal.id} />
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" size="sm" asChild>
               <Link href={`/deals/${deal.id}?section=parties`} data-testid="deal-aml-dialog-open-deal">

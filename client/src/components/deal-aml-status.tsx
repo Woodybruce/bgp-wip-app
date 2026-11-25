@@ -502,12 +502,17 @@ export interface PartySlot {
   change?: ReactNode;
 }
 
-function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen, slot }: {
+function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen, slot, mirror }: {
   dealId: string; data: DealAmlStatus; cp: Counterparty; row: AmlDashboardRow | null; party: DealPartyView | null;
   checks: ClientChecks | undefined; openAll: OpenAll; startOpen?: boolean; slot?: PartySlot | null;
+  // The transaction page's read-only copy (Woody, 25 November 2026): every press opens the AML board on this party.
+  mirror?: (role: string) => void;
 }) {
   const staff = !!data.prechecks;
-  const { open, toggle, show } = useOpenSections(STEP_KEYS, openAll);
+  const sections = useOpenSections(STEP_KEYS, openAll);
+  const open = mirror ? new Set<StepKey>() : sections.open;
+  const toggle = (k: StepKey) => (mirror ? mirror(cp.role) : sections.toggle(k));
+  const show = sections.show;
   // A party still being checked opens on its four steps; a cleared one is one line until opened.
   // Opened by name from the address (?full=<role>, Group entities' Start full KYC): unfolded.
   const [folded, setFolded] = useState(() => {
@@ -535,6 +540,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   } : null;
 
   const reveal = (k: StepKey) => {
+    if (mirror) { mirror(cp.role); return; }
     setFolded(false);
     show(k);
     window.setTimeout(() => document.getElementById(`aml-${cp.id}-${k}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
@@ -636,6 +642,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
 
   const nextAction: ReactNode = (() => {
     const quiet = "h-7 text-xs bg-background";
+    if (mirror) return step.action
+      ? <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => mirror(cp.role)} data-testid={`aml-next-open-board-${cp.role}`}>Do it on the AML board</Button>
+      : null;
     switch (step.action) {
       case "trust": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
       case "person_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-dob-${cp.role}`}>Add it</Button>;
@@ -806,7 +815,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               {partyName === cp.name
                 ? <Link href={`/companies/${cp.id}`} className="min-w-0 break-words text-base font-semibold hover:underline" data-testid={`aml-box-title-${cp.role}`}>{partyName}</Link>
                 : <span className="min-w-0 break-words text-base font-semibold" data-testid={`aml-box-title-${cp.role}`}>{partyName}</span>}
-              {staff && slot?.change}
+              {staff && !mirror && slot?.change}
               <span className="ml-auto flex flex-wrap items-center gap-1.5">
                 <RedFlagChip count={flags.length} onClick={() => reveal("screening")} testId={`aml-box-flags-${cp.role}`} />
                 {level && !cp.notRequired && <AmlLevelChip level={level.level} testId={`aml-box-level-${cp.role}`} />}
@@ -821,7 +830,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         {sanctionsOnlyLine}
         {deadline}
         {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
-        {staff && level?.level === "simplified" && level.sdd && !cp.notRequired && (
+        {staff && !mirror && level?.level === "simplified" && level.sdd && !cp.notRequired && (
           <SddBox dealId={dealId} role={cp.role} roleLabel={roleLabel} sdd={level.sdd} partyName={partyName}
             dealName={row?.dealName || null} dealRef={row?.dealRef || null} contactName={party?.person?.name || null} isClient={!!party?.client} canSave={canSignOff} />
         )}
@@ -951,12 +960,14 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
 }
 
 // A slot with no party yet: its role and the picker to link one.
-function UnsetPartyRow({ slot }: { slot: PartySlot }) {
+function UnsetPartyRow({ slot, mirror }: { slot: PartySlot; mirror?: (role: string) => void }) {
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-card px-3 py-2.5" data-testid={`aml-party-unset-${slot.role}`}>
       <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{slot.label}</span>
       {slot.client && <span className="text-xs text-muted-foreground">BGP's client</span>}
-      <div className="min-w-0 flex-1">{slot.picker}</div>
+      <div className="min-w-0 flex-1">{mirror
+        ? <button type="button" className="text-sm text-muted-foreground hover:text-foreground hover:underline" onClick={() => mirror(slot.role)} data-testid={`aml-party-unset-open-${slot.role}`}>Not set · set it on the AML board</button>
+        : slot.picker}</div>
     </div>
   );
 }
@@ -996,9 +1007,14 @@ function AmlBoxMenu({ dealId, openAll, onToggleAll, officer, staff }: { dealId: 
 // the deal's other parties follow, each on its Next line until opened.
 // slots: on the deal page, the Parties card merged in (22 November 2026): one
 // card per party slot, an unset one with its picker; actingFor: BGP acts for.
-export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, footer }: {
+// mirror: the transaction page's copy, read only (Woody, 25 November 2026: "all
+// amls are being done in the AML pages ... just show it in parties and Aml on the
+// transaction page with ability to open the AML board and amend"). It draws the
+// same board; every button opens the AML board at that party instead.
+export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, footer, mirror }: {
   dealId: string; dealStatus?: string | null; focusCompanyId?: string | null;
   slots?: PartySlot[] | null; actingFor?: ReactNode; footer?: ReactNode;
+  mirror?: (role?: string) => void;
 }) {
   const { data, isLoading } = useDealAmlStatus(dealId);
   // BGP's own reads (the checks before asking) come only to BGP staff: the
@@ -1049,6 +1065,7 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
       openAll={openAll}
       startOpen={focusCompanyId ? cp.id === focusCompanyId : !isSettled(cp)}
       slot={slot}
+      mirror={mirror}
     />
   );
 
@@ -1065,13 +1082,17 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
           {stopQ.data?.stopped && <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-800 dark:bg-red-900/40 dark:text-red-200" data-testid="aml-stop-mark">BGP stopped acting</span>}
           <span className="ml-auto flex flex-wrap items-center gap-2">
             {actingFor}
-            {officer && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
-            <AmlBoxMenu dealId={dealId} openAll={openAll.all} onToggleAll={toggleAll} officer={officer} staff={staffView} />
+            {mirror ? (
+              <Button type="button" size="sm" className="h-7 text-xs" onClick={() => mirror()} data-testid="aml-open-board">Open the AML board</Button>
+            ) : (<>
+              {officer && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
+              <AmlBoxMenu dealId={dealId} openAll={openAll.all} onToggleAll={toggleAll} officer={officer} staff={staffView} />
+            </>)}
           </span>
         </div>
 
         {/* Type the transaction out, or drop the heads of terms (Woody, 23 November 2026). */}
-        {staffView && slots && <DealDescribeBox dealId={dealId} />}
+        {staffView && slots && !mirror && <DealDescribeBox dealId={dealId} />}
 
         {!slots && data.counterparties.length < 2 && (
           <p className="text-xs text-muted-foreground" data-testid="deal-aml-status-incomplete">
@@ -1083,7 +1104,7 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
           {slots
             ? slots.map(slot => {
                 const cp = slot.companyId ? data.counterparties.find(c => c.id === slot.companyId && c.role === slot.role) || data.counterparties.find(c => c.id === slot.companyId) : null;
-                return cp ? box(cp, slot) : <UnsetPartyRow key={`unset-${slot.role}`} slot={slot} />;
+                return cp ? box(cp, slot) : <UnsetPartyRow key={`unset-${slot.role}`} slot={slot} mirror={mirror} />;
               })
             : cps.map(cp => box(cp, null))}
         </div>
@@ -1094,19 +1115,19 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
             {(dealFlags.length > 0 || dealAside.length > 0) && (
               <AmlStep id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The transaction" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "todo" : "done"}
                 summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")}: ${shortReason(dealFlags[0].label, 60)}` : `${dealAside.length} set aside`}
-                open={deal.open.has("deal")} onToggle={() => deal.toggle("deal")}>
+                open={!mirror && deal.open.has("deal")} onToggle={() => (mirror ? mirror() : deal.toggle("deal"))}>
                 <DealRedFlags dealId={dealId} data={data} />
               </AmlStep>
             )}
             {agentList.length > 0 && (
               <AmlStep id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" state={agentState} summary={agentSummary}
-                open={deal.open.has("agents")} onToggle={() => deal.toggle("agents")}>
+                open={!mirror && deal.open.has("agents")} onToggle={() => (mirror ? mirror() : deal.toggle("agents"))}>
                 <DealAgentsAml dealId={dealId} bare />
               </AmlStep>
             )}
             {/* The other side's solicitors (21 November 2026, "do 7"). */}
             <AmlStep id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" state={solState} summary={sol.words}
-              open={deal.open.has("solicitors")} onToggle={() => deal.toggle("solicitors")}>
+              open={!mirror && deal.open.has("solicitors")} onToggle={() => (mirror ? mirror() : deal.toggle("solicitors"))}>
               <DealSolicitorsAmlPanel dealId={dealId} />
             </AmlStep>
           </div>

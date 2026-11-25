@@ -32,7 +32,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "./db";
 import { abroadTraceLines,
   KYC_PRECHECK_FRESH_DAYS, KYC_PRECHECK_MAX_WEB_PEOPLE, KYC_PRECHECK_VERSION, PRECHECK_AUTO_RUNS_A_DAY, PRECHECK_RETRY_MINUTES,
-  askInputFrom, checkWebAnswer, chooseScreened, foreignOnCompaniesHouse, gleifOwnerAbroad, gleifPartyLine, homeRegisterFrom, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
+  askInputFrom, chainLinkHasNoOwners, checkWebAnswer, chooseScreened, foreignOnCompaniesHouse, gleifOwnerAbroad, gleifPartyLine, homeRegisterFrom, idvOf, isOffshoreCountry, isOverseasEntityNumber, ownerRegister, ownersAbroadOf, personNameOfRecord,
   dedupeRegisterOwners, isPrecheckResult, listingFromExemptions, normaliseStoredPrecheck, withRoeListing, nameTokens, onePersonNamed, ownerKind, personNamesMatch, precheckCardLines, precheckCompany, precheckSanctionsMatch,
   looksOverseasName, pickOverseasEntity, precheckUnfinished, sanctionsLine, sanctionsListCode, sanctionsListName, statementIsConcern, statementWords,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
@@ -430,7 +430,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   try {
     const { discoverUltimateParent } = await import("./companies-house");
     const walk = await withTimeout(discoverUltimateParent(n), chPatient(45_000), "The ownership chain");
-    chain = walk.chain.map(l => ({ name: clean(l.name, 160), number: padNumber(clean(l.number, 20)), individuals: l.individualPscs.length, companies: l.corporatePscs.length }));
+    chain = walk.chain.map(l => ({ name: clean(l.name, 160), number: padNumber(clean(l.number, 20)), individuals: l.individualPscs.length, companies: l.corporatePscs.length, ...(l.unread ? { unread: true } : {}) }));
     peopleUpChain = walk.ubos.filter(u => u.depth > 0).slice(0, 12).map(u => ({
       name: clean(u.name, 160), foundAt: clean(u.foundAt, 160), controls: (u.controls || []).map(c => clean(c, 120)),
       dob: u.dob?.year ? { year: u.dob.year, month: u.dob.month ?? null } : null, nationality: clean(u.nationality, 60) || null,
@@ -521,7 +521,7 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
 
 // owner: a person with significant control, of the company or of one up its
 // ownership chain (a beneficial owner, MLR 2017 reg 5).
-interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean }
+interface Subject { name: string; role: string; person: boolean; dobYear: number | null; context: string; dobMonth?: number | null; nationality?: string | null; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean; noOwners?: boolean }
 
 // A UK nationality as Companies House words it, as the code Mesh takes (Woody,
 // 19 November 2026: send the birth year "and UK"). Any other nationality is
@@ -933,6 +933,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     if (s.abroad) seen.abroad = true;
     if (s.trustee) seen.trustee = true;
     if (s.trustPerson) seen.trustPerson = true;
+    if (s.noOwners) seen.noOwners = true;
     // A fuller context replaces a shorter one, but never one that carries the
     // date of birth with one that does not (a trustee merged into a director).
     if (s.context.length > seen.context.length && !(/\bborn\b/.test(seen.context) && !/\bborn\b/.test(s.context))) seen.context = s.context;
@@ -986,7 +987,7 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     add({ name: o.name, role: o.role.replace(/-/g, " "), person, dobYear: o.dob?.year || null, dobMonth: o.dob?.month || null, nationality: person ? o.nationality || null : null,
       context: `${o.role.replace(/-/g, " ")} of ${where}${o.dob?.year ? `, born ${o.dob.month ? `${o.dob.month}/` : ""}${o.dob.year}` : ""}${o.nationality ? `, ${o.nationality}` : ""}` });
   }
-  for (const c of companiesHouse?.chain || []) add({ name: c.name, role: "company up the ownership chain", person: false, dobYear: null, context: `UK company ${c.number}, in the ownership chain of ${where}` });
+  for (const c of companiesHouse?.chain || []) add({ name: c.name, role: "company up the ownership chain", person: false, dobYear: null, noOwners: chainLinkHasNoOwners(c), context: `UK company ${c.number}, in the ownership chain of ${where}${chainLinkHasNoOwners(c) ? ", with nobody on record behind it" : ""}` });
   for (const a of (companiesHouse?.ownersAbroad || []).filter(x => x.foundAt)) {
     add({ name: a.name, role: "owning company up the chain", person: false, abroad: true, dobYear: null, context: `company registered in ${a.country} that owns ${a.foundAt}, in the ownership chain of ${where}` });
   }

@@ -63,6 +63,9 @@ export type ChainLink = {
   number: string;
   individualPscs: ChainPsc[];
   corporatePscs: ChainPsc[];
+  // Companies House could not be read for this owner, or the walk stopped
+  // before it (25 November 2026: never passed over in silence).
+  unread?: boolean;
 };
 
 export type UboFinding = {
@@ -87,6 +90,11 @@ export type UboFinding = {
  * (and downstream AI prompt) gets the full picture without needing a separate
  * fetch per chain entity.
  */
+// A registered society (IP, RS or SP number, on the FCA's Mutuals register)
+// keeps no register of people with significant control: no answer from
+// Companies House for one is a dead end, not a failed read.
+const keepsNoPscRegister = (n: string) => /^(IP|RS|SP)\d/i.test(String(n || "").trim());
+
 export async function discoverUltimateParent(companyNumber: string, maxDepth = 5): Promise<{
   chain: ChainLink[];
   ultimateParent: { name: string; number: string; } | null;
@@ -128,7 +136,14 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
       if (visited.has(paddedNum)) break;
       visited.add(paddedNum);
 
-      const pscData = await chFetch(`/company/${paddedNum}/persons-with-significant-control`);
+      let pscData: any;
+      try {
+        pscData = await chFetch(`/company/${paddedNum}/persons-with-significant-control`);
+      } catch (e) {
+        // An owner whose register could not be read is said, not dropped.
+        if (depth > 0) chain.push({ name: currentName, number: currentNumber, individualPscs: [], corporatePscs: [], ...(keepsNoPscRegister(currentNumber) ? {} : { unread: true }) });
+        throw e;
+      }
       const items = (pscData.items || []).filter((p: any) => !p.ceased_on && !p.ceased);
       const individualPscs: ChainPsc[] = items
         .filter((p: any) => p.kind === "individual-person-with-significant-control" || (p.kind && !p.kind.includes("corporate") && !p.kind.includes("legal-person")))
@@ -199,8 +214,14 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
   const mainTop = chain.length > 0 ? { name: chain[chain.length - 1].name, number: chain[chain.length - 1].number } : null;
   // The other owners, breadth first, at most 12 companies more.
   let extra = 0;
-  while (branches.length && extra < 12) {
+  while (branches.length) {
     const b = branches.shift()!;
+    if (extra >= 12) {
+      // Past the walk's limit: listed as not read, never silently left out.
+      const padded = b.number.padStart(8, "0");
+      if (!visited.has(padded)) { visited.add(padded); chain.push({ name: b.name, number: b.number, individualPscs: [], corporatePscs: [], unread: true }); }
+      continue;
+    }
     const padded = b.number.padStart(8, "0");
     if (b.depth > maxDepth || visited.has(padded)) continue;
     visited.add(padded);
@@ -225,7 +246,8 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
       }
       queueBranches(items, null, b.depth);
     } catch {
-      // A registered society or charity number is not on Companies House's PSC register.
+      // Not readable at Companies House: listed, so the file says so.
+      chain.push({ name: b.name, number: b.number, individualPscs: [], corporatePscs: [], ...(keepsNoPscRegister(b.number) ? {} : { unread: true }) });
     }
   }
 

@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "AML is worked on the AML page; the transaction page shows it",
+    text: "Every AML check is done on the AML page, which has the full board with the parties and who BGP acts for. A transaction's Parties and AML shows the same board read only, with Open the AML board, so there is one place to work and nothing differs between the two." },
+  { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "Every owner up the chain is followed, and a dead end is said",
+    text: "BGP's checks follow every company that owns the party, not only the largest. A company up the chain with nobody on record behind it, such as a registered society, is named under Owners and screened in full as a company. An owner whose register could not be read is said, never passed over." },
   { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Our client is checked once; the other side is told the transaction",
     text: "A request to our own client says: by law, before we can act for you as estate agents, we have to confirm who we are dealing with, names the property and town, and says we only ask once (it covers our future work until our next review). A request to the other side spells out the transaction, who we act for, and that both sides are checked." },
   { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "A UK public body is not a red flag for being the state",

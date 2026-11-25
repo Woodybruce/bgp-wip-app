@@ -673,7 +673,30 @@ export const SCREEN_BASIS_WORDS: Record<ScreenBasis, string> = {
 // trustee: a trustee of the charity the party is, or acts for, from the
 // Charity Commission's register (21 November 2026).
 // trustPerson: someone on a trust's structure as BGP recorded it (23 November 2026).
-export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean }
+export interface ScreenCandidate { name: string; role: string; person: boolean; owner?: boolean; abroad?: boolean; trustee?: boolean; trustPerson?: boolean; noOwners?: boolean }
+
+// A UK company up the ownership chain with nobody on record behind it (Woody,
+// 25 November 2026, on ST JOHN'S HILL PH03 LLP: "its not asking anything on
+// Peabody"): a registered society (IP or RS number, on the FCA's Mutuals
+// register) keeps no register of who owns or controls it, and a company may
+// show no one with significant control. Nobody behind it is asked for checks;
+// it is screened in full as a company, and the file says why.
+export type ChainLinkSummary = { name: string; number: string; individuals: number; companies: number; unread?: boolean };
+export const chainLinkHasNoOwners = (c: ChainLinkSummary): boolean => !c.individuals && !c.companies;
+export function noOwnersBehindWords(c: ChainLinkSummary): string {
+  const n = String(c.number || "").toUpperCase();
+  if (/^(IP|RS|SP)\d/.test(n)) return `${c.name} (${c.number}) is a registered society, which keeps no register of who owns or controls it`;
+  if (/^(CE|CS)\d/.test(n)) return `${c.name} (${c.number}) is a charitable incorporated organisation, controlled by its trustees`;
+  return `Companies House shows no one with significant control of ${c.name} (${c.number})`;
+}
+export function noOwnersBehindNote(chain: ChainLinkSummary[]): string | null {
+  const unread = chain.filter(c => c.unread);
+  const ends = chain.filter(c => !c.unread && chainLinkHasNoOwners(c));
+  const parts: string[] = [];
+  if (ends.length) parts.push(`${ends.map(noOwnersBehindWords).join("; ")}: nobody behind ${ends.length === 1 ? "it" : "them"} to check, so ${ends.length === 1 ? "it is" : "they are"} screened in full as ${ends.length === 1 ? "a company" : "companies"}.`);
+  if (unread.length) parts.push(`Who owns ${unread.map(c => `${c.name} (${c.number})`).join(", ")} could not be read at Companies House: press Run again, or find its owners by hand.`);
+  return parts.length ? parts.join(" ") : null;
+}
 
 const roles = (c: ScreenCandidate) => c.role.split(", ");
 const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /director|member/i.test(r) && !/corporate/i.test(r));
@@ -685,7 +708,7 @@ const isManager = (c: ScreenCandidate) => c.person && roles(c).some(r => /direct
  * the directors when no owner can be named; a private individual themselves.
  */
 export function chooseScreened<T extends ScreenCandidate>(candidates: T[], ctx: { individual: boolean; listed: boolean; maxPeople: number }): { basis: ScreenBasis; full: T[]; sanctionsOnly: T[] } {
-  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company") || r.startsWith("the charity") || r === "corporate trustee" || r.startsWith("company on the trust")) || !!c.abroad));
+  const companies = candidates.filter(c => !c.person && (roles(c).some(r => r.startsWith("the company") || r.startsWith("the charity") || r === "corporate trustee" || r.startsWith("company on the trust")) || !!c.abroad || !!c.noOwners));
   let basis: ScreenBasis;
   let people: T[];
   if (ctx.individual) {
@@ -752,7 +775,7 @@ export interface KycPrecheckResult {
     owners: RegisterOwner[];
     statements: Array<{ statement: string; words: string; concern: boolean; notifiedOn: string | null }>;
     listing: PrecheckListing | null;
-    chain: Array<{ name: string; number: string; individuals: number; companies: number }>;
+    chain: Array<{ name: string; number: string; individuals: number; companies: number; unread?: boolean }>;
     // The month and year of birth and nationality since 19 November 2026.
     peopleUpChain: Array<{ name: string; foundAt: string; controls: string[]; dob?: { month?: number | null; year?: number | null } | null; nationality?: string | null }>;
     offshoreOwners: Array<{ name: string; country: string }>;
@@ -1067,7 +1090,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     listedViaParent: !!ch.listing?.viaParent,
     directors: ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name),
     owners: ch.owners.map(o => ({ name: o.name, control: ownerControlLine(o) || "significant control" })),
-    ownerNote: ch.listing ? null : ch.owners.length ? null : ch.statements.length ? ch.statements.map(s => s.words).join("; ") : "No one with significant control is on the register.",
+    ownerNote: ch.listing ? null : ch.owners.length ? noOwnersBehindNote(ch.chain) : ch.statements.length ? ch.statements.map(s => s.words).join("; ") : "No one with significant control is on the register.",
     chain: ch.chain.map(c => `${c.name} (${c.number})`),
     accounts: ch.lastAccountsMadeUpTo ? `Made up to ${ch.lastAccountsMadeUpTo}${ch.lastAccountsType ? `, ${ch.lastAccountsType}` : ""}` : null,
     warnings,
@@ -1982,12 +2005,14 @@ export function precheckCardLines(result: KycPrecheckResult, opts: { publicBody?
       });
     } else {
       const abroad = ownersAbroadOf(ch);
-      const concern = ch.statements.some(s => s.concern) || offshoreOwnersOf(ch).length > 0 || abroad.length > 0;
+      const concern = ch.statements.some(s => s.concern) || offshoreOwnersOf(ch).length > 0 || abroad.length > 0 || ch.chain.some(c => c.unread);
+      const behind = noOwnersBehindNote(ch.chain);
       out.push({
         key: "owners", label: ch.owners.length ? `Owners on the register: ${list(ch.owners.map(o => o.name), 4)}` : "No owners on the register",
         state: concern ? "attention" : ch.owners.length ? "ok" : "info",
         detail: [ch.owners.map(o => `${o.name}: ${ownerControlLine(o) || "significant control"}`).join("; "), ch.statements.map(s => s.words).join("; "), ch.chain.length ? `Chain: ${ch.chain.map(c => c.name).join(" > ")}` : "",
-          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. The people behind ${abroad.length === 1 ? "it" : "them"} still need finding` : ""].filter(Boolean).join(". ") || null,
+          abroad.length ? `Registered abroad, so Companies House cannot show who owns ${abroad.length === 1 ? "it" : "them"}: ${ownersAbroadWords(abroad)}. The people behind ${abroad.length === 1 ? "it" : "them"} still need finding` : "",
+          behind ? behind.replace(/\.$/, "") : ""].filter(Boolean).join(". ") || null,
         links: [],
       });
     }
