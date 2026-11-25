@@ -32,7 +32,9 @@ import { KycCompaniesView, KYC_COMPANIES_KEY } from "@/components/kyc-companies/
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { DEAL_NOTE_TYPES } from "@shared/deal-note";
 import { AmlStartBar, type AmlStart } from "@/components/aml-start";
 import { LetterRail, WithLetterRail } from "@/components/letter-rail";
 import { byName, indexLetter, letterCounts, type IndexLetter } from "@shared/letter-index";
@@ -212,10 +214,62 @@ function DealCell({ t }: { t: AmlTransactionRow }) {
 }
 
 // The transaction's own status (Woody, 23 November 2026), in the Transactions
-// board's words and colours: the shared chip.
+// board's words and colours: the shared chip. Its type beside it (Woody,
+// 25 November 2026: "Mikos Mikos is a rent review can we change or see the
+// deal type in the AML?"), changed in place through the transaction's own save:
+// the type decides which checks a party needs (a rent review checks our client).
 function DealStatusChip({ row }: { row: AmlDashboardRow }) {
-  if (!amlDealStatusWords(row).words) return <span className="text-muted-foreground">—</span>;
-  return <AmlDealStatusChip status={row.dealStatus} dealType={row.dealType} testId={`aml-deal-status-${row.key}`} />;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {amlDealStatusWords(row).words
+        ? <AmlDealStatusChip status={row.dealStatus} dealType={row.dealType} testId={`aml-deal-status-${row.key}`} />
+        : <span className="text-muted-foreground">—</span>}
+      <DealTypeChip dealId={row.dealId} dealType={row.dealType} />
+    </div>
+  );
+}
+
+function DealTypeChip({ dealId, dealType }: { dealId: string; dealType: string | null }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const types = dealType && !DEAL_NOTE_TYPES.includes(dealType) ? [dealType, ...DEAL_NOTE_TYPES] : DEAL_NOTE_TYPES;
+  const save = async (next: string) => {
+    if (!next || next === dealType) { setOpen(false); return; }
+    setBusy(true);
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { dealType: next });
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      toast({ title: "Transaction type changed", description: `Now a ${next}. Its checks follow the new type.` });
+      setOpen(false);
+    } catch (e: any) {
+      toast({ title: "Not changed", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button type="button" onClick={e => e.stopPropagation()} title="The transaction's type: press to change it"
+          className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted"
+          data-testid={`aml-deal-type-${dealId}`}>
+          {dealType || "Set type"}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 space-y-2 p-3 text-xs" onClick={e => e.stopPropagation()}>
+        <div className="font-medium">Transaction type</div>
+        <select className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" defaultValue={dealType || ""} disabled={busy}
+          onChange={e => void save(e.target.value)} data-testid={`aml-deal-type-select-${dealId}`}>
+          {!dealType && <option value="">Choose…</option>}
+          {types.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <p className="text-muted-foreground">The type decides the checks: a rent review checks our client only; a letting under £10,000 a month needs sanctions checks only.</p>
+        {busy && <p className="text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Saving…</p>}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 // One transaction in the table: the transaction, its status and its agents
