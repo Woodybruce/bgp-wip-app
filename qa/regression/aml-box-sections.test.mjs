@@ -122,3 +122,10 @@ test('the board shows the red flags as a count that opens their explanations', (
   const server = read('server/aml-dashboard.ts');
   assert.match(server, /flagDetails: shownFlags,/);
 });
+
+test("a party KYC4U checked says so on its card, with the past checks under Documents", () => {
+  const box = read("client/src/components/deal-aml-status.tsx");
+  assert.match(box, /queryKey: \["\/api\/kyc4u\/company", cp\.id\], enabled: staff/);
+  assert.match(box, /data-testid=\{`aml-kyc4u-considered-\$\{cp\.role\}`\}/);
+  assert.match(box, /\{kyc4uPast\.length > 0 && <Kyc4uStatusStrip companyId=\{cp\.id\} \/>\}/);
+});

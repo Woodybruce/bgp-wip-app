@@ -37,6 +37,7 @@ import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register"
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import { AmlCommentaryView } from "@/components/aml-commentary";
+import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import type { PersonDetailsView } from "@shared/kyc-person-details";
 import { PersonDetailsLine } from "@/components/aml-person-details";
@@ -510,6 +511,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
 }) {
   const staff = !!data.prechecks;
   const sections = useOpenSections(STEP_KEYS, openAll);
+  const kyc4uQ = useQuery<{ requests: Array<{ listId: string; itemId: string; entityName: string | null; createdAt: string | null; modifiedAt: string | null }> }>({
+    queryKey: ["/api/kyc4u/company", cp.id], enabled: staff, staleTime: 5 * 60_000,
+  });
   const open = mirror ? new Set<StepKey>() : sections.open;
   const toggle = (k: StepKey) => (mirror ? mirror(cp.role) : sections.toggle(k));
   const show = sections.show;
@@ -778,6 +782,18 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       Signed off{cp.sanctionsOnlyApproval.at ? ` ${amlBoxDay(cp.sanctionsOnlyApproval.at)}` : ""}{cp.sanctionsOnlyApproval.by ? ` by ${cp.sanctionsOnlyApproval.by}` : ""} for sanctions checks only, on a smaller letting. This transaction needs the full checks.
     </p>
   ) : null;
+  // KYC4U's past checks on this party, by the brand or a company it names (Woody,
+  // 25 November 2026, on Karve: "we at least need to match KYC4U historic data
+  // base so we know if its been considered"). KYC4U's folders carry no verdict:
+  // their result is recorded by an admin, under Documents.
+  const kyc4uPast = (kyc4uQ.data?.requests || []).filter(r => r.listId !== "manual");
+  const kyc4uRecorded = (kyc4uQ.data?.requests || []).some(r => r.listId === "manual");
+  const kyc4uLine = staff && kyc4uPast.length > 0 && !settled ? (
+    <button type="button" className="block text-left text-xs text-amber-800 hover:underline dark:text-amber-300" onClick={() => reveal("documents")} data-testid={`aml-kyc4u-considered-${cp.role}`}>
+      KYC4U considered it: {kyc4uPast.slice(0, 2).map(r => `${r.itemId}${r.entityName ? ` ${r.entityName}` : ""}${r.createdAt || r.modifiedAt ? `, ${amlBoxDay(String(r.createdAt || r.modifiedAt))}` : ""}`).join("; ")}
+      {kyc4uPast.length > 2 ? ` and ${kyc4uPast.length - 2} more` : ""}. {kyc4uRecorded ? "A KYC4U result is recorded." : "Their result isn't recorded in the app yet."}
+    </button>
+  ) : null;
   const deadline = row && !settled && !cp.notRequired && row.deadline ? (
     <p className={`text-xs ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
       {row.late ? "Late: needed " : "Needed "}{row.deadline}
@@ -828,6 +844,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         </div>
         {nextLine}
         {sanctionsOnlyLine}
+        {kyc4uLine}
         {deadline}
         {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
         {staff && !mirror && level?.level === "simplified" && level.sdd && !cp.notRequired && (
@@ -895,6 +912,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             <AmlStep id={sid("documents")} testId={tid("documents")} n={3} label={AML_STEP_LABEL.documents} state={documents.state} summary={documents.words} open={open.has("documents")} onToggle={() => toggle("documents")}>
               {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
               <PartyFiles dealId={dealId} role={cp.role} />
+              {kyc4uPast.length > 0 && <Kyc4uStatusStrip companyId={cp.id} />}
               {companyMissing && !current
                 ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
                 : <>

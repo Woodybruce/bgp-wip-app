@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Records and reports", title: "KYC4U's past checks show on each party",
+    text: "When KYC4U checked a party before 23 November 2026, its AML card says so, with the request and date, and whether KYC4U's result is recorded. KYC4U's folders carry no verdict: an admin records their result from their report or email. The company view keeps this prompt while BGP's own checks run." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "AML is worked on the AML page; the transaction page shows it",
     text: "Every AML check is done on the AML page, which has the full board with the parties and who BGP acts for. A transaction's Parties and AML shows the same board read only, with Open the AML board, so there is one place to work and nothing differs between the two." },
   { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "Every owner up the chain is followed, and a dead end is said",
