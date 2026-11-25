@@ -195,3 +195,35 @@ test("one line per transaction with its parties inside (Woody, 24 November 2026)
   assert.equal(leadParty(lines[0], "todo").role, "landlord");
   assert.equal(leadParty(lines[0], "done").role, "landlord");
 });
+
+// What a transaction is known by (Woody, 25 November 2026: "transactions which
+// should lead with the building or brand depending on if we are acting on the
+// building or then acting on the brand"). Cases from the live board.
+test("a transaction leads with the building, or with the brand when BGP acts for the tenant", async () => {
+  const { transactionLead, nameWithout } = await import("../shared/aml-dashboard");
+  const p = (role: string, brandName: string, clientRole: string) => ({ role, brandName, clientRole });
+  const lead = (dealName: string, propertyName: string | null, parties: ReturnType<typeof p>[]) => transactionLead({ dealName, propertyName, parties });
+  // BGP acts for the landlord: the building, with the tenant under it.
+  assert.deepEqual(lead("Tunsgate Quarter", "Tunsgate Quarter", [p("landlord", "Wirral Metropolitan Borough Council", "landlord"), p("tenant", "Rodd & Gunn", "landlord")]),
+    { lead: "Tunsgate Quarter", sub: "Rodd & Gunn", actingFor: "building" });
+  // The rest of the name is what tells it apart: the tenant, or the unit.
+  assert.equal(lead("Bird House Brewery – Brixton Village", "Brixton Village", [p("landlord", "Hondo Enterprises", "landlord"), p("tenant", "Bird House Brewery", "landlord")]).sub, "Bird House Brewery");
+  assert.deepEqual(lead("Bluewater Shopping Centre – U063", "Bluewater Shopping Centre", [p("landlord", "Landsec", "landlord")]),
+    { lead: "Bluewater Shopping Centre", sub: "U063", actingFor: "building" });
+  assert.equal(lead("King's Road Park – Anytime Fitness", "Kings Road Park", [p("landlord", "Berkeley Group", "landlord")]).sub, "Anytime Fitness", "an apostrophe aside");
+  assert.equal(lead("Lego – Unit 3, Canada Place", "Canary Wharf Estate", [p("landlord", "Canary Wharf Group", "landlord")]).sub, "Lego – Unit 3, Canada Place", "a name that is not the building's is kept whole");
+  // A sale: the building, with the buyer under it.
+  assert.deepEqual(lead("One Clapham", "One Clapham", [p("vendor", "Mount Anvil", "vendor"), p("purchaser", "Inovalis", "vendor")]),
+    { lead: "One Clapham", sub: "Inovalis", actingFor: "building" });
+  // BGP acts for the tenant: the brand, with the building under it.
+  assert.deepEqual(lead("Google - Positive Retail", "Google Kings Cross", [p("landlord", "Google", "tenant"), p("tenant", "Positive Retail", "tenant")]),
+    { lead: "Positive Retail", sub: "Google Kings Cross", actingFor: "brand" });
+  assert.deepEqual(lead("Vodafone", "The Arndale Shopping Centre", [p("landlord", "tam family", "tenant"), p("tenant", "Vodafone", "tenant")]),
+    { lead: "Vodafone", sub: "The Arndale Shopping Centre", actingFor: "brand" });
+  // No building: the transaction's own name.
+  assert.equal(lead("[TEST AML] 3", null, [p("landlord", "AML Test Landlord Ltd", "landlord"), p("tenant", "AML Test Tenant Ltd", "landlord")]).lead, "[TEST AML] 3");
+  // Taking a name off the start or the end, never the middle of a word.
+  assert.equal(nameWithout("Grand Central Shopping Centre – Unit 16B", "Grand Central Shopping Centre"), "Unit 16B");
+  assert.equal(nameWithout("Grand Centrality – Unit 1", "Grand Central"), "Grand Centrality – Unit 1");
+  assert.equal(nameWithout("Elephant Park - Mikos Mikos", "Elephant Park"), "Mikos Mikos");
+});

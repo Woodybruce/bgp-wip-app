@@ -26,6 +26,8 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { CrmSelectBar } from "@/components/crm-hub/crm-select-bar";
+import { LetterRail, WithLetterRail } from "@/components/letter-rail";
+import { byName, indexLetter, letterCounts, type IndexLetter } from "@shared/letter-index";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -148,6 +150,8 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
   const isMobile = useIsMobile();
   const [filter, setFilter] = useState<KycCompanyFilter>("all");
   const [query, setQuery] = useState("");
+  // A letter down the right picks the companies under it (Woody, 25 November 2026).
+  const [letter, setLetter] = useState<IndexLetter | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   // Add a company on the bar at the top opens it here, from either view (24 November 2026).
   const [adding, setAdding] = useState(startAdding);
@@ -162,9 +166,15 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
     setView(picked);
     if (!isMobile) storeAmlView("companies", picked);
   };
-  const searched = useMemo(() => (data?.rows || []).filter(r => kycCompanyMatchesSearch(r, query)), [data, query]);
+  const searchedAll = useMemo(() => (data?.rows || []).filter(r => kycCompanyMatchesSearch(r, query)), [data, query]);
+  const searched = useMemo(() => searchedAll.filter(r => !letter || indexLetter(r.name) === letter), [searchedAll, letter]);
   const counts = useMemo(() => kycCompanyCounts(searched), [searched]);
-  const shown = useMemo(() => searched.filter(r => kycCompanyMatchesFilter(r, filter)), [searched, filter]);
+  // The letters with something under them on this pill, before a letter is picked.
+  const letters = useMemo(() => letterCounts(searchedAll.filter(r => kycCompanyMatchesFilter(r, filter)).map(r => r.name)), [searchedAll, filter]);
+  const shown = useMemo(() => {
+    const list = searched.filter(r => kycCompanyMatchesFilter(r, filter));
+    return letter ? [...list].sort((a, b) => byName(a.name, b.name)) : list;
+  }, [searched, filter, letter]);
   const openRow = (data?.rows || []).find(r => r.id === openId) || null;
   const onRow = (r: KycCompanyRow) => {
     if (!selecting) return setOpenId(r.id);
@@ -208,10 +218,12 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
         <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading every company on a transaction…</div>
       ) : error ? (
         <p className="text-sm text-destructive">The companies could not be read.</p>
-      ) : !shown.length ? (
-        <p className="text-sm text-muted-foreground" data-testid="kyc-companies-empty">No companies here{query ? " for that search" : ""}.</p>
+      ) : (
+      <WithLetterRail testId="kyc-companies-list" rail={<LetterRail counts={letters} active={letter} onPick={setLetter} testId="kyc-companies-letters" />}>
+      {!shown.length ? (
+        <p className="text-sm text-muted-foreground" data-testid="kyc-companies-empty">No companies here{letter ? ` under ${letter}` : ""}{query ? " for that search" : ""}.</p>
       ) : isMobile || view === "card" ? (
-        <AmlCardGrid items={shown} testId="kyc-companies-cards" render={r => <KycCompanyCard key={r.id} row={r} onOpen={onRow} selected={selecting ? picked.has(r.id) : undefined} />} />
+        <AmlCardGrid key={letter || "all"} items={shown} testId="kyc-companies-cards" render={r => <KycCompanyCard key={r.id} row={r} onOpen={onRow} selected={selecting ? picked.has(r.id) : undefined} />} />
       ) : (
         <div className="rounded-lg border overflow-hidden" data-testid="kyc-companies-table-box">
           <ScrollableTable minWidth={1080} topScrollbar>
@@ -243,6 +255,8 @@ export function KycCompaniesView({ isAdmin, startAdding = false }: { isAdmin: bo
             </table>
           </ScrollableTable>
         </div>
+      )}
+      </WithLetterRail>
       )}
 
       {openRow && <CompanyKycWindow row={openRow} onClose={() => setOpenId(null)} />}

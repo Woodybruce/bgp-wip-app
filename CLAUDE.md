@@ -5012,6 +5012,25 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   shared chips). Order: a late party first, then the most red flags, then
   the longest unmoved. The property page's AML on transactions here groups
   with the same rule.
+- **A to Z down the right** (Woody, 25 November 2026: "on the right side can
+  you put letters alphabetic so can click and search companies and also
+  transactions which should lead with the building or brand depending on if we
+  are acting on the building or then acting on the brand"). Transactions and
+  Companies each have a letter rail (`LetterRail`, `WithLetterRail` in
+  `client/src/components/letter-rail.tsx`; rules `shared/letter-index.ts`: a
+  name's first letter, accents aside, a number or no letter under #). A letter
+  shows only the names under it, A to Z; pressing it again or All shows them
+  all; a letter with nothing under it on the pill is greyed; the pills' counts
+  follow the letter. On a computer the rail sits in the page's right margin, so
+  the table keeps its width (the Agents column must not run off a 1440px
+  screen); on a phone, beside the cards. **A transaction is known by its
+  building, or by the brand when BGP acts for the tenant** (`transactionLead`
+  in `shared/aml-dashboard.ts`, from `clientRole` on each board row,
+  `dealClientRole`; a sale and a purchase lead with the building). Under it:
+  for a building, the rest of the transaction's name (`nameWithout`: the unit,
+  the tenant), else the other party; for a brand, the building; then the Ref.
+  Tests: `server/letter-index.test.ts`, `server/aml-dashboard.test.ts`,
+  `qa/regression/aml-one-build.test.mjs`.
 - **Start from the AML page** (Woody, 24 November 2026: "what about my add
   new transaction text box and upload files box etc here?", then "and add new
   company AML etc"). At the top of the Transactions and the Companies views
