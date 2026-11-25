@@ -86,14 +86,14 @@ test('the table shows the transaction status, the red flags under due diligence 
   assert.match(page, /<th className="text-left font-medium px-3 py-2">AML stage<\/th>/);
   assert.match(page, /<th className="text-left font-medium px-3 py-2">Due diligence and red flags<\/th>/);
   assert.doesNotMatch(page, />Red flags<\/th>/, 'the red flags sit under due diligence, not in a column of their own');
-  assert.match(page, /<td className="px-3 py-2"><DealStatusChip row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 max-w-\[240px\]"><DiligenceCell row=\{r\} onOpen=\{setOpen\} \/><\/td>/);
+  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{block\}><DealStatusChip row=\{first\} \/><\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} max-w-\[240px\]`\}><DiligenceCell row=\{r\} onOpen=\{onOpen\} \/><\/td>/);
   // Every agent on a line of their own, never cut off.
-  assert.match(page, /\{row\.agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
+  assert.match(page, /\{agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
   // The party, transaction and waiting-on columns give way below 1536px so the agents fit a laptop screen.
-  assert.match(page, /<td className="px-3 py-2 max-w-\[170px\] 2xl:max-w-\[230px\]"><PartyCell row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 max-w-\[190px\] 2xl:max-w-\[260px\]"><DealCell row=\{r\} \/><\/td>/);
-  assert.match(page, /<td className="px-3 py-2 min-w-\[120px\] max-w-\[200px\]">\{r\.waitingOn\}<\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} max-w-\[170px\] 2xl:max-w-\[230px\]`\}><PartyCell row=\{r\} \/><\/td>/);
+  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{`\$\{block\} max-w-\[190px\] 2xl:max-w-\[260px\]`\}><DealCell row=\{first\} \/><\/td>/);
+  assert.match(page, /<td className=\{`\$\{cell\(i\)\} min-w-\[120px\] max-w-\[200px\]`\}>\{r\.waitingOn\}<\/td>/);
   assert.doesNotMatch(page, /r\.agents\.join\(", "\)/);
   // The status in the Transactions board's words, a letting's AVA as Marketing.
   assert.match(read('shared/aml-dashboard.ts'), /words: dealStatusLabel\(row\.dealStatus, row\.dealType\)/);
@@ -101,7 +101,8 @@ test('the table shows the transaction status, the red flags under due diligence 
 
 test('the top folds once the table scrolls, keeping the title and pills (Woody, 22 November 2026)', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
-  assert.match(page, /const foldedTop = folded && !isMobile && shownSection === "checks";/);
+  // Transactions and Companies fold alike since 24 November 2026 (startsHere).
+  assert.match(page, /const foldedTop = folded && !isMobile && startsHere;/);
   assert.match(page, /if \(table\.scrollTop > 48\) setFolded\(/);
   // The policy line has its own pill, so the table starts at the top (22 November 2026).
   assert.match(page, /\{ key: "policy", label: "Policy" \},/);
@@ -114,4 +115,57 @@ test('the top folds once the table scrolls, keeping the title and pills (Woody, 
   const panel = read('client/src/components/aml-policy-panel.tsx');
   assert.match(panel, /<div className="max-w-3xl space-y-4 text-sm" data-testid="aml-policy-panel">/);
   assert.doesNotMatch(panel, /data-testid="aml-policy-open"/);
+});
+
+// One line per transaction with its parties inside it (Woody, 24 November 2026:
+// "combine the 2 (normally) AML checks into just one transaction board or line").
+test('the board is one line per transaction, each party on a line of its own inside it', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  assert.match(page, /const transactions = useMemo\(\(\) => groupAmlByTransaction\(data\?\.rows \|\| \[\]\), \[data\]\);/);
+  assert.match(page, /scoped\.filter\(t => t\.buckets\.includes\(bucket\)\)/);
+  assert.match(page, /const counts = useMemo\(\(\) => transactionBucketCounts\(scoped\), \[scoped\]\);/);
+  // The table: a group per transaction; its own cells once (rowSpan), a line per party.
+  assert.match(page, /\{shown\.map\(t => <TransactionRows key=\{t\.key\} t=\{t\} bucket=\{bucket\} onOpen=\{setOpen\} \/>\)\}/);
+  assert.match(page, /<tbody className="group\/txn border-t border-border" data-testid=\{`aml-transaction-\$\{t\.dealId\}`\}>/);
+  assert.match(page, /<tr key=\{r\.key\} onClick=\{\(\) => onOpen\(r\)\} className="cursor-pointer" data-testid=\{`aml-row-\$\{r\.key\}`\}>/);
+  // Cards and the phone: one card per transaction, a line per party.
+  assert.match(page, /render=\{t => <AmlTransactionCard key=\{t\.key\} t=\{t\} bucket=\{bucket\} onOpen=\{setOpen\} \/>\}/);
+  assert.doesNotMatch(page, /function AmlPartyCard\(/);
+  // The property page's AML on transactions here groups the same way.
+  assert.match(read('client/src/components/property-page/ownership-card.tsx'), /const transactions = groupAmlByTransaction\(data\?\.rows \|\| \[\]\);/);
+});
+
+// Start from the AML page (Woody, 24 November 2026: "what about my add new
+// transaction text box and upload files box etc here?", "and add new company AML etc").
+test('the AML page starts a new transaction from words or heads of terms, and adds a company', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  // One top for Transactions and Companies (Woody, 24 November 2026: "make the company
+  // page the same format as the transactions page on the top ... and obviously have the
+  // new box"): the bar above both views, and both fold on scroll.
+  assert.match(page, /const startsHere = shownSection === "checks" \|\| shownSection === "companies";/);
+  assert.match(page, /\{startsHere && !foldedTop && <AmlStartBar onTransaction=\{setStartTx\} onCompany=\{\(\) => \{ setAddCompany\(true\); setSection\("companies"\); \}\} \/>\}/);
+  assert.equal([...page.matchAll(/<AmlStartBar /g)].length, 1, 'one bar, not one per view');
+  assert.match(page, /const foldedTop = folded && !isMobile && startsHere;/);
+  assert.match(page, /useEffect\(\(\) => \{ setFolded\(false\); lastTopRef\.current = 0; \}, \[shownSection\]\);/);
+  assert.match(page, /const NewTransactionDialog = lazy\(\(\) => import\("@\/pages\/deals"\)\.then\(m => \(\{ default: m\.NewTransactionDialog \}\)\)\);/);
+  assert.match(page, /initialNote=\{startTx\.note \|\| null\}/);
+  assert.match(page, /initialHotsFile=\{startTx\.file \|\| null\}/);
+  assert.match(page, /<KycCompaniesView isAdmin=\{!!me\?\.isAdmin\} startAdding=\{addCompany\} \/>/);
+  const bar = read('client/src/components/aml-start.tsx');
+  // The box keeps its own drops, and saves nothing itself.
+  assert.match(bar, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\);/);
+  assert.doesNotMatch(bar, /apiRequest|fetch\(/);
+  const deals = read('client/src/pages/deals.tsx');
+  assert.match(deals, /export function NewTransactionDialog\(/);
+  assert.match(deals, /initialText=\{!handover && initialNote \? initialNote : undefined\}/);
+  assert.match(deals, /autoRead=\{!handover && !!initialNote\}/);
+  assert.match(deals, /autoHotsFile=\{!handover && !isClientCreate \? initialHotsFile : null\}/);
+  assert.match(deals, /if \(!autoHotsFile \|\| autoHotsRead\.current\) return;/);
+  const companies = read('client/src/components/kyc-companies/companies-view.tsx');
+  assert.match(companies, /const \[adding, setAdding\] = useState\(startAdding\);\n\s+useEffect\(\(\) => \{ if \(startAdding\) setAdding\(true\); \}, \[startAdding\]\);/);
+  // Its controls are laid out as Transactions' (Select, Table or Cards, then the search), and
+  // Add a company is the bar's, not a second button.
+  assert.doesNotMatch(companies, /data-testid="kyc-companies-add"/);
+  const controls = companies.indexOf('data-testid="kyc-companies-select"');
+  assert.ok(controls > 0 && controls < companies.indexOf('data-testid="kyc-companies-view-toggle"') && companies.indexOf('data-testid="kyc-companies-view-toggle"') < companies.indexOf('data-testid="kyc-companies-search"'));
 });

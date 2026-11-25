@@ -44,9 +44,10 @@ test("deleting a sub company: never one that signs, pays, guarantees or holds AM
   const route = s.slice(s.indexOf('app.delete("/api/crm/trading-entities/:id"'));
   assert.match(route, /landlord_trading_entity_id = \$1 OR tenant_trading_entity_id = \$1 OR vendor_trading_entity_id = \$1 OR purchaser_trading_entity_id = \$1/);
   assert.match(route, /FROM crm_deals WHERE invoice_payer_entity_id = \$1/);
-  assert.match(route, /FROM deal_guarantors WHERE trading_entity_id = \$1 AND removed_at IS NULL/);
+  // deal_guarantors keys the company by entity_id (the guard read a column that does not exist until 24 November 2026).
+  assert.match(route, /FROM deal_guarantors WHERE entity_id = \$1 AND removed_at IS NULL/);
   for (const t of ["kyc_documents", "kyc_investigations", "kyc_client_files", "kyc_upload_tokens"]) {
-    assert.ok(route.slice(0, 4000).includes(`FROM ${t} WHERE trading_entity_id = $1`), t);
+    assert.ok(route.slice(0, 5000).includes(`FROM ${t} WHERE trading_entity_id = $1`), t);
   }
 });
 
@@ -55,7 +56,7 @@ test("the screen: one row per company, the company page's own card inside, each 
   assert.match(v, /data-testid="kyc-companies"/);
   assert.match(v, /<AccountEntitiesPanel companyId=\{row\.id\} \/>/, "one version of the Companies and KYC card");
   assert.match(v, /<DealAmlDialog deal=\{aml\}/, "a transaction's AML box, not a copy");
-  assert.match(v, /<Kyc4uStatusStrip companyId=\{row\.id\} \/>/);
+  assert.match(v, /<Kyc4uStatusStrip companyId=\{row\.id\} bare \/>/, 'the window\'s section has the heading; the strip leaves its own out');
   assert.match(v, /<CrmSelectBar kind="kyc"/, "select and delete follow the CRM lists' rules");
   assert.match(v, /\/deals\?new=1&\$\{row\.kind === "brand" \? "tenantId" : "landlordId"\}=/);
   assert.doesNotMatch(v, /<form[\s>]/, "no form element in a dialog");

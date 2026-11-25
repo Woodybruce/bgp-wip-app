@@ -192,8 +192,22 @@ const EDD_REASONS: Record<string, string> = {
 const eddReason = (reason: string | null | undefined): string | null => {
   const r = String(reason || "").trim();
   if (!r) return null;
-  return EDD_REASONS[r] ? `Reason: ${EDD_REASONS[r]}` : words(r);
+  if (EDD_REASONS[r]) return `Reason: ${EDD_REASONS[r]}`;
+  // Several reasons saved together ("super_prime,pep"): each in words, never a
+  // super-prime price, which is weighed and is no reason by itself.
+  const keys = r.split(",").map(k => k.trim()).filter(k => k && k !== "super_prime");
+  return keys.length && keys.every(k => EDD_REASONS[k]) ? `Reason: ${keys.map(k => EDD_REASONS[k]).join(", ")}` : words(r);
 };
+
+// The transaction save marked every sale or purchase priced at £1m or more
+// (£5m with "london" in its name) for enhanced due diligence, with the reason
+// super_prime, until 24 November 2026. A super-prime price is weighed on each
+// party, never a red flag by itself (risk assessment Issue 3), so a mark with
+// no other reason is no flag (marks already saved on live included).
+export function eddMarkIsSuperPrimeOnly(reason: string | null | undefined): boolean {
+  const keys = String(reason || "").split(",").map(k => k.trim()).filter(Boolean);
+  return keys.length > 0 && keys.every(k => k === "super_prime");
+}
 
 // aml_pep_status as the screening and the MLRO write it: review_required
 // (screening found a possible PEP or sanctions match), pep / pep_* (a PEP),
@@ -333,7 +347,10 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
     flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(facts.company.aml_edd_reason), source: "KYC record", at: null,
       key: "record:edd", evidence: [`reason:${keyPart(facts.company.aml_edd_reason)}`], facts: history });
   }
-  if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, { sanctionsCurrent: facts.precheck.current }));
+  if (facts.precheck?.result) flags.push(...precheckRedFlags(facts.precheck.result, {
+    sanctionsCurrent: facts.precheck.current,
+    publicBody: String(facts.company?.aml_subject_type || "").trim().toLowerCase() === "public_body",
+  }));
   flags.push(...policyFactorFlags({ precheck: facts.precheck?.result || null, companyType: facts.company?.company_type, subjectType: facts.company?.aml_subject_type }));
   return flags;
 }
@@ -346,7 +363,7 @@ export function dealRedFlags(deal: DealRedFlagFacts | null): KycRedFlag[] {
   const pep = pepStatusLabel(deal.aml_pep_status);
   if (pep) flags.push({ kind: "screening", label: pep, detail: null, source: "Transaction record", at: null, key: "deal:screening", evidence: [`status:${keyPart(deal.aml_pep_status)}`] });
   if (highRisk(deal.aml_risk_level)) flags.push({ kind: "high_risk", label: riskLabel(deal.aml_risk_level!), detail: null, source: "Transaction record", at: null, key: "deal:high_risk", evidence: [`level:${keyPart(deal.aml_risk_level)}`] });
-  if (deal.aml_edd_required && !deal.aml_edd_completed_at) {
+  if (deal.aml_edd_required && !deal.aml_edd_completed_at && !eddMarkIsSuperPrimeOnly(deal.aml_edd_reason)) {
     flags.push({ kind: "edd", label: "Marked for enhanced due diligence", detail: eddReason(deal.aml_edd_reason), source: "Transaction record", at: null, key: "deal:edd", evidence: [`reason:${keyPart(deal.aml_edd_reason)}`] });
   }
   const mismatched = (deal.aml_sof_analysis?.items || []).filter(i => i?.declaredSourceMatchesDocument === false);

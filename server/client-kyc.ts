@@ -21,6 +21,7 @@
 //   POST /api/client-kyc/:companyId/subjects/:entity/sign-off       { note }
 //   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/set-aside { key, comment } (the officers)
 //   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/put-back  { reviewId } (the officers)
+//   POST /api/client-kyc/:companyId/subjects/:entity/red-flags/suggest   { key } (the officers: the app's draft of the reason)
 //   POST /api/client-kyc/:companyId/checks                         { entityIds, again? }: BGP's checks on many sub companies, one at a time
 //   GET  /api/client-kyc/:companyId/checks                         where that run is
 //
@@ -199,6 +200,7 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     request: main ? main.status : "none",
     waitingOn: view.outstanding.length && main?.status === "finished" ? requests.filter((r: any) => r.person && r.status !== "finished").map((r: any) => r.person.name) : [],
     signOffBlocked: view.blocked,
+    dobNeeded: !!view.person?.needed && !view.person.details,
   };
   const fmt = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
   const { rows: transactions } = await pool.query(
@@ -428,13 +430,14 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/sign-off", asy
       note ? `note: ${note}` : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (BGP's contact for ${subject.accountName})` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
-    const line = `BGP sign-off on ${subject.entityName || subject.accountName}, ${subject.dealName}, by ${who}: ${relied}`;
+    // A listed company's note, written from the file (24 November 2026), kept with the approval.
+    const line = `BGP sign-off on ${subject.entityName || subject.accountName}, ${subject.dealName}, by ${who}: ${relied}${facts.fileNote ? `. Written from the file: ${facts.fileNote}` : ""}`;
     if (subject.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
       const r = await approveEntityKyc("trading_entity", subject.entityId, me.name, {
         reminderCompanyId: subject.brandId, notes: line, recheckYears: years,
         evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: null, role: "client", clientFile: subject.file?.id || null,
-          instruction: subject.file?.instruction || null, note: note || null, level, regime: subject.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+          instruction: subject.file?.instruction || null, note: note || null, fileNote: facts.fileNote || null, level, regime: subject.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company was not found." });
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
@@ -474,6 +477,25 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/set-
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
     console.error("[client-kyc] set aside failed:", err?.message);
     res.status(500).json({ message: "The red flag could not be set aside." });
+  }
+});
+
+// The app's draft of the reason for setting a flag aside (server/flag-set-aside.ts). Saves nothing.
+clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/suggest", async (req: Request, res: Response) => {
+  try {
+    const { decider } = await import("./deal-party-aml");
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const subject = await clientSubjectFor(req, res);
+    if (!subject) return;
+    const key = text(req.body?.key).slice(0, 300);
+    if (!key) return res.status(400).json({ message: "Which red flag?" });
+    const { suggestSetAside } = await import("./flag-set-aside");
+    res.json(await suggestSetAside({ dealId: null, brandId: subject.brandId, entityId: subject.entityId, key }));
+  } catch (err: any) {
+    if (err?.name === "SuggestRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[client-kyc] suggest failed:", err?.message);
+    res.status(500).json({ message: "The app could not draft a reason." });
   }
 });
 

@@ -24,6 +24,7 @@ export type AmlBoxWho = "nobody" | "bgp" | "client" | "officers" | "joint_agent"
 export type AmlBoxAction =
   | "fill_in"            // the party box: the company that signs, who to ask, an email
   | "trust"              // a trust's structure (23 November 2026)
+  | "person_details"     // a private individual's date of birth (24 November 2026)
   | "add_details"        // the party box, for the people the checks need
   | "send_client_checks"
   | "send_via_agent"     // the client checks, through the party's own agent to pass on
@@ -121,6 +122,9 @@ export interface AmlBoxFacts {
   joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number; chasing?: boolean; unread?: number } | null;
   // The Not required reason's key ("joint_agent", "no_deal"), for its short words.
   notRequiredReason?: string | null;
+  // A private individual on a letting under £10,000 a month with no date of
+  // birth recorded (shared/kyc-person-details.ts, 24 November 2026).
+  dobNeeded?: boolean;
   // The firm relied on (MLR 2017 reg 39), by name.
   relianceFirm?: string | null;
 }
@@ -215,6 +219,8 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   // A letting under £10,000 a month: the sanctions checks only, kept simple (Woody,
   // 23 November 2026). Only a possible sanctions match holds it up; an agent signs off.
   if (f.sanctionsOnly && !f.trust) {
+    // A private individual's date of birth first: it is what sets a namesake on the lists aside.
+    if (f.dobNeeded) return step("act", "bgp", "To do", "Add their date of birth", "person_details");
     if ((f.sanctionsFlags || 0) > 0) return step("flag", "officers", "Possible sanctions match", "check it first", "red_flags");
     if (f.billingDiffers) return BILLING_STEP;
     if (f.canSignOff && f.signOffBlocked === null) return step("act", "bgp", "Ready to sign off", "sanctions only, all clear", "sign_off");
@@ -296,6 +302,15 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("act", "bgp", "To do", words, viaAgent ? "send_via_agent" : "send_client_checks");
   }
   if (unreachable.length) {
+    // The person acting passes each owner their own link from their page, so
+    // while their request is open the wait is on them; BGP can add the
+    // details and send the link itself (#4664, 24 November 2026: "unclear if
+    // the email for Lee has been added for Kenneth to send on?").
+    const to = f.request.to;
+    if (f.request.status !== "finished" && to && unreachable.every(p => !personNamesMatch(p.name, to))) {
+      const who = unreachable.length === 1 ? unreachable[0].name : `${unreachable.length} owners`;
+      return step("wait", "client", `Waiting on ${to}`, `to pass ${who} ${unreachable.length === 1 ? "their link" : "their links"}`, "add_details");
+    }
     return step("act", "bgp", "To do", `Add contact details for ${andList(unreachable.map(p => p.name))}`, "add_details");
   }
   const noLink = f.people.filter(p => !p.linked);

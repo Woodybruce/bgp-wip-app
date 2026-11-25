@@ -284,6 +284,35 @@ export interface HotsReading {
 
 export const isInvestmentDealType = (dealType: string | null | undefined): boolean => dealType === "Sale" || dealType === "Purchase";
 
+// A bracket that is about the company, not its name: its number, who it is
+// care of, where it is registered (One Clapham #4578, 24 November 2026: the
+// heads of terms gave "SCPI Eden (c/o Advenis Real Estate Investment
+// Management (ADVENIS REIM); Company No. 833 409 899)" and that whole line
+// became a CRM record's name).
+// "(No. 2)" stays: it is part of many SPVs' names.
+const ABOUT_THE_COMPANY = /^\s*(?:c\/o\b|care of\b|company\s*(?:no|number|reg|registration)\b|co\.?\s*(?:no|reg)\b|registered\s+(?:no|number|in|office|address|company)\b|reg(?:istration)?\.?\s*(?:no|number)\b|rcs\b|siren\b|siret\b|kvk\b|hrb\b|incorporated\b|a company\b|an?\s+(?:english|scottish|welsh|limited|private|public|french|luxembourg|jersey|guernsey)\b|(?:SC|NI|OC|SO|NC|FC|LP|SL)\s?\d{6}\b|\d{5,})/i;
+
+/** A party's name as the document gives it, without what the document says about it: "St John's Hill PH03 LLP (Company No. OC443074)" is St John's Hill PH03 LLP. */
+export function hotsPartyName(v: unknown): string {
+  let s = words(v);
+  // Drop each bracket (nested ones with it) that is about the company.
+  for (let guard = 0; guard < 6; guard++) {
+    let cut = false;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] !== "(") continue;
+      let depth = 0, j = i;
+      for (; j < s.length; j++) { if (s[j] === "(") depth++; else if (s[j] === ")" && --depth === 0) break; }
+      if (ABOUT_THE_COMPANY.test(s.slice(i + 1, j))) { s = `${s.slice(0, i)} ${s.slice(j + 1)}`.replace(/\s+/g, " ").trim(); cut = true; break; }
+    }
+    if (!cut) break;
+  }
+  // "…, Company No. 123" or "… company number 123" written after the name, without brackets.
+  s = s.replace(/[,;]?\s*\b(?:registered\s+)?(?:company|co\.?|registration)\s*(?:no\.?|number|reg(?:istration)?\.?\s*no\.?)\s*:?\s*[A-Z]{0,2}\s?[\d\s]{5,}\s*$/i, "");
+  // "c/o …" left outside a bracket.
+  s = s.replace(/[,;]?\s*\bc\/o\b.*$/i, "");
+  return s.replace(/[\s,;:–-]+$/, "").trim();
+}
+
 /**
  * The parties a reading names for the deal type the form will have: the
  * vendor and purchaser on a sale or purchase (a reader that only gave a
@@ -292,7 +321,7 @@ export const isInvestmentDealType = (dealType: string | null | undefined): boole
  */
 export function hotsParties(reading: HotsReading, dealType: string | null | undefined): Array<{ role: DealNoteRole; name: string }> {
   const out: Array<{ role: DealNoteRole; name: string }> = [];
-  const add = (role: DealNoteRole, v: unknown) => { const n = words(v); if (n) out.push({ role, name: n.slice(0, 160) }); };
+  const add = (role: DealNoteRole, v: unknown) => { const n = hotsPartyName(v); if (n) out.push({ role, name: n.slice(0, 160) }); };
   if (isInvestmentDealType(dealType)) {
     add("vendor", reading.vendorName || reading.landlordName);
     add("purchaser", reading.purchaserName);

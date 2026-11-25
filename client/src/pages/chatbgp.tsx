@@ -31,7 +31,7 @@ import {
   Menu, Home, UserPlus, Download, File as FileIcon, ChevronRight,
   ArrowLeft, Paperclip, FolderOpen, ChevronDown,
   Eye, Share2, Image, FileSpreadsheet, ExternalLink, Copy, Check,
-  Mic, Square, MapPin, Folder, Globe, Hash, Tag,
+  Mic, Square, MapPin, Hash, Tag,
   Star, Archive, BookOpen, Brain, FileUp, MoreVertical, RotateCcw,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -40,6 +40,7 @@ import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { ChatResponse } from "@/components/chat-response";
 import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
+import { RecordFolderLinks, useIsFolderStaff } from "@/components/folders/record-folder-links";
 
 function formatFileSize(bytes: number | null) {
   if (!bytes) return "";
@@ -632,85 +633,6 @@ function PropertyContextSection({ title, icon: Icon, children, defaultOpen = fal
   );
 }
 
-function FolderTreeItem({ item, team, propertyName, depth = 0 }: {
-  item: { id: string; name: string; isFolder: boolean; childCount: number; webUrl: string; size: number; lastModified: string };
-  team: string;
-  propertyName: string;
-  depth?: number;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [children, setChildren] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const loadChildren = async () => {
-    if (children.length > 0 || loading) return;
-    setLoading(true);
-    try {
-      const currentPath = item.name;
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(team)}/${encodeURIComponent(propertyName)}?path=${encodeURIComponent(currentPath)}`, { credentials: "include", headers: { ...getAuthHeaders() } });
-      if (res.ok) {
-        const data = await res.json();
-        setChildren(data.folders || []);
-      }
-    } catch (err) {
-      console.error("[loadChildren] Failed:", err);
-    }
-    setLoading(false);
-  };
-
-  if (item.isFolder) {
-    return (
-      <div>
-        <button
-          className="w-full flex items-center gap-2.5 py-2 px-3 hover:bg-muted/40 transition-colors text-left"
-          style={{ paddingLeft: `${depth * 16 + 12}px` }}
-          onClick={() => {
-            const next = !expanded;
-            setExpanded(next);
-            if (next) loadChildren();
-          }}
-          data-testid={`folder-${item.id}`}
-        >
-          <ChevronRight className={`w-3.5 h-3.5 text-muted-foreground shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
-          <Folder className="w-4 h-4 text-amber-500 shrink-0" />
-          <span className="text-xs truncate flex-1 font-medium">{item.name}</span>
-          {item.childCount > 0 && <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{item.childCount}</span>}
-        </button>
-        {expanded && (
-          <div>
-            {loading ? (
-              <div className="flex items-center gap-2 py-2" style={{ paddingLeft: `${(depth + 1) * 16 + 12}px` }}>
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                <span className="text-[11px] text-muted-foreground">Loading...</span>
-              </div>
-            ) : children.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground py-2" style={{ paddingLeft: `${(depth + 1) * 16 + 32}px` }}>Empty folder</p>
-            ) : (
-              children.map((child: any) => (
-                <FolderTreeItem key={child.id} item={child} team={team} propertyName={propertyName} depth={depth + 1} />
-              ))
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <button
-      className="w-full flex items-center gap-2.5 py-2 px-3 hover:bg-muted/40 transition-colors text-left group"
-      style={{ paddingLeft: `${depth * 16 + 32}px` }}
-      onClick={() => item.webUrl && window.open(item.webUrl, "_blank")}
-      data-testid={`file-item-${item.id}`}
-    >
-      <FileIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      <span className="text-xs truncate flex-1">{item.name}</span>
-      {item.size > 0 && <span className="text-[10px] text-muted-foreground shrink-0">{formatFileSize(item.size)}</span>}
-      <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-    </button>
-  );
-}
-
 function PropertyProjectView({
   project,
   onStartChat,
@@ -935,24 +857,8 @@ function ProjectRightPanel({
     ...project.dealChildren.flatMap((d: any) => d.threads),
   ].sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
 
-  const folderTeams: string[] = propertyDetail?.folderTeams || [];
-  const [activeFolderTeam, setActiveFolderTeam] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (folderTeams.length > 0 && !activeFolderTeam) {
-      setActiveFolderTeam(folderTeams[0]);
-    }
-  }, [folderTeams, activeFolderTeam]);
-
-  const { data: folderData } = useQuery<{ exists: boolean; folders: any[] }>({
-    queryKey: ["/api/microsoft/property-folders", activeFolderTeam, propertyDetail?.name],
-    queryFn: async () => {
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeFolderTeam!)}/${encodeURIComponent(propertyDetail?.name)}`, { credentials: "include", headers: { ...getAuthHeaders() } });
-      if (!res.ok) return { exists: false, folders: [] };
-      return res.json();
-    },
-    enabled: !!activeFolderTeam && !!propertyDetail?.name,
-  });
+  // The property's Folders, read only: BGP staff only (a client login never reads the folder engine).
+  const folderStaff = useIsFolderStaff();
 
   const memberIds = new Set(members.map((m: any) => m.id || m.userId));
   const availableUsers = users.filter((u: any) => !memberIds.has(u.id));
@@ -1272,51 +1178,15 @@ function ProjectRightPanel({
             </div>
           </div>
 
-          {folderTeams.length > 0 && (
+          {folderStaff && propertyId && (
             <div className="border-t border-border/50 pt-5">
               <div className="flex items-center justify-between mb-2.5">
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-muted-foreground" />
-                  SharePoint
+                  <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                  Folders
                 </h4>
               </div>
-              {folderTeams.length > 1 && (
-                <div className="flex gap-1 mb-3 flex-wrap">
-                  {folderTeams.map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setActiveFolderTeam(t)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${activeFolderTeam === t ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {folderData?.exists && folderData.folders.length > 0 ? (
-                <div className="rounded-xl bg-muted/20 border border-border/40 overflow-hidden">
-                  {folderData.folders.map((item: any, idx: number) => (
-                    <div key={item.id} className={idx > 0 ? "border-t border-border/30" : ""}>
-                      <FolderTreeItem
-                        item={item}
-                        team={activeFolderTeam!}
-                        propertyName={propertyDetail?.name || ""}
-                      />
-                    </div>
-                  ))}
-                </div>
-              ) : folderData?.exists === false ? (
-                <div className="rounded-xl bg-muted/20 border border-border/40 p-4 text-center">
-                  <FolderOpen className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
-                  <p className="text-xs text-muted-foreground">No SharePoint folders configured</p>
-                  <p className="text-[11px] text-muted-foreground/60 mt-0.5">Set up SharePoint on the property to see folders here</p>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 py-3 justify-center">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Loading folders...</span>
-                </div>
-              )}
+              <RecordFolderLinks recordType="property" recordId={propertyId} testId="project-folder-links" />
             </div>
           )}
 
@@ -1462,24 +1332,8 @@ function ThreadInfoPanel({
     enabled: !!propertyId,
   });
 
-  const folderTeams: string[] = propertyDetail?.folderTeams || [];
-  const [activeFolderTeam, setActiveFolderTeam] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (folderTeams.length > 0 && !activeFolderTeam) {
-      setActiveFolderTeam(folderTeams[0]);
-    }
-  }, [folderTeams, activeFolderTeam]);
-
-  const { data: folderData } = useQuery<{ exists: boolean; folders: any[] }>({
-    queryKey: ["/api/microsoft/property-folders", activeFolderTeam, propertyDetail?.name],
-    queryFn: async () => {
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeFolderTeam!)}/${encodeURIComponent(propertyDetail?.name)}`, { credentials: "include", headers: { ...getAuthHeaders() } });
-      if (!res.ok) return { exists: false, folders: [] };
-      return res.json();
-    },
-    enabled: !!activeFolderTeam && !!propertyDetail?.name,
-  });
+  // The property's Folders, read only: BGP staff only (a client login never reads the folder engine).
+  const folderStaff = useIsFolderStaff();
 
   const { data: marketingFiles = [] } = useQuery<UnitMarketingFile[]>({
     queryKey: ["/api/available-units", "by-property", propertyId, "files"],
@@ -1641,47 +1495,11 @@ function ThreadInfoPanel({
             </PropertyContextSection>
           )}
 
-          <PropertyContextSection title="Files" icon={FolderOpen} defaultOpen={true}>
-            {folderTeams.length > 0 ? (
-              <div>
-                {folderTeams.length > 1 && (
-                  <div className="flex gap-1 mb-2 flex-wrap">
-                    {folderTeams.map(t => (
-                      <button
-                        key={t}
-                        onClick={() => setActiveFolderTeam(t)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${activeFolderTeam === t ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}
-                        data-testid={`folder-team-${t}`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {folderData?.exists && folderData.folders.length > 0 ? (
-                  <div className="space-y-0">
-                    {folderData.folders.map((item: any) => (
-                      <FolderTreeItem
-                        key={item.id}
-                        item={item}
-                        team={activeFolderTeam!}
-                        propertyName={propertyDetail?.name || ""}
-                      />
-                    ))}
-                  </div>
-                ) : folderData?.exists === false ? (
-                  <p className="text-[11px] text-muted-foreground py-1">No SharePoint folders set up yet</p>
-                ) : (
-                  <div className="flex items-center gap-2 py-2">
-                    <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                    <span className="text-[11px] text-muted-foreground">Loading folders...</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <p className="text-[11px] text-muted-foreground py-1">No SharePoint folders configured</p>
-            )}
-          </PropertyContextSection>
+          {folderStaff && propertyId && (
+            <PropertyContextSection title="Folders" icon={FolderOpen} defaultOpen={true}>
+              <RecordFolderLinks recordType="property" recordId={propertyId} testId="thread-folder-links" />
+            </PropertyContextSection>
+          )}
 
           {marketingFiles.length > 0 && (
             <PropertyContextSection title="Marketing Files" icon={FileText}>

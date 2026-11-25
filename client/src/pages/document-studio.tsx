@@ -15,9 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { FolderPicker } from "@/components/folders/folder-picker";
+import { folderApi } from "@/components/folders/folder-api";
 import {
   FileText, Plus, Upload, Download, RefreshCw, FolderUp, Presentation,
-  FileSpreadsheet, FileType, ChevronRight, Loader2, Sparkles, CloudUpload, Trash2,
+  FileSpreadsheet, FileType, Loader2, Sparkles, CloudUpload, Trash2,
 } from "lucide-react";
 
 interface DocItem {
@@ -252,9 +254,22 @@ export default function DocumentStudio() {
       <GenerateDialog open={genOpen} onOpenChange={setGenOpen} templates={templates}
         onCreated={(id) => { setGenOpen(false); setSelectedId(id); queryClient.invalidateQueries({ queryKey: ["/api/documents"] }); }}
         onError={(m) => toast({ title: "Couldn't generate", description: m, variant: "destructive" })} />
-      {selected && <MirrorDialog open={mirrorOpen} onOpenChange={setMirrorOpen} doc={selected}
-        onDone={() => { setMirrorOpen(false); queryClient.invalidateQueries({ queryKey: ["/api/documents"] }); toast({ title: "Filed to SharePoint" }); }}
-        onError={(m) => toast({ title: "Filing failed", description: m, variant: "destructive" })} />}
+      {selected && (
+        <FolderPicker
+          open={mirrorOpen}
+          onOpenChange={setMirrorOpen}
+          title="File to SharePoint"
+          description={`Choose the folder for ${selected.fileName || selected.title}. It goes up as you, on your own Microsoft 365; a name already there gets a number.`}
+          notTops
+          pickLabel={(_count, here) => (here ? `File it in ${here.name}` : "File it here")}
+          onPick={async ([folder]) => {
+            const r = await folderApi<{ webUrl: string | null; path: string }>("POST", `/api/documents/${selected.id}/mirror`, { driveId: folder.driveId, itemId: folder.itemId });
+            queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+            toast({ title: "Filed in SharePoint", description: r.path });
+          }}
+          testId="document-file-picker"
+        />
+      )}
       {editing && <OnlyOfficeEditor doc={editing}
         onClose={() => { setEditing(null); setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/documents"] }), 1500); }} />}
     </div>
@@ -424,56 +439,6 @@ function GenerateDialog({ open, onOpenChange, templates, onCreated, onError }: {
           </div>
         )}
 
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function MirrorDialog({ open, onOpenChange, doc, onDone, onError }: {
-  open: boolean; onOpenChange: (v: boolean) => void; doc: DocItem; onDone: () => void; onError: (m: string) => void;
-}) {
-  const [path, setPath] = useState("BGP share drive");
-  const { data: folders = [], isFetching } = useQuery<Array<{ name: string; path: string }>>({
-    queryKey: [`/api/documents/sp-folders?path=${encodeURIComponent(path)}`], enabled: open,
-  });
-  const mirror = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/documents/${doc.id}/mirror`, { folderPath: path })).json(),
-    onSuccess: (r) => { if (r?.error) return onError(r.error); onDone(); },
-    onError: (e: any) => onError(e?.message || "Unknown error"),
-  });
-  const parts = path.split("/").filter(Boolean);
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>File to SharePoint</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="text-xs text-muted-foreground flex items-center gap-1 flex-wrap">
-            <button className="underline" onClick={() => setPath("")}>BGP</button>
-            {parts.map((p, i) => (
-              <span key={i} className="flex items-center gap-1">
-                <ChevronRight className="w-3 h-3" />
-                <button className="underline" onClick={() => setPath(parts.slice(0, i + 1).join("/"))}>{p}</button>
-              </span>
-            ))}
-          </div>
-          <div className="border rounded-lg max-h-56 overflow-y-auto">
-            {isFetching ? <div className="p-4 text-center text-muted-foreground text-sm"><Loader2 className="w-4 h-4 mx-auto animate-spin" /></div>
-              : !folders.length ? <div className="p-4 text-center text-muted-foreground text-sm">No subfolders — file here.</div>
-                : folders.map(f => (
-                  <button key={f.path} onClick={() => setPath(f.path)}
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center gap-2 border-b last:border-0">
-                    <FolderUp className="w-3.5 h-3.5 text-muted-foreground" /> {f.name}
-                  </button>
-                ))}
-          </div>
-          <p className="text-[11px] text-muted-foreground">Filing <b>{doc.fileName}</b> into <b>{path || "site root"}</b></p>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => mirror.mutate()} disabled={mirror.isPending}>
-            {mirror.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Filing…</> : "File here"}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

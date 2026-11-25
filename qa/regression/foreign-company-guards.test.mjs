@@ -67,7 +67,7 @@ test("no sign-off on the full checks without the extract, and the AML file carri
   const kyc = read("shared/party-kyc.ts");
   const deny = kyc.slice(kyc.indexOf("export function signOffDenial"));
   const extract = deny.indexOf("registerExtractDenial(f.registerExtract)");
-  const sanctionsOnly = deny.indexOf("return guarantorChecksDenial(f.guarantorChecks);");
+  const sanctionsOnly = deny.indexOf("return guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);");
   const kyc4u = deny.indexOf("This party was raised with KYC4U");
   assert.ok(sanctionsOnly > 0 && extract > sanctionsOnly && kyc4u > extract, "after the sanctions-only branch, before the rest of the full checks");
   assert.match(read("server/deal-party-aml.ts"), /registerExtract/);

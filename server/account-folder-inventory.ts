@@ -18,11 +18,9 @@ import {
   buildExpectedFolderTree, expectedNameCandidates,
   type ExpectedFolderNode, type FolderOwnerKind,
 } from "@shared/client-folder-tree";
-import {
-  SHAREPOINT_ROOT_FOLDER, getSharePointDriveId,
-  resolveFolderUrlRef, resolveItemByPath, type SharePointItemRef,
-} from "./sharepoint-graph";
+import { SHAREPOINT_ROOT_FOLDER, resolveFolderUrlRef, type SharePointItemRef } from "./sharepoint-graph";
 import { GRAPH_LIST_PAGE_CAP, type GraphChildrenPage } from "./microsoft-graph-pagination";
+import { bgpLibrary, entryByPath, graph } from "./folders/graph";
 
 const WALK_DEPTH_CAP = 4;
 
@@ -98,6 +96,19 @@ export function createChildrenLister(
     }
     return { items, capped };
   };
+}
+
+// The same lister on the folder engine's one door to Microsoft
+// (server/folders/graph.ts), with the token the caller already has.
+export function engineChildrenLister(token: string): ChildrenLister {
+  return createChildrenLister(
+    async (url) => {
+      const res = await graph({ method: "GET", url, token });
+      if (res.status >= 400) throw new Error(`Graph listing failed: ${res.status}`);
+      return res.body;
+    },
+    (driveId, itemId) => `/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
+  );
 }
 
 export interface WalkResult {
@@ -293,11 +304,8 @@ export async function resolveClientRoot(
   }
 
   const graphGet = async (path: string) => {
-    const res = await fetch(path.startsWith("http") ? path : `https://graph.microsoft.com/v1.0${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return null;
-    return res.json();
+    const res = await graph({ method: "GET", url: path, token });
+    return res.status < 400 ? res.body : null;
   };
 
   // 2. The stored folder URL (the client jail's root), across same-named
@@ -317,11 +325,11 @@ export async function resolveClientRoot(
     if (ref) return { source: "url", ref };
   }
 
-  // 3. Legacy path probe: BGP share drive/{ClientName}.
-  const spInfo = await getSharePointDriveId(token);
-  if (!spInfo) return null;
-  const ref = await resolveItemByPath(token, spInfo.driveId, `${SHAREPOINT_ROOT_FOLDER}/${companyName}`);
-  return ref ? { source: "path", ref } : null;
+  // 3. Legacy path probe: BGP share drive/{ClientName}, read only.
+  const lib = await bgpLibrary(token).catch(() => null);
+  if (!lib) return null;
+  const found = await entryByPath(token, lib.driveId, `${SHAREPOINT_ROOT_FOLDER}/${companyName}`).catch(() => null);
+  return found ? { source: "path", ref: { driveId: found.driveId, itemId: found.itemId, name: found.name, webUrl: found.webUrl, fullPath: "" } } : null;
 }
 
 // ─── Report assembly ─────────────────────────────────────────────────────
@@ -390,30 +398,23 @@ router.get("/api/accounts/:id/folder-inventory", requireAuth, async (req: Reques
     if (folderInventoryDeniedForScope(scopeCompanyId)) {
       return res.status(403).json({ error: "Folder inventory reports are staff-only" });
     }
-    const { getValidMsToken } = await import("./microsoft");
-    const token = await getValidMsToken(req);
-    if (!token) return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    // As the person, on their own Microsoft 365, never a colleague's (decision 7 of docs/folders-review-2026-11-20.md).
+    const { getOwnMsAccess } = await import("./microsoft");
+    const ownerId = (req as any).session?.userId || (req as any).tokenUserId;
+    const own = ownerId ? await getOwnMsAccess(String(ownerId)).catch(() => null) : null;
+    if (!own) return res.status(428).json({ message: "Connect your own Microsoft 365 first, on the SharePoint page: folders are read as you, never as a colleague.", connect: true });
+    const token = own.token;
 
     const companyId = String(req.params.id);
     const q = await defaultPool();
     const { rows: companyRows } = await q.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
     if (!companyRows[0]) return res.status(404).json({ error: "Company not found" });
 
-    const listChildren = createChildrenLister(
-      async (url) => {
-        const pageRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!pageRes.ok) throw new Error(`Graph listing failed: ${pageRes.status}`);
-        return pageRes.json();
-      },
-      (driveId, itemId) =>
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
-    );
-
     const report = await generateFolderInventory(companyId, {
       pool: q,
       graph: {
         resolveRoot: () => resolveClientRoot(companyId, companyRows[0].name, token, { pool: q }),
-        listChildren,
+        listChildren: engineChildrenLister(token),
       },
     });
     res.json(report);

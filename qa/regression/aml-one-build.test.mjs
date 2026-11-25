@@ -47,10 +47,28 @@ test('the AML page has a Cards view on Transactions and Companies, like the CRM 
     // One card for the phone and the Cards view.
     assert.match(src, /isMobile \|\| view === "card" \? \(\s*<AmlCardGrid/);
   }
-  assert.match(page, /function AmlPartyCard\(/);
+  assert.match(page, /function AmlTransactionCard\(/);
   assert.match(companies, /function KycCompanyCard\(/);
   // Remembered in this browser, never relied on.
   assert.match(frame, /try \{ const v = window\.localStorage\.getItem\(`bgp_aml_view_\$\{key\}`\);/);
+});
+
+// Woody, 24 November 2026: "can you sort the cards so they all the same size and add
+// scroll within as required".
+test('every AML card is one height on a computer, its rows scrolling inside', () => {
+  const card = frame.slice(frame.indexOf('export function AmlCard('), frame.indexOf('export function AmlCardGrid'));
+  // One height from two columns up; a phone keeps each card's own height.
+  assert.match(card, /overflow-hidden rounded-xl [^"]*md:h-72/);
+  assert.doesNotMatch(card, /[^:]h-72/, 'no fixed height on a phone');
+  // The title and the footer stay put; the rows scroll, starting at the top.
+  assert.match(card, /<div className="flex shrink-0 items-start gap-2">/);
+  assert.match(card, /<div className="relative min-h-0 flex-1">\s*<dl ref=\{body\} className="grid h-full grid-cols-\[auto_minmax\(0,1fr\)\] content-start [^"]*overflow-y-auto/);
+  assert.match(card, /<div className="shrink-0 border-t border-border pt-2/);
+  // A fade while more is below, worked out after each render, on scroll and on resize.
+  assert.match(card, /setMore\(el\.scrollHeight - el\.scrollTop - el\.clientHeight > 2\)/);
+  assert.match(card, /useEffect\(check\);/);
+  assert.match(card, /new ResizeObserver\(check\)/);
+  assert.match(card, /\{more && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 /);
 });
 
 test('every other AML and KYC chip is the shared one', () => {

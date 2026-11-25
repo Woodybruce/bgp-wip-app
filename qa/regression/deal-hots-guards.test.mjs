@@ -110,7 +110,7 @@ test('the box is on the AML box for BGP staff and the button in the party box, w
   assert.match(screen, /onDrop=\{e => \{ if \(!hasFiles\(e\)\) return; e\.preventDefault\(\); e\.stopPropagation\(\); setDragging\(false\); const f = e\.dataTransfer\.files\?\.\[0\]; if \(f\) void read\(\{ file: f \}\);/);
   assert.match(server, /typeof req\.body\?\.text === "string"/);
   assert.match(partyBox, /<DealHotsButton dealId=\{dealId\} label="Read the heads of terms"[^>]*inEditor onOpenChange=\{setHotsOpen\}/);
-  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding\) onClose\(\);/);
+  assert.match(partyBox, /if \(!o && !finding && !hotsOpen && !guarantorFinding && !signerFinding\) onClose\(\);/);
   // No import cycle: the screen loads the party box only when asked for.
   assert.doesNotMatch(screen, /from "@\/components\/deal-parties"/);
   assert.match(screen, /lazy\(\(\) => import\("@\/components\/deal-parties"\)/);
@@ -158,4 +158,20 @@ test('a company abroad is looked up by its name, and offered rather than set by 
   assert.match(server, /if \(r\.byName\) base\.byName = true;/);
   assert.match(screen, /!p\.numberIsAnother && !p\.byName/);
   assert.match(partyBox, /\{\(!party\.company \|\| hotsOpen\) && \(/);
+});
+
+test('a sum whose figure and words disagree is read by the words, on both heads of terms readers (One Clapham, 24 November 2026)', () => {
+  const rules = read('shared/deal-hots.ts');
+  // The transaction page: the provider's answer and the rules both go through the words.
+  const check = rules.slice(rules.indexOf('export function checkHotsAnswer('), rules.indexOf('// ── The rules reader'));
+  assert.match(check, /sumByWords\(quote, value\)/);
+  const byRules = rules.slice(rules.indexOf('export function readHotsByRules('), rules.indexOf('// ── A note a person typed'));
+  assert.match(byRules, /sumByWords\(value, v\)/);
+  // New Transaction's reader corrects the same sums.
+  const crm = read('server/crm.ts');
+  const parse = crm.slice(crm.indexOf('const parseHotsHandler = async'), crm.indexOf('app.post("/api/crm/deals/parse-hots"'));
+  assert.match(parse, /sumByWords\(text, n\)/);
+  assert.match(parse, /\["price", "rentPa", "capitalContribution", "fee"\]/);
+  // The dialog says why the figure was not used.
+  assert.match(screen, /data-testid=\{`deal-hots-term-note-\$\{t\.key\}`\}/);
 });

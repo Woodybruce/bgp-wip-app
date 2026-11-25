@@ -84,6 +84,15 @@ export default {
           busy: "rgb(239 68 68)",
           offline: "rgb(156 163 175)",
         },
+        // Folder chip colours (decision 5 of docs/folders-review-2026-11-20.md).
+        folder: {
+          slate: "hsl(var(--folder-slate) / <alpha-value>)",
+          sage: "hsl(var(--folder-sage) / <alpha-value>)",
+          sky: "hsl(var(--folder-sky) / <alpha-value>)",
+          sand: "hsl(var(--folder-sand) / <alpha-value>)",
+          rose: "hsl(var(--folder-rose) / <alpha-value>)",
+          plum: "hsl(var(--folder-plum) / <alpha-value>)",
+        },
       },
       fontFamily: {
         sans: ["var(--font-sans)"],

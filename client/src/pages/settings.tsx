@@ -28,6 +28,7 @@ import { HolidayCalendarImportDialog } from "@/components/holiday-calendar-impor
 import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 import { LettingSuggestionsAdmin } from "@/components/letting-note/suggestions-admin";
 import { EmailOfferCleanupPanel } from "@/components/email-offer-cleanup";
+import { FoldersMigrationSection } from "@/components/folders/folders-migration";
 import { TrackerScheduleGapsPanel } from "@/components/tracker-schedule-gaps";
 import type { DuplicateGroup } from "@shared/property-duplicates";
 
@@ -421,6 +422,7 @@ export default function SettingsPage() {
           </Card>
         )}
         <TeamFoldersSection />
+        {isAdmin && <FoldersMigrationSection />}
         {isAdmin && <UserActivitySection />}
         {isAdmin && <EmailIntelligenceSection />}
         <DataHealthSection />

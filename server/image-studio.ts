@@ -3852,11 +3852,13 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         pdfBuffer = file.data;
         sourceName = file.originalName || bare;
       } else if (driveId && itemId) {
-        const { getValidMsToken } = await import("./microsoft");
-        const token = await getValidMsToken(req as any);
-        if (!token) return res.status(401).json({ error: "Not signed into Microsoft" });
+        // Read as the person, on their own Microsoft 365, never a colleague's
+        // (decision 7 of docs/folders-review-2026-11-20.md).
+        const { getOwnMsAccess } = await import("./microsoft");
+        const own = await getOwnMsAccess(String(req.session?.userId || (req as any).tokenUserId || ""));
+        if (!own) return res.status(428).json({ error: "Connect your own Microsoft 365 first, on the SharePoint page: files open as you, never as a colleague.", connect: true });
         const upstream = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`, {
-          headers: { Authorization: `Bearer ${token}` }, redirect: "follow",
+          headers: { Authorization: `Bearer ${own.token}` }, redirect: "follow",
         });
         if (!upstream.ok) return res.status(upstream.status).json({ error: `SharePoint fetch failed: ${upstream.status}` });
         pdfBuffer = Buffer.from(await upstream.arrayBuffer());
@@ -4280,16 +4282,4 @@ export async function runImageSync(opts: { forceReimport?: boolean } = {}) {
 
 export function getImageSyncStatus() {
   return { running: imageSyncRunning, progress: imageSyncProgress, foldersChecked: imageScanFoldersChecked, imagesFound: imageScanImagesFound };
-}
-
-export function startImageSync() {
-  setTimeout(() => {
-    runImageSync().catch(e => console.error("[image-sync] Initial sync error:", e.message));
-  }, 60_000);
-
-  setInterval(() => {
-    runImageSync().catch(e => console.error("[image-sync] Scheduled sync error:", e.message));
-  }, 6 * 60 * 60 * 1000);
-
-  console.log("[image-sync] SharePoint image sync enabled — runs on startup + every 6 hours");
 }

@@ -7,16 +7,18 @@
  * generators land in follow-ups (math is already in pla-valuation.ts —
  * just needs the xlsx layout + cell logic).
  *
- * Files land in the matter's SharePoint folder under:
+ * Files land in the folder linked to the matter in Folders (else its
+ * property's) under:
  *   <matter folder>/Rent Review/Valuation/
- * (matches Tom + Pete's canonical Lease Advisory tree)
+ * (matches Tom + Pete's canonical Lease Advisory tree). With no folder
+ * linked a workbook is not filed in SharePoint; its figures stay in the app.
  */
 
 import ExcelJS from "exceljs";
 import { db } from "./db";
 import { plaMatters, plaMatterWorkbooks, crmProperties } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { uploadFileToSharePoint, SHAREPOINT_ROOT_FOLDER } from "./microsoft";
+import { fileAppDocument } from "./document-filing";
 import type { NetEffectiveInput, NetEffectiveOutput } from "./pla-valuation";
 
 const SHEET_NAME = "Net Effective";
@@ -151,27 +153,9 @@ export async function buildAndUploadNetEffectiveXlsx(args: {
     ws.getColumn(1).width = 26;
     ws.getColumn(2).width = 22;
 
-    const buf = await wb.xlsx.writeBuffer();
-    const buffer = Buffer.from(buf as ArrayBuffer);
-
-    // Upload into the matter's Rent Review / Valuation folder
-    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Valuation`;
+    // Filed in the matter's Rent Review / Valuation folder
     const filename = `Net Effective — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
-
-    const upload = await uploadFileToSharePoint(
-      buffer,
-      filename,
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      folder,
-    );
-
-    // Stamp the workbook row with the SharePoint URL
-    await db
-      .update(plaMatterWorkbooks)
-      .set({ sharepointUrl: upload.webUrl })
-      .where(eq(plaMatterWorkbooks.id, args.workbookId));
-
-    return { ok: true, webUrl: upload.webUrl };
+    return await uploadAndStamp(wb, args, "Rent Review/Valuation", filename);
   } catch (err: any) {
     console.error(`[pla-workbook-writer] net-effective xlsx for matter ${args.matterId} failed:`, err?.message || err);
     return { ok: false, error: err?.message || "xlsx generation failed" };
@@ -180,10 +164,6 @@ export async function buildAndUploadNetEffectiveXlsx(args: {
 
 function humanise(s: string): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function cleanFolderName(s: string): string {
-  return s.trim().replace(/[<>:"/\\|?*]+/g, "-").slice(0, 200);
 }
 
 function cleanFilename(s: string): string {
@@ -354,25 +334,8 @@ export async function buildAndUploadComparablesScheduleXlsx(args: {
     const colWidths = [12, 14, 24, 10, 22, 11, 14, 10, 14, 10, 13, 11, 14, 13, 16, 18];
     colWidths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
 
-    const buf = await wb.xlsx.writeBuffer();
-    const buffer = Buffer.from(buf as ArrayBuffer);
-
-    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Comparable Evidence`;
     const filename = `Comparables Schedule — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
-
-    const upload = await uploadFileToSharePoint(
-      buffer,
-      filename,
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      folder,
-    );
-
-    await db
-      .update(plaMatterWorkbooks)
-      .set({ sharepointUrl: upload.webUrl })
-      .where(eq(plaMatterWorkbooks.id, args.workbookId));
-
-    return { ok: true, webUrl: upload.webUrl };
+    return await uploadAndStamp(wb, args, "Rent Review/Comparable Evidence", filename);
   } catch (err: any) {
     console.error(`[pla-workbook-writer] comparables xlsx for matter ${args.matterId} failed:`, err?.message || err);
     return { ok: false, error: err?.message || "xlsx generation failed" };
@@ -472,9 +435,8 @@ export async function buildAndUploadItzaXlsx(args: {
     ws.getColumn(3).width = 12;
     ws.getColumn(4).width = 16;
 
-    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Valuation`;
     const filename = `ITZA — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
-    return await uploadAndStamp(wb, folder, filename, args.workbookId);
+    return await uploadAndStamp(wb, args, "Rent Review/Valuation", filename);
   } catch (err: any) {
     console.error(`[pla-workbook-writer] itza xlsx failed:`, err?.message || err);
     return { ok: false, error: err?.message || "itza xlsx failed" };
@@ -536,9 +498,8 @@ export async function buildAndUploadDevaluationXlsx(args: {
     ws.getColumn(1).width = 28;
     ws.getColumn(2).width = 18;
 
-    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Valuation`;
     const filename = `Devaluation — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
-    return await uploadAndStamp(wb, folder, filename, args.workbookId);
+    return await uploadAndStamp(wb, args, "Rent Review/Valuation", filename);
   } catch (err: any) {
     console.error(`[pla-workbook-writer] devaluation xlsx failed:`, err?.message || err);
     return { ok: false, error: err?.message || "devaluation xlsx failed" };
@@ -578,15 +539,21 @@ function headerBlock(ws: ExcelJS.Worksheet, title: string, propertyName: string,
   for (const r of [3, 4, 5, 6]) ws.getCell(`A${r}`).font = { bold: true };
 }
 
-async function uploadAndStamp(wb: ExcelJS.Workbook, folder: string, filename: string, workbookId: string): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+// Filed in the folder linked to the matter in Folders (else its property's),
+// in `subfolder`, made where missing; the workbook row is stamped with its
+// SharePoint address. With no folder linked nothing is filed and the reason
+// comes back as the error.
+async function uploadAndStamp(wb: ExcelJS.Workbook, ids: { matterId: string; workbookId: string }, subfolder: string, filename: string): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
   const buf = await wb.xlsx.writeBuffer();
-  const buffer = Buffer.from(buf as ArrayBuffer);
-  const upload = await uploadFileToSharePoint(
-    buffer,
-    filename,
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    folder,
-  );
-  await db.update(plaMatterWorkbooks).set({ sharepointUrl: upload.webUrl }).where(eq(plaMatterWorkbooks.id, workbookId));
-  return { ok: true, webUrl: upload.webUrl };
+  const [row] = await db.select({ by: plaMatterWorkbooks.generatedBy }).from(plaMatterWorkbooks).where(eq(plaMatterWorkbooks.id, ids.workbookId));
+  const filed = await fileAppDocument({
+    record: { type: "pla_matter", id: ids.matterId }, subfolder, name: filename, bytes: Buffer.from(buf as ArrayBuffer),
+    userId: row?.by ?? null, what: "Lease Advisory workbook",
+  });
+  if (!filed.filed) {
+    console.warn(`[pla-workbook-writer] ${filename} for matter ${ids.matterId}: ${filed.note}`);
+    return { ok: false, error: filed.note };
+  }
+  await db.update(plaMatterWorkbooks).set({ sharepointUrl: filed.webUrl }).where(eq(plaMatterWorkbooks.id, ids.workbookId));
+  return { ok: true, webUrl: filed.webUrl || undefined };
 }

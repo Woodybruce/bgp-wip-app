@@ -129,13 +129,28 @@ export async function loadKycCompanies(me: { id: string; name: string }, now: Da
         ORDER BY company_id, trading_entity_id, created_at DESC`, [ids], unchecked),
     // KYC4U's request folders on each company (its past checks; the KYC4U strip's own read).
     side("KYC4U's past checks", `SELECT COALESCE(q.company_id_manual, q.company_id, e.parent_company_id) AS company_id,
-              count(*)::int AS folders, max(q.modified_at_source) AS last
+              q.list_id, q.item_id, q.modified_at_source AS last
          FROM kyc4u_requests q
          LEFT JOIN crm_trading_entities e ON e.id = q.trading_entity_id
-        WHERE COALESCE(q.company_id_manual, q.company_id, e.parent_company_id) = ANY($1::text[]) AND q.list_id <> 'manual'
-        GROUP BY 1`, [ids], unchecked),
+        WHERE COALESCE(q.company_id_manual, q.company_id, e.parent_company_id) = ANY($1::text[]) AND q.list_id <> 'manual'`, [ids], unchecked),
   ]);
-  const kyc4uBy = new Map(kyc4u.map((r: any) => [String(r.company_id), { folders: Number(r.folders) || 0, last: iso(r.last) }]));
+  // And every KYC4U request that names one of a company's registered companies,
+  // wherever it was filed (Sheet Anchor, 25 November 2026): the strip's own rule.
+  const { kyc4uRequestsNaming } = await import("./kyc4u-named");
+  const named = await kyc4uRequestsNaming(ids).catch((e: any) => { unchecked.push("KYC4U's checks named for each company"); console.warn("[kyc-companies] KYC4U by name:", e?.message); return new Map(); });
+  const kyc4uSeen = new Map<string, Map<string, number>>();
+  const kyc4uAdd = (companyId: string, key: string, last: unknown) => {
+    const t = last ? new Date(last as any).getTime() : 0;
+    const m = kyc4uSeen.get(companyId) || new Map<string, number>();
+    m.set(key, Math.max(m.get(key) || 0, Number.isNaN(t) ? 0 : t));
+    kyc4uSeen.set(companyId, m);
+  };
+  for (const r of kyc4u) kyc4uAdd(String(r.company_id), `${r.list_id}:${r.item_id}`, r.last);
+  for (const [companyId, list] of named) for (const r of list) kyc4uAdd(companyId, `${r.listId}:${r.itemId}`, r.modifiedAt);
+  const kyc4uBy = new Map([...kyc4uSeen.entries()].map(([companyId, m]) => {
+    const last = Math.max(0, ...m.values());
+    return [companyId, { folders: m.size, last: last ? new Date(last).toISOString() : null }] as const;
+  }));
 
   // The agents the transactions record, named once.
   const agentIds = new Set<string>();

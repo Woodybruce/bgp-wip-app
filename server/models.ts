@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
-import { db } from "./db";
+import { db, pool } from "./db";
 import multer from "./utils/upload";
 import XLSX from "xlsx-js-style";
 import * as fs from "fs";
@@ -9,8 +9,11 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
-import { listAllChildren } from "./microsoft-graph-pagination";
+import { isGraphId, type DriveEntry } from "@shared/folders";
+import { GraphError, bgpLibrary, previewUrl, replaceFileContent } from "./folders/graph";
+import { folderAtPath, folderErrorWords, ownMicrosoft, saveFileInto } from "./folders/by-path";
+import { logFolderAction } from "./folders/links";
+import { readFileFor, runFolderTool, saveToShareDrive } from "./chatbgp-folder-tools";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
@@ -1547,61 +1550,6 @@ export function setupModelsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/models/templates/:id/save-to-sharepoint", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const template = await storage.getExcelTemplate(req.params.id as string);
-      if (!template) return res.status(404).json({ message: "Template not found" });
-      if (!template.filePath) return res.status(404).json({ message: "Template file not found" });
-      await ensureTemplateFile(template.filePath);
-      if (!fs.existsSync(template.filePath)) {
-        return res.status(404).json({ message: "Template file not found" });
-      }
-
-      const { folderPath } = req.body;
-      const destinationFolder = folderPath || "BGP share drive/Models";
-
-      const { getValidMsToken } = await import("./microsoft");
-      const msToken = await getValidMsToken(req);
-      if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
-
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
-      const site = await siteRes.json();
-
-      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!drivesRes.ok) return res.status(500).json({ message: "Could not list drives" });
-      const drives = await drivesRes.json();
-      const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-      if (!bgpDrive) return res.status(500).json({ message: "BGP share drive not found" });
-
-      const fileName = `${(template.name || "model").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
-      const cleanFolder = destinationFolder.replace(/^\/+|\/+$/g, "");
-      const encoded = encodeURIComponent(cleanFolder).replace(/%2F/g, "/");
-      const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
-
-      const fileBuffer = fs.readFileSync(template.filePath);
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${msToken}`,
-          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-        body: fileBuffer,
-      });
-
-      if (!uploadRes.ok) {
-        const errBody = await uploadRes.text();
-        return res.status(500).json({ message: `SharePoint upload failed: ${uploadRes.status}` });
-      }
-
-      const uploadResult = await uploadRes.json();
-      res.json({ success: true, webUrl: uploadResult.webUrl, name: fileName, folder: cleanFolder });
-    } catch (err: any) {
-      console.error("[save-to-sharepoint]", err);
-      res.status(500).json({ message: `Failed to save to SharePoint: ${err?.message}` });
-    }
-  });
-
   // Save a new version of a model run's workbook (e.g. after user edits in Excel add-in).
   // Stores a versioned copy, extracts updated outputs via the template's output mapping,
   // mirrors to SharePoint, and updates the run's pointer to the latest file.
@@ -1650,41 +1598,25 @@ export function setupModelsRoutes(app: Express) {
 
       let sharepointUrl: string | null = null;
       let sharepointDriveItemId: string | null = null;
+      let sharepointNote: string | null = null;
       try {
-        const { getValidMsToken } = await import("./microsoft");
-        const msToken = await getValidMsToken(req);
-        if (msToken) {
-          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
-          if (siteRes.ok) {
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (drivesRes.ok) {
-              const drives = await drivesRes.json();
-              const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-              if (bgpDrive) {
-                let folderPath = "BGP share drive/Models";
-                if (run.propertyId) {
-                  const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, run.propertyId)).limit(1);
-                  if (prop?.name) folderPath = `BGP share drive/Investment/${prop.name}/Financial Model`;
-                }
-                const fileName = `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}_v${nextVersion}.xlsx`;
-                const cleanFolder = folderPath.replace(/^\/+|\/+$/g, "");
-                const encoded = encodeURIComponent(cleanFolder).replace(/%2F/g, "/");
-                const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
-                const fileBuffer = fs.readFileSync(versionedFilePath);
-                const uploadRes = await fetch(uploadUrl, {
-                  method: "PUT",
-                  headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-                  body: fileBuffer,
-                });
-                if (uploadRes.ok) {
-                  const uploadResult = await uploadRes.json();
-                  sharepointUrl = uploadResult.webUrl;
-                  sharepointDriveItemId = uploadResult.id;
-                }
-              }
-            }
-          }
+        // A copy in the property's folder in Folders, under Models, as the
+        // person saving, on their own Microsoft 365 (server/folders/filing.ts:
+        // the property's first linked folder no client can see). With no
+        // folder linked, or no property, the version stays in the app: no
+        // folder is made by name anywhere (24 November 2026).
+        const own = await ownMicrosoft(req);
+        if (own && run.propertyId) {
+          const { fileRecordDocument } = await import("./folders/filing");
+          const filed = await fileRecordDocument(pool, async () => own.token, {
+            record: { type: "property", id: run.propertyId }, subfolder: "Models",
+            name: `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}_v${nextVersion}.xlsx`,
+            bytes: new Uint8Array(fs.readFileSync(versionedFilePath)), userId: own.userId, what: "Model version", account: own.account,
+          });
+          if (filed.filed) {
+            sharepointUrl = filed.webUrl;
+            sharepointDriveItemId = filed.itemId;
+          } else sharepointNote = filed.note;
         }
       } catch (err: any) {
         console.warn(`[save-version] SharePoint mirror failed:`, err?.message);
@@ -1723,7 +1655,7 @@ export function setupModelsRoutes(app: Express) {
         ...(sharepointUrl ? { sharepointUrl, sharepointDriveItemId: sharepointDriveItemId || undefined } : {}),
       }).where(eq(excelModelRuns.id, runId));
 
-      res.json({ success: true, version, outputs: newOutputs });
+      res.json({ success: true, version, outputs: newOutputs, sharepointNote });
     } catch (err: any) {
       console.error("[save-version] error:", err?.message);
       res.status(500).json({ message: err?.message || "Failed to save version" });
@@ -1766,64 +1698,6 @@ export function setupModelsRoutes(app: Express) {
     }
   });
 
-  app.post("/api/models/runs/:id/save-to-sharepoint", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const run = await storage.getExcelModelRun(req.params.id as string);
-      if (!run) return res.status(404).json({ message: "Run not found" });
-      if (!run.generatedFilePath) return res.status(404).json({ message: "Run file not found" });
-      await ensureRunFile(run.generatedFilePath);
-      if (!fs.existsSync(run.generatedFilePath)) {
-        return res.status(404).json({ message: "Run file not found" });
-      }
-
-      const { folderPath } = req.body;
-      const destinationFolder = folderPath || "BGP share drive/Models";
-
-      const { getValidMsToken } = await import("./microsoft");
-      const msToken = await getValidMsToken(req);
-      if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
-
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
-      const site = await siteRes.json();
-
-      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!drivesRes.ok) return res.status(500).json({ message: "Could not list drives" });
-      const drives = await drivesRes.json();
-      const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-      if (!bgpDrive) return res.status(500).json({ message: "BGP share drive not found" });
-
-      const fileName = `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
-      const cleanFolder = destinationFolder.replace(/^\/+|\/+$/g, "");
-      const encoded = encodeURIComponent(cleanFolder).replace(/%2F/g, "/");
-      const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
-
-      const fileBuffer = fs.readFileSync(run.generatedFilePath);
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${msToken}`,
-          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-        body: fileBuffer,
-      });
-
-      if (!uploadRes.ok) {
-        return res.status(500).json({ message: `SharePoint upload failed: ${uploadRes.status}` });
-      }
-
-      const uploadResult = await uploadRes.json();
-      await db.update(excelModelRuns).set({
-        sharepointUrl: uploadResult.webUrl,
-        sharepointDriveItemId: uploadResult.id,
-      }).where(eq(excelModelRuns.id, req.params.id as string));
-      res.json({ success: true, webUrl: uploadResult.webUrl, name: fileName, folder: cleanFolder });
-    } catch (err: any) {
-      console.error("[save-run-to-sharepoint]", err);
-      res.status(500).json({ message: `Failed to save to SharePoint: ${err?.message}` });
-    }
-  });
-
   app.post("/api/models/runs/:id/embed-excel", requireAuth, async (req: Request, res: Response) => {
     try {
       const run = await storage.getExcelModelRun(req.params.id as string);
@@ -1834,118 +1708,54 @@ export function setupModelsRoutes(app: Express) {
         return res.status(404).json({ message: "Run file not found" });
       }
 
-      const { getValidMsToken } = await import("./microsoft");
-      const msToken = await getValidMsToken(req);
-      if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected — required for embedded Excel" });
-
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
-      const site = await siteRes.json();
-
-      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (!drivesRes.ok) return res.status(500).json({ message: "Could not list drives" });
-      const drives = await drivesRes.json();
-      const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-      if (!bgpDrive) return res.status(500).json({ message: "BGP share drive not found" });
-
-      let driveItemId = run.sharepointDriveItemId;
-      let webUrl = run.sharepointUrl;
-
-      const folderPath = "Models/Live";
-      const fileName = `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
-      const encoded = encodeURIComponent(folderPath).replace(/%2F/g, "/");
-      const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
-
-      const fileBuffer = fs.readFileSync(run.generatedFilePath);
-      const uploadRes2 = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${msToken}`,
-          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-        body: fileBuffer,
-      });
-
-      if (!uploadRes2.ok) {
-        return res.status(500).json({ message: `SharePoint upload failed: ${uploadRes2.status}` });
+      // The run's live copy in SharePoint, as the person asking, on their own
+      // Microsoft 365, through the folder engine: the copy the run already has
+      // is brought up to date, otherwise a new one goes in "Models/Live" at
+      // the top of the BGP library.
+      const own = await ownMicrosoft(req);
+      if (!own) return res.status(428).json({ message: "Connect your own Microsoft 365 first, on the SharePoint page: the embedded workbook opens as you.", connect: true });
+      const log = { db: pool, actor: { userId: own.userId, account: own.account }, detail: { via: "model_studio", runId: run.id } };
+      const lib = await bgpLibrary(own.token);
+      const bytes = new Uint8Array(fs.readFileSync(run.generatedFilePath));
+      let copy: DriveEntry | null = null;
+      if (run.sharepointDriveItemId && isGraphId(run.sharepointDriveItemId)) {
+        try {
+          copy = await replaceFileContent(own.token, lib.driveId, run.sharepointDriveItemId, bytes);
+          await logFolderAction(pool, log.actor, { action: "upload", driveId: lib.driveId, itemId: copy.itemId, nameAfter: copy.name, detail: { ...log.detail, size: bytes.length, sameFile: true } });
+        } catch (e) {
+          // Gone, moved to another library, or too large to update in place: a new copy instead.
+          if (!(e instanceof GraphError) || ![404, 410, 413].includes(e.status)) throw e;
+        }
       }
-
-      const uploadResult = await uploadRes2.json();
-      webUrl = uploadResult.webUrl;
-      driveItemId = uploadResult.id;
+      if (!copy) {
+        const folder = await folderAtPath(own.token, lib, ["Models", "Live"], { make: log });
+        copy = await saveFileInto(own.token, folder, `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`, bytes, log);
+      }
 
       await db.update(excelModelRuns).set({
-        sharepointUrl: webUrl,
-        sharepointDriveItemId: driveItemId,
+        sharepointUrl: copy.webUrl,
+        sharepointDriveItemId: copy.itemId,
       }).where(eq(excelModelRuns.id, req.params.id as string));
 
-      const previewRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/items/${driveItemId}/preview`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${msToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
-      });
-
       let embedUrl = "";
-      if (previewRes.ok) {
-        const previewData = await previewRes.json();
-        embedUrl = previewData.getUrl || "";
-      }
-
-      if (!embedUrl && webUrl) {
-        embedUrl = webUrl.replace(/\?.*$/, "") + "?action=embedview&wdbipreview=true";
+      try {
+        embedUrl = await previewUrl(own.token, lib.driveId, copy.itemId);
+        await logFolderAction(pool, log.actor, { action: "preview", driveId: lib.driveId, itemId: copy.itemId, detail: log.detail });
+      } catch { /* SharePoint's own view address below */ }
+      if (!embedUrl && copy.webUrl) {
+        embedUrl = copy.webUrl.replace(/\?.*$/, "") + "?action=embedview&wdbipreview=true";
       }
 
       res.json({
         success: true,
         embedUrl,
-        webUrl,
-        driveItemId,
-        fileName,
+        webUrl: copy.webUrl,
+        driveItemId: copy.itemId,
+        fileName: copy.name,
       });
     } catch (err: any) {
       console.error("[embed-excel]", err);
-      res.status(500).json({ message: `Failed to get embed URL: ${err?.message}` });
-    }
-  });
-
-  app.post("/api/models/runs/:id/sync-to-sharepoint", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const run = await storage.getExcelModelRun(req.params.id as string);
-      if (!run) return res.status(404).json({ message: "Run not found" });
-      if (!run.sharepointDriveItemId) return res.status(400).json({ message: "Run not synced to SharePoint yet" });
-      if (!run.generatedFilePath) return res.status(404).json({ message: "Run file not found" });
-      await ensureRunFile(run.generatedFilePath);
-      if (!fs.existsSync(run.generatedFilePath)) {
-        return res.status(404).json({ message: "Run file not found" });
-      }
-
-      const { getValidMsToken } = await import("./microsoft");
-      const msToken = await getValidMsToken(req);
-      if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
-
-      const fileBuffer = fs.readFileSync(run.generatedFilePath);
-      const uploadUrl = `https://graph.microsoft.com/v1.0/drives/items/${run.sharepointDriveItemId}/content`;
-      const uploadRes2 = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${msToken}`,
-          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        },
-        body: fileBuffer,
-      });
-
-      if (!uploadRes2.ok) {
-        const uploadResult = await uploadRes2.json();
-        return res.status(500).json({ message: `SharePoint sync failed: ${uploadRes2.status}` });
-      }
-
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("[sync-to-sharepoint]", err);
-      res.status(500).json({ message: `Failed to sync to SharePoint: ${err?.message}` });
+      res.status(500).json({ message: `Failed to get embed URL: ${folderErrorWords(err)}` });
     }
   });
 
@@ -2939,18 +2749,18 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_browse",
-          description: "Browse a folder on the BGP SharePoint share drive. Use a path like 'BGP share drive/Investment' or '' for root. Returns list of files and subfolders with names, types, sizes, and web URLs.",
+          description: "Browse a folder in BGP - Share Drive, the team's SharePoint tree. Use a path inside it like 'Investment' or 'Investment/Models', '' for its top, or a SharePoint folder link. Returns its files and subfolders with names, types, sizes and web links. Runs as the person asking, on their own Microsoft 365.",
           input_schema: {
             type: "object" as const,
             properties: {
-              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Retail'. Use empty string for root." },
+              folderPath: { type: "string", description: "A path inside BGP - Share Drive. Examples: 'Investment', 'Investment/Models'. Use an empty string for its top." },
             },
             required: ["folderPath"],
           },
         },
         {
           name: "sharepoint_read_file",
-          description: "Read the contents of a file from SharePoint. For Excel files, returns all cell data. For text/CSV, returns text content. Provide either a path like 'BGP share drive/Investment/report.xlsx' or a SharePoint sharing URL.",
+          description: "Read the contents of a file from SharePoint. For Excel files, returns all cell data. For text/CSV, returns text content. Provide either a path inside BGP - Share Drive like 'Investment/report.xlsx' or a SharePoint sharing URL. Runs as the person asking, on their own Microsoft 365.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -2961,24 +2771,24 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_create_folder",
-          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London F&B, London Retail, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
+          description: "Create a new folder in BGP - Share Drive, the team's SharePoint tree (never the old 'BGP share drive'). The parent folder must already be there; a folder of that name already there is used, never replaced. Runs as the person asking, on their own Microsoft 365, and is logged.",
           input_schema: {
             type: "object" as const,
             properties: {
               folderName: { type: "string", description: "Name of the folder to create" },
-              parentPath: { type: "string", description: "Parent folder path. Example: 'BGP share drive/Investment'" },
+              parentPath: { type: "string", description: "The parent folder, as a path inside BGP - Share Drive. Example: 'Investment'" },
             },
             required: ["folderName", "parentPath"],
           },
         },
         {
           name: "sharepoint_move_file",
-          description: "Move or rename a file/folder on SharePoint.",
+          description: "Move or rename a file or folder in BGP - Share Drive, within the same SharePoint library. A name already in the destination is refused, never replaced. Runs as the person asking, on their own Microsoft 365, and is logged.",
           input_schema: {
             type: "object" as const,
             properties: {
-              sourcePath: { type: "string", description: "Current path of the file/folder" },
-              destinationFolderPath: { type: "string", description: "Destination folder path" },
+              sourcePath: { type: "string", description: "The file or folder, as a path inside BGP - Share Drive or its SharePoint link" },
+              destinationFolderPath: { type: "string", description: "The folder to move it into, as a path inside BGP - Share Drive" },
               newName: { type: "string", description: "Optional new name for the item" },
             },
             required: ["sourcePath", "destinationFolderPath"],
@@ -2986,12 +2796,12 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_upload_template",
-          description: "Upload a model template from the system to SharePoint. Copies the template's Excel file to a specified SharePoint folder.",
+          description: "Upload a model template from the system to SharePoint. Copies the template's Excel file to a folder in BGP - Share Drive (missing folders below a top-level folder are made; a file of the same name already there is kept and this one gets a number). Runs as the person asking, on their own Microsoft 365, and is logged.",
           input_schema: {
             type: "object" as const,
             properties: {
               templateId: { type: "string", description: "The template ID to upload" },
-              destinationPath: { type: "string", description: "SharePoint folder path. Example: 'BGP share drive/Investment/Models'" },
+              destinationPath: { type: "string", description: "A folder inside BGP - Share Drive. Example: 'Investment/Models'" },
               fileName: { type: "string", description: "Optional custom file name (defaults to original file name)" },
             },
             required: ["templateId", "destinationPath"],
@@ -3003,7 +2813,7 @@ CRITICAL RULES:
           input_schema: {
             type: "object" as const,
             properties: {
-              filePath: { type: "string", description: "SharePoint path to the Excel file. Example: 'BGP share drive/Investment/Model.xlsx'" },
+              filePath: { type: "string", description: "The Excel file, as a path inside BGP - Share Drive (example: 'Investment/Model.xlsx') or its SharePoint link" },
               templateName: { type: "string", description: "Name for the imported template" },
             },
             required: ["filePath"],
@@ -3455,259 +3265,57 @@ CRITICAL RULES:
             return JSON.stringify({ success: true, templateId: updated.id });
           }
 
-          case "sharepoint_browse": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." });
-
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access BGP SharePoint site" });
-            const site = await siteRes.json();
-
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!drivesRes.ok) return JSON.stringify({ error: "Could not list drives" });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "BGP share drive not found" });
-
-            const cleanPath = (input.folderPath || "").replace(/^\/+|\/+$/g, "");
-            let itemUrl: string;
-            if (!cleanPath || cleanPath === "") {
-              itemUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`;
-            } else {
-              const encoded = encodeURIComponent(cleanPath).replace(/%2F/g, "/");
-              itemUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}:/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`;
-            }
-
-            // Follow @odata.nextLink — folders over one page ($top=200)
-            // silently truncated for the AI browse tool without it.
-            let childrenValue: any[];
-            try {
-              childrenValue = await listAllChildren(
-                async (pageUrl) => {
-                  const pageRes = await fetch(pageUrl, { headers: { Authorization: `Bearer ${msToken}` } });
-                  if (!pageRes.ok) {
-                    const err: any = new Error(`Could not list folder "${cleanPath}" (${pageRes.status})`);
-                    err.graphStatus = pageRes.status;
-                    throw err;
-                  }
-                  return pageRes.json();
-                },
-                itemUrl,
-              );
-            } catch (e: any) {
-              return JSON.stringify({ error: e?.graphStatus ? e.message : `Could not list folder "${cleanPath}"` });
-            }
-
-            const items = childrenValue.map((c: any) => ({
-              name: c.name,
-              type: c.folder ? "folder" : "file",
-              size: c.size ? `${Math.round(c.size / 1024)}KB` : undefined,
-              lastModified: c.lastModifiedDateTime,
-              webUrl: c.webUrl,
-            }));
-            return JSON.stringify({ success: true, path: cleanPath || "/", itemCount: items.length, items });
-          }
+          // SharePoint, through the folder engine as the person asking, on
+          // their own Microsoft 365 (server/chatbgp-folder-tools.ts): a path
+          // is inside BGP - Share Drive, never the old "BGP share drive", and
+          // every change is logged.
+          case "sharepoint_browse":
+            return JSON.stringify((await runFolderTool("browse_sharepoint_folder", { url: input.folderPath || "/" }, req, undefined, "model_studio")).data);
 
           case "sharepoint_read_file": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected." });
-
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access SharePoint" });
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "Drive not found" });
-
-            const filePath = input.filePath.trim().replace(/^\/+|\/+$/g, "");
-            const encoded = encodeURIComponent(filePath).replace(/%2F/g, "/");
-            const itemRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (!itemRes.ok) return JSON.stringify({ error: `File not found: ${filePath}` });
-            const item = await itemRes.json();
-            const fileName = item.name || filePath.split("/").pop() || "file";
-
+            const read = await readFileFor(req, { url: String(input.filePath || "").trim() });
+            if ("error" in read) return JSON.stringify({ error: read.error });
+            const fileName = read.entry.name;
             const ext = path.extname(fileName).toLowerCase();
-            const downloadUrl = item["@microsoft.graph.downloadUrl"] ||
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}:/content`;
-
-            const fetchHeaders: Record<string, string> = {};
-            if (downloadUrl.includes("graph.microsoft.com")) {
-              fetchHeaders["Authorization"] = `Bearer ${msToken}`;
-            }
-            const fileRes = await fetch(downloadUrl, { headers: fetchHeaders });
-            if (!fileRes.ok) return JSON.stringify({ error: `Failed to download (${fileRes.status})` });
-
             if ([".xlsx", ".xls"].includes(ext)) {
-              const buffer = Buffer.from(await fileRes.arrayBuffer());
-              const tempPath = path.join(process.cwd(), "ChatBGP", "sp-temp", `sp-${Date.now()}-${fileName}`);
-              fs.mkdirSync(path.dirname(tempPath), { recursive: true });
-              fs.writeFileSync(tempPath, buffer);
-              const wb = XLSX.readFile(tempPath);
+              const wb = XLSX.read(Buffer.from(read.bytes), { type: "buffer" });
               const context = extractRichWorkbookContext(wb, 80);
-              try { fs.unlinkSync(tempPath); } catch {}
               return JSON.stringify({ success: true, fileName, type: "excel", sheets: wb.SheetNames, data: context.slice(0, 60000) });
             } else if ([".csv", ".txt"].includes(ext)) {
-              const text = await fileRes.text();
-              return JSON.stringify({ success: true, fileName, type: "text", content: text.slice(0, 50000) });
+              return JSON.stringify({ success: true, fileName, type: "text", content: new TextDecoder().decode(read.bytes).slice(0, 50000) });
             } else {
-              return JSON.stringify({ success: true, fileName, webUrl: item.webUrl, note: `${ext} files can't be read directly, but the file exists at the URL.` });
+              return JSON.stringify({ success: true, fileName, webUrl: read.entry.webUrl, note: `${ext} files can't be read directly, but the file exists at the URL.` });
             }
           }
 
-          case "sharepoint_create_folder": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected." });
+          case "sharepoint_create_folder":
+            return JSON.stringify((await runFolderTool("create_sharepoint_folder", { folderName: input.folderName, parentPath: input.parentPath }, req, undefined, "model_studio")).data);
 
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access SharePoint" });
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "Drive not found" });
-
-            const parentPath = (input.parentPath || "").replace(/^\/+|\/+$/g, "");
-            let createUrl: string;
-            if (!parentPath) {
-              createUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root/children`;
-            } else {
-              createUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encodeURIComponent(parentPath).replace(/%2F/g, "/")}:/children`;
-            }
-
-            const createRes = await fetch(createUrl, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name: input.folderName, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
-            });
-
-            if (createRes.status === 409) return JSON.stringify({ success: true, note: "Folder already exists" });
-            if (!createRes.ok) return JSON.stringify({ error: `Failed to create folder (${createRes.status})` });
-            const folder = await createRes.json();
-            return JSON.stringify({ success: true, name: input.folderName, path: parentPath ? `${parentPath}/${input.folderName}` : input.folderName, webUrl: folder.webUrl });
-          }
-
-          case "sharepoint_move_file": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected." });
-
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access SharePoint" });
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "Drive not found" });
-
-            const sourcePath = input.sourcePath.replace(/^\/+|\/+$/g, "");
-            const sourceRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encodeURIComponent(sourcePath).replace(/%2F/g, "/")}`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (!sourceRes.ok) return JSON.stringify({ error: `Source not found: ${sourcePath}` });
-            const sourceItem = await sourceRes.json();
-
-            const destPath = input.destinationFolderPath.replace(/^\/+|\/+$/g, "");
-            const destRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encodeURIComponent(destPath).replace(/%2F/g, "/")}`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (!destRes.ok) return JSON.stringify({ error: `Destination folder not found: ${destPath}` });
-            const destItem = await destRes.json();
-
-            const moveBody: any = { parentReference: { driveId: bgpDrive.id, id: destItem.id } };
-            if (input.newName) moveBody.name = input.newName;
-
-            const moveRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/items/${sourceItem.id}`,
-              { method: "PATCH", headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/json" }, body: JSON.stringify(moveBody) }
-            );
-            if (!moveRes.ok) return JSON.stringify({ error: `Move failed (${moveRes.status})` });
-            const moved = await moveRes.json();
-            return JSON.stringify({ success: true, name: moved.name, from: sourcePath, to: destPath, webUrl: moved.webUrl });
-          }
+          case "sharepoint_move_file":
+            return JSON.stringify((await runFolderTool("move_sharepoint_item", { sourcePath: input.sourcePath, destinationFolderPath: input.destinationFolderPath, newName: input.newName }, req, undefined, "model_studio")).data);
 
           case "sharepoint_upload_template": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected." });
-
             const template = await storage.getExcelTemplate(input.templateId);
             if (!template) return JSON.stringify({ error: "Template not found" });
             if (!fs.existsSync(template.filePath)) return JSON.stringify({ error: "Template file missing" });
-
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access SharePoint" });
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "Drive not found" });
-
-            const destPath = input.destinationPath.replace(/^\/+|\/+$/g, "");
-            const uploadName = input.fileName || template.originalFileName;
-            const fileBuffer = fs.readFileSync(template.filePath);
-
-            const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encodeURIComponent(destPath).replace(/%2F/g, "/")}/${encodeURIComponent(uploadName)}:/content`;
-            const uploadRes = await fetch(uploadUrl, {
-              method: "PUT",
-              headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/octet-stream" },
-              body: fileBuffer,
-            });
-            if (!uploadRes.ok) return JSON.stringify({ error: `Upload failed (${uploadRes.status})` });
-            const uploaded = await uploadRes.json();
-            return JSON.stringify({ success: true, name: uploadName, path: `${destPath}/${uploadName}`, webUrl: uploaded.webUrl });
+            const saved = await saveToShareDrive(req, {
+              folderPath: input.destinationPath, name: input.fileName || template.originalFileName,
+              bytes: new Uint8Array(fs.readFileSync(template.filePath)), from: "template",
+            }, undefined, "model_studio");
+            if (!saved.success) return JSON.stringify({ error: saved.error });
+            return JSON.stringify({ success: true, name: saved.fileName, path: `${saved.path} / ${saved.fileName}`, webUrl: saved.webUrl, message: saved.message });
           }
 
           case "sharepoint_import_excel": {
-            const msToken = await getValidMsToken(req);
-            if (!msToken) return JSON.stringify({ error: "Microsoft 365 is not connected." });
-
-            const SP_HOST = "brucegillinghampollardlimited.sharepoint.com";
-            const SP_SITE = "/sites/BGP";
-            const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (!siteRes.ok) return JSON.stringify({ error: "Could not access SharePoint" });
-            const site = await siteRes.json();
-            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-            const drives = await drivesRes.json();
-            const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-            if (!bgpDrive) return JSON.stringify({ error: "Drive not found" });
-
-            const filePath = input.filePath.replace(/^\/+|\/+$/g, "");
-            const encoded = encodeURIComponent(filePath).replace(/%2F/g, "/");
-            const itemRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (!itemRes.ok) return JSON.stringify({ error: `File not found: ${filePath}` });
-            const item = await itemRes.json();
-
+            const read = await readFileFor(req, { url: String(input.filePath || "").trim() });
+            if ("error" in read) return JSON.stringify({ error: read.error });
+            const item = read.entry;
             const ext = path.extname(item.name || "").toLowerCase();
             if (![".xlsx", ".xls"].includes(ext)) return JSON.stringify({ error: "Only Excel files can be imported as templates" });
 
-            const downloadUrl = item["@microsoft.graph.downloadUrl"] ||
-              `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}:/content`;
-            const fetchHeaders: Record<string, string> = {};
-            if (downloadUrl.includes("graph.microsoft.com")) fetchHeaders["Authorization"] = `Bearer ${msToken}`;
-            const fileRes = await fetch(downloadUrl, { headers: fetchHeaders });
-            if (!fileRes.ok) return JSON.stringify({ error: `Download failed (${fileRes.status})` });
-
-            const buffer = Buffer.from(await fileRes.arrayBuffer());
             const localName = `${Date.now()}-${(item.name || "import.xlsx").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
             const localPath = path.join(UPLOAD_DIR, localName);
-            fs.writeFileSync(localPath, buffer);
+            fs.writeFileSync(localPath, Buffer.from(read.bytes));
 
             const wb = XLSX.readFile(localPath);
             const analysis = analyzeWorkbook(wb);
@@ -3715,7 +3323,7 @@ CRITICAL RULES:
 
             const template = await storage.createExcelTemplate({
               name: tplName,
-              description: `Imported from SharePoint: ${filePath}`,
+              description: `Imported from SharePoint: ${item.path}`,
               filePath: localPath,
               originalFileName: item.name || localName,
               inputMapping: "{}",
@@ -3727,7 +3335,7 @@ CRITICAL RULES:
               templateId: template.id,
               name: template.name,
               sheets: analysis.sheets.map(s => s.name),
-              source: filePath,
+              source: item.path,
             });
           }
 
@@ -3831,7 +3439,7 @@ CRITICAL RULES:
             };
             const deleteFn = deleteMap[input.entityType];
             if (!deleteFn) return JSON.stringify({ error: `Unknown entity type: ${input.entityType}` });
-            await deleteFn(input.id);
+            try { await deleteFn(input.id); } catch (e: any) { if (e?.status === 409) return JSON.stringify({ error: e.message }); throw e; }
             return JSON.stringify({ success: true, action: "deleted", entity: input.entityType, id: input.id, name: input.confirmName });
           }
 
@@ -4178,8 +3786,8 @@ You have FULL ACCESS to the entire BGP operational platform. Your capabilities i
 - Update cell values, formulas, add/delete sheets
 - Update input/output mappings
 
-**BGP SharePoint Share Drive:**
-- Browse, read, create, move, rename files and folders
+**BGP - Share Drive (the team's SharePoint tree; paths start inside it, never in the old "BGP share drive"):**
+- Browse, read, create, move, rename files and folders, as the person asking on their own Microsoft 365 (if a tool says to connect, tell them to connect it on the SharePoint page)
 - Upload templates to SharePoint
 - Import Excel files from SharePoint as new templates
 

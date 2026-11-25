@@ -4,8 +4,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, hotsNamesClose, hotsPersonName, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
-  readHotsByRules, readHotsNoteRules,
+  checkHotsAnswer, cleanCompanyNumber, countsIn, documentHasText, figuresWithWords, hotsNamesClose, hotsPersonName, hotsTermPatch, hotsTermState, mergeHotsReadings, moneyIn, numberAfterName, numberInQuote,
+  readHotsByRules, readHotsNoteRules, sumByWords, sumInWords,
   contactsFromBody, firmLike, isBgpContact, mergeHotsContacts, readHotsContactsByRules,
   hotsContactKind, hotsContactLabel, hotsFirmIsParty,
   type HotsContact, type HotsParty,
@@ -653,4 +653,49 @@ test("a company abroad named with its home registry's number is found by its nam
   const [oe] = await matchHotsParties(fakeDb([]), DEAL as any, [party("landlord", name, "OE002654")], lookups({ OE002654: { name: "AG HONDO BRIXTON VILLAGE BV", status: "registered" } }));
   assert.equal(oe.state, "register");
   assert.equal(oe.byName, undefined);
+});
+
+// One Clapham's heads of terms (24 November 2026) gave the price as
+// "£2,325m (Two Million, Three Hundred & Twenty-Five Thousand Pounds)": the
+// figure was read as £2,325,000,000 and filled on #4578. The words are used.
+const ONE_CLAPHAM_PRICE = "£2,325m (Two Million, Three Hundred & Twenty-Five Thousand Pounds) plus VAT for both ground floor units subject to confirmed tenancies.";
+
+test("a sum in words reads as pounds, up to the word pounds", () => {
+  assert.equal(sumInWords("Two Million, Three Hundred & Twenty-Five Thousand Pounds"), 2_325_000);
+  assert.equal(sumInWords("One Hundred and Thirty Thousand Pounds"), 130_000);
+  assert.equal(sumInWords("Sixty-Five Thousand Pounds plus VAT"), 65_000);
+  assert.equal(sumInWords("one million pounds sterling"), 1_000_000);
+  assert.equal(sumInWords("exclusive of VAT"), null);
+  assert.equal(sumInWords("Two Million Pounds and Fifty Pence"), 2_000_000);
+  assert.deepEqual(figuresWithWords(ONE_CLAPHAM_PRICE), [{ raw: "£2,325m", figure: 2_325_000_000, words: 2_325_000 }]);
+  // A figure with no words beside it, or words that agree, changes nothing.
+  assert.equal(sumByWords("Price: £2,325,000 plus VAT", 2_325_000), null);
+  assert.equal(sumByWords("£130,000.00 (One Hundred and Thirty Thousand Pounds)", 130_000), null);
+});
+
+test("the rules read a price by its words when the figure says otherwise, and say so", () => {
+  const { terms } = readHotsByRules(`Vendor\n  St John's Hill PH03 LLP- Registration Number OC443074.\nPrice\n${ONE_CLAPHAM_PRICE}\nTOGC\nThis transaction will be treated as a Transfer of a Going Concern.`);
+  const price = terms.find(t => t.key === "pricing")!;
+  assert.equal(price.value, 2_325_000);
+  assert.match(price.note || "", /The figure £2,325m reads as £2,325,000,000 but the words beside it say £2,325,000/);
+});
+
+test("the provider's price is kept by the words: read from them, or corrected to them", () => {
+  const doc = `Price\n${ONE_CLAPHAM_PRICE}`;
+  // Read from the words: kept (until 24 November 2026 it was dropped, and the rules' £2,325,000,000 used).
+  const fromWords = checkHotsAnswer({ terms: { pricing: { value: 2_325_000, quote: ONE_CLAPHAM_PRICE } } }, doc);
+  assert.deepEqual(fromWords.dropped, []);
+  assert.equal(fromWords.terms[0].value, 2_325_000);
+  assert.ok(fromWords.terms[0].note);
+  // Read from the figure: corrected to the words.
+  const fromFigure = checkHotsAnswer({ terms: { pricing: { value: 2_325_000_000, quote: ONE_CLAPHAM_PRICE } } }, doc);
+  assert.equal(fromFigure.terms[0].value, 2_325_000);
+  assert.ok(fromFigure.terms[0].note);
+  // Either way the merged reading fills £2,325,000.
+  const merged = mergeHotsReadings({ parties: [], terms: fromFigure.terms }, readHotsByRules(doc));
+  assert.equal(merged.terms.find(t => t.key === "pricing")?.value, 2_325_000);
+  // A rent whose figure and words agree has no note.
+  const rent = checkHotsAnswer({ terms: { rentPa: { value: 130_000, quote: "£130,000.00 (One Hundred and Thirty Thousand Pounds) per annum" } } }, "Rent\n£130,000.00 (One Hundred and Thirty Thousand Pounds) per annum");
+  assert.equal(rent.terms[0].value, 130_000);
+  assert.equal(rent.terms[0].note, undefined);
 });

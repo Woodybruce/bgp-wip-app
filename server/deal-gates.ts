@@ -14,7 +14,8 @@
 // etc.) are Xero ContactIDs and are never read here.
 import { pool } from "./db";
 import { amlRegime } from "@shared/aml-policy";
-import { applyCheckScope, brandSignOffScope, entitySignOffScope, kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
+import { applyCheckScope, applySigners, brandSignOffScope, entitySignOffScope, kycVerdict, partyKycState, type PartyKycState } from "@shared/party-kyc";
+import { signersNotCleared } from "@shared/deal-guarantor";
 
 export type AmlGateInput = {
   landlordId?: string | null;
@@ -72,7 +73,9 @@ async function signingCompanies(deal: AmlGateInput): Promise<Record<string, stri
 // fullChecks: the transaction needs the full checks (amlRegime "full"), so an
 // approval that was a sign-off for sanctions checks only does not count
 // (applyCheckScope in shared/party-kyc.ts, 23 November 2026).
-export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; brandId: string; entityId: string | null; fullChecks?: boolean }>): Promise<Record<string, PartyKycState>> {
+// dealId: the transaction, for the other companies that sign for the party;
+// signerKey: "<dealId>:<role>" when the role given is a key of the caller's own.
+export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; brandId: string; entityId: string | null; fullChecks?: boolean; dealId?: string | null; signerKey?: string }>): Promise<Record<string, PartyKycState>> {
   const brandIds = [...new Set(parties.map(p => p.brandId).filter(Boolean))];
   const entityIds = [...new Set(parties.map(p => p.entityId).filter((x): x is string => !!x))];
   const brands = brandIds.length ? (await q.query(
@@ -93,6 +96,11 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
     `SELECT DISTINCT ON (company_id) company_id, notes, created_at FROM kyc_audit_log
       WHERE company_id = ANY($1::varchar[]) AND action = 'kyc_approved'
       ORDER BY company_id, created_at DESC NULLS LAST, id DESC`, [brandIds]).catch(() => ({ rows: [] as any[] }))).rows : [];
+  // Another company that signs for a party (24 November 2026): the party
+  // reads cleared only once each one holds its own approval. A failed read
+  // reads as not cleared, never as approved.
+  const dealIds = [...new Set(parties.map(p => p.dealId).filter((x): x is string => !!x))];
+  const signers = dealIds.length ? await import("./deal-guarantors").then(m => m.signerApprovals(dealIds, q as any)).catch(() => null) : undefined;
   const out: Record<string, PartyKycState> = {};
   for (const p of parties) {
     const b = brands.find((r: any) => r.id === p.brandId);
@@ -100,14 +108,17 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
     const e = p.entityId ? entities.find((r: any) => r.id === p.entityId && r.parent_company_id === p.brandId) : null;
     const k = e ? checks.find((r: any) => r.entity_id === e.id) : null;
     const line = approvalLines.find((r: any) => r.company_id === b.id);
-    out[p.role] = applyCheckScope(partyKycState({
+    const open = !p.dealId ? null
+      : signers === null ? ["the other companies that sign (could not be read)"]
+      : signersNotCleared((signers?.get(p.signerKey || `${p.dealId}:${p.role}`) || []).filter(x => x.companyId === p.brandId), !!p.fullChecks);
+    out[p.role] = applySigners(applyCheckScope(partyKycState({
       brand: { id: b.id, name: b.name, companiesHouseNumber: b.companies_house_number || null, legalName: b.uk_entity_name || b.ch_name || null,
         status: b.kyc_status || null, expiresAt: b.kyc_expires_at || null, approvedBy: b.kyc_approved_by || null, approvedAt: b.kyc_checked_at || null,
         scope: line ? brandSignOffScope({ notes: line.notes, loggedAt: line.created_at, checkedAt: b.kyc_checked_at }) : null },
       company: e ? { id: e.id, name: e.name, companiesHouseNumber: e.companies_house_number || null,
         kyc: k ? { status: k.kyc_status || null, expiresAt: k.expires_at || null, approvedBy: k.approved_by || null, approvedAt: k.approved_at || null,
           scope: entitySignOffScope({ regime: k.signoff_regime, signedOffAt: k.signoff_at, approvedAt: k.approved_at }) } : null } : null,
-    }), !!p.fullChecks);
+    }), !!p.fullChecks), open);
   }
   return out;
 }
@@ -133,7 +144,7 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
 
   const signs = await signingCompanies(deal);
   const fullChecks = await gateFullChecks(deal);
-  const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role], fullChecks })));
+  const states = await loadPartyKyc(pool, pairs.map(p => ({ role: p.role, brandId: p.parentId, entityId: signs[p.role], fullChecks, dealId: deal.dealId || null })));
   // A party the Nominated Officer or the Deputy marked Not required on this
   // deal (BGP's AML policy: the other side of a deal a joint agent
   // negotiated) needs nothing, unless it was rejected.
@@ -272,16 +283,27 @@ export async function recomputeDealKycApproved(companyId: string, approvedBy?: s
 }
 
 // The deals that name a company that signs, when that company's own check
-// changes (BGP sign-off, KYC4U's result on it).
+// changes (BGP sign-off, KYC4U's result on it), and those it signs for as
+// another company that signs (24 November 2026).
 export async function recomputeDealsForTradingEntity(entityId: string, approvedBy?: string | null): Promise<number> {
   if (!entityId) return 0;
   const { rows: deals } = await pool.query(
     `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved,
             landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
        FROM crm_deals
-      WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1`,
+      WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1
+         OR id IN (SELECT deal_id FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL AND COALESCE(kind, 'guarantor') = 'signer')`,
     [entityId],
-  );
+  ).catch(async (e: any) => {
+    // A database not yet given the kind column (boot migration) reads the deals it signs as before.
+    if (e?.code !== "42703" && e?.code !== "42P01") throw e;
+    return pool.query(
+      `SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id, kyc_approved,
+              landlord_trading_entity_id, tenant_trading_entity_id, vendor_trading_entity_id, purchaser_trading_entity_id
+         FROM crm_deals
+        WHERE landlord_trading_entity_id = $1 OR tenant_trading_entity_id = $1 OR vendor_trading_entity_id = $1 OR purchaser_trading_entity_id = $1`,
+      [entityId]);
+  });
   return recomputeDeals(deals, approvedBy);
 }
 

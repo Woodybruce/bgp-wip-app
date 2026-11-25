@@ -3214,6 +3214,70 @@ in when Layla bills. Rule: `shared/invoice-template.ts`; read:
 - Not run against Xero from a build machine; checked in a browser on a local
   copy on 22 November 2026.
 
+## Xero invoices worked from the app (Woody, 2026-11-24)
+
+Woody, on draft INV-05587 (20 November 2026): "at this point need the ability
+to edit that draft or also see that draft in the app is that possible? and
+also delete it if the deal gets deleted from the app? ... does the api allow
+for approval and email from the app? can you review and see if we can make it
+more integrated so layla doesn't need to go on to Xero?"; asked who may
+approve and send, on 24 November 2026: "xero all admin". Do not re-litigate.
+Rules: `shared/xero-invoice.ts`; routes: `server/xero-invoice-actions.ts`
+(`setupXeroInvoiceRoutes`, after `setupXeroRoutes` in `server/index.ts`);
+window: `client/src/components/xero-invoice-window.tsx`. Tests:
+`server/xero-invoice.test.ts` (in `npm test`),
+`qa/regression/xero-invoice-actions.test.mjs`.
+
+- **The invoice window**: pressing an invoice on the transaction's Xero
+  Invoicing card (Fees & invoicing), or making a draft with Send to Xero, opens
+  it as Xero holds it (`GET /api/xero/invoices/:id/detail`, which also
+  refreshes the row and moves the transaction to Invoiced once approved, as the
+  sync does): lines, VAT, totals, dates, reference, amount due, and the last
+  email sent from the app. **See the PDF** is Xero's own PDF
+  (`GET …/:id/pdf`, `Accept: application/pdf`) in the pop-out viewer.
+- **Who does what** (`invoiceActions`): any BGP person signed in as themselves
+  reads an invoice, changes a draft and deletes a draft, as any BGP person makes
+  one. Admins (`users.is_admin` or `ADMIN_EMAILS`, requireAdmin's test) approve,
+  email and void. Writes go through the person's own Xero connection, so Xero
+  records who did it and the email goes out in their name (`XERO_CONNECT` asks
+  them to connect); reads fall back to the firm's connection.
+- **Changing a draft** (`PUT /api/xero/invoices/:id`, `invoiceEditInput`,
+  `xeroEditPayload`): every line is sent (Xero deletes a line not sent), a kept
+  line keeps its account code and tax type, a new one takes the sales nominal
+  (`salesAccountCode`); the dates, reference and contact. **The contact is sent
+  by its Xero id only**: a name or details would change the contact itself in
+  Xero. Read fresh first: a draft approved in Xero since is refused.
+- **Approve** (`POST …/:id/approve`, optional `andEmail`) from DRAFT or
+  SUBMITTED; never on a transaction stopped for AML reasons. **Email**
+  (`POST …/:id/email`): AUTHORISED or PAID only; Xero sends it to the contact's
+  own address and its contact persons marked to receive emails, from
+  messaging-service@post.xero.com with Xero's default template
+  (`GET …/:id/recipients` shows who). With no address on the contact, a person
+  gives one and it is saved on the contact (its contact persons sent back as
+  they were). An `Idempotency-Key` on every send; a second send within ten
+  minutes asks first (`SENT_RECENTLY`); then marked as sent
+  (`SentToContact`). **Void** (`POST …/:id/void`): approved with nothing paid or
+  credited, with a reason noted on the invoice's history in Xero. **Delete the
+  draft** (`POST …/:id/delete-draft`). Each writes a history line on the
+  transaction (`xero_invoice_edited`, `_approved`, `_emailed`, `_voided`,
+  `_deleted`), hidden from client logins with the AML lines.
+- **Deleting a transaction** (`xeroBeforeDealDelete`): its drafts are deleted in
+  Xero first (Status DELETED); an approved invoice keeps it until an admin voids
+  it, and a paid one keeps it (409 `XERO_INVOICE_LIVE`); a draft Xero could not
+  be reached for keeps it too (`XERO_UNREACHABLE`), so no draft is left behind.
+  The delete routes ask with the person's own Xero login; `storage.deleteCrmDeal`
+  asks again (the firm's connection) for every other caller, ChatBGP's
+  delete_record included, and removes the transaction's invoice rows with it.
+- **Taking a row off** (`DELETE /api/xero/invoices/:id`) only when Xero holds
+  nothing live for it (deleted, voided, or never sent).
+- Also fixed: Xero's dates came back as `/Date(…)/` and were cut to "/Date(176"
+  on sync; `xeroDay` reads both forms.
+- Checked in a browser on a local copy against a stand-in for Xero on
+  24 November 2026 (edit, PDF, approve and email, no address, void, transaction
+  delete). Not run against BGP's Xero from a build machine: the first real
+  approval and email is an admin's.
+- Not built: attachments, repeating invoices, payments, credit notes.
+
 ## Who BGP bills and who pays (Woody, 2026-11-20)
 
 Woody: "the Xero billing entity and the aml entity need to be flagged if they
@@ -3357,6 +3421,26 @@ not showing". On live the reader had no vendor, purchaser or price; the club
 - **Already a live sale or purchase on this property** (`LiveInvestmentDeals`,
   from `GET /api/crm/properties/:id/deals`) lists them under Property on New
   Deal for a sale or purchase, each opening its deal.
+- **Use this transaction** on that notice (Woody, 2026-11-24: "Can you allow
+  for link to existing deal at this point? its easier"; BGP staff, New
+  Transaction only, not a handover). Rule: `client/src/lib/deal-link.ts`
+  (`linkToTransaction`; tests `server/deal-link.test.ts`, in `npm test`, and
+  `qa/regression/deal-link-guards.test.mjs`). The form moves onto that
+  transaction, read fresh: what it holds stays; its blanks fill from what New
+  Transaction was given (a field differs from New Transaction's own defaults,
+  so the Solicitors default and the person's team never count); a party comes
+  whole with its billing entity and company that signs, and the same party
+  only fills those two where blank; new comments are added to its own. Its
+  name, team, BGP Contact, property and AML check are never carried
+  (`KEPT`). Where the two differ the transaction's value stays and the
+  banner (`DealLinkBanner`) offers **Use** for the other, with Undo. The
+  stage is never moved by itself: a later stage (Negotiating, HOTs or
+  Solicitors only, never past) is offered as **Move it to HOTs**. The
+  property is fixed (`place`), Show all fields is not offered, the read
+  panel cannot move it to another property, and its own fee split is
+  loaded when it has one. **Back to a new transaction** puts the form as it
+  was. **Save to #<ref>** is its own save (`PUT /api/crm/deals/:id`, never
+  a POST), then its fee split, then Kick off AML.
 
 ## Heads of terms on the transaction page (Woody, 2026-11-23)
 
@@ -3435,6 +3519,20 @@ screen: `client/src/components/deal-hots.tsx`. Tests:
   the number is in the document, each figure is one its own words give in the
   unit the transaction stores. A scan cannot be checked: its lines say check
   by eye. Solicitors and agents are not parties; "Guarantor: None" is none.
+- **A sum given as a figure and in words is read by the words** (Woody,
+  24 November 2026, on One Clapham #4578: "that's got 000 wrong"). Its heads
+  of terms gave "£2,325m (Two Million, Three Hundred & Twenty-Five Thousand
+  Pounds)"; the figure was read as £2,325,000,000 and filled, and a provider
+  reading of £2,325,000 from the words was dropped as "not in the words it
+  came from". `sumByWords` (`sumInWords`, `figuresWithWords` in
+  `shared/deal-hots.ts`) now settles a figure with a sum in words in brackets
+  beside it that disagrees: the provider's answer, the rules and New
+  Transaction's reader (`parseHotsHandler` in `server/crm.ts`: price, rent,
+  capital contribution, fee) all take the words, and the dialog shows the
+  term's `note` ("The figure £2,325m reads as £2,325,000,000 but the words
+  beside it say £2,325,000: the words are used."). Tests in
+  `server/deal-hots.test.ts`. #4578's price was put right on live the same
+  day (£2,325,000; its Investment Tracker row followed).
 - **Where each party is** (`matchHotsParties`, and `POST …/match` after
   anything is set, without reading the document again): the company filed
   under the transaction's party with that number or exact registered name
@@ -3590,6 +3688,69 @@ re-litigate. Rules: `shared/deal-guarantor.ts`; reads:
   Inception T2's main company is not the one that signs.
 - Not built: a guarantor of a landlord or a seller; source of funds asked of a
   guarantor that pays.
+
+## Another company signs too (Woody, 2026-11-24)
+
+Woody, on #4664's party box: "can we add 2 entities? maybe should disappear
+with just clear left and also add another entity or something?", then "yes".
+A second company or person signing for the same party: joint landlords on one
+title, a joint venture, two people buying together. Do not re-litigate.
+Rules: `shared/deal-guarantor.ts` (`SIGNER_ROLES`, `signerRedFlags`,
+`signerChecksDenial`, `signersNotCleared`); reads: `server/deal-guarantors.ts`
+(`signerRows`, `signerViews`, `signersForParty`, `signerApprovals`); routes in
+`server/deal-parties.ts`. Tests: `server/deal-signer.test.ts` (in `npm test`),
+`qa/regression/deal-signer-guards.test.mjs`.
+
+- **Kept with the guarantors**: a `deal_guarantors` row of `kind = 'signer'`
+  (boot migration adds `kind`, default `'guarantor'`). Any party role; filed
+  under the party, never the company that signs, and only beside one ("Set the
+  company that signs for the landlord first"). One live row per company per
+  party, so a company is a guarantor or another signer, never both (409 either
+  way). Each read and route filters by kind; a guarantor route never touches a
+  signer row and the other way round.
+- **Routes** (BGP staff signed in as themselves): `POST /api/deals/:id/signers
+  { role, companyId }` (BGP's checks start on it at once; a history line
+  `signer`; the brand's transactions are recomputed), `DELETE
+  /api/deals/:id/signers/:signerId`, `POST …/:signerId/checks` (Run checks).
+- **Each one is a customer**, checked as a guarantor is and approved as the
+  company that signs is: its findings are the party's red flags (`signer:<entity>:…`,
+  "Also signs, X: …", on the transaction and the AML board); a company's owners
+  (role `signer_owner`) and a person who signs (role `signer`) are People to
+  check, each owing an identity check and a proof of address, its other
+  directors screened only, and the person acting can pass them their links;
+  the sign-off waits until BGP's checks on each have run in the last 30 days
+  (`signerChecksDenial`, in all three sign-off paths), then **approves each one**
+  with the main company (`approveEntityKyc` on every signer, same level and
+  term).
+- **The party reads cleared only while each signer is**: `loadPartyKyc` takes the
+  transaction (`dealId`, and `signerKey` where the caller keys parties its own
+  way) and reads the signers' own approvals (`signerApprovals`); an approved
+  party with a signer not approved, expired, or approved for sanctions only on
+  a transaction that needs the full checks reads as not cleared
+  (`applySigners`, `signersOpen`; kycVerdict says "X also signs and is not
+  signed off yet"). A failed read reads as not cleared, never as approved. The
+  gate, the deal's `kyc_approved`, the AML box and board, the AML file, the
+  sign-off and the status route all pass the transaction. A signer added after
+  the party was cleared re-opens it until it is signed off. A company's own
+  approval change recomputes the transactions it signs for as another signer
+  too (`recomputeDealsForTradingEntity`).
+- **Screens**: in the party box, under the chosen company (Change, Clear),
+  **Also signs** lists each with its checks, **Run checks** and **Remove**,
+  and **Another company signs too** offers the brand's other companies, **Find
+  it at Companies House**, **Registered abroad** and **A person signs too**
+  (the billing entity dialog, no Xero contact). The Parties card and the AML
+  box's party lines show an **Also signs** row; the AML box's first step names
+  them ("also signs: X") and says when checks are still to run; the AML file
+  lists them and what is still needed on each.
+- **Billing is unchanged**: BGP bills the company that signs for its client
+  (or the party's billing entity), never the other signer.
+- Also fixed: the filed-company delete guard read `deal_guarantors.trading_entity_id`,
+  a column that does not exist, so the database error was read as zero and a
+  company guaranteeing a transaction could be deleted. It reads `entity_id`
+  now, and refuses a company that signs with another one too.
+- Not built: a separate person acting for the other company (the party's who
+  to ask acts for all its signers); heads of terms naming two landlords setting
+  the second one by themselves; a guarantor of a landlord or seller.
 
 ## KYC4U is no longer used (Woody, 2026-11-23)
 
@@ -3793,7 +3954,16 @@ call for action countries only).
     party's factors to weigh (`server/kyc-red-flags.ts`,
     `server/aml-dashboard.ts`); `dealRedFlags` no longer adds it. Enhanced
     due diligence comes from another higher-risk factor or the agent's
-    judgement. `superPrimeFlag` stays the reading.
+    judgement. `superPrimeFlag` stays the reading. Until 24 November 2026
+    the transaction save (`PUT /api/crm/deals/:id`) still marked every sale
+    or purchase of £1m or more (£5m with "london" in its name) for enhanced
+    due diligence, reason `super_prime`, which came back as a "Marked for
+    enhanced due diligence" red flag (found when New Transaction's Use this
+    transaction saved a price). The save now marks only a PEP, and a mark
+    whose only reason is `super_prime` is no red flag
+    (`eddMarkIsSuperPrimeOnly`), so marks already saved on live clear on
+    read. Tests: `server/aml-policy.test.ts`,
+    `qa/regression/aml-policy-guards.test.mjs`.
   - **The counterparty on a joint instruction is always checked**, using the
     joint agent's documents or BGP's own checks, sale or letting. The
     joint agent reason for Not required is gone: `jointAgentNotRequiredRefusal`
@@ -3939,6 +4109,10 @@ check?" Do not re-litigate.
   board shows the party as **Sanctions only** (`sanctionsOnly` on the row)
   and lists only possible sanctions matches, with "Letting under £10k a
   month" under it. The sanctions line names who was screened.
+- **A sanctions-only party waits on the sign-off** (24 November 2026): once
+  screened it reads "BGP: sign off" on the AML board ("Officers: sign off"
+  with a possible sanctions match), never "send the client checks", because
+  nobody is asked for anything (`amlWaitingOn(stage, flags, sanctionsOnly)`).
 - **The board's red flags are a count** (Woody, the same evening: "lets not
   show the actual problem in the table just 2 flags but click and it shows
   the explanations as pop up and can take to the AML board"). The Due
@@ -4443,6 +4617,23 @@ Tests: `server/kyc-prechecks.test.ts` (in `npm test`),
   records `notAsked` (with reasons), `confirmOwners`, `ownerNames`,
   `ownersAnswer` and `precheckId`; the dialog lists what was not asked and the
   agent can tick anything back. With no finished run, the usual list is asked.
+- **Sending waits for the register** (Woody, 24 November 2026, on #4664: "I
+  clicked in the add people button before it had searched the companies?
+  should it wait"). The landlord's request went to Kenneth Tam three minutes
+  after BGP's checks read the register, with the list the send window had
+  made before they finished: a structure chart, "ID for each of those
+  owners" as documents and his own proof of address, and no identity check
+  of their own for the owner, Lee Chung Chan. Now the client checks list
+  carries `precheckRunning` per party and is read again every 3 seconds
+  while a run goes (`useClientChecks`), and the AML box re-reads it when a
+  run starts or finishes; the send window says it is reading Companies House
+  and holds its ticks and Send until the run finishes, then makes the list
+  afresh. The server (`createClientCheck`) waits up to 20 seconds for a run
+  going, then refuses (`CHECKS_RUNNING`), and refuses a list made before
+  the latest run (`basedOn`, `listMadeBeforeChecks`: `CHECKS_UPDATED`); the
+  window then re-reads and asks for the list to be checked again. A request
+  already sent is not changed: People to check shows each owner still to
+  check, with Send them a link.
 - **The nightly fix**: the nightly Companies House refresh (`runBatchReKyc`
   → `performAutoKyc`, 120 companies a night) wrote a `kyc_investigations` row
   with `sanctions_match = false` without screening anyone, so within 30 days
@@ -4799,6 +4990,54 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   phone card shows the status beside the transaction.
   The view is kept in the address (`?view=`, `?who=mine`), replaced, so a pill
   is never a Back step. The KYC4U grid is in Subscriptions & APIs → KYC4U.
+- **One line per transaction** (Woody, 24 November 2026: "on Transactions
+  lets combine the 2 (normally) AML checks into just one transaction board
+  or line we can see the individuals in companies. That way doesnt get too
+  crowded"; do not re-litigate). The feed still sends a row per party; the
+  page groups them with `groupAmlByTransaction` (`shared/aml-dashboard.ts`,
+  tested in `server/aml-dashboard.test.ts`): parties in the order landlord,
+  tenant, vendor, purchaser. **The pills pick transactions**
+  (`transactionBuckets`): To do, In progress, Expiring and Closed, not
+  checked when any party is on them (a transaction can be on more than
+  one); Not due yet when nothing else is outstanding and a party is not
+  due; Done only when every party is done. The counts are transactions
+  (`transactionBucketCounts`); Late, Mine and the search pick a
+  transaction through any party (`transactionMatches`). The table is one
+  `tbody` per transaction (`TransactionRows`): Transaction, Transaction
+  status and Agents once (`rowSpan`), then a line per party (Party, AML
+  stage, Due diligence and red flags, Waiting on, Last moved). A party's
+  line opens that party's trail; the transaction's own cells open the party
+  on the pill shown (`leadParty`). Cards and the phone: one card per
+  transaction (`AmlTransactionCard`), a line per party (`PartyLine`, the
+  shared chips). Order: a late party first, then the most red flags, then
+  the longest unmoved. The property page's AML on transactions here groups
+  with the same rule.
+- **Start from the AML page** (Woody, 24 November 2026: "what about my add
+  new transaction text box and upload files box etc here?", then "and add new
+  company AML etc"). At the top of the Transactions and the Companies views
+  (folded away with the top when either table scrolls), `AmlStartBar`
+  (`client/src/components/aml-start.tsx`):
+  **New transaction**, the Describe the transaction box's look (type the
+  transaction out and press Fill it in, or drop or choose its heads of terms),
+  opens New Transaction (`NewTransactionDialog` in `client/src/pages/deals.tsx`,
+  loaded only when used) with the words read by its Describe the transaction
+  box (`initialNote`: `initialText` and `autoRead` on its `NoteFill`) or the
+  file read by its Add heads of terms (`initialHotsFile`, read once when the
+  lists are in); saving is the form's own Create, then its Kick off AML step,
+  and closing it reads the board and the Companies view again. **Add a
+  company** opens the Companies view's Add a company (`startAdding` on
+  `KycCompaniesView`, read again while the view is open), for KYC with no
+  transaction. Nothing is saved from the box itself. A party's own KYC
+  documents still go in its Documents step (Upload documents).
+- **Transactions and Companies share one top** (Woody, 24 November 2026: "make
+  the company page the same format as the transactions page on the top so they
+  match up in terms of design and obviously have the new box"): the bar above
+  both (`startsHere` in `client/src/pages/aml-dashboard.tsx`), then the view's
+  pills on the left and its controls on the right in the same order (Companies:
+  Select for admins, Table / Cards, the search; Transactions: All, Mine, Late,
+  Table / Cards, the search), both searches the same width. The Companies view
+  has no Add a company button of its own. Changing view opens a folded top
+  again.
 - Checked in a browser against a local copy on 18 November 2026 (desktop and
   an iPhone profile). Not built: the stage on the deal page's own card (it
   shows the state, not this chain), and a count of To do on the side bar.
@@ -4976,6 +5215,44 @@ Guards: `qa/regression/aml-box-company-and-flags.test.mjs`; unit tests in
   machine (no keys here): the queue and the profile detail are first seen on
   live.
 
+## The app drafts why a red flag can be set aside (Woody, 2026-11-24)
+
+Woody, on the Set aside box for adverse media about BERKELEY GROUP PLC(THE):
+"can you get the app to review and put a suggestions of why can set aside
+these flags in this box?" Do not re-litigate. Rules: `shared/flag-set-aside.ts`;
+reader: `server/flag-set-aside.ts`; box: `SetAsideDialog` in
+`client/src/components/aml-red-flags.tsx`. Tests: `server/flag-set-aside.test.ts`
+(in `npm test`), `qa/regression/flag-set-aside-guards.test.mjs`.
+
+- **When the box opens** it asks `POST /api/deals/:id/red-flags/suggest
+  { role?, key }` (or the client file's `.../red-flags/suggest { key }`), the
+  officers only (`decider`), and fills the box with the draft unless the
+  officer has typed; **Use the app's draft** puts it back. Above the box, the
+  app's read: none of these bears on money laundering risk; look closer; or
+  this one should stand. **Set aside is still the only save**: the draft is
+  never saved by itself.
+- **The reader**: the flag is read again on the server by its key (as the
+  set-aside does), its findings numbered (`flagFindings`: a web finding's
+  words with its source and date, a ComplyAdvantage profile with its
+  articles), with what BGP holds on the company (register facts and listing
+  from BGP's checks). Anthropic, called directly, one forced-tool call
+  (`suggest_set_aside`), capped a day (`FLAG_SET_ASIDE_DAILY_CAP`, default
+  100, 0 = off), told what bears on money laundering risk (financial crime,
+  sanctions, corruption, tax evasion, charges, a regulator's action for
+  financial crime) and what does not (another person of the name, commercial
+  disputes, competition or consumer law resolved with no finding of financial
+  crime, environmental or planning matters, allegations withdrawn or found
+  unfounded), to use only the facts given, and to write plainly in 80 words.
+  `checkSetAsideSuggestion` drops findings the flag does not have, takes off
+  bullets, cuts a long draft, and turns set_aside into look_closer when the
+  reader itself calls a finding relevant.
+- **Never drafted** (`setAsideNeedsPerson`, before any call): a possible
+  sanctions match (a person compares the list entry; tell the Nominated
+  Officer), the client's own public-role answer, a declined identity check,
+  the client's dispute of the register's owners, a source of funds mismatch,
+  and a mark a person put on the KYC record. The box says what to do instead.
+- Not run against Anthropic from a build machine.
+
 ## Which screening matches are red flags (Woody, 2026-11-19)
 
 **Warning lists are judged like adverse media since 23 November 2026** (Woody,
@@ -5144,7 +5421,7 @@ chain walk keeps each owner's date of birth). Tests:
   90% like anything else. A company, and every check from before this
   change, keeps the earlier rule, so its flags stand until **Run again**.
 - **A year either side is not enough for adverse media** (24 November 2026,
-  Woody's "random red flags"): Fortis Green's trustee Ian Macfarlane
+  Woody's "random red flags"; widened the same day, next bullet): Fortis Green's trustee Ian Macfarlane
   Anderson, born November 1948, was a red flag on the Jethro Tull musician
   Ian Anderson's adverse media profile, whose only birth date is a year one
   either side (`profileDobAgrees` takes a year alone within a year). The
@@ -5154,6 +5431,16 @@ chain walk keeps each owner's date of birth). Tests:
   possible namesake ("the profile gives only a year, one either side of
   theirs"); a public role or a sanctions list still counts it. Stored checks
   hold no profile years, so it applies from the next run.
+- **Nor is a year with no month** (24 November 2026, Fortis Green's run
+  again: the same musician's profile now gave 1948, Ian Macfarlane Anderson's
+  own year, worked out from his age in a 2026 This is Money article, so the
+  rule above did not catch it). The match also carries `birthYearOnly`
+  (every agreeing date on the profile is a year with no month, the person's
+  own year included), and for adverse media, a warning list or fitness and
+  probity such a match is a possible namesake ("the profile gives only a year
+  of birth, no month"): a month that agrees ties the person, a year alone
+  does not. A public role or a sanctions list still counts the year. From
+  the next run, as above.
 - **A charity trustee is the director of the same name** (same day): the
   Charity Commission lists "IAN CRITCHLEY" and Companies House "CRITCHLEY,
   Ian Martin", so they were screened as two people, the trustee with no date
@@ -5318,6 +5605,25 @@ their sanctions result only". Do not re-litigate. Rules (pure):
   19 November 2026. Not run against Veriff or Microsoft from a build machine.
   Not built: adding a person by hand (an owner the register does not name),
   and asking each owner the source of funds.
+- **Anyone on the transaction may send a proof of address** (Woody,
+  24 November 2026: "Let's allow others to drop proof of address? Is that
+  technical? Or legal": technical; the law asks that it is genuine, recent,
+  an accepted kind and in the person's name, not who hands it over). A proof
+  of address sent on any link on the party counts for the person it names,
+  read and checked as on their own link (`others` in `partyPeople`), and
+  their row on People to check says where it came in ("sent on Kenneth Tam's
+  link", `proof.elsewhere`, beside the link's reference). On the person acting's page
+  each owner has **Upload their proof of address** (`kyc-owner-proof-<key>`)
+  beside sending their link: `POST /api/kyc-upload/:token/file` with
+  `forKey`, taken only for a proof of address, on the person acting's own
+  request, naming one of the party's people, and kept as
+  `request.addressProofFor[documentId]`. The hint never makes a bill count:
+  it shows a bill sent for someone on their row whether or not it passed, so
+  an officer can Read again or Accept it for them, and an acceptance counts
+  only for the person it was sent for. The page says whether each owner's
+  proof is in, being read, or did not pass. They still do their own identity
+  check. Tests: `server/kyc-people.test.ts`,
+  `qa/regression/kyc-proof-for-others-guards.test.mjs`.
 - **More than one private individual on one side** (Jack, 20 November 2026:
   "sometimes it is private individuals who havent set up a company yet ...
   I want to be able to start checks on more that one private indiviaul").
@@ -6025,6 +6331,14 @@ flags: `client/src/components/aml-red-flags.tsx`. Tests:
   draw the same card (`AmlPartyCard`, `KycCompanyCard`) in the CRM lists'
   grid, 90 at a time with Show more. The AML page's party is named by the
   company being checked too (`PartyCell`).
+- **Every card one height on a computer** (Woody, 24 November 2026: "can you
+  sort the cards so they all the same size and add scroll within as
+  required"): `AmlCard` is `md:h-72` (288px, which fitted about three live
+  cards in four: transactions measured 145 to 378px, companies 187 to 315px);
+  the title and the footer stay put, the rows scroll inside, and a fade shows
+  while more is below (worked out after each render, on scroll and on
+  resize). A phone keeps each card's own height: one column, and no scroll box
+  inside the page's. Guard in `qa/regression/aml-one-build.test.mjs`.
 - **The same chips elsewhere**: the CRM lists' KYC chip, the Companies and
   KYC card's chips, the Companies view, the property page's AML on
   transactions here, and the AML page's stage, Late and transaction status.
@@ -6281,6 +6595,21 @@ can and use those for xero invoicing too". Do not re-litigate. Rules:
   screening, documents, sign-off) and a Next line (`clientKycNextStep`); the
   client checks, people and documents are the transaction components, pointed
   at the client file through `AmlUrlsProvider`.
+- **Owners abroad on a client file** (Woody, 25 November 2026, on Federated
+  Hermes Limited, owned through Federated Hermes, Inc. in the United States:
+  "suggesting find them on owners abroad but there isnt anywhere to do it on
+  this form"). The client window's first step (The company) now has the
+  transaction box's **Owners abroad** section (`ClientFileAbroad`, `AbroadTrace`
+  from `aml-abroad.tsx`): what was traced, and Add its register page, Add a
+  register extract, Record a person behind it, Add a note, Add a structure
+  chart. It is drawn inside the client file's `AmlUrlsProvider`, and the
+  section's reads and saves take their address from it (`urls.party`), so they
+  reach the client file's routes in `server/kyc-abroad.ts`, which already
+  answered on `/api/client-kyc/:companyId/subjects/:entity/abroad`. The hint
+  under People reads "Record them under Owners abroad, in The company (step
+  1)", and the basis words say BGP's officers find the people behind a company
+  abroad (they still named KYC4U). Still to find no longer offers "a Creditsafe
+  report" (`abroadStatus`): BGP has no Creditsafe.
 - **CRM boards**: each Landlords, Brands, Agents and Lenders row carries
   `kyc` (`server/crm-hub.ts`, `clientKycSummary`, `clientKycWords`): a chip
   (KYC cleared, KYC due soon, KYC 2 of 5, KYC in progress, KYC expired, KYC
@@ -6400,6 +6729,27 @@ Ok go ahead". Do not re-litigate. Rules: `shared/kyc-companies.ts`,
   **Match** on each request (`MatchToCompany`, the existing hand-set PATCH).
   KYC4U's verdicts come in only through the bookmark on their status page or
   an admin's **Record a past KYC4U sign-off**: nothing guesses them.
+- **A KYC4U check shows on every company it names** (Woody, 25 November 2026,
+  on Sheet Anchor Evolve (London) Ltd: "these guys should have been KYC4U but
+  saying there isn't one"). KYC4U's REQ103894, "SHEET ANCHOR EVOLVE LONDON
+  LIMITED", was read in on 21 November, before that record was added
+  (24 November), so the matcher took the short name "Sheet Anchor" and filed
+  it on the parent's record; the company's window said KYC4U held no check.
+  It was moved by hand on live (Match, 25 November). The strip (`GET
+  /api/kyc4u/company/:id`) and the Companies view's count now also take every
+  request that names one of the record's registered companies (its own
+  registered name, its Companies House name, the companies filed under it),
+  wherever it was filed: the request's entity, or a folder inside it named
+  for a company with a legal form (KYC4U files each company up the chain in
+  its own folder). Every word is kept and only the legal form is set aside
+  (`legalNameKey`): never a display name, never a shortened name. A request
+  filed elsewhere reads "Names this company; filed on <record>". Rules
+  `shared/kyc4u-names.ts`, read `server/kyc4u-named.ts`; tests
+  `server/kyc4u-names.test.ts`, `qa/regression/kyc4u-named-and-client-abroad.test.mjs`.
+  Nothing re-runs the matcher when a company is added; Match on the KYC4U grid
+  moves a request by hand. The strip's chip shows a folder's file count only
+  (its folder names ran off the window's edge and hid the request), and the
+  company window draws the heading once (`Kyc4uStatusStrip bare`).
 - Not built: a lender's or agent's own KYC row; the CRM duplicate records
   merged by themselves (Sephora T1 and the like: the CRM merge is a person's).
 
@@ -6472,10 +6822,12 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   name when it answers; a company Companies House shows closed is refused). The
   pills at the top follow. A role a person set is never changed. One line in
   `investment_comp_migration_log` (batch `property-ownership`).
-- **KYC only when asked**: **Run checks** (`POST …/ownership/check { entityId,
-  again }`) runs BGP's checks before asking on a company filed under the
-  building's Owner (`startPrecheck(owner, { entityId })`), the same record a
-  transaction's AML box reads. Nothing checks a building by itself.
+- **KYC only when asked** (superseded on 24 November 2026: the checks start
+  by themselves once Use files a company, see the Touchwood bullets below):
+  **Run checks** (`POST …/ownership/check { entityId, again }`) ran BGP's
+  checks before asking on a company filed under the building's Owner
+  (`startPrecheck(owner, { entityId })`), the same record a transaction's AML
+  box reads. Nothing checks a building that nobody set up.
 - **Feeding the AML box**: on a transaction at the building, the landlord's or
   seller's party offers the building's registered owner (`landRegistryOwnerOf`
   in `server/deal-parties.ts`, from the property's stored title): a company
@@ -6504,8 +6856,81 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   `approvalScope` for it.
 - Also the same day: a People row's role pill ("Agent at a viewing") gives
   way before the name does (`people-board.tsx`).
+- **Touchwood (Woody, 24 November 2026)**: "picked up the long leasehold
+  interest but not the freehold for some reason but I think this KYC board is
+  old? it hasnt auto started the check on the long leaseholder?". Do not
+  re-litigate.
+  - **Why the freehold was missed**: the card read only the building's
+    postcode (B91 3GJ) and its title on record (WM757813, the head lease held
+    by the two ASF UK Touchwood trustees, registered abroad). A big site's
+    freehold is often registered at another address or with no postcode
+    (Solihull Council's 2015 compulsory purchase papers say the Council holds
+    the freehold of much of Touchwood), and the Land Registry boundary map
+    that would pin it by location (INSPIRE) is not loaded for Solihull (an
+    attempt on four councils in June 2026 never finished). So, with no
+    freehold among the building's titles, the feed now also reads freeholds
+    naming the building (its own words, `buildingSearchTerm`: "touchwood")
+    in its town or postcode district, and freeholds on its street
+    (`unnumberedStreet`: "Homer Road"), each by the trigram index on the
+    address (`titlesBeyondPostcode`), listed for a person to pick
+    (`freeholds`, fits "elsewhere" and "street"); and `GET
+    /api/properties/:id/ownership?title=WM123456` looks up a title number a
+    person typed (`typed`), from the long lease's register. Nothing is set by
+    itself.
+  - **Leases of units are tenants'** (`isUnitLease`: a unit, shop, kiosk,
+    suite, flat or floor): listed apart under Show N leases of units here, no
+    actions, never offered as the building's Long leaseholder (until then
+    Touchwood's shops were offered Set as long leaseholder). The building's
+    titles list freeholds first.
+  - **A freehold on a building held on a long lease is the Freeholder's**
+    (found in the local check of the fix): with a Long leaseholder set, Use on
+    a freehold title not on the record is **Set as freeholder** (`kind:
+    "freeholder"`): it sets the empty Freeholder pill and files the company
+    under it, keeps the head lease on the record and leaves the Owner alone.
+    Before, it would have recorded the council's freehold in place of the head
+    lease and made the council the Owner.
+  - **The Long leaseholder's KYC**: a head lease's owner is filed under the
+    Long leaseholder for the AML, as a freehold's is under the Owner
+    (`accountFor`, `fileUnder`: a UK number, or the overseas list's country,
+    so BGP's checks look for it abroad). Set as long leaseholder sets the
+    empty pill and files the company; File it for the AML files a co-owner or
+    one already set. A filed company shows its KYC and a **KYC** button that
+    opens the shared client KYC window (one build); the card's own checks
+    line and `POST .../ownership/check` were removed.
+  - **BGP's checks start by themselves** when Use files a company for the AML
+    (Woody, 24 November 2026: yes to "should checks start by themselves when
+    you set a building's owner, rather than when someone presses KYC?";
+    supersedes his "only when someone presses" of 23 November): after the
+    transaction commits, `useLandRegistryOwner` calls `startPrecheck(account,
+    { entityId })` on the company it filed, within the day's allowance
+    (`KYC_PRECHECK_DAILY_CAP`), and the toast says what happened
+    (`ownershipChecksWords`: started, already running, checked in the last 30
+    days, waiting for tomorrow's allowance). The button's words say so ("...
+    for the AML and starts BGP's checks"). A company filed before then starts
+    its checks when its KYC window opens, as before.
+  - **A street named after the building is not the building**
+    (`addressNamesBuilding`, 24 November 2026: live Touchwood listed
+    "garages at Touchwood Hall Close"): the building's name counts only where
+    the part of the address it is in does not go on, within three words, to a
+    street's name (Close, Road, Street, Lane, Avenue and the like). On live
+    the wider search found the council's freehold the same day: WM937485,
+    "Land on the north side of Poplar Arcade, Touchwood Centre", the
+    Metropolitan Borough of Solihull, listed for a person to pick.
+  - **The old KYC card**: BGP staff get the shared Companies and KYC card
+    (`AccountEntitiesPanel`, with `label`) for the Owner, Freeholder and Long
+    leaseholder (`PropertyOwnersKyc`) in place of the older company checks
+    card (`PropertyComplianceBoardWrapper`: UK trading entity, downstream
+    checks parked, the property's billing entity), which stays for client
+    logins only. The property's billing entity field invoices nothing (a
+    transaction bills its party's billing entity) and is no longer shown to
+    staff here.
+  - Tests: `server/property-ownership.test.ts`,
+    `qa/regression/property-ownership-guards.test.mjs`. Not run against the
+    live Land Registry lists from a build machine: whether Touchwood's
+    freehold names Touchwood is first seen on live.
 - Not built: a building-level sign-off with no transaction; reading the
-  freeholder chain (`findFreeholderChain`) on the card.
+  freeholder chain (`findFreeholderChain`) on the card; loading the Land
+  Registry boundary map (INSPIRE, about 5.4 GB) for every council.
 
 ## Setting up a new property (Woody, 2026-11-23)
 
@@ -6514,12 +6939,14 @@ questions I think? correct address? then documents where do we want the files
 options are existing folder with a pop out to the BGP share drive and ability
 to go in and pick a folder. or create new folder tree. Add joint agent and
 tenancy schedule or areas schedule for marketing and add brochure and add
-plans". Rules: `shared/property-setup.ts`; folder tree route:
-`server/property-setup.ts`; dialog:
-`client/src/components/property-page/property-setup.tsx`; folder picker:
-`client/src/components/sharepoint-folder-picker.tsx`. Tests:
+plans". Rules: `shared/property-setup.ts`; dialog:
+`client/src/components/property-page/property-setup.tsx`. Tests:
 `server/property-setup.test.ts` (in `npm test`),
-`qa/regression/property-setup-guards.test.mjs`.
+`qa/regression/property-setup-guards.test.mjs`. **Since 24 November 2026 the
+Files step uses the folder engine** ("Folders: one engine" below:
+`record-folder-picker.tsx`, `/api/folders/`); the folder tree route
+(`server/property-setup.ts`) and `sharepoint-folder-picker.tsx` are deleted, so
+the Files bullet below is how it worked before.
 
 - **When it opens**: after **Add property** on the Properties page saves a new
   property (or merges into one the address found), the property opens at
@@ -6686,7 +7113,59 @@ person who typed that message so fix that bug". Do not re-litigate.
 - **The note** is headed with `noteFrom`, the first name of
   `request.sentBy` (it was the first name on the contact list); with nobody
   named, "Bruce Gillingham Pollard". The page reads `view.noteFrom`.
-- Tests in `server/kyc-request.test.ts`.
+- **The AML officers are copied on every AML email** (Woody, 24 November
+  2026: "can you have layla, jack and I copied in on all emails sent out for
+  AML"). `sendKycEmail`, the one door for AML emails, adds the Nominated
+  Officer and the Deputies (`amlOfficerEmails`, so today Jack, Layla and
+  Woody) to the copy list (`kycCopyList` in `shared/kyc-request.ts`: each
+  once, never someone the email is sent to, BGP addresses only): client
+  checks, a person's own link, reminders, pass-on, the joint agent's request
+  and chases, the Finished and red-flag notes, the trust documents note.
+  `test: true` (an admin's test, or an email about a test request,
+  `!!row.is_test`) copies nobody else. The send confirmation and the KYC
+  history line name everyone copied (`sent.cc`). A new AML email goes
+  through `sendKycEmail` and says whether it is a test.
+- Tests in `server/kyc-request.test.ts`, guards in
+  `qa/regression/kyc-client-checks.test.mjs`.
+
+## What a client checks request says: our client, the other side (Woody, 2026-11-25)
+
+Woody, on the request to Jack Sullivan (CBRE) for Wirral Metropolitan Borough
+Council on Tunsgate Quarter: "wording here for clients is a bit weird",
+"By law to act on your behalf in an estate agency capacity we need to", then
+"the our client one is good. we should add the town Tunsgate Quarter,
+Guildford", and of the other side "Before it can go ahead ... we need to spell
+out the transaction". Do not re-litigate. Rules: `shared/kyc-work-words.ts`
+(`kycWorkFor`, `kycPlace`, `kycWorkOpening`, `kycWorkReminder`); tests
+`server/kyc-work-words.test.ts` (in `npm test`).
+
+- **Kept on the request** (`request.work`, made in `createClientCheck` by
+  `workFor` from the transaction's type, property, town and unit, read by
+  `dealParties`): whether we act for the party (`client`: its role is the
+  transaction's client role, or a client file), the place ("Tunsgate Quarter,
+  Guildford": the property and the town from its address, `townFromAddress`),
+  the transaction spelt out ("the letting of 98-100 High Street, Tunsgate
+  Quarter, Guildford, to Rodd & Gunn"; a sale "to", a purchase "from", a lease
+  renewal "with") and its one word ("letting", "sale" ...). The email, the
+  reminders, the client's page and the send window's preview all read it; a
+  request made before has none and keeps the old wording.
+- **Our client**: "By law, before we can act for you as estate agents, we have
+  to confirm who we are dealing with. We act for <party> on <place>, so we need
+  a few things from you." and "We only ask once: it then covers our future work
+  for <party>, until our next review." (a sign-off counts on every transaction
+  until its re-check date).
+- **The other side**: "We act for <client>, the <role>, on <the transaction>.
+  Before the <letting> can go ahead, the law requires us to confirm who is on
+  each side. That's you, for <party>, and the people who own or control it"
+  (the owners only when the request asks about them). The email to the other
+  side's agent says the same.
+- **The title and subject** name the place ("Identity checks for Tunsgate
+  Quarter, Guildford"), not the transaction's internal name.
+- **A UK public body** (`work.publicBody`): no owners or directors anywhere.
+  The authority step is "Confirmation you can act for the council" (or "the
+  organisation"): an email or letter from someone authorised at it
+  (`kycDocWords`); the public roles question and the certified copies are about
+  the person only; no "Companies House record" line.
 
 ## Only a sign-off counts (Woody, 2026-11-24)
 
@@ -6733,6 +7212,176 @@ Tests: `server/party-kyc.test.ts`, `server/kyc-red-flags.test.ts`,
 - **The results stay in the app**: no stored value was rewritten, and the
   KYC history keeps every line (`loadRecordHistory` reads six lines per
   company, with each line's action, to tell the two apart).
+
+## A private individual's date of birth on a small letting (Woody, 2026-11-24)
+
+Woody: "on the sanctions only for a private are you sure we dont need adderess
+or DOB?" Answered: the law asks for neither on a letting under £10,000 a month
+(only the sanctions checks apply), but a date of birth is what tells a person
+from a namesake on the lists; he said yes to recording it, typed in, with no
+documents. Do not re-litigate. Rules: `shared/kyc-person-details.ts`; store:
+`server/kyc-person-details.ts` (boot table `kyc_person_details`, one row per
+party record: the brand, with the person who signs when there is one); route
+in `server/deal-party-aml.ts`; line: `client/src/components/aml-person-details.tsx`.
+Tests: `server/kyc-person-details.test.ts` (in `npm test`),
+`qa/regression/kyc-person-details-guards.test.mjs`.
+
+- **Where**: step 1 ("The person") of a private individual's AML, on the
+  transaction's AML box and in the client KYC window: **Date of birth** with
+  Add or Change (a date box and Nationality, if known). `PUT
+  /api/deals/:id/parties/:role/person-details` and
+  `/api/client-kyc/:companyId/subjects/:entity/person-details`: any BGP person
+  signed in as themselves, a private individual only (`partyKindOf`, else
+  409), checked by `personDetailsInput` (a real date, 16 to 110 years ago; a
+  nationality in words). The date goes on the KYC history only; the
+  transaction's history says only that it was recorded.
+- **Screening**: BGP's checks run again on saving (`startPrecheck`, `force`),
+  and `runPrecheck` screens the party with its year and month of birth and
+  nationality (`dobParts`, `meshNationality`): the lists set aside an entry
+  whose date of birth disagrees, ComplyAdvantage goes by the date-of-birth
+  rules ("Who is screened, and the date of birth decides").
+- **Sign-off**: a private individual on sanctions checks only
+  (`personDobNeeded`) is not signed off until the date is recorded
+  (`PERSON_DOB_NEEDED`, ahead of a possible sanctions match, which the date
+  helps settle), nor while the latest run of the checks is older than the date
+  (`PERSON_DOB_AFTER_RUN`). The Next line reads "To do · Add their date of
+  birth" (`person_details`), on the box and the client window. The full checks
+  do not ask for it (the identity check gives it).
+- Five-year deletion covers the table; a company merge leaves the row on the
+  merged-away record (the table holds one row per record).
+- Not built: a date of birth for someone named alongside a private individual;
+  showing it on the AML file.
+
+## Fable's view of a party's AML file (Woody, 2026-11-24)
+
+Woody, on the risk assessment of Vodafone #4664: "we allready have all this
+info highlioghted in the parts above? shouldnt this be more an AI led
+commentry with fable 5 giving a proper view on whats been found and given to
+date and the risk profile given the rules?". Do not re-litigate. Rules and the
+checks on the answer: `shared/aml-commentary.ts`; the call, the saved views
+and the routes: `server/aml-commentary.ts`; the screen:
+`client/src/components/aml-commentary.tsx`. Tests:
+`server/aml-commentary.test.ts` (in `npm test`),
+`qa/regression/aml-commentary-guards.test.mjs`.
+
+- **What it reads**: every line of the party's risk assessment, numbered F1,
+  F2 and so on (`commentaryFacts`: the job, the level, the four risk
+  headings, the due diligence checklist, the structure and its evidence, the
+  owners, red flags, mitigating factors, the record's own conclusion, the
+  counterparty and the approvals), and BGP's AML rules in short, numbered
+  R1, R2 and so on (`commentaryRules`, from `shared/aml-rules.ts`). Nothing
+  else: no web, no CRM.
+- **What it writes** (`COMMENTARY_SCHEMA`, structured output): a headline,
+  a risk profile (lower, standard, higher or unclear: its reading under the
+  rules), one short paragraph for each of What has been found and given,
+  What is still needed, Risk profile under BGP's rules and Next steps, each
+  citing the facts and rules it rests on, and **Worth a look**: anything in
+  the facts that does not add up. `checkCommentary` keeps only the sections,
+  facts and rules given, drops a paragraph that cites no fact, and returns
+  nothing without a headline and a paragraph. It decides nothing and never
+  says a party is cleared unless a fact does.
+- **The call**: Fable 5.2 (`claude-fable-5-2`), called directly on the beta
+  endpoint with the API's refusal fallback (`fallbacks: "default"`), effort
+  high, the answer as JSON in the schema (Fable takes no forced tool), one
+  call a view, capped a day (`AML_COMMENTARY_DAILY_CAP`, default 60, 0 =
+  off), logged as `aml-commentary`. BGP staff signed in as themselves:
+  `GET /api/deals/:id/aml-commentary?role=` (the latest view and whether the
+  file has changed since) and `POST` the same `{ role, again? }` (write one).
+- **Kept** in `aml_risk_commentaries` (boot migration) with the facts and
+  rules it was written from and their fingerprint (`commentaryHash`): the
+  same view is shown until the file changes; then it says "The file has
+  changed since this view was written" with **Write again**. It is written by
+  itself only the first time the Risk assessment section is opened with no
+  view at all.
+- **Where**: the party's Risk assessment section (Sign-off step) leads with
+  it, the full record folded under **Show the full record**; the AML file
+  prints a current view first, then the record (`writeCommentary` in
+  `server/aml-file.ts`). Each cited fact shows its words on hover and under
+  **Sources**.
+- **The record's own wording was fixed the same day**: a company owned
+  through a listed one (`listedViaParent` on the company facts) is no longer
+  called listed, its structure chart reads "owned through one company at each
+  level by a listed company", and simplified due diligence is offered only
+  for a company listed itself; the conclusion no longer says "the checks
+  asked for are in" when no one has been asked anything (no one named: name
+  who acts for the company; named but not sent: the client checks have not
+  been sent); a letting under £10,000 a month concludes on the sanctions
+  checks; an empty owners list draws no empty line.
+- Not run against Anthropic from a build machine (no key here).
+
+## Everyone on a transaction: the People card (Woody, 2026-11-24)
+
+Woody, on #4664's Parties & AML, which listed only the BGP team: "add up there
+all the other contacts on the deal with email and phone number? should be
+client/s and the details of the other side plus advisors agents and solcitors
+and ability to add a contact to the deal". Then, on its party box: Kenneth Tam
+"shown twice", "if a company or person has been chosen then those tabs for
+other choices should disappear", and Lee Chung Chan (the landlord's owner, no
+email held) "unclear if the email for Lee has been added for Kenneth to send
+on?". Do not re-litigate. Rules: `shared/deal-people.ts`; reads and routes:
+`server/deal-people.ts`; card: `client/src/components/deal-people.tsx`. Tests:
+`server/deal-people.test.ts` (in `npm test`), `qa/regression/deal-people-guards.test.mjs`.
+
+- **The People card** leads the Parties & AML pill for BGP staff (it replaced
+  the BGP-team-only card and, for staff, the Linked contacts card): the BGP
+  team (`BgpTeamGroup` with `details`: email and phone written out; **Change
+  the team** opens Fees & invoicing, where the agents and the fee split are
+  set), then **Our client**, **The other side** (each heading names the
+  parties), **Agents**, **Solicitors** and **Advisers and others**, every
+  person with their email and phone as links. A person met in more than one
+  place is one row with every role, in the first group any role gives
+  (`mergePeople`).
+- **Where each comes from** (`loadDealPeople`, read only): each party's person
+  to ask (`<role>_contact_id`), the client contact, the joint agent and each
+  party's agent (a firm with nobody named is a firm line with the firm's own
+  phone), our client's solicitors (`solicitor_firm`, and `solicitor_contact`
+  as the heads of terms save it, "Name · email · phone",
+  `parseSolicitorContact`), every firm checked at the SRA on the transaction
+  (its head office, from the SRA, when nobody there is named; someone at the
+  firm carries the side instead), and the contacts linked to the transaction
+  (`crm_contact_deals`, boot columns `deal_group`, `deal_label`, `added_by`,
+  `added_by_name`, `added_at`; an older link with no group is placed by the
+  party it is filed under, else its firm's kind, `groupForLinked`). A party
+  with nobody named reads "Nobody named yet" with **Add someone**.
+- **Routes** (BGP staff signed in as themselves, checked first): `GET
+  /api/deals/:id/people`, `GET …/people/search?q=` (CRM contacts by name,
+  email or firm; BGP's own people left out), `POST …/people` (a CRM contact,
+  or someone new: found by email first, else made, filed under a CRM company
+  only when exactly one has the firm's name; `newDealContact`), `DELETE
+  …/people/:contactId` (only a contact linked on the card), `POST
+  …/people/:contactId/details` (a blank email or phone only; the contact page
+  changes the rest). Each change is a `deal_audit_log` line, field
+  `deal_people`, which client logins never see (`CLIENT_HIDDEN_AUDIT_FIELDS`).
+- **The party box shows a choice once it is made**: a company that signs is
+  one line with **Change** and **Clear** (the list, Find it at Companies
+  House, Registered abroad and A person signs come back on Change; the brand's
+  other companies are offered as guarantor in the Guarantor section); who to
+  ask is one line with **Change** (the picker and Add someone come back on
+  Change), and when they are listed under Who the AML checks need it reads
+  "details above" rather than repeating them.
+- **An owner with no email is passed their link by the person dealing with
+  us**, from that person's own page (it lists the owners live). The Next line
+  reads "Waiting on <person> · to pass <owner> their link" while their request
+  is open (still offering Add details), and "To do · Add contact details" once
+  they have finished; the party box and the AML box's line say so. Their
+  reminders list the pass-on step for owners read since the request went out
+  (`ownersToLink` in `server/aml-portal.ts`, `KycProgress.ownersToLink`).
+- **Who to ask is offered by the client checks wherever they are filed**
+  (`dealParties` and `clientFileParties`: `company_id = $1 OR id = $2`). On
+  One Clapham (#4578, 24 November 2026) the vendor became a new record after
+  Gavin Hubrich (filed under Mount Anvil) was set as who to ask, and Send
+  client checks had nobody to send to although the party box named him.
+- **Heads of terms party names are offered without what the document says
+  about the company** (`hotsPartyName` in `client/src/lib/deal-note.ts`, used
+  by `hotsParties`): "(Company No. …)", "(c/o …)", "(registered in …)", a bare
+  number in brackets and a trailing "Company No. …" or "c/o …" come off;
+  "(UK)", "(No. 2)" and "(Holdings)" stay. One Clapham's heads of terms had
+  made CRM records named "St John's Hill PH03 LLP (Company No. OC443074)" and
+  "SCPI Eden (c/o Advenis Real Estate Investment Management (ADVENIS REIM);
+  Company No. 833 409 899)".
+- Not built: two companies signing for one party (joint landlords on one
+  title). A party has one company that signs, with guarantors and a third
+  party that pays beside it.
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 
@@ -7502,7 +8151,11 @@ our system and check along side what KYC4U did to see if we get the same".
   number / registered office" and "matching the queried company" as the
   register, and reads a cut last sentence of 40 characters or fewer that
   opens with "No", "Nothing", "None" or "There is no" as saying nothing; any
-  other cut sentence keeps the finding.
+  other cut sentence keeps the finding. St George plc's run of the same day
+  raised "Companies House identifies The Berkeley Group plc as holding 75% or
+  more of ST GEORGE PLC's shares ... provide no indication that this parent is
+  government- or state-owned": "identifies" now reads as the register
+  restated, like lists, shows, names and records.
   (2) Companies House writes 9999-12-31 for a date not set: the app read it
   as "identity verification statement removed on 31 Dec 9999" (Choux). It is
   no date now (`idvOf`, `idvState`).
@@ -9582,6 +10235,275 @@ on screen, in a message or in a document.
 - **A new screen, message or email says transaction.** A new string read
   back as a value, or naming something outside the app, keeps its own word.
 
+## Folders: one engine (Woody, 2026-11-24) — docs/folders-review-2026-11-20.md
+
+Woody, on the folders review: "go ahead with the folder suggestion", which
+approved every recommendation in its section 5, then "push and finish the
+build". Do not re-litigate: links by Microsoft's ids in a new table (decision
+1); the picker opens at the top of `BGP - Share Drive` and the person chooses
+where (2); "New folder" is empty and "New property folder" makes the client
+tree's five property folders, and the templates keyed by retired team names are
+retired (3); a transaction shows its own folders, then its property's, and Add
+folder on a transaction links to it with a tick to put it on the property
+instead (4); six muted app colours on the chip, seen in the app only (5, a
+deliberate exception in `docs/DESIGN.md` §1); BGP staff share chosen folders
+with a client (6); folder actions run as the person, with their own Microsoft
+365, never a colleague's (7); the app's own picker, not Microsoft's (8); no
+client uploads yet (9). **Read the review before touching folders.** Steps 0
+to 5 of its 4.9 and decision 6 are built (24 November 2026). Decisions 10 (the
+app's own Microsoft permissions) and 11 (the server-disk team folders) wait on
+Woody and BGP's Microsoft admin. **Nothing new is ever made in the old `BGP
+share drive` tree** (the client tree job still fills in a client's existing data room there: decision 6).
+
+- **The tables** (boot MIGRATIONS in `server/index.ts`, not in
+  `shared/schema.ts`): `record_folders` (record type and id, Microsoft's drive
+  and item ids, label, colour, position, the name, path and address SharePoint
+  last gave, status, source `picked` / `created` / `pasted` /
+  `migrated:<column>`, who linked it, `removed_at` for an unlink: rows are never
+  deleted; `shared_with_company_id`, `shared_by`, `shared_at` for a share with a
+  client) with one live link per folder per record (the partial unique index
+  `record_folders_live_uq`), and `folder_actions` (every action, failed ones
+  too: who, the Microsoft account Graph saw (`app` for the app's own filing),
+  the action, the record, the item, names and parents before and after,
+  detail). A property merge moves its links (`server/property-merge.ts`); a
+  company merge moves the merged company's links and shares to the keeper
+  (`server/folders/merge.ts`, called in `mergeCompanyInto` once the references
+  are repointed; a folder the keeper already links is unlinked on the merged
+  one, its share carried over). Undoing a merge leaves the folders on the
+  keeper.
+- **Records**: property, deal (a transaction), company, scheme, pla_matter
+  and pathway_run (`FOLDER_RECORD_TYPES`, `folderRecord` in
+  `server/folders/access.ts`).
+- **The one door to Microsoft** is `server/folders/graph.ts` (`graph()`,
+  stood in for by tests with `setGraphTransport`): graph.microsoft.com with a
+  token the caller hands in; an upload session's or a copy monitor's address on
+  BGP's own SharePoint (`brucegillinghampollardlimited(-my).sharepoint.com`),
+  which Microsoft signs, with NO token and redirects not followed; anything
+  else is refused. Busy answers (429, 503) are waited out twice. Nothing else
+  in `server/folders/` calls fetch or names Graph, and nothing in
+  `server/folders/` takes the app's token itself: the app's own work hands it
+  in from outside (`server/document-filing.ts`).
+- **Who**: BGP staff signed in as themselves (`folderStaff`: `contactViewer`;
+  staff viewing as a client are refused). The client gateway refuses the whole
+  of `/api/folders/` to client logins and joint agents (only
+  `/api/folders/client/` could ever be listed); their data room stays on
+  `/api/client/sharepoint/` (`ClientPropertyFoldersPanel`, test id
+  `client-property-folders-panel`, which the smoke suite waits for). Each route
+  goes through `handle("staff" | "maybe" | "microsoft")`: the staff check comes
+  before any token is asked for, and a person with no Microsoft 365 of their
+  own gets 428 with `connect: true` ("Connect your own Microsoft 365 first, on
+  the SharePoint page"). `getOwnMsAccess` in `server/microsoft.ts` gives their
+  own token and account, never a colleague's.
+- **No colleague's token anywhere a person acts on files** (decision 7): the
+  SharePoint page, the dashboard widget and the Excel add-in
+  (`/api/microsoft/files`, `files/folder`, `files/item`, `files/upload`,
+  `files/content`, `files/thumbnail`, through `ownFileToken`) and Image
+  Studio's PDF capture use the person's own Microsoft 365 or answer 428 with
+  `connect: true`, and the screens say to connect it on the SharePoint page.
+  Folder listings no longer ask Graph for thumbnails. The SharePoint page's
+  Team Folders list and its Set up are gone (retired team names, `BGP share
+  drive`), with `/api/microsoft/team-folders`, `team-folders/setup`,
+  `company-folder-templates`, `shared-folder-probe`, `sharepoint/debug`,
+  `sharepoint/sites`, `files/share-link`, `files/invite`, `startImageSync`,
+  `TEAM_FOLDERS`, `TEAM_FOLDER_TREES` and `COMPANY_FOLDER_TREES`.
+- **Routes** (`server/folders/routes.ts`): places, browse, search; a record's
+  folders (`GET /api/folders/:recordType/:recordId`, its own then its
+  property's, refreshed from SharePoint after ten minutes, with who each is
+  shared with); link (ids or a pasted address), create (`empty`, `property` or
+  `lease_advisory` template) then link; label, colour, order, unlink
+  (`/api/folders/links/:id`); share with a client (`GET`/`POST
+  /api/folders/links/:id/share`). Inside a folder
+  (`/api/folders/items/:driveId/:itemId/...`): new folder, rename, move (the
+  same library only), copy (to any folder; followed through
+  `GET /api/folders/copies/:jobId`, kept in memory), delete (to the library's
+  recycle bin), upload (up to 10 MB in one go; larger through
+  `upload-session` and `PUT /api/folders/uploads/:sessionId` pieces of whole
+  320 KB blocks, in order, relayed by the server so Microsoft's signed address
+  never reaches the browser), share (a link for anyone, falling back to people
+  at BGP and saying so; or an invitation by email), preview, and follow /
+  unfollow (Graph's own, so the picker's Followed list shows it). The top of a
+  library and `BGP - Share Drive` itself are never renamed, moved or deleted
+  from the app, nor linked to a record or shared with a client
+  (`linkTopProblem`: the top of a library or a OneDrive, or the whole of `BGP -
+  Share Drive`; the server refuses it and the pickers do not offer it, so one
+  press cannot link the whole drive to a transaction), a folder linked to a
+  record is unlinked before it can be deleted, and a name already there is
+  never replaced (new folders fail; uploads, copies and the app's own filing
+  get a number). Rules: `shared/folders.ts`.
+- **Templates** (`FOLDER_TEMPLATES`): `empty`, `property` (the client tree's
+  five property folders) and `lease_advisory` (Lease Documents, Rent Review,
+  Lease Renewal, Dilapidations, Service Charge, Correspondence and Legal, with
+  the folders within them: 20 paths). A new folder on a Lease Advisory matter
+  starts as `lease_advisory`, on a property as `property`, anything else
+  empty (`defaultFolderTemplate`); the picker lists the record's own first,
+  with what is inside it.
+- **Screens** (`client/src/components/folders/`): `RecordFolders` (the strip
+  of chips, Add folder, the open folder; a chip's menu has Open in SharePoint,
+  Rename the label, Colour, Move up / down, Share with <client> / Stop sharing,
+  Follow / Stop following, Unlink and Also linked to; a shared chip has a
+  people mark and a "Shared with" line; `compact` draws the chips only and
+  opens a folder in a window), `FolderPicker` (Search, Browse from `BGP -
+  Share Drive`, My OneDrive or Followed, New folder here, tick several, Paste a
+  link instead), `FolderBrowser` (filter, sort, list or grid, a menu on every
+  row that can always be seen, ticks for Move / Copy to / Delete together, New
+  folder, Upload and drop with progress, Follow on a folder's row),
+  `folder-actions.tsx` (the dialogs), `folder-share.tsx` (the share menu items,
+  dialog and marks), `record-folder-links.tsx` (a read-only list) and
+  `client-shared-folders.tsx` (the client's shared folders). `FolderDialog` is
+  a dialog on a computer and a sheet from the bottom on a phone; no browser
+  prompt or confirm anywhere. A client login gets its data room through the
+  same `RecordFolders` (`client`), before any engine read.
+- **Where** (every page that showed folders, step 5): the transaction page's
+  Files pill (a joint agent still reads "Documents are managed by the BGP
+  team."); the plan-led property page's **Folders** button
+  (`button-property-folders`, with its brochures) and the page as it was (its
+  **Folders** card); **New property folder** in place of Set Up Folders (More
+  menu, and the classic header); the property set-up dialog's Files step and
+  the Properties list's **Folders** column (`InlineFolderTree`); a landlord's
+  **Files** pill (the company's Folders for BGP staff, its data room for a
+  client login, nothing until the sign-in is known; the **<company> property
+  tree** button stays, Set Up Folders and the team tabs are gone); a brand's,
+  agent firm's and lender's **Documents & gallery** (compact Folders, staff
+  only, in place of "Open <brand> folder on SharePoint"); each scheme on the
+  property's schemes panel (compact, record type `scheme`; the schemes routes
+  no longer read or write `property_schemes.sharepoint_folder_url`); a Lease
+  Advisory matter's **Folders** card (its header's folder buttons are gone);
+  a Pathway run's CRM & Folders card (stage 1 keeps a stored folder and no
+  longer searches `Investment/<address>`); and the ChatBGP page (a property
+  thread's Folders, read only, each opening in SharePoint, staff only). The
+  brochure, schedule and plan finders (`server/sharepoint-property-files.ts`)
+  also walk folders linked in Folders. Deleted with the move:
+  `PropertyFoldersPanel`, `SetUpFoldersDialog`, `PropertySharepointLink`, the
+  dead copies in `instructions.tsx` and `companies.tsx`,
+  `sharepoint-folder-picker.tsx`, `server/pla-folder-template.ts` and the
+  matter's apply-folder-template route, the property folder tree route
+  (`server/property-setup.ts`), `GET/PUT /api/crm/properties/:id/sharepoint-folders`,
+  and `/api/microsoft/property-folders` (both), `/company-folders` (both),
+  `/folders` and `/folder-templates`.
+- **Documents the app files** (`server/folders/filing.ts`, rules in
+  `shared/folders-filing.ts`): the Targeting Brief, Document Briefs, Lease
+  Advisory workbooks, the Pathway model and Why Buy go into their record's
+  first linked folder by position (a transaction, matter, scheme or run with
+  none: its property's first), inside their own sub-folder (Targeting Briefs,
+  Rent Review/Valuation, Rent Review/Comparable Evidence, Models, Why Buy Deck
+  and so on), made where missing, on the app's token
+  (`server/document-filing.ts`: `fileAppDocument`, `appFilingNote`). With no
+  folder linked the document stays in the app and the person sees "Not filed
+  in SharePoint: link a folder to <property> first." (the note on the
+  Targeting Brief goes to BGP staff only; Save HTML is refused before drawing).
+  A document made from an email to ChatBGP is attached to the reply and never
+  filed (it names no record). Each folder made and each upload is a
+  `folder_actions` row with `ms_account` `app`.
+- **Document Studio's File to SharePoint and Legal & DD's Create Project**
+  choose the place in `FolderPicker` and act as the person, on their own
+  Microsoft 365 (428 to connect). Create Project makes the analysis's folders
+  with `createFolderTree`, lists what was made and what was not, and links the
+  new folder to the analysis's transaction when it has one (`crm_deal_id`).
+  `GET /api/documents/sp-folders` is gone.
+- **Shared with a client** (decision 6; `shared/folder-share.ts`,
+  `server/folders/share.ts`): BGP staff share a folder linked to a property, a
+  transaction (through its property) or a company (with itself) with one
+  client company whose logins can open that record (the property's landlord or
+  a company linked to it, not merged away, with an active client login; never
+  any other company). Sharing re-reads the folder on the person's own
+  Microsoft 365: it must be a folder in BGP's library, never a drive's top or
+  `BGP - Share Drive`. Stopping needs no connection. Logged as `share_client` /
+  `unshare_client`. Scheme, Lease Advisory and Pathway folders are not
+  shareable. **The client reads it** on `/api/client/sharepoint/shared`,
+  `…/shared/:linkId/list?path=` and `…/shared/:linkId/content?path=`, with the
+  app's token, by the link id and names below it, never a drive or item id:
+  the link must be shared with the caller's company on a record it can open
+  (`isPropertyInScope`, `isDealInScope`, `schemeLimitedPropertyIdsOrNone`;
+  fails closed), the folder is read by its stored ids and an item counts only
+  when it lies below it (`insideSharedFolder`). A company's own folder never
+  shows to a login held to schemes; a joint agent's transaction page shows
+  none. Shared folders show in the client's property data room and on its
+  Files page, read only.
+- **Code that works by path, and ChatBGP's folder tools** (`server/folders/by-path.ts`):
+  a path a person gives starts inside `BGP - Share Drive` (`shareDrivePath`)
+  and the old `BGP share drive` is refused; a missing folder is made only
+  below one that must already exist (`keep`), and in the old tree only below
+  a record's own folder (an old Pathway run's). ChatBGP's folder tools are one
+  file, `server/chatbgp-folder-tools.ts`, which both tool paths run
+  (`FOLDER_TOOL_NAMES`): look in a folder, read a file, make a folder, move,
+  upload a chat file, copy from Dropbox, save an email attachment, and
+  `get_record_folders` / `link_record_folder` (a property's, transaction's or
+  company's folders, and linking one by a path or a pasted address). BGP staff
+  only (on `CLIENT_BLOCKED_TOOLS`), on their own Microsoft 365, never on an
+  automated run (reading a record's folders asks Microsoft nothing, so that
+  one runs there too); every change is logged with `via`. Email attachments,
+  the MLRO report (`<team>/AML/MLRO Reports/<transaction>`, kept out of record
+  folders, which can be shared with a client) and Model Studio's template
+  upload save through `saveToShareDrive`. Model Studio's assistant and Embed
+  Excel (its live copy in `Models/Live`), Pathway's file look-ups and the
+  design tools use the person's own token (428 to connect); the MCP server's
+  SharePoint tools and the news comps reader keep the app's token. The client
+  tree build and the folder inventory report use the person's own Microsoft
+  365 (428 to connect). The SharePoint page's upload with no folder open is
+  refused, never put in the old tree. Everything goes through `graph()`;
+  `server/utils/sharepoint-operations.ts` and `uploadFileToSharePoint` are
+  deleted.
+- **Model Studio's Save version** files the version under `Models` in the
+  run's property's folder by the filing rule above, on the person's own
+  Microsoft 365 (`fileRecordDocument` with their token and account); with no
+  property or no folder linked it stays in the app and the reply carries the
+  words (`sharepointNote`). No folder is made by name.
+- **Never into a folder shared with a client** (24 November 2026): the app's
+  own filing (`filingPlace`) skips a linked folder shared with a client, and
+  any folder inside one (`filingBlockedByShare` in `shared/folders-filing.ts`,
+  by drive and the stored path; a folder with no path on a drive that holds a
+  shared folder is skipped too), because a client sees everything below a
+  shared folder. When every linked folder is shared the words say "Not filed
+  in SharePoint: the folders linked to <property> are shared with a client.
+  Link a folder only BGP uses first."
+- **Old links** (a property's `sharepoint_folder_url` and
+  `sharepoint_team_folders`, a transaction's `sharepoint_link`, and the one
+  stored address of a company, scheme, Lease Advisory matter or Pathway run,
+  `LEGACY_RECORD_FOLDER`) show as chips marked "old link", read only, until
+  moved over (`legacyFolders` in `server/folders/links.ts`); one a migration
+  run moved is hidden until the run is undone, and one that opens to a folder
+  the record already links shows as the link only.
+- **The migration** (`server/folders/migration.ts`, Settings → **Folders:
+  moving the old links over**, admins; `GET /api/admin/folders/migration`,
+  `POST …/apply`, `POST …/undo`, `GET …/runs`): Preview opens every stored
+  address and old team-folder path (`BGP share drive/<team>/<name>`) as the
+  admin, on their own Microsoft 365, with a status (opens, not in SharePoint,
+  a file, not BGP's SharePoint, no access, already in Folders, could not be
+  read), lists `BGP share drive/Companies` once and offers each folder to the
+  company of exactly that name (`companiesPlaceRows`, merged companies left
+  out), and, for records with nothing that opens, folders of the same name in
+  `BGP - Share Drive` as suggestions only. Apply takes the rows the same admin
+  ticked on that preview within the hour (`migrationApplyRefusal`), as links
+  with source `migrated:<column>` in one logged batch
+  (`system_settings.folders_migration:runs`); Undo unlinks a batch. Never at
+  boot or on a timer. The old columns are never written by the engine, and
+  they are still read where the app read them until Woody agrees to stop: the
+  list is `OLD_FOLDER_READERS` in `shared/folders.ts`, shown on the report.
+- **Tests** (in `npm test`): `server/folders.test.ts`,
+  `server/folders-postgres.test.ts` (the SQL in a throwaway schema; needs
+  `FOLDERS_DATABASE_URL` naming a local database), `server/folders-filing.test.ts`,
+  `server/folders-share.test.ts` and `server/folders-pages.test.ts` (their SQL
+  parts need the same variable) and `server/folders-tools.test.ts`; guards (in `npm run qa:regression`):
+  `qa/regression/folders-engine-guards.test.mjs` (the gateway, the staff gate,
+  own tokens only, the one door, the client fence, bodies read after the staff
+  check, the migration's admin gate), `folders-filing-guards`,
+  `folders-share-guards`, `folders-pages-guards`, `folders-tools-guards` and
+  `property-setup-guards`. Not run against Microsoft from a build machine:
+  checked in a browser on a local copy with the folder routes answered by
+  stand-ins.
+- **Not built**: client uploads (decision 9); decisions 10 (narrowing the
+  app's own Microsoft permissions) and 11 (the team folders on the server's
+  disk), both waiting on Woody and BGP's Microsoft admin; a screen saying why
+  a Net Effective, ITZA or Devaluation workbook, the Pathway model or the Why
+  Buy deck was not filed; Legal & DD analyses carry no transaction yet, so
+  Create Project links none; Pathway stage 1 still writes the run's old
+  columns from SharePoint matches; `brand-profile.ts` still sends and saves
+  `folder_teams` and `sharepoint_folder_url`; ChatBGP's knowledge-folder
+  indexing, `import_wip_excel` by a share link and image import by SharePoint
+  ids still call Graph themselves; mail, calendar and HR documents still use
+  the older sign-in, which can fall back to a colleague's (decision 7 covers
+  folders, all of which are on the person's own).
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document
@@ -9901,3 +10823,48 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   named The Crown Estate: the suggestion, recording it, the draft, saving
   it). Not run on live: #3965's landlord still has to be recorded as a
   public body by a person.
+- **Not a red flag for being the state** (Woody, 25 November 2026, on Wirral
+  Metropolitan Borough Council for Merseyside Pension Fund, which showed
+  Enhanced): for a party recorded as a UK public body, the web search's "Possibly
+  owned or controlled by the state" finding on the body itself is not a red flag
+  (`precheckRedFlags(..., { publicBody })`, passed by `partyRedFlags` from
+  `aml_subject_type`), so it stays on simplified due diligence. Adverse media
+  about it, and a person's public role, still count. Read on stored checks, so
+  no re-run is needed. Test in `server/kyc-prechecks.test.ts`.
+
+## The sign-off note for a listed company (Woody, 2026-11-24)
+
+Woody asked whether a plc needs someone to sign it off or is automatic
+(answer: a BGP person always presses Sign off; the law makes the risk
+decision BGP's, with its reasons kept), then: "Yes do the sign off note".
+Do not re-litigate. Rules: `shared/sign-off-note.ts` (`listedSignOffNote`);
+server: `fileNoteFor` in `server/deal-party-aml.ts`. Tests:
+`server/sign-off-note.test.ts` (in `npm test`),
+`qa/regression/sign-off-note-guards.test.mjs`.
+
+- **When**: a company listed on a UK or EU regulated market (`listingSettled`),
+  or owned through one company at each level by one (`viaParent`), on the full
+  checks, with no red flag on the party or the transaction and every flag
+  record read. A market abroad (the officers weigh it), a red flag (enhanced:
+  the officers' own note), a sanctions-only letting (no note needed), a person,
+  a trust or a public body get none.
+- **What it says**, from BGP's latest checks and the people to check: the
+  listing and PSC exemption date, simplified (listed itself) or standard
+  (through a listed parent) due diligence, the ownership chain read at
+  Companies House, the status, the latest accounts, which screens ran with no
+  red flags (and any that did not run, never read as clear), the person
+  instructing us (their identity check, and their authority: a director at
+  Companies House, sent with the client checks, or not yet), whether the
+  client checks are finished, and what is still to come.
+- **Where**: `fileNote` on each party's sign-off view (`signOffView`, so the
+  transaction's AML status and the client KYC window both carry it), shown as
+  **Written from the file** in the transaction's Sign off box
+  (`aml-sign-off-file-note-<role>`, from the Sign-off step and the Next line)
+  and the client KYC window (`client-kyc-sign-off-file-note`).
+- **It never stands in for the person**: the server writes it again at
+  sign-off, never from the request, and keeps it in the approval's history
+  line ("Written from the file: ...") and its evidence (`bgpSignOff.fileNote`).
+  The sign-off rule is checked against the typed note only, so while the
+  client checks are unfinished the person signing still says why (the box
+  asks for it); once nothing is outstanding the sign-off needs no typing.
+- Checked in a browser on a local copy; not run on live.

@@ -2,6 +2,8 @@ import { isBgpTeam } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
+import { XeroInvoiceWindow, XERO_STATUS_COLOURS } from "@/components/xero-invoice-window";
+import { xeroStatusWords } from "@shared/xero-invoice";
 import { SigningEntityPicker } from "@/components/signing-entity-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -149,6 +151,7 @@ import type { HotsConversion, HotsConvertDefaults } from "@shared/unit-hots";
 import { hotsCall } from "@/components/unit-hots/hots-api";
 import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, findCompanyByName, hotsParties, hotsPricePatch, isInvestmentDealType, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType, teamPatch } from "@/lib/deal-note";
 import { DealNoteReadPanel } from "@/components/deal-note-read";
+import { linkToTransaction, linkValueWords, type LinkDifference } from "@/lib/deal-link";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
@@ -2006,8 +2009,14 @@ function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: 
 
 // Sales and purchases already live on the property (Woody, 2026-11-20: three
 // deals were made for one purchase in a morning). Shown under the property on
-// New Deal for a sale or purchase, each opening its deal in a new tab.
-function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
+// New Deal for a sale or purchase, each opening its deal in a new tab, and for
+// BGP staff with Use this transaction (Woody, 2026-11-24: "Can you allow for
+// link to existing deal at this point? its easier"): the form moves onto it.
+function LiveInvestmentDeals({ propertyId, onUse, usingId = null }: {
+  propertyId: string;
+  onUse?: (deal: { id: string }) => void;
+  usingId?: string | null;
+}) {
   const { data = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/properties", propertyId, "deals"],
     queryFn: async () => {
@@ -2027,16 +2036,26 @@ function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
   if (!live.length) return null;
   return (
     <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs dark:border-amber-900 dark:bg-amber-950/20" data-testid="deal-live-investment-on-property">
-      <p className="font-medium text-amber-900 dark:text-amber-200">Already a live sale or purchase on this property: open it rather than adding another.</p>
-      <ul className="mt-1 space-y-0.5">
+      <p className="font-medium text-amber-900 dark:text-amber-200">
+        Already a live sale or purchase on this property: {onUse ? "use it rather than adding another." : "open it rather than adding another."}
+      </p>
+      <ul className="mt-1 space-y-1">
         {live.slice(0, 5).map((d: any) => {
           const code = legacyToCode(d.status);
           return (
-            <li key={d.id}>
-              <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
-                {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Transaction"}
-              </a>
-              <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
+            <li key={d.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="min-w-0 flex-1">
+                <a href={`/deals/${d.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid={`deal-live-investment-${d.id}`}>
+                  {d.dealRef ? `#${d.dealRef} ` : ""}{d.name || "Transaction"}
+                </a>
+                <span className="text-muted-foreground"> · {d.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : d.status || "No status"}</span>
+              </span>
+              {onUse && (
+                <Button type="button" variant="outline" size="sm" className="h-7 bg-background text-xs" disabled={!!usingId}
+                  onClick={() => onUse({ id: String(d.id) })} data-testid={`deal-live-investment-use-${d.id}`}>
+                  {usingId === String(d.id) && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Use this transaction
+                </Button>
+              )}
             </li>
           );
         })}
@@ -2045,16 +2064,75 @@ function LiveInvestmentDeals({ propertyId }: { propertyId: string }) {
   );
 }
 
+// New Transaction moved onto a live transaction (Woody, 2026-11-24): which
+// one, what was filled in where it had nothing, and where the two differ, with
+// the other value to take (or the stage to move it on to) and Undo.
+function DealLinkBanner({ linked, names, onTake, onBack }: {
+  linked: { deal: CrmDeal; filled: Array<{ key: string; label: string }>; differs: LinkDifference[]; taken: string[] };
+  names: { company: (id: string) => string | undefined; unit: (id: string) => string | undefined };
+  onTake: (d: LinkDifference, take: boolean) => void;
+  onBack: () => void;
+}) {
+  const code = legacyToCode(linked.deal.status);
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm" data-testid="deal-link-banner">
+      <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+        <div className="min-w-0 flex-1 basis-56">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Adding to a live transaction</p>
+          <p className="break-words font-medium">
+            <a href={`/deals/${linked.deal.id}`} target="_blank" rel="noreferrer" className="underline underline-offset-2" data-testid="deal-link-open">
+              {linked.deal.dealRef != null ? `#${linked.deal.dealRef} ` : ""}{linked.deal.name || "Transaction"}
+            </a>
+            <span className="font-normal text-muted-foreground"> · {linked.deal.dealType || "No type"} · {code ? DEAL_STATUS_LABELS[code] : linked.deal.status || "No status"}</span>
+          </p>
+        </div>
+        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={onBack} data-testid="deal-link-back">Back to a new transaction</Button>
+      </div>
+      <p className="text-xs" data-testid="deal-link-filled">
+        {linked.filled.length
+          ? <>Filled in where it had nothing: {linked.filled.map(f => f.label).join(", ")}.</>
+          : <>Nothing to fill in: it already holds what this form was given.</>}
+      </p>
+      {linked.differs.length > 0 && (
+        <div className="space-y-1.5" data-testid="deal-link-differs">
+          <p className="text-xs text-muted-foreground">It holds something else here, and keeps it unless you take the other:</p>
+          {linked.differs.map(d => {
+            const taken = linked.taken.includes(d.key);
+            const current = linkValueWords(d.field, d.current, names);
+            const offered = linkValueWords(d.field, d.offered, names);
+            return (
+              <div key={d.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs" data-testid={`deal-link-differ-${d.key}`}>
+                <span className="min-w-0 flex-1 basis-48 break-words">
+                  <span className="font-medium">{d.label}:</span>{" "}
+                  {taken
+                    ? <>{offered} <span className="text-muted-foreground">(was {current})</span></>
+                    : <>{current} <span className="text-muted-foreground">· this form has {offered}</span></>}
+                </span>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => onTake(d, !taken)} data-testid={`deal-link-take-${d.key}`}>
+                  {taken ? "Undo" : d.move ? `Move it to ${offered}` : offered.length > 28 ? "Use this form's" : `Use ${offered}`}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
-  onUnitPicked, liveLettingRow, onUseLiveDeal,
+  onUnitPicked, liveLettingRow, onUseLiveDeal, onUseLiveInvestment, usingLiveInvestment = null,
   jointAgency, setJointAgency, jointAgencyErrors, signedBy,
-  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null,
+  place = null, hotsUnitId = null, hotsOnFile = null, tenantHint = null, propertySeed = null, autoHotsFile = null,
 }: {
   // The note's address, to open the property picker with it typed (2026-11-20).
   propertySeed?: { text: string; key: number } | null;
+  // Heads of terms handed in when the form opens (the AML page's New
+  // transaction box, 24 November 2026): read once, as Add heads of terms reads them.
+  autoHotsFile?: File | null;
   // A handover (Promote, the Heads of Terms' Convert): the property and unit
   // are the tracker unit's, shown as one line in place of the pickers.
   place?: { propertyName: string; unitName: string } | null;
@@ -2089,6 +2167,9 @@ function SimplifiedCreateBody({
   onUnitPicked: (row: LettingUnitSearchRow) => void;
   liveLettingRow: LettingUnitSearchRow | null;
   onUseLiveDeal: (row: LettingUnitSearchRow) => void;
+  // A live sale or purchase on the property: the form moves onto it (BGP staff).
+  onUseLiveInvestment?: (deal: { id: string }) => void;
+  usingLiveInvestment?: string | null;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy fall
@@ -2321,6 +2402,13 @@ function SimplifiedCreateBody({
       if (hotsInputRef.current) hotsInputRef.current.value = "";
     }
   };
+  const autoHotsRead = useRef(false);
+  useEffect(() => {
+    if (!autoHotsFile || autoHotsRead.current) return;
+    autoHotsRead.current = true;
+    void handleHotsFile(autoHotsFile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoHotsFile]);
 
   // The landlord's or brand's name, for its billing entity box.
   const partyName = (id: string, fallback: string) => companies.find(c => c.id === id)?.name || fallback;
@@ -2431,14 +2519,17 @@ function SimplifiedCreateBody({
               ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below{place ? "" : " and the transaction set to HOTs"} — check them before {place ? "you save" : "Create"}.</>
               : hotsUnitId
                 ? <>Upload the final agreed HOTs (PDF or Word): they are filed on the unit and the form fills itself.</>
-                : <>Upload the HOTs (PDF or Word) and the form fills itself; the transaction starts at HOTs.</>}
+                : place
+                  // Adding to a live transaction: a reading fills its blanks and never moves its stage.
+                  ? <>Upload the HOTs (PDF or Word) and they fill what the transaction has blank.</>
+                  : <>Upload the HOTs (PDF or Word) and the form fills itself; the transaction starts at HOTs.</>}
           </p>
         </div>
       )}
       {place && (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" data-testid="deal-handover-place">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Property and unit</span>
-          <div className="break-words">{place.propertyName} — {place.unitName}</div>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{place.unitName ? "Property and unit" : "Property"}</span>
+          <div className="break-words">{place.unitName ? `${place.propertyName} — ${place.unitName}` : place.propertyName}</div>
         </div>
       )}
       {!isSecondment && !place && (
@@ -2478,7 +2569,9 @@ function SimplifiedCreateBody({
             }
           }}
         />
-        {form.propertyId && isInvestmentDealType(form.dealType) && <div className="mt-1.5"><LiveInvestmentDeals propertyId={form.propertyId} /></div>}
+        {form.propertyId && isInvestmentDealType(form.dealType) && (
+          <div className="mt-1.5"><LiveInvestmentDeals propertyId={form.propertyId} onUse={onUseLiveInvestment} usingId={usingLiveInvestment} /></div>
+        )}
       </div>
       )}
 
@@ -3125,6 +3218,52 @@ export function DealHandoverDialog({ open, onOpenChange, handover }: {
   );
 }
 
+/**
+ * New Transaction opened from the AML page (Woody, 24 November 2026: "what
+ * about my add new transaction text box and upload files box etc here?"): it
+ * loads the lists the form picks from, then opens with the words typed there
+ * read in, or the heads of terms dropped there read in. Saving it is the
+ * form's own Create, then its Kick off AML step.
+ */
+export function NewTransactionDialog({ open, onOpenChange, initialNote, initialHotsFile }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialNote?: string | null;
+  initialHotsFile?: File | null;
+}) {
+  const { toast } = useToast();
+  const properties = useQuery<CrmProperty[]>({ ...dealFormPropertiesQuery, enabled: open });
+  const companies = useQuery<CrmCompany[]>({ ...dealFormCompaniesQuery, enabled: open });
+  const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({ queryKey: ["/api/users"], enabled: open });
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({ queryKey: ["/api/property-units"], enabled: open });
+  useEffect(() => {
+    if (!open || !properties.isError) return;
+    toast({ title: "New transaction could not be opened", description: "Refresh the page and try again.", variant: "destructive" });
+    onOpenChange(false);
+  }, [open, properties.isError]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The companies are read before the heads of terms, so their parties match.
+  const ready = properties.isSuccess && (companies.isSuccess || companies.isError);
+  return (
+    <>
+    {open && !ready && (
+      <div className="fixed inset-x-0 bottom-6 z-50 mx-auto flex w-fit items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm shadow-md" role="status" data-testid="new-transaction-opening">
+        <Loader2 className="h-4 w-4 animate-spin" />Opening New transaction…
+      </div>
+    )}
+    <DealFormDialog
+      open={open && ready}
+      onOpenChange={onOpenChange}
+      properties={properties.data || []}
+      propertyUnits={propertyUnits}
+      companies={companies.data || []}
+      users={users}
+      initialNote={initialNote}
+      initialHotsFile={initialHotsFile}
+    />
+    </>
+  );
+}
+
 export function DealFormDialog({
   open,
   onOpenChange,
@@ -3135,6 +3274,8 @@ export function DealFormDialog({
   users,
   handover,
   prefill,
+  initialNote,
+  initialHotsFile,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3147,6 +3288,11 @@ export function DealFormDialog({
   // A new transaction started from a company (Transactions → AML → Companies,
   // 24 November 2026): that company filled in as landlord, tenant, seller or buyer.
   prefill?: Partial<Pick<DealFormData, "landlordId" | "tenantId" | "vendorId" | "purchaserId">>;
+  // Started from the AML page's New transaction box (24 November 2026): the
+  // words typed there, read into the form as Describe the transaction reads
+  // them, or the heads of terms dropped there, read as Add heads of terms reads them.
+  initialNote?: string | null;
+  initialHotsFile?: File | null;
 }) {
   const { toast } = useToast();
   // Search-or-create pickers for the full form — the "Show all fields" /
@@ -3270,6 +3416,7 @@ export function DealFormDialog({
     setDealRead(null);
     setDealNoteBusy(null);
     setPropertySeed(null);
+    setLinked(null);
   }, [open, deal]);
 
   // A handover's fee split starts from the deal's own (the editor keeps BGP
@@ -3405,6 +3552,73 @@ export function DealFormDialog({
       return;
     }
     if (row.dealId) navigateTo(`/deals/${row.dealId}`);
+  };
+
+  // A live sale or purchase already on the property (Woody, 2026-11-24: "Can
+  // you allow for link to existing deal at this point? its easier"): the form
+  // moves onto that transaction. What it holds stays; its blanks fill from
+  // what this form was given (client/src/lib/deal-link.ts); where the two
+  // differ the person may take the other value. Saving is that transaction's
+  // own save, then Kick off AML. Back to a new transaction puts the form back.
+  type LinkedTransaction = {
+    deal: CrmDeal;
+    before: { form: DealFormData; feeRows: FeeAllocationEditorRow[]; feeAllocType: "percentage" | "fixed"; nameAutoFilled: boolean };
+    filled: Array<{ key: string; label: string }>;
+    differs: LinkDifference[];
+    restore: Record<string, Record<string, unknown>>;
+    taken: string[];
+  };
+  const [linked, setLinked] = useState<LinkedTransaction | null>(null);
+  const [linking, setLinking] = useState<string | null>(null);
+  useEffect(() => { if (!open) { setLinked(null); setLinking(null); } }, [open]);
+  const linkTo = async (target: { id: string }) => {
+    if (linking || linked) return;
+    setLinking(target.id);
+    try {
+      const existing = await queryClient.fetchQuery<CrmDeal>({ queryKey: ["/api/crm/deals", target.id], staleTime: 0 });
+      if (!existing?.id) throw new Error("It may have been deleted.");
+      let allocations: DealFeeAllocation[] = [];
+      try {
+        allocations = (await queryClient.fetchQuery<DealFeeAllocation[]>({ queryKey: ["/api/crm/deals", target.id, "fee-allocations"], staleTime: 0 })) || [];
+      } catch { /* the split stays as entered here */ }
+      const base: DealFormData = { ...emptyForm, team: freshForm().team };
+      const result = linkToTransaction(dealToForm(existing) as any, form as any, base as any);
+      const restore: LinkedTransaction["restore"] = {};
+      for (const d of result.differs) restore[d.key] = Object.fromEntries(Object.keys(d.patch).map(k => [k, (result.form as any)[k]]));
+      setLinked({ deal: existing, before: { form, feeRows, feeAllocType, nameAutoFilled }, filled: result.filled, differs: result.differs, restore, taken: [] });
+      setForm(result.form as DealFormData);
+      setNameAutoFilled(false);
+      setShowAllFields(false);
+      // The transaction's own fee split, when it has one; else the one entered here.
+      if (allocations.some(a => !a.isBgpHouse && a.agentName)) {
+        const fixed = allocations.some(a => !a.isBgpHouse && a.allocationType === "fixed");
+        setFeeAllocType(fixed ? "fixed" : "percentage");
+        setFeeRows(allocations.map(a => ({
+          agentName: a.agentName,
+          allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
+          percentage: a.percentage || 0,
+          fixedAmount: a.fixedAmount || 0,
+          isBgpHouse: !!a.isBgpHouse,
+        })));
+      }
+    } catch (e: any) {
+      toast({ title: "That transaction could not be opened", description: requestWords(e), variant: "destructive" });
+    } finally {
+      setLinking(null);
+    }
+  };
+  const unlink = () => {
+    if (!linked) return;
+    setForm(linked.before.form);
+    setFeeRows(linked.before.feeRows);
+    setFeeAllocType(linked.before.feeAllocType);
+    setNameAutoFilled(linked.before.nameAutoFilled);
+    setLinked(null);
+  };
+  const takeDifference = (d: LinkDifference, take: boolean) => {
+    if (!linked) return;
+    setForm(prev => ({ ...prev, ...(take ? d.patch : linked.restore[d.key]) } as DealFormData));
+    setLinked(l => l ? { ...l, taken: take ? [...l.taken.filter(k => k !== d.key), d.key] : l.taken.filter(k => k !== d.key) } : l);
   };
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
@@ -3569,6 +3783,15 @@ export function DealFormDialog({
         if (prop) finalForm.name = prop.name;
       }
       if (handover) return saveHandover(handover, finalForm);
+      if (linked) {
+        const linkedPayload = formToPayload(finalForm, "Moved on from New transaction");
+        delete linkedPayload.internalAgent; // the fee split's save keeps BGP Contact in step
+        const res = await apiRequest("PUT", `/api/crm/deals/${linked.deal.id}`, linkedPayload);
+        const warned = res.headers.get("X-AML-Warning");
+        const saved = linked.deal.dealRef != null ? `Saved to #${linked.deal.dealRef}` : "Saved";
+        await saveSplit(linked.deal.id, saved);
+        return { id: linked.deal.id, dealRef: linked.deal.dealRef ?? null, linked: true, amlWarning: warned ? decodeURIComponent(warned) : null };
+      }
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
       // BGP Contact comes from the fee split: on create the split's agent
       // rows are the contacts; on edit the form never writes them (the
@@ -3605,6 +3828,25 @@ export function DealFormDialog({
         }
         if (handover.kind === "hots" && data?.conversion) handover.onConverted(data.conversion);
         if (!showAmlStep(data?.id, data?.conversion?.dealRef ?? deal?.dealRef ?? null)) onOpenChange(false);
+        return;
+      }
+      if (data?.linked) {
+        toast({
+          title: data.dealRef != null ? `Transaction #${data.dealRef} updated` : "Transaction updated",
+          action: (
+            <ToastAction altText="View transaction" onClick={() => navigateTo(`/deals/${data.id}`)} data-testid="toast-view-deal">
+              View transaction →
+            </ToastAction>
+          ),
+        });
+        if (data.amlWarning) toast({ title: "Saved — AML follow-up needed", description: data.amlWarning, variant: "destructive" });
+        invalidateDealCaches();
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", data.id, "audit-log"] });
+        if (form.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", form.propertyId, "deals"] });
+        if (!showAmlStep(data.id, data.dealRef)) onOpenChange(false);
         return;
       }
       toast({
@@ -3781,9 +4023,11 @@ export function DealFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : "New Transaction"}</DialogTitle>
+          <DialogTitle>{amlStep ? "Kick off AML" : handover?.kind === "promote" ? "Promote to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Edit Transaction" : linked ? `Add to transaction${linked.deal.dealRef != null ? ` #${linked.deal.dealRef}` : ""}` : "New Transaction"}</DialogTitle>
           <DialogDescription>
-            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "The client checks are switched off: the officers sign each party off on the transaction's AML.") : handover
+            {amlStep ? (clientChecks ? "Send each party's contact the client checks: one email, and a page of their own to do them on." : "The client checks are switched off: the officers sign each party off on the transaction's AML.") : linked
+              ? `${linked.deal.name || "This transaction"}: check what goes onto it, then save. Nothing changes until you do.`
+              : handover
               ? `${[handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name, handover.unit.unitName].filter(Boolean).join(" — ")}. Check the transaction, then save: it moves to Solicitors.`
               : isEdit ? "Update transaction details below." : "Fill in the details to create a new transaction."}
           </DialogDescription>
@@ -3837,6 +4081,17 @@ export function DealFormDialog({
           </div>
         ) : (
         <>
+        {linked && (
+          <DealLinkBanner
+            linked={linked}
+            names={{
+              company: (id) => companies.find(c => c.id === id)?.name,
+              unit: (id) => propertyUnits.find(u => u.id === id)?.unitName,
+            }}
+            onTake={takeDifference}
+            onBack={unlink}
+          />
+        )}
         {/* Type it and the form fills (Woody, 2026-11-17): the same note reader
             as the letting forms, read as an offer. BGP staff only; never on the
             edit form. Nothing is saved until the form is. */}
@@ -3850,6 +4105,8 @@ export function DealFormDialog({
             title="Describe the transaction"
             example="Letting of 55 Wells Street to Acme Ltd. Landlord is Wells Estates Ltd. 10 year lease. Rent £120k pax. 6 MRF"
             startOpen
+            initialText={!handover && initialNote ? initialNote : undefined}
+            autoRead={!handover && !!initialNote}
             autoApply
             onApply={applyDealNote}
             onRead={(data) => {
@@ -3866,8 +4123,12 @@ export function DealFormDialog({
             busy={dealNoteBusy}
             billing
             onUseType={(value) => setForm((prev: any) => named(withType(prev, value)))}
-            onPickProperty={(id) => setForm((prev: any) => named(withProperty(prev, id, dealRead)))}
-            onFindProperty={(text) => setPropertySeed({ text, key: Date.now() })}
+            onPickProperty={(id) => linked
+              ? toast({ title: "This transaction stays on its property", description: "Go back to a new transaction to use another." })
+              : setForm((prev: any) => named(withProperty(prev, id, dealRead)))}
+            onFindProperty={(text) => linked
+              ? toast({ title: "This transaction stays on its property", description: "Go back to a new transaction to use another." })
+              : setPropertySeed({ text, key: Date.now() })}
             onPickParty={(role, c) => setForm((prev: any) => named({ ...prev, ...partyPatch(prev, role, c) }))}
             onAddParty={(role, name, hit) => { void addNoteParty(role, name, hit); }}
             onBill={(role, companyId, number) => { void billNoteParty(role, companyId, number); }}
@@ -3910,6 +4171,7 @@ export function DealFormDialog({
               users={users}
               setForm={setForm}
               hideFees={isClientCreate}
+              autoHotsFile={!handover && !isClientCreate ? initialHotsFile : null}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
@@ -3919,6 +4181,8 @@ export function DealFormDialog({
               onUnitPicked={setPickedUnit}
               liveLettingRow={liveLettingRow}
               onUseLiveDeal={useLiveDeal}
+              onUseLiveInvestment={!isClientCreate && !handover && !linked ? (d) => { void linkTo(d); } : undefined}
+              usingLiveInvestment={linking}
               jointAgency={jointAgency}
               setJointAgency={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
               jointAgencyErrors={jointAgencyErrors}
@@ -3926,6 +4190,9 @@ export function DealFormDialog({
               place={handover ? {
                 propertyName: handover.unit.propertyName || properties.find(p => p.id === handover.unit.propertyId)?.name || "Property",
                 unitName: handover.unit.unitName,
+              } : linked ? {
+                propertyName: properties.find(p => p.id === form.propertyId)?.name || "Property",
+                unitName: propertyUnits.find(u => u.id === form.unitId)?.unitName || "",
               } : null}
               hotsUnitId={handover?.kind === "promote" ? handover.unit.id : null}
               hotsOnFile={handover?.kind === "hots" ? (handover.finalFileName || "the final Heads of Terms") : null}
@@ -4513,7 +4780,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && !isClientCreate && !handover && (
+            {!isEdit && !isClientCreate && !handover && !linked && (
               <Button
                 type="button"
                 variant="ghost"
@@ -4539,7 +4806,7 @@ export function DealFormDialog({
               data-testid="button-save-deal"
             >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : "Create Transaction"}
+              {handover?.kind === "promote" ? "Move to Solicitors" : handover?.kind === "hots" ? "Convert to Solicitors" : isEdit ? "Save Changes" : linked ? `Save to${linked.deal.dealRef != null ? ` #${linked.deal.dealRef}` : " the transaction"}` : "Create Transaction"}
             </Button>
           </DialogFooter>
         </form>
@@ -5478,6 +5745,8 @@ function HotsChecklistDialog({
 export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
+  // The invoice window: the invoice as Xero holds it, its PDF, change the draft, approve, email, void (components/xero-invoice-window.tsx).
+  const [openInvoice, setOpenInvoice] = useState<string | null>(null);
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
   const [currency, setCurrency] = useState<"GBP" | "USD">(deal.feeCurrency === "USD" ? "USD" : "GBP");
@@ -5615,9 +5884,11 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
       });
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Invoice created in Xero" });
+    onSuccess: (out: any) => {
+      toast({ title: "Draft created in Xero" });
       setCreating(false);
+      // The new draft opens in the invoice window, to check, change, approve and send.
+      if (out?.invoice?.id) setOpenInvoice(String(out.invoice.id));
       setAllowMissingPo(false);
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "po-check"] });
       setReference("");
@@ -5664,26 +5935,6 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     },
   });
 
-  const XERO_STATUS_COLORS: Record<string, string> = {
-    DRAFT: "bg-zinc-500",
-    SUBMITTED: "bg-blue-500",
-    AUTHORISED: "bg-green-600",
-    PAID: "bg-emerald-600",
-    VOIDED: "bg-red-500",
-    DELETED: "bg-red-700",
-    ERROR: "bg-red-500",
-  };
-  // Say where the invoice is in Xero — a bare "DRAFT" chip under an
-  // "Invoiced" deal status read as a contradiction (Woody, 2026-09-27).
-  const XERO_STATUS_LABELS: Record<string, string> = {
-    DRAFT: "Draft in Xero",
-    SUBMITTED: "Awaiting approval",
-    AUTHORISED: "Approved",
-    PAID: "Paid",
-    VOIDED: "Voided",
-    DELETED: "Deleted",
-    ERROR: "Error",
-  };
   // Contact search and invoice sync run on the firm-wide Xero session, so
   // "Connect Xero" (a per-login token, only needed to send a NEW invoice)
   // no longer headlines a card that already has invoices.
@@ -5914,13 +6165,14 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {invoices.length > 0 && (
           <div className="space-y-2">
             {invoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm">
+              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm" data-testid={`xero-invoice-row-${inv.id}`}>
                 {/* Two lines — entity name, then invoice # + amount — so the
                     phone row stops clipping to "The Cr…" with the number
-                    hidden and the amount wrapping (Woody, 2026-09-28). */}
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
-                    {XERO_STATUS_LABELS[inv.status] || inv.status}
+                    hidden and the amount wrapping (Woody, 2026-09-28). The
+                    row opens the invoice window (24 November 2026). */}
+                <button type="button" className="flex items-center gap-2 min-w-0 flex-1 text-left hover:opacity-80" onClick={() => setOpenInvoice(inv.id)} title="Open the invoice" data-testid={`xero-invoice-open-${inv.id}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLOURS[inv.status] || "bg-zinc-500"}`}>
+                    {xeroStatusWords(inv.status)}
                   </Badge>
                   <div className="min-w-0 flex-1">
                     {inv.invoicingEntityName && (
@@ -5937,7 +6189,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       )}
                     </p>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-1 shrink-0">
                   {inv.xeroUrl && (
                     <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
@@ -5980,6 +6232,17 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {!xeroStatus?.connected && invoices.length === 0 && (
           <p className="text-xs text-muted-foreground">Connect Xero to create and track invoices for this transaction.</p>
         )}
+        <XeroInvoiceWindow
+          invoiceId={openInvoice}
+          open={!!openInvoice}
+          onOpenChange={(v) => { if (!v) setOpenInvoice(null); }}
+          onChanged={() => {
+            refetchInvoices();
+            invalidateDealCaches();
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+            queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
+          }}
+        />
       </CardContent>
     </Card>
   );

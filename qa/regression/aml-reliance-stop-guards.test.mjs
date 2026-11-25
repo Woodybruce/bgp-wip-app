@@ -89,5 +89,6 @@ test("the international pieces stay international: a UK company is read as it al
 
 test("a client login's deal history never shows BGP's AML lines", () => {
   const crm = read("server/crm.ts");
-  assert.match(crm, /!CLIENT_HIDDEN_AUDIT_FIELDS\.has\(l\.field\) && !\/\^\(aml\|kyc\|client_checks\)\/i\.test/);
+  // Since 24 November 2026 BGP's invoicing lines too (xero_invoice_approved, _emailed ...).
+  assert.match(crm, /!CLIENT_HIDDEN_AUDIT_FIELDS\.has\(l\.field\) && !\/\^\(aml\|kyc\|client_checks\|xero\)\/i\.test/);
 });

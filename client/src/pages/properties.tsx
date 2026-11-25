@@ -1,7 +1,6 @@
 import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
-import { BGP_TEAMS, folderWithin, propertyFolderTabs } from "@shared/property-labels";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
@@ -58,7 +57,6 @@ import {
   ChevronUp,
   X,
   ArrowLeft,
-  FolderTree,
   Loader2,
   CheckCircle2,
   FolderOpen,
@@ -69,8 +67,6 @@ import {
   Plus,
   Pencil,
   Trash2,
-  MoreVertical,
-  Share2,
   FolderPlus,
   Save,
   MapPin,
@@ -102,7 +98,6 @@ import {
   Camera,
   Bookmark,
   BookmarkCheck,
-  Link2,
   Upload,
   Mail,
   Phone,
@@ -153,6 +148,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/empty-state";
+import { RecordFolderPicker } from "@/components/folders/record-folder-picker";
+import { ClientSharedFolders } from "@/components/folders/client-shared-folders";
 
 const GROUP_TABS = [
   { id: "all", label: "All" },
@@ -355,6 +352,11 @@ export function InlineEngagement({
   );
 }
 
+// The Properties list's Folders column (Woody, 24 November 2026;
+// docs/folders-review-2026-11-20.md, decisions 2 and 3): a new property folder
+// is made through the folder engine where the person chooses, with the
+// property folder's five folders inside, never at a fixed place under "BGP
+// share drive". The old team-folder badges show read only.
 function InlineFolderTree({
   propertyId,
   propertyName,
@@ -365,92 +367,35 @@ function InlineFolderTree({
   folderTeams: string[] | null;
 }) {
   const current = folderTeams || [];
-  const { toast } = useToast();
-  const [creating, setCreating] = useState<string | null>(null);
-
-  const createFoldersMutation = useMutation({
-    mutationFn: async (team: string) => {
-      setCreating(team);
-      const res = await apiRequest("POST", "/api/microsoft/property-folders", {
-        propertyName,
-        team,
-      });
-      return res.json();
-    },
-    onSuccess: async (data, team) => {
-      const updated = [...current, team];
-      try {
-        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
-      } catch (e: any) {
-        toast({ title: "Folders created, but the badge didn't save", description: e?.message, variant: "destructive" });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
-      toast({
-        title: "Folders Created",
-        description: `${data.created} folders created for ${propertyName} under ${team}`,
-      });
-      setCreating(null);
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Error",
-        description: err.message || "Failed to create folders",
-        variant: "destructive",
-      });
-      setCreating(null);
-    },
-  });
-
-  const handleToggle = (team: string) => {
-    if (current.includes(team)) return;
-    createFoldersMutation.mutate(team);
-  };
-
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" data-testid="inline-folder-tree-trigger">
-          {current.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-              <FolderTree className="w-3 h-3" />
-              Set up folders
-            </span>
-          ) : (
-            <div className="flex items-center gap-1 flex-wrap">
-              {current.map(t => (
-                <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
-                  <FolderOpen className="w-2.5 h-2.5" />
-                  {t}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
-        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Create folder tree for team</div>
-        {TEAMS.map(team => {
-          const isCreated = current.includes(team);
-          const isCreating = creating === team;
-          return (
-            <DropdownMenuItem
-              key={team}
-              onClick={() => !isCreated && !isCreating && handleToggle(team)}
-              disabled={isCreated || isCreating}
-              data-testid={`folder-team-option-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
-            >
-              <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${isCreated ? "bg-green-500 border-green-500" : "border-muted-foreground/30"}`}>
-                {isCreated && <span className="text-white text-[8px]">✓</span>}
-              </div>
-              <span className="text-xs flex-1">{team}</span>
-              {isCreating && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
-              {isCreated && <CheckCircle2 className="w-3 h-3 text-green-500 ml-1" />}
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px]" onClick={() => setOpen(true)} title={`New property folder for ${propertyName}`} data-testid="inline-folder-tree-trigger">
+        {current.length === 0 ? (
+          <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+            <FolderPlus className="w-3 h-3" />
+            New folder
+          </span>
+        ) : (
+          <div className="flex items-center gap-1 flex-wrap">
+            {current.map(t => (
+              <Badge key={t} variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
+                <FolderOpen className="w-2.5 h-2.5" />
+                {t}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </button>
+      <RecordFolderPicker
+        open={open}
+        onOpenChange={setOpen}
+        record={{ type: "property", id: propertyId, name: propertyName }}
+        startNew
+        defaultTemplate="property"
+        title={`New property folder for ${propertyName}`}
+      />
+    </>
   );
 }
 
@@ -1553,821 +1498,6 @@ export function InlineTenants({
 
 // ColumnFilterPopover imported from shared component
 
-const TEAMS = CRM_OPTIONS.dealTeam;
-
-interface FolderTemplate {
-  team: string;
-  folderCount: number;
-  structure: string[];
-}
-
-function buildTreeFromPaths(paths: string[]): { name: string; children: any[] }[] {
-  const root: any[] = [];
-  for (const p of paths) {
-    const parts = p.split("/");
-    let current = root;
-    for (const part of parts) {
-      let existing = current.find((n: any) => n.name === part);
-      if (!existing) {
-        existing = { name: part, children: [] };
-        current.push(existing);
-      }
-      current = existing.children;
-    }
-  }
-  return root;
-}
-
-function TreeNode({ node, depth = 0 }: { node: { name: string; children: any[] }; depth?: number }) {
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 py-0.5" style={{ paddingLeft: `${depth * 16}px` }}>
-        {node.children.length > 0 ? (
-          <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
-        ) : (
-          <FolderOpen className="w-3.5 h-3.5 text-muted-foreground/50" />
-        )}
-        <span className="text-xs">{node.name}</span>
-      </div>
-      {node.children.map((child: any) => (
-        <TreeNode key={child.name} node={child} depth={depth + 1} />
-      ))}
-    </div>
-  );
-}
-
-export function SetUpFoldersDialog({
-  propertyId,
-  propertyName,
-  folderTeams,
-  open,
-  onOpenChange,
-  // entityType lets the same dialog drive a landlord folder set-up
-  // (defaults to property). When 'landlord', the post-create update
-  // hits PATCH /api/brand/:id instead of PUT /api/crm/properties/:id,
-  // and invalidates the brand-profile query so the new folders show
-  // up immediately in the sidebar.
-  entityType = "property",
-}: {
-  propertyId: string;
-  propertyName: string;
-  folderTeams?: string[] | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  entityType?: "property" | "landlord";
-}) {
-  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
-  const [result, setResult] = useState<any>(null);
-  const { toast } = useToast();
-
-  const { data: currentUser } = useQuery<any>({
-    queryKey: ["/api/auth/me"],
-  });
-
-  const { data: templates } = useQuery<FolderTemplate[]>({
-    queryKey: ["/api/microsoft/folder-templates"],
-    enabled: open,
-  });
-
-  const { data: msStatus } = useQuery<any>({
-    queryKey: ["/api/microsoft/status"],
-    enabled: open,
-  });
-
-  const defaultTeam = currentUser?.team || null;
-  const activeTeam = selectedTeam || defaultTeam;
-
-  const activeTemplate = templates?.find((t) => t.team === activeTeam);
-  const treeNodes = activeTemplate ? buildTreeFromPaths(activeTemplate.structure) : [];
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      if (!activeTeam) throw new Error("Please select a team");
-      const res = await apiRequest("POST", "/api/microsoft/property-folders", {
-        propertyName,
-        team: activeTeam,
-      });
-      return res.json();
-    },
-    onSuccess: async (data) => {
-      setResult(data);
-      const currentTeams = folderTeams || [];
-      if (!currentTeams.includes(data.team)) {
-        const updated = [...currentTeams, data.team];
-        if (entityType === "landlord") {
-          await apiRequest("PATCH", `/api/brand/${propertyId}`, { folder_teams: updated });
-          queryClient.invalidateQueries({ queryKey: ["/api/brand", propertyId, "profile"] });
-        } else {
-          await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
-          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
-        }
-      }
-      toast({
-        title: "Folders Created",
-        description: `${data.created} folders created for ${propertyName} under ${data.team}`,
-      });
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Error",
-        description: err.message || "Failed to create folders",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleClose = () => {
-    setResult(null);
-    setSelectedTeam(null);
-    onOpenChange(false);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg" data-testid="dialog-setup-folders">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FolderTree className="w-5 h-5" />
-            Set Up Property Folders
-          </DialogTitle>
-          <DialogDescription>
-            Create a SharePoint folder structure for <span className="font-medium text-foreground">{propertyName}</span>
-          </DialogDescription>
-        </DialogHeader>
-
-        {!msStatus?.connected ? (
-          <div className="py-6 text-center space-y-2">
-            <AlertCircle className="w-8 h-8 mx-auto text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Please connect to Microsoft 365 first via the SharePoint page</p>
-          </div>
-        ) : result ? (
-          <div className="space-y-4" data-testid="folder-creation-result">
-            <div className="flex items-center gap-3 p-4 bg-green-50 dark:bg-green-950/30 rounded-lg">
-              <CheckCircle2 className="w-6 h-6 text-green-600 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-medium">Folders created successfully</p>
-                <p className="text-xs text-muted-foreground">
-                  {result.created} folders under {result.team}/{propertyName}
-                </p>
-              </div>
-            </div>
-            {result.errors > 0 && (
-              <p className="text-xs text-amber-600">{result.errors} folders had errors (may already exist)</p>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={handleClose} data-testid="button-close-folder-result">
-                Done
-              </Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-2">Which team should this property be filed under?</p>
-              <div className="grid grid-cols-2 gap-2">
-                {TEAMS.map((team) => (
-                  <button
-                    key={team}
-                    className={`text-left px-3 py-2 rounded-md border text-xs transition-colors ${
-                      activeTeam === team
-                        ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
-                        : "border-border hover-elevate"
-                    }`}
-                    onClick={() => setSelectedTeam(team)}
-                    data-testid={`button-team-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
-                  >
-                    <span className="font-medium">{team}</span>
-                    {team === defaultTeam && !selectedTeam && (
-                      <span className="ml-1 text-[10px] opacity-70">(your team)</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {activeTeam && activeTemplate && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Folder structure preview ({activeTemplate.folderCount} folders)
-                  </p>
-                </div>
-                <div className="border rounded-md p-3 bg-muted/30 max-h-[250px] overflow-y-auto">
-                  <div className="flex items-center gap-1.5 py-0.5 font-medium">
-                    <FolderOpen className="w-3.5 h-3.5" />
-                    <span className="text-xs">{activeTeam}</span>
-                    <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-xs">{propertyName}</span>
-                  </div>
-                  {treeNodes.map((node) => (
-                    <TreeNode key={node.name} node={node} depth={1} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <DialogFooter>
-              <Button variant="outline" onClick={handleClose} data-testid="button-cancel-folders">
-                Cancel
-              </Button>
-              <Button
-                onClick={() => createMutation.mutate()}
-                disabled={!activeTeam || createMutation.isPending}
-                data-testid="button-create-folders"
-              >
-                {createMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <FolderTree className="w-4 h-4 mr-2" />
-                    Create Folders
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface PropertyFolderItem {
-  id: string;
-  name: string;
-  isFolder: boolean;
-  childCount: number;
-  size: number;
-  webUrl: string;
-  lastModified: string;
-}
-
-export function PropertyFoldersPanel({ propertyName, propertyId, folderTeams, sharepointFolderUrl, entityType, entityId, entityName, bare = false }: { propertyName: string; propertyId?: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string; bare?: boolean }) {
-  const [, navigate] = useLocation();
-  const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareScopeNote, setShareScopeNote] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const userTeam = currentUser?.team || "Investment";
-  // On a property page each tab can have its own linked folder, and extra
-  // named folders (Leases) get their own tabs — see propertyFolderTabs.
-  const folderLinksKey = ["/api/crm/properties", propertyId, "sharepoint-folders"];
-  const { data: folderLinks } = useQuery<{ defaultUrl: string | null; folders: Record<string, string> }>({
-    queryKey: folderLinksKey,
-    enabled: !!propertyId,
-    retry: false,
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/sharepoint-folders`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to load linked folders");
-      return res.json();
-    },
-  });
-  const tabs = propertyFolderTabs(folderTeams, folderLinks?.folders, sharepointFolderUrl, userTeam);
-  const [activeTeamName, setActiveTeamName] = useState<string | null>(null);
-  const activeTab = tabs.find(t => t.label.toLowerCase() === String(activeTeamName || "").toLowerCase()) || tabs[0];
-  const activeTeam = activeTab?.label || userTeam;
-  const [subPath, setSubPath] = useState<string>("");
-  const [isDragging, setIsDragging] = useState(false);
-  const [linkEdit, setLinkEdit] = useState<{ label: string; url: string; isNew: boolean } | null>(null);
-  const dragCounter = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-
-  // The tab's own linked folder, else the property's linked folder — both
-  // resolve to the real folder regardless of name mismatches between CRM
-  // and SharePoint. The team-based path synthesis is only used as a fallback.
-  const folderUrl = (activeTab?.url || "").trim();
-  // Deleting a folder tree another tab also opens (or that holds another
-  // tab's folder) would take that tab's files too — not offered.
-  const folderSharedWithOtherTab = !!folderUrl && tabs.some(t => t !== activeTab && t.url && (folderWithin(t.url, folderUrl) || folderWithin(folderUrl, t.url)));
-
-  const linkMutation = useMutation({
-    mutationFn: async ({ label, url }: { label: string; url: string | null }) => {
-      const res = await apiRequest("PUT", `/api/crm/properties/${propertyId}/sharepoint-folders`, { label, url });
-      return res.json();
-    },
-    onSuccess: (data: { folders: Record<string, string> }, vars) => {
-      queryClient.setQueryData(folderLinksKey, (old: any) => ({ ...(old || {}), ...data }));
-      setLinkEdit(null);
-      setSubPath("");
-      if (vars.url) setActiveTeamName(vars.label.trim());
-      toast({ title: vars.url ? `${vars.label} folder linked` : `${vars.label} folder unlinked` });
-    },
-    onError: (e: any) => toast({ title: "Couldn't link the folder", description: String(e.message || "").replace(/^\d{3}: /, ""), variant: "destructive" }),
-  });
-
-  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string; driveId?: string; currentItemId?: string | null }>({
-    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (folderUrl) params.set("folderUrl", folderUrl);
-      if (subPath) params.set("path", subPath);
-      const qs = params.toString() ? `?${params.toString()}` : "";
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}${qs}`, { credentials: "include" });
-      if (!res.ok) {
-        if (res.status === 401) return { exists: false, folders: [] };
-        throw new Error("Failed to load folders");
-      }
-      return res.json();
-    },
-    retry: false,
-  });
-
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const destDriveId = folderData?.driveId;
-      const destFolderId = folderData?.currentItemId;
-      if (destDriveId && destFolderId) {
-        // Upload straight into the folder the user is actually browsing, by
-        // drive/item ID — correct for both linked-folder (folderUrl) and
-        // path-based browsing, immune to CRM/SharePoint name mismatches.
-        formData.append("driveId", destDriveId);
-        formData.append("folderId", destFolderId);
-      } else if (folderUrl) {
-        // A linked folder IS selected but the listing hasn't resolved its
-        // IDs — refuse here rather than let the server silently land the
-        // file at the SharePoint root.
-        throw new Error("This folder's location isn't available yet — wait for the file list to load, then try again.");
-      } else {
-        formData.append("folderPath", `BGP share drive/${activeTeam}/${propertyName}${subPath ? `/${subPath}` : ""}`);
-      }
-      const res = await fetch("/api/microsoft/files/upload", { method: "POST", credentials: "include", body: formData });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || "Upload failed");
-      }
-      return res.json();
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
-      toast({ title: "File uploaded", description: data.name });
-    },
-    onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
-  });
-
-  const driveId = folderData?.driveId;
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath] });
-
-  const newFolderMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await fetch("/api/microsoft/folders", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, parentId: folderData?.currentItemId, driveId }) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || "Could not create folder"); }
-      return res.json();
-    },
-    onSuccess: () => { refresh(); toast({ title: "Folder created" }); },
-    onError: (e: any) => toast({ title: "Create folder failed", description: e.message, variant: "destructive" }),
-  });
-
-  const renameMutation = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
-      const res = await fetch("/api/microsoft/files/item", { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id, name }) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Rename failed"); }
-      return res.json();
-    },
-    onSuccess: () => { refresh(); toast({ title: "Renamed" }); },
-    onError: (e: any) => toast({ title: "Rename failed", description: e.message, variant: "destructive" }),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch("/api/microsoft/files/item", { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: id }) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || e.error || "Delete failed"); }
-      return res.json();
-    },
-    onSuccess: () => { refresh(); toast({ title: "Deleted", description: "Moved to the SharePoint recycle bin." }); },
-    onError: (e: any) => toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
-  });
-
-  const openShare = async (item: { id: string; name: string }) => {
-    setShareFor(item); setShareUrl(null); setShareScopeNote(null); setInviteEmail("");
-    try {
-      const res = await fetch("/api/microsoft/files/share-link", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: item.id, type: "view", scope: "anonymous" }) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Could not create link");
-      setShareUrl(data.webUrl || null);
-      if (data.fellBackToOrg) setShareScopeNote("Your tenant blocks anonymous links — this one only works for people inside the organisation.");
-    } catch (e: any) {
-      toast({ title: "Share failed", description: e.message, variant: "destructive" });
-    }
-  };
-
-  const inviteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/microsoft/files/invite", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ driveId, itemId: shareFor?.id, emails: inviteEmail.split(/[,\s]+/).filter(Boolean), role: "read" }) });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Invite failed"); }
-      return res.json();
-    },
-    onSuccess: () => { toast({ title: "Invitation sent" }); setInviteEmail(""); },
-    onError: (e: any) => toast({ title: "Invite failed", description: e.message, variant: "destructive" }),
-  });
-
-  const startChat = async () => {
-    if (!entityType || !entityId) return;
-    try {
-      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: entityType === "landlord" ? "company" : entityType, linkedId: entityId, linkedName: entityName || propertyName });
-      const thread = await res.json();
-      navigate(`/chatbgp?thread=${thread.id}`);
-    } catch (e: any) {
-      toast({ title: "Could not open chat", description: e.message, variant: "destructive" });
-    }
-  };
-
-  const promptNewFolder = () => { const n = window.prompt("New folder name"); if (n && n.trim()) newFolderMutation.mutate(n.trim()); };
-  const promptRename = (item: { id: string; name: string }) => { const n = window.prompt("Rename to", item.name); if (n && n.trim() && n.trim() !== item.name) renameMutation.mutate({ id: item.id, name: n.trim() }); };
-  const confirmDelete = (item: { id: string; name: string }) => { if (window.confirm(`Delete "${item.name}"? It will go to the SharePoint recycle bin.`)) deleteMutation.mutate(item.id); };
-  // Delete the whole active team's folder tree (e.g. when "Set Up Folders"
-  // created the wrong one). Sends the team's root folder + everything in it
-  // to the SharePoint recycle bin — recoverable.
-  const confirmDeleteTree = () => {
-    if (!folderData?.currentItemId) return;
-    if (window.confirm(`Delete the entire "${activeTeam}" folder tree for ${propertyName}? Everything inside it goes to the SharePoint recycle bin (recoverable). Use this if the wrong folder tree was set up.`)) {
-      deleteMutation.mutate(folderData.currentItemId);
-      setSubPath("");
-    }
-  };
-
-  const rowMenu = (item: { id: string; name: string }) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted flex-shrink-0" data-testid={`row-menu-${item.id}`}>
-          <MoreVertical className="w-3.5 h-3.5 text-muted-foreground" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); promptRename(item); }}><Pencil className="w-3.5 h-3.5 mr-2" />Rename</DropdownMenuItem>
-        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openShare(item); }}><Share2 className="w-3.5 h-3.5 mr-2" />Share</DropdownMenuItem>
-        <DropdownMenuItem onClick={(e) => { e.stopPropagation(); confirmDelete(item); }} className="text-destructive focus:text-destructive"><Trash2 className="w-3.5 h-3.5 mr-2" />Delete</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); e.stopPropagation();
-    setIsDragging(false); dragCounter.current = 0;
-    const files = Array.from(e.dataTransfer.files);
-    for (const f of files) uploadMutation.mutate(f);
-  };
-
-  const breadcrumbs = subPath ? subPath.split("/") : [];
-
-  if (isLoading) {
-    return (
-      <Card data-testid="property-folders-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <FolderOpen className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Folders</h3>
-          </div>
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8" />)}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card data-testid="property-folders-panel"
-      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; if (e.dataTransfer.types.includes("Files")) setIsDragging(true); }}
-      onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={onDrop}
-      className={[isDragging ? "ring-2 ring-primary border-primary" : "", bare ? "border-0 shadow-none bg-transparent rounded-none" : ""].filter(Boolean).join(" ") || undefined}
-    >
-      <CardContent className={bare ? "p-0" : "p-4"}>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            {!bare && <FolderOpen className="w-4 h-4" />}
-            {!bare && <h3 className="text-sm font-semibold">Documents</h3>}
-            {tabs.map((t) => (
-              <Pill
-                key={t.label}
-                active={t === activeTab}
-                onClick={() => { setActiveTeamName(t.label); setSubPath(""); setLinkEdit(null); }}
-                data-testid={`folder-team-tab-${t.label}`}
-              >
-                {t.label}
-              </Pill>
-            ))}
-          </div>
-          <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
-            {entityType && entityId && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={startChat} data-testid="btn-folder-chat">
-                <MessageSquare className="w-3 h-3 mr-1" />Chat
-              </Button>
-            )}
-            {folderData?.currentItemId && (
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={promptNewFolder} disabled={newFolderMutation.isPending} data-testid="btn-new-folder">
-                {newFolderMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <FolderPlus className="w-3 h-3 mr-1" />}New folder
-              </Button>
-            )}
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={uploadMutation.isPending} data-testid="btn-upload-property-file">
-              {uploadMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Upload
-            </Button>
-            {folderData?.webUrl && (
-              <a href={folderData.webUrl} target="_blank" rel="noopener noreferrer">
-                <Button size="sm" variant="ghost" className="h-7 text-xs" data-testid="btn-open-sharepoint">
-                  <ExternalLink className="w-3 h-3 mr-1" />SharePoint
-                </Button>
-              </a>
-            )}
-            {!subPath && folderData?.exists && folderData?.currentItemId && !folderSharedWithOtherTab && (
-              // Destructive, rarely needed — behind a menu, not a red button
-              // in the everyday toolbar.
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" aria-label="More folder actions" title="More folder actions" data-testid="btn-folder-more">
-                    <MoreVertical className="w-3.5 h-3.5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem className="text-destructive focus:text-destructive text-xs" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree">
-                    <Trash2 className="w-3 h-3 mr-1.5" />Delete the whole {activeTeam} folder tree
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMutation.mutate(f); e.target.value = ""; }}
-            />
-          </div>
-        </div>
-
-        {propertyId && activeTab && (
-          linkEdit ? (
-            <div className="flex items-center gap-2 mb-2 flex-wrap" data-testid="folder-link-form">
-              {linkEdit.isNew && (
-                <>
-                  <Input
-                    placeholder="Folder name, e.g. Leases"
-                    value={linkEdit.label}
-                    onChange={(e) => setLinkEdit({ ...linkEdit, label: e.target.value })}
-                    className="text-xs h-8 w-44"
-                    list="folder-link-teams"
-                    data-testid="input-folder-link-label"
-                  />
-                  <datalist id="folder-link-teams">{BGP_TEAMS.map(t => <option key={t} value={t} />)}</datalist>
-                </>
-              )}
-              <Input
-                placeholder="https://brucegillinghampollardlimited.sharepoint.com/..."
-                value={linkEdit.url}
-                onChange={(e) => setLinkEdit({ ...linkEdit, url: e.target.value })}
-                className="text-xs h-8 flex-1 min-w-[12rem]"
-                data-testid="input-folder-link-url"
-              />
-              <Button size="sm" className="h-8 text-xs" disabled={!linkEdit.label.trim() || !linkEdit.url.trim() || linkMutation.isPending} onClick={() => linkMutation.mutate({ label: linkEdit.label.trim(), url: linkEdit.url.trim() })} data-testid="button-save-folder-link">
-                {linkMutation.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}Save
-              </Button>
-              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setLinkEdit(null)}>Cancel</Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground flex-wrap" data-testid="folder-link-line">
-              {activeTab.own ? (
-                <>
-                  <span>{activeTab.kind === "extra" ? "Linked folder" : `${activeTab.label}'s own folder`}</span>
-                  <span>·</span>
-                  <button className="text-primary hover:underline" onClick={() => setLinkEdit({ label: activeTab.label, url: activeTab.url || "", isNew: false })} data-testid="button-change-folder-link">Change</button>
-                  <span>·</span>
-                  <button className="text-primary hover:underline" disabled={linkMutation.isPending} onClick={() => { if (window.confirm(activeTab.kind === "extra" ? `Remove the ${activeTab.label} tab? The SharePoint folder itself is not touched.` : `Unlink ${activeTab.label}'s own folder? The tab goes back to the property's linked folder; nothing in SharePoint changes.`)) linkMutation.mutate({ label: activeTab.label, url: null }); }} data-testid="button-remove-folder-link">Remove</button>
-                </>
-              ) : (
-                <>
-                  {activeTab.url && <><span>Using the property's linked folder</span><span>·</span></>}
-                  <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: activeTab.label, url: "", isNew: false })} data-testid="button-link-team-folder">
-                    <Link2 className="w-3 h-3" />Link folder for {activeTab.label}
-                  </button>
-                </>
-              )}
-              <span>·</span>
-              <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: "", url: "", isNew: true })} data-testid="button-add-folder-link">
-                <Plus className="w-3 h-3" />Add folder
-              </button>
-            </div>
-          )
-        )}
-
-        {/* Breadcrumb navigation when drilling into subfolders */}
-        {(subPath || folderData?.exists) && (
-          <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
-            <button onClick={() => setSubPath("")} className={`hover:text-primary ${subPath ? "text-primary cursor-pointer" : "text-foreground font-medium"}`} data-testid="breadcrumb-root">
-              {propertyName}
-            </button>
-            {breadcrumbs.map((seg, i) => (
-              <span key={i} className="flex items-center gap-1">
-                <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                <button
-                  onClick={() => setSubPath(breadcrumbs.slice(0, i + 1).join("/"))}
-                  className={`hover:text-primary ${i === breadcrumbs.length - 1 ? "text-foreground font-medium" : "text-primary cursor-pointer"}`}
-                  data-testid={`breadcrumb-${i}`}
-                >
-                  {seg}
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {isDragging && (
-          <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-md flex items-center justify-center pointer-events-none z-10">
-            <p className="text-sm font-medium text-primary">Drop file here to upload</p>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
-        ) : !folderData?.exists ? (
-          <div className="text-center py-6">
-            <FolderTree className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No folder linked yet</p>
-            <p className="text-[10px] text-muted-foreground mt-1">Drop a file here or click Upload to start</p>
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {folderData.folders.filter(f => f.isFolder).map((folder) => (
-              <div
-                key={folder.id}
-                onClick={() => setSubPath(subPath ? `${subPath}/${folder.name}` : folder.name)}
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group cursor-pointer"
-                data-testid={`folder-item-${folder.id}`}
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                <span className="text-xs flex-1 truncate">{folder.name}</span>
-                {folder.childCount > 0 && (
-                  <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
-                )}
-                {driveId && rowMenu(folder)}
-                <ChevronRight className="w-3 h-3 text-muted-foreground" />
-              </div>
-            ))}
-            {folderData.folders.filter(f => !f.isFolder).map((file) => (
-              <a
-                key={file.id}
-                href={file.webUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group"
-                data-testid={`file-item-${file.id}`}
-                title={file.size ? `${Math.round(file.size / 1024).toLocaleString()} KB` : undefined}
-              >
-                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                <span className="text-xs flex-1 truncate">{file.name}</span>
-                {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
-                {driveId && rowMenu(file)}
-                <ExternalLink className="w-3 h-3 text-muted-foreground invisible group-hover:visible flex-shrink-0" />
-              </a>
-            ))}
-            {folderData.folders.length === 0 && (
-              <p className="text-xs text-muted-foreground italic text-center py-4">This folder is empty. Drop a file or click Upload.</p>
-            )}
-          </div>
-        )}
-      </CardContent>
-
-      <Dialog open={!!shareFor} onOpenChange={(o) => { if (!o) setShareFor(null); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle className="text-sm">Share "{shareFor?.name}"</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Anyone with the link</Label>
-              {shareUrl ? (
-                <div className="flex items-center gap-2 mt-1">
-                  <Input readOnly value={shareUrl} className="text-xs h-8" data-testid="share-link-url" />
-                  <Button size="sm" className="h-8" onClick={() => { navigator.clipboard.writeText(shareUrl); toast({ title: "Link copied" }); }} data-testid="btn-copy-share-link"><Copy className="w-3 h-3" /></Button>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Generating link…</p>
-              )}
-              {shareScopeNote && <p className="text-[10px] text-amber-600 mt-1">{shareScopeNote}</p>}
-            </div>
-            <div className="border-t pt-3">
-              <Label className="text-xs">Or invite specific people by email</Label>
-              <div className="flex items-center gap-2 mt-1">
-                <Input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="name@example.com" className="text-xs h-8" data-testid="share-invite-email" />
-                <Button size="sm" className="h-8 text-xs" disabled={!inviteEmail.trim() || inviteMutation.isPending} onClick={() => inviteMutation.mutate()} data-testid="btn-send-invite">
-                  {inviteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Invite"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </Card>
-  );
-}
-
-export function PropertySharepointLink({
-  propertyId,
-  sharepointFolderUrl,
-  onUpdate,
-}: {
-  propertyId: string;
-  sharepointFolderUrl?: string | null;
-  onUpdate: (field: string, value: any) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [urlInput, setUrlInput] = useState(sharepointFolderUrl || "");
-
-  if (sharepointFolderUrl && !editing) {
-    return (
-      <div className="flex items-center gap-2 pt-1">
-        <a
-          href={sharepointFolderUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-          data-testid="link-property-sharepoint-url"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Open in SharePoint
-        </a>
-        <button
-          className="text-muted-foreground hover:text-foreground"
-          onClick={() => { setUrlInput(sharepointFolderUrl); setEditing(true); }}
-          data-testid="button-edit-property-sharepoint-url"
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-      </div>
-    );
-  }
-
-  if (editing) {
-    return (
-      <div className="space-y-2 pt-1">
-        <Input
-          placeholder="https://brucegillinghampollard.sharepoint.com/..."
-          value={urlInput}
-          onChange={(e) => setUrlInput(e.target.value)}
-          className="text-xs h-8"
-          data-testid="input-property-sharepoint-url"
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => {
-              onUpdate("sharepointFolderUrl", urlInput.trim() || null);
-              setEditing(false);
-            }}
-            disabled={!urlInput.trim()}
-            data-testid="button-save-property-sharepoint-url"
-          >
-            Save
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setEditing(false)}
-          >
-            Cancel
-          </Button>
-          {sharepointFolderUrl && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-destructive hover:text-destructive"
-              onClick={() => {
-                onUpdate("sharepointFolderUrl", null);
-                setEditing(false);
-                setUrlInput("");
-              }}
-              data-testid="button-remove-property-sharepoint-url"
-            >
-              Remove
-            </Button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="text-xs h-7 mt-1"
-      onClick={() => setEditing(true)}
-      data-testid="button-link-property-sharepoint"
-    >
-      <Link2 className="w-3 h-3 mr-1" />
-      Link SharePoint Folder
-    </Button>
-  );
-}
-
 // Conversations that @-tagged this record in chat — the flip side of smart
 // tags: from the entity page back to every discussion that mentioned it.
 // Member-scoped server-side, so it only ever lists threads you belong to.
@@ -2513,7 +1643,12 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
             <FolderOpen className="w-4 h-4" />
             <h3 className="text-sm font-semibold">Documents</h3>
           </div>
-          <p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>
+          {/* Folders BGP shared with the client show even with no data room root linked. */}
+          <ClientSharedFolders
+            propertyId={propertyId}
+            company={!propertyId}
+            whenEmpty={<p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>}
+          />
         </CardContent>
       </Card>
     );
@@ -2615,6 +1750,9 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
             ))}
           </div>
         )}
+        <div className="mt-3 border-t border-border pt-3 empty:hidden">
+          <ClientSharedFolders propertyId={propertyId} company={!propertyId} />
+        </div>
       </CardContent>
     </Card>
   );
@@ -5661,7 +4799,7 @@ function PropertiesList({
     tenants: "Tenants",
     agents: "BGP Contacts",
     sqft: "Sq Ft",
-    folderTree: "Folder Tree",
+    folderTree: "Folders",
   };
 
   const toggleColumn = (col: string) => {
@@ -6485,7 +5623,7 @@ function PropertiesList({
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[90px] w-[90px]">Sq Ft</SortableTableHead>}
-                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
+                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folders</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>

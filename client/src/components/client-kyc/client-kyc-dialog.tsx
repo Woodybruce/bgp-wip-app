@@ -30,6 +30,9 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { CLIENT_INSTRUCTIONS, clientSubjectParam, type ClientKycNext } from "@shared/client-kyc";
 import type { PrecheckCardLine, PrecheckCompany } from "@shared/kyc-prechecks";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
+import type { PersonDetailsView } from "@shared/kyc-person-details";
+import { PersonDetailsLine } from "@/components/aml-person-details";
+import { AbroadTrace, useDealAbroad } from "@/components/aml-abroad";
 
 export interface ClientFileView {
   subject: { companyId: string; accountName: string; entityId: string | null; name: string; number: string | null; kind: string; country: string | null; sameCompany: boolean };
@@ -37,7 +40,11 @@ export interface ClientFileView {
   state: { status: string | null; expiresAt: string | null; approvedBy: string | null; scope: string | null; bucket: string };
   precheck: { ranAt: string | null; running: boolean; lines: PrecheckCardLine[]; company: PrecheckCompany | null } | null;
   flags: { live: KycRedFlag[]; setAside: SetAsideFlag[]; level: { level: "simplified" | "standard" | "enhanced"; why: string[]; toWeigh?: string[] } | null; unchecked: string[] };
-  signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean };
+  signOff: { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; canSignOff: boolean; canDecide: boolean;
+    // A private individual's date of birth and nationality (24 November 2026).
+    person?: PersonDetailsView | null;
+    // A listed company's sign-off note, written from the file (24 November 2026).
+    fileNote?: string | null };
   next: ClientKycNext;
   documents?: { done: boolean; request?: { status: ClientRequestStatus; who: string; sentAt: string | null } | null; owing?: number };
   // The company's sanctions-only switch (24 November 2026): the sanctions steps alone, nothing asked of the client.
@@ -61,6 +68,20 @@ export function useClientFile(companyId: string, entityId: string | null, enable
     },
     refetchInterval: q => (q.state.data?.precheck?.running ? 5000 : false),
   });
+}
+
+// Owners abroad on a client file (Woody, 25 November 2026, on Federated Hermes
+// Limited: "suggesting find them on owners abroad but there isnt anywhere to do
+// it on this form"): the transaction box's own section, rendered inside the
+// client file's addresses so its reads and saves go to the client file.
+function ClientFileAbroad({ scopeKey, ownedAbroad, sanctionsOnly }: { scopeKey: string; ownedAbroad: boolean; sanctionsOnly: boolean }) {
+  const query = useDealAbroad(scopeKey, "client", true);
+  return (
+    <div className="space-y-1.5" data-testid="client-kyc-abroad">
+      <p className="text-xs font-medium text-muted-foreground">{query.data?.trace?.party ? "Registered abroad" : ownedAbroad ? "Owners abroad" : "Parent companies"}</p>
+      <AbroadTrace dealId={scopeKey} role="client" query={query} sanctionsOnly={sanctionsOnly} />
+    </div>
+  );
 }
 
 /** Opens the client file: what BGP is instructed on, and who to ask. */
@@ -152,8 +173,13 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
     missing: false,
     kind: view.subject.kind === "individual" ? "a person" : null,
     warning: pre?.company?.warnings[0] || null,
-    gaps: !cleared && !sanctionsOnly && !view.file?.contact && !request ? ["who to ask not set"] : [],
+    gaps: [
+      !cleared && !sanctionsOnly && !view.file?.contact && !request ? "who to ask not set" : null,
+      // A private individual's date of birth, before a sanctions-only sign-off (24 November 2026).
+      !cleared && view.signOff.person?.needed && !view.signOff.person.details ? "date of birth to add" : null,
+    ].filter((g): g is string => !!g),
     notes: [
+      view.signOff.person?.words ? view.signOff.person.words.replace(/^Born /, "born ") : null,
       view.file?.contact && !cleared ? `ask ${view.file.contact.name}` : null,
       view.subject.entityId ? (view.xero ? "in Xero" : "not in Xero") : null,
       view.transactions.length ? `${view.transactions.length} transaction${view.transactions.length === 1 ? "" : "s"}` : null,
@@ -181,6 +207,9 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
   }) : null;
   const signOffStep = sanctionsOnly ? 3 : 4;
   const isPerson = view?.subject.kind === "individual";
+  // Owned through a company abroad, or anything traced past Companies House: the section to record the people behind it.
+  const ownedAbroad = pre?.company?.ownersAbroad || [];
+  const showAbroad = !!view && !isPerson && (ownedAbroad.length > 0 || (pre?.company?.trace || []).length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,6 +244,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                   <SendClientChecksButton dealId={scopeKey} companyId={companyId} partyName={view.subject.name} label="Send client checks" className="h-7 text-xs bg-background" />
                 )}
                 {view.next.action === "sign_off" && <Button size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpenStep(signOffStep)}>Sign off</Button>}
+                {view.next.action === "person_details" && <Button size="sm" variant="outline" className="h-7 text-xs bg-background" onClick={() => setOpenStep(1)} data-testid="client-kyc-next-dob">Add it</Button>}
               </>} />
               {view.sanctionsOnly && (
                 <p className="mb-2 text-xs text-muted-foreground" data-testid="client-kyc-sanctions-only">Sanctions checks only: for lettings under £10,000 a month. Nothing is asked of the client; the sign-off covers small lettings only.</p>
@@ -226,6 +256,11 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
               <AmlStep n={1} label={isPerson ? AML_STEP_LABEL.person : AML_STEP_LABEL.company} testId="client-kyc-step-company" open={step(1)} onToggle={() => toggle(1)}
                 state={companyLine.state} summary={companyLine.words}>
                 {pre?.company && <CompanyFactsList company={pre.company} testKey={`client-${view.subject.entityId || view.subject.companyId}`} />}
+                {showAbroad && <ClientFileAbroad scopeKey={scopeKey} ownedAbroad={ownedAbroad.length > 0} sanctionsOnly={sanctionsOnly} />}
+                {view.signOff.person && (
+                  <PersonDetailsLine view={view.signOff.person} url={`/api/client-kyc/${encodeURIComponent(companyId)}/subjects/${encodeURIComponent(entity)}/person-details`}
+                    onSaved={refresh} testKey="client" />
+                )}
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
                   {view.xero ? <span>Xero: <span className="font-medium">{view.xero.name}</span>, used for invoices when it signs</span>
@@ -274,7 +309,14 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
                 {view.signOff.blocked && <p className="text-xs text-amber-800 dark:text-amber-300">{view.signOff.blocked}</p>}
                 {view.signOff.canSignOff ? (
                   <div className="space-y-2">
-                    {(view.signOff.needsNote || view.signOff.edd) && <Textarea value={note} onChange={e => setNote(e.target.value)} rows={3} placeholder={view.signOff.edd ? "What was checked, and why the risk is acceptable" : "A note: what was checked"} data-testid="client-kyc-sign-off-note" />}
+                    {view.signOff.fileNote && (
+                      <div className="space-y-1" data-testid="client-kyc-sign-off-file-note">
+                        <p className="text-xs font-medium">Written from the file</p>
+                        <p className="rounded-md border bg-muted/40 px-2.5 py-2 text-xs leading-relaxed">{view.signOff.fileNote}</p>
+                      </div>
+                    )}
+                    {(view.signOff.needsNote || view.signOff.edd) && <Textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+                      placeholder={view.signOff.edd ? "What was checked, and why the risk is acceptable" : view.signOff.fileNote ? "The client checks aren't finished: say why you're signing off before they are" : "A note: what was checked"} data-testid="client-kyc-sign-off-note" />}
                     <Button size="sm" disabled={!!view.signOff.blocked || signOff.isPending} onClick={() => signOff.mutate()} data-testid="client-kyc-sign-off">
                       {signOff.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Sign off {view.subject.name}
                     </Button>

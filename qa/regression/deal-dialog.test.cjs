@@ -24,7 +24,7 @@ const { EMPTY_JOINT_AGENCY } = evaluate(find('client/src/components/joint-agency
 function setup({ handover, prefill } = {}) {
   const state = { form: null, resets: 0, changeReason: '', learning: '', showAllFields: false, feeRows: [], feeAllocType: 'percentage', nameAutoFilled: false,
     pickedUnit: null, jointAgency: EMPTY_JOINT_AGENCY, jointAgencyErrors: false, noteBrandHint: 'stale',
-    dealRead: 'stale', dealNoteBusy: 'stale', propertySeed: 'stale' };
+    dealRead: 'stale', dealNoteBusy: 'stale', propertySeed: 'stale', linked: 'stale' };
   const bindings = {
     draftSessionRef: { current: null },
     dealToForm: deal => ({ ...deal }),
@@ -37,7 +37,8 @@ function setup({ handover, prefill } = {}) {
     setForm: value => { state.form = value; state.resets++; },
     EMPTY_JOINT_AGENCY,
   };
-  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors', 'noteBrandHint', 'dealRead', 'dealNoteBusy', 'propertySeed']) {
+  // A New Transaction moved onto a live transaction (Use this transaction, 24 November 2026) is let go too.
+  for (const field of ['changeReason', 'learning', 'showAllFields', 'feeRows', 'feeAllocType', 'nameAutoFilled', 'pickedUnit', 'jointAgency', 'jointAgencyErrors', 'noteBrandHint', 'dealRead', 'dealNoteBusy', 'propertySeed', 'linked']) {
     bindings[`set${field[0].toUpperCase()}${field.slice(1)}`] = value => { state[field] = value; };
   }
   const { render } = evaluate(`exports.render = (open, deal) => (${resetEffect.getText(ast)})();`, bindings);
@@ -109,6 +110,8 @@ test('a handover starts from the unit\'s deal at Solicitors, keeps the deal\'s n
   assert.equal(state.noteBrandHint, null);
   // The deal read from the box at the top (2026-11-20) is cleared with it.
   assert.deepEqual([state.dealRead, state.dealNoteBusy, state.propertySeed], [null, null, null]);
+  // And a live transaction New Transaction was moved onto (24 November 2026).
+  assert.equal(state.linked, null);
   // A tracker row with no deal yet still opens on the handover form.
   const orphan = setup({ handover: { kind: 'promote', unit: { id: 'row-2' } } });
   orphan.render(true, undefined);

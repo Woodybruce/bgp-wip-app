@@ -36,7 +36,10 @@ import { useToast } from "@/hooks/use-toast";
 import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register";
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
+import { AmlCommentaryView } from "@/components/aml-commentary";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
+import type { PersonDetailsView } from "@shared/kyc-person-details";
+import { PersonDetailsLine } from "@/components/aml-person-details";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
@@ -99,7 +102,10 @@ export interface DealAmlStatus {
     canDecide: boolean; canSignOff?: boolean; mlroAppointed: boolean;
     officers?: { nominated: string | null; deputy: string | null }; officerWords?: string;
     // full: on a letting under £10,000 a month, whether the full checks may be signed off (23 November 2026).
-    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; full?: { blocked: string | null; needsNote: boolean; edd?: boolean } }>;
+    // fileNote: a listed company's sign-off note, written from the file (24 November 2026).
+    parties: Record<string, { blocked: string | null; needsNote: boolean; edd?: boolean; fileNote?: string | null; full?: { blocked: string | null; needsNote: boolean; edd?: boolean; fileNote?: string | null };
+      // A private individual's date of birth and nationality (24 November 2026).
+      person?: PersonDetailsView | null }>;
     // The officers' setting: BGP does enhanced due diligence itself (21 November 2026).
     inHouseEdd?: boolean;
   } | null;
@@ -181,10 +187,27 @@ function PartyCharityFacts({ data, companyId }: { data: DealAmlStatus; companyId
   );
 }
 
+// The risk assessment (Woody, 24 November 2026, on Vodafone #4664: "we
+// allready have all this info highlighted in the parts above? shouldnt this
+// be more an AI led commentary with fable 5"): Fable's written view first
+// (aml-commentary.tsx), and the full record, in KYC4U's shape, folded under it.
+function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string }) {
+  const [showRecord, setShowRecord] = useState(false);
+  return (
+    <div className="space-y-2" data-testid={`aml-risk-assessment-${role}`}>
+      <AmlCommentaryView dealId={dealId} role={role} />
+      <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setShowRecord(v => !v)} data-testid={`aml-risk-record-toggle-${role}`}>
+        {showRecord ? "Hide the full record" : "Show the full record"}
+      </button>
+      {showRecord && <PartyRiskRecord dealId={dealId} role={role} />}
+    </div>
+  );
+}
+
 // BGP's written risk assessment for the party, in KYC4U's shape (Woody,
 // 21 November 2026: "yes lets do 1 to 4"). The same builder as the AML file
 // (shared/aml-risk-assessment.ts), read from GET /api/deals/:id/aml-risk-assessment.
-function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string }) {
+function PartyRiskRecord({ dealId, role }: { dealId: string; role: string }) {
   const { data, isLoading, error } = useQuery<{ riskAssessment: RiskAssessment | null; unread: string[] }>({
     queryKey: ["/api/deals", dealId, "aml-risk-assessment", role],
     queryFn: async () => {
@@ -205,8 +228,8 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
   );
   const H = ({ children }: { children: ReactNode }) => <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{children}</p>;
   return (
-    <div className="space-y-1.5" data-testid={`aml-risk-assessment-${role}`}>
-      <p className="text-[11px] text-muted-foreground">BGP's written risk assessment, read from the checks above. The AML file prints it first.</p>
+    <div className="space-y-1.5" data-testid={`aml-risk-record-${role}`}>
+      <p className="text-[11px] text-muted-foreground">The full record, read from the checks above. The AML file prints it after BGP's view.</p>
       <Rows rows={ra.job} />
       <H>Risk details</H>
       <ul className="text-xs space-y-0.5">
@@ -223,9 +246,9 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
       </>}
       <H>Beneficial owners</H>
       {ra.ownersNote && <p className="text-xs text-muted-foreground">{ra.ownersNote}</p>}
-      <ul className="text-xs space-y-1">
+      {ra.owners.length > 0 && <ul className="text-xs space-y-1">
         {ra.owners.map(o => <li key={o.name}><span className="font-medium">{o.name}</span> <span className="text-muted-foreground">· {o.nationality} · {o.residence}</span> · <span className={o.idMethod.startsWith("Not verified") ? "text-amber-800 dark:text-amber-300" : ""}>{o.idMethod}</span> <span className="text-muted-foreground">· risk {o.risk.toLowerCase()} · PEP {o.pep.toLowerCase()}</span></li>)}
-      </ul>
+      </ul>}
       <H>Risk identified</H>
       <ul className="text-xs space-y-0.5">{(ra.riskIdentified.length ? ra.riskIdentified : ["No risk identified."]).map(x => <li key={x} className={ra.riskIdentified.length ? "text-amber-800 dark:text-amber-300" : ""}>{x}</li>)}</ul>
       {ra.mitigating.length > 0 && <><H>Mitigating factors</H><ul className="text-xs space-y-0.5">{ra.mitigating.map(x => <li key={x}>{x}</li>)}</ul></>}
@@ -380,7 +403,14 @@ export function useDealAmlStatus(dealId: string, enabled = true) {
     queryFn: async () => {
       const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load AML status");
-      return res.json();
+      const next: DealAmlStatus = await res.json();
+      // A run of BGP's checks started or finished since the last read: the
+      // people to check and the send window's list are read again (24
+      // November 2026, #4664: the list was made before the register was read).
+      const before = queryClient.getQueryData<DealAmlStatus>(["/api/kyc/deal", dealId, "status"]);
+      const runs = (s?: DealAmlStatus) => JSON.stringify(Object.entries(s?.prechecks || {}).map(([k, p]) => [k, p.state, p.ranAt || null]));
+      if (before && runs(before) !== runs(next)) queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "client-checks"] });
+      return next;
     },
   });
 }
@@ -599,6 +629,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     inHouseEdd: true,
     sanctionsFlags: [...flags, ...(data.redFlags?.deal || [])].filter(isSanctionsFlag).length,
     joint: jointBoxFacts(jointQ.data, cp.id),
+    // A private individual's date of birth, before a sanctions-only sign-off (24 November 2026).
+    dobNeeded: !settled && !!decision?.person?.needed && !decision.person.details,
   };
   const step = amlNextStep(facts);
 
@@ -606,6 +638,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     const quiet = "h-7 text-xs bg-background";
     switch (step.action) {
       case "trust": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-trust-${cp.role}`}>Add trust information</Button>;
+      case "person_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-dob-${cp.role}`}>Add it</Button>;
       case "fill_in": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
       case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
@@ -632,6 +665,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The guarantors (23 November 2026): named on the line, and to do while BGP's checks on one have not run.
   const guarantors = party?.guarantors || [];
   const guarantorOpen = guarantors.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
+  // The other companies that sign for the party (24 November 2026): the same way.
+  const otherSigners = party?.signers || [];
+  const signerOpen = otherSigners.some(g => g.checks.state === "not_run" || g.checks.state === "stale");
   const signs = companyStepLine({
     missing: companyMissing,
     kind: !isCompany && !party?.company ? "a person" : isPublicBody ? "a UK public body"
@@ -642,11 +678,15 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       askNoEmail ? `no email for ${party!.person!.name}` : null,
       facts.billingDiffers ? "BGP bills another company" : null,
       trustRecordedGaps.length ? "trust information to add" : null,
+      facts.dobNeeded ? "date of birth to add" : null,
       guarantorOpen ? "guarantor checks to run" : null,
+      signerOpen ? "checks to run on the other company that signs" : null,
     ].filter((g): g is string => !!g),
     notes: [
+      decision?.person?.details && decision.person.words ? decision.person.words.replace(/^Born /, "born ") : null,
       party?.person && !askNoEmail && !sanctionsOnly && !settled ? `ask ${party.person.name}` : null,
       ownedAbroad.length ? "owned from abroad" : null,
+      otherSigners.length ? `also signs: ${otherSigners.map(g => g.name).join(", ")}` : null,
       guarantors.length ? `guarantor${guarantors.length > 1 ? "s" : ""}: ${guarantors.map(g => g.name).join(", ")}` : null,
     ].filter((g): g is string => !!g),
   });
@@ -794,6 +834,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {decision?.person && (
+              <PersonDetailsLine view={decision.person} url={`/api/deals/${dealId}/parties/${cp.role}/person-details`} testKey={cp.role}
+                onSaved={() => {
+                  queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+                }} />
+            )}
             {party && !settled && <PublicBodyLine dealId={dealId} party={party} compact />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}

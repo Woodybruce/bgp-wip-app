@@ -298,6 +298,48 @@ test("a proof of address counts only when it reads as theirs, in date and accept
   assert.equal(fixed.address.proof?.documentId, "doc-2");
 });
 
+// Woody, 24 November 2026: "Let's allow others to drop proof of address" (who
+// hands it over is not a legal point). A proof sent on someone else's link on
+// the party counts for the person it names, read and checked the same way.
+test("a proof of address sent on someone else's link counts for the person it names", () => {
+  const huseynKey = personKey("Mr Huseyn Mirhadiyev");
+  const peopleWith = (file: Partial<PeopleRequest["files"][number]>, over: Partial<PeopleRequest> = {}) => partyPeople({
+    companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) },
+    requests: [request({ finished: true, files: [{ name: "bill.pdf", docKey: "proof_of_address", uploadedAt: "2026-11-20T09:00:00Z", url: "/a", documentId: "doc-9", ...file }], ...over })],
+  }).people;
+  const who = (list: ReturnType<typeof peopleWith>, name: string) => list.find(p => p.name === name)!;
+
+  // Jack, the person acting, uploads Huseyn's bill for him.
+  const sent = who(peopleWith({ reading: thamesWater, forKey: huseynKey }), "Huseyn Mirhadiyev");
+  assert.equal(sent.address.done, true);
+  assert.equal(sent.address.proof?.elsewhere, "on Jack Barrat's link");
+  assert.equal(sent.address.proof?.ref, "7MJEGT");
+  assert.ok(!sent.outstanding.includes("proof of address"));
+  // With no "for" at all, a bill that reads as his still counts for him.
+  assert.equal(who(peopleWith({ reading: thamesWater }), "Huseyn Mirhadiyev").address.done, true);
+  // It never counts for someone it does not name.
+  assert.equal(who(peopleWith({ reading: thamesWater, forKey: huseynKey }), "Woody Bruce").address.done, false);
+  // Sent for him but in another name: shown on his row with the reason, so an officer can accept it for him.
+  const wrong = who(peopleWith({ reading: { ...thamesWater, names: ["MRS J SMITH"] }, forKey: huseynKey }), "Huseyn Mirhadiyev");
+  assert.equal(wrong.address.done, false);
+  assert.deepEqual(wrong.address.proof?.reasons, ["In the name of MRS J SMITH, not Huseyn Mirhadiyev"]);
+  const accepted = who(peopleWith({ reading: { ...thamesWater, names: ["MRS J SMITH"] }, forKey: huseynKey,
+    accepted: { by: "Jack Barratt", at: "2026-11-20T10:00:00Z", note: "Bill in his partner's name; the tenancy agreement shows him at the address" } }), "Huseyn Mirhadiyev");
+  assert.equal(accepted.address.done, true);
+  assert.equal(accepted.address.proof?.accepted?.by, "Jack Barratt");
+  // An acceptance is for the person it was sent for, never for whoever else the bill names.
+  const forWoody = peopleWith({ reading: thamesWater, forKey: personKey("Mr Woody Bruce"), accepted: { by: "Jack Barratt", at: "2026-11-20T10:00:00Z", note: "Accepted for Woody" } });
+  assert.equal(who(forWoody, "Woody Bruce").address.done, true, "accepted for him");
+  assert.equal(who(forWoody, "Huseyn Mirhadiyev").address.done, true, "it reads as Huseyn's, so it counts for him too");
+  assert.equal(who(forWoody, "Huseyn Mirhadiyev").address.proof?.accepted, null);
+  // Not read yet: not counted, and shown on his row as waiting.
+  const unread = who(peopleWith({ reading: null, forKey: huseynKey }), "Huseyn Mirhadiyev");
+  assert.equal(unread.address.done, false);
+  assert.deepEqual(unread.address.proof?.reasons, ["Not read yet"]);
+  // Another party's links never count.
+  assert.equal(who(peopleWith({ reading: thamesWater, forKey: huseynKey }, { companyId: "brand-cap" }), "Huseyn Mirhadiyev").address.done, false);
+});
+
 test("owners behind a company registered abroad: the client is asked who they are", async () => {
   const { partyPeople, PARTY_PEOPLE_BASIS_WORDS } = await import("../shared/kyc-people");
   const precheck: any = {
@@ -313,7 +355,8 @@ test("owners behind a company registered abroad: the client is asked who they ar
   assert.equal(people.basis, "owners_abroad");
   assert.deepEqual(people.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco", foundAt: null }]);
   // Since 21 November 2026 a company abroad goes to KYC4U (Woody: "foreign companies I think we will send to KYC4U").
-  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /They have to be found \(by KYC4U, or by the officers when enhanced checks are in-house\)\. The app traces what it can/);
+  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /BGP's officers find them\. The app traces what it can/);
+  assert.doesNotMatch(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /KYC4U/);
   assert.ok(people.outstanding.some(o => /The people behind Scp Aaa Invest \(Monaco\)/.test(o)), "owed until the client sends the chart");
 
   // Someone recorded behind it (21 November 2026) is an owner to check, and

@@ -27,7 +27,9 @@ export type BgpTeamPerson = {
   lastAt?: string | null;
 };
 
-export function BgpTeamRow({ person, menu }: { person: BgpTeamPerson; menu?: ReactNode }) {
+// details: the email and phone written out under the name, not only as icons
+// (the transaction's People card, Woody, 24 November 2026: "with email and phone number").
+export function BgpTeamRow({ person, menu, details }: { person: BgpTeamPerson; menu?: ReactNode; details?: boolean }) {
   const last = lastContactShort(person.lastAt);
   const history = person.history?.filter(h => h.label) || [];
   return (
@@ -53,10 +55,16 @@ export function BgpTeamRow({ person, menu }: { person: BgpTeamPerson; menu?: Rea
           {last && history.length > 0 && <span className="whitespace-nowrap"> · {last}</span>}
           {person.note && <span className="block truncate">{person.note}</span>}
         </div>
+        {details && (person.email || person.phone) && (
+          <div className="text-xs flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+            {person.email && <a href={`mailto:${person.email}`} className="text-primary hover:underline truncate max-w-full">{person.email}</a>}
+            {person.phone && <a href={`tel:${person.phone.replace(/[^\d+]/g, "")}`} className="text-primary hover:underline tabular-nums whitespace-nowrap">{person.phone}</a>}
+          </div>
+        )}
       </div>
       <div className="flex items-center shrink-0">
-        {person.email && <a href={`mailto:${person.email}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Email ${person.name}`} title={person.email}><Mail className="w-4 h-4" /></a>}
-        {person.phone && <a href={`tel:${person.phone.replace(/[^\d+]/g, "")}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Call ${person.name}`} title={person.phone}><Phone className="w-4 h-4" /></a>}
+        {!details && person.email && <a href={`mailto:${person.email}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Email ${person.name}`} title={person.email}><Mail className="w-4 h-4" /></a>}
+        {!details && person.phone && <a href={`tel:${person.phone.replace(/[^\d+]/g, "")}`} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label={`Call ${person.name}`} title={person.phone}><Phone className="w-4 h-4" /></a>}
         {menu && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -72,7 +80,7 @@ export function BgpTeamRow({ person, menu }: { person: BgpTeamPerson; menu?: Rea
   );
 }
 
-export function BgpTeamGroup({ people, menuFor, addControl, emptyText, loading, extra, title = "BGP team", bare }: {
+export function BgpTeamGroup({ people, menuFor, addControl, emptyText, loading, extra, title = "BGP team", bare, details }: {
   people: BgpTeamPerson[];
   menuFor?: (person: BgpTeamPerson) => ReactNode | null;
   addControl?: ReactNode;
@@ -82,6 +90,7 @@ export function BgpTeamGroup({ people, menuFor, addControl, emptyText, loading, 
   title?: string;
   // Inside a board that already draws group headings in its own style.
   bare?: boolean;
+  details?: boolean;
 }) {
   return (
     <div className="space-y-0.5 min-w-0" data-testid="bgp-team-group">
@@ -94,7 +103,7 @@ export function BgpTeamGroup({ people, menuFor, addControl, emptyText, loading, 
       {bare && addControl && <div className="pb-1">{addControl}</div>}
       {loading ? <p className="text-xs text-muted-foreground">Loading the team…</p>
         : !people.length ? (emptyText ? <p className="text-xs text-muted-foreground">{emptyText}</p> : null)
-        : people.map(person => <BgpTeamRow key={person.id} person={person} menu={menuFor?.(person) || undefined} />)}
+        : people.map(person => <BgpTeamRow key={person.id} person={person} menu={menuFor?.(person) || undefined} details={details} />)}
       {extra}
     </div>
   );

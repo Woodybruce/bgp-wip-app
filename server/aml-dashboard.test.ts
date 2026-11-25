@@ -109,6 +109,10 @@ test("who a party waits on", () => {
   assert.equal(amlWaitingOn("not_started", 0), "BGP: start the checks");
   assert.equal(amlWaitingOn("bgp_checked", 0), "BGP: send the client checks or sign off");
   assert.equal(amlWaitingOn("bgp_checked", 1), "BGP: send the client checks");
+  // A letting under £10,000 a month asks nobody for anything: screened, it waits on the sign-off.
+  assert.equal(amlWaitingOn("bgp_checked", 0, true), "BGP: sign off");
+  assert.equal(amlWaitingOn("bgp_checked", 1, true), "Officers: sign off");
+  assert.equal(amlWaitingOn("not_started", 0, true), "BGP: start the checks");
   assert.equal(amlWaitingOn("client_sent", 2), "The client");
   assert.equal(amlWaitingOn("client_finished", 0), "BGP: sign off");
   assert.equal(amlWaitingOn("client_finished", 1), "Officers: sign off");
@@ -147,4 +151,47 @@ test("the transaction's status in the Transactions board's words (Woody, 23 Nove
 test("no Not with KYC4U mark: KYC4U is no longer used (23 November 2026)", async () => {
   const board = await import("../shared/aml-dashboard");
   assert.equal((board as any).amlNeedsKyc4u, undefined);
+});
+
+test("one line per transaction with its parties inside (Woody, 24 November 2026)", async () => {
+  const { groupAmlByTransaction, transactionBuckets, transactionBucketCounts, transactionMatches, leadParty } = await import("../shared/aml-dashboard");
+  const party = (dealId: string, role: string, over: Partial<AmlDashboardRow> = {}): AmlDashboardRow => ({
+    key: `${dealId}:${role}`, dealId, dealName: `Unit ${dealId}`, dealRef: 100, dealStatus: "HOT", dealType: "New Letting", propertyName: "Westgate",
+    role, brandId: `${dealId}-${role}`, brandName: `${role} brand`, signsAs: null, level: "standard", levelWhy: [], stage: "not_started",
+    bucket: "todo", due: true, deadline: "before the lease completes", late: false, redFlags: [], waitingOn: "BGP: start the checks",
+    movedDays: null, approvedBy: null, expiresAt: null, agents: ["Victoria Broadhead"], mine: false, ...over,
+  });
+  // The tenant comes back before the landlord; the line reads landlord then tenant.
+  const rows = [
+    party("a", "tenant", { bucket: "in_progress", redFlags: ["Possible match"], late: true }),
+    party("a", "landlord", { bucket: "todo", agents: ["Victoria Broadhead", "Jack Barratt"] }),
+    party("b", "vendor", { bucket: "done" }),
+    party("b", "purchaser", { bucket: "done", mine: true }),
+    party("c", "landlord", { bucket: "done", brandName: "Hammerson" }),
+    party("c", "tenant", { bucket: "not_due" }),
+  ];
+  const lines = groupAmlByTransaction(rows);
+  assert.deepEqual(lines.map(l => l.dealId), ["a", "b", "c"]);
+  assert.deepEqual(lines[0].parties.map(p => p.role), ["landlord", "tenant"]);
+  assert.deepEqual(lines[0].buckets, ["todo", "in_progress"]);
+  assert.equal(lines[0].late, true);
+  assert.equal(lines[0].redFlags, 1);
+  assert.deepEqual(lines[0].agents, ["Victoria Broadhead", "Jack Barratt"]);
+  assert.deepEqual(lines[1].buckets, ["done"]);
+  assert.equal(lines[1].mine, true);
+  // Landlord cleared, tenant not due yet: nothing to do now.
+  assert.deepEqual(lines[2].buckets, ["not_due"]);
+  assert.deepEqual(transactionBucketCounts(lines), { todo: 1, in_progress: 1, done: 1, expiring: 0, not_due: 1, closed: 0 });
+  // Done only when every party is done; a party still to do keeps the transaction off Done.
+  assert.deepEqual(transactionBuckets(["done", "todo"]), ["todo"]);
+  assert.deepEqual(transactionBuckets(["expiring", "done"]), ["expiring"]);
+  assert.deepEqual(transactionBuckets(["closed", "done"]), ["closed"]);
+  assert.deepEqual(transactionBuckets(["not_due", "todo"]), ["todo"]);
+  assert.deepEqual(transactionBuckets([]), []);
+  // The search finds the transaction through any party, and it opens on the party on the pill.
+  assert.ok(transactionMatches(lines[2], "hammerson"));
+  assert.ok(!transactionMatches(lines[2], "pret"));
+  assert.equal(leadParty(lines[0], "in_progress").role, "tenant");
+  assert.equal(leadParty(lines[0], "todo").role, "landlord");
+  assert.equal(leadParty(lines[0], "done").role, "landlord");
 });

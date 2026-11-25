@@ -19,7 +19,6 @@ import {
 import fs from "fs";
 import { inArray } from "drizzle-orm";
 import { performPropertyLookup } from "./property-lookup";
-import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
 import { askPerplexity } from "./perplexity";
 import { callClaude } from "./utils/anthropic-client";
 import { legacyToCode } from "@shared/deal-status";
@@ -355,8 +354,8 @@ interface StageResults {
     modelRunName?: string;
     modelVersionLabel?: string;
     workbookUrl?: string;
-    // SharePoint URL — written by Stage 7 after the workbook is
-    // uploaded to BGP share drive/Investment/<Property>/Models/. The
+    // SharePoint URL — written by Stage 7 after the workbook is filed
+    // under Models in the run's (or its property's) folder in Folders. The
     // canonical shareable location; workbookUrl above is the local
     // BGP-auth-only download path.
     workbookSharepointUrl?: string;
@@ -2441,9 +2440,11 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   }
 
   // 1b-2. SharePoint folder tree — NEVER auto-create in Stage 1 (would spawn
-  // a new folder every search, cluttering SharePoint). Only surface the
-  // folder if one already exists (either stored on the run, or discoverable
-  // at the expected Investment/{address} path).
+  // a new folder every search, cluttering SharePoint). Only a folder already
+  // stored on the run is used. The run's folders are its Folders (server/
+  // folders/, record type "pathway_run", on the run's page): nothing is looked
+  // for at "BGP share drive/Investment/<address>" any more (Woody, 24 November
+  // 2026; docs/folders-review-2026-11-20.md).
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
   if (run.sharepointFolderPath && run.sharepointFolderUrl) {
     folderTree = {
@@ -2451,30 +2452,6 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       webUrl: run.sharepointFolderUrl,
       children: STANDARD_FOLDER_TREE,
     };
-  } else {
-    try {
-      const { lookupSharePointFolderIfExists } = await import("./utils/sharepoint-operations");
-      const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-      const existing = await lookupSharePointFolderIfExists(
-        { folderName: propertyFolderName, parentPath: "Investment" },
-        req
-      );
-      if (existing) {
-        folderTree = {
-          root: existing.path,
-          webUrl: existing.webUrl,
-          children: STANDARD_FOLDER_TREE,
-        };
-        run.sharepointFolderPath = folderTree.root;
-        run.sharepointFolderUrl = folderTree.webUrl;
-        await updateRun(run.id, {
-          sharepointFolderPath: folderTree.root,
-          sharepointFolderUrl: folderTree.webUrl,
-        });
-      }
-    } catch (err: any) {
-      console.warn("[pathway stage1] Folder lookup (non-fatal):", err?.message);
-    }
   }
 
   // 1c. Email search via Microsoft Graph.
@@ -3001,17 +2978,15 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
           let savedUrl: string | undefined;
           let sizeMB: number | undefined;
           if (fileBuffer && run.sharepointFolderPath) {
-            const brochureFolder = `${run.sharepointFolderPath.replace(/^BGP share drive\//, "")}/Brochure & Marketing`;
             try {
+              // Into the run's folder, as the person running it, through the folder engine.
+              const { saveFileAtLibraryPath } = await import("./folders/by-path");
               const up = await Promise.race([
-                executeUploadFileToSharePoint(
-                  { folderPath: brochureFolder, filename, content: fileBuffer, contentType: a.contentType },
-                  req
-                ),
+                saveFileAtLibraryPath(req, run.sharepointFolderPath, ["Brochure & Marketing"], filename, new Uint8Array(fileBuffer), { via: "pathway", runId: run.id }),
                 new Promise<any>((_, reject) => setTimeout(() => reject(new Error("SharePoint upload timeout")), 60000)),
               ]);
-              savedUrl = up.file.webUrl;
-              sizeMB = up.file.sizeMB;
+              savedUrl = up.webUrl ?? undefined;
+              sizeMB = +(fileBuffer.length / 1024 / 1024).toFixed(2);
             } catch (err: any) {
               console.warn("[pathway stage1] brochure upload failed:", filename, err?.message);
             }
@@ -3071,49 +3046,44 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   // 1c-8. SharePoint search — find any existing folders/files matching the address
   const sharepointHits: NonNullable<StageResults["stage1"]>["sharepointHits"] = [];
   try {
-    const { getValidMsToken } = await import("./microsoft");
-    const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
-    const token = await getValidMsToken(req);
-    if (token) {
-      const driveId = await getSharePointDriveId(token);
-      if (driveId) {
-        // Search terms: the street/building name (first part of address) + postcode
-        const streetTerm = address.split(",")[0].trim();
-        const queries = [streetTerm, postcode].filter((q) => q && q.length >= 3);
-        const seen = new Set<string>();
-        for (const q of queries) {
-          try {
-            const searchUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/search(q='${encodeURIComponent(q)}')`;
-            const resp = await fetch(searchUrl, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
-            if (!resp.ok) continue;
-            const data: any = await resp.json();
-            for (const item of (data.value || []).slice(0, 40)) {
-              if (seen.has(item.id)) continue;
-              seen.add(item.id);
-              const path = item.parentReference?.path?.replace(/\/drive\/root:/, "") || "";
-              const hit = {
+    // The BGP library, searched as the person running the pathway, on their
+    // own Microsoft 365, through the folder engine.
+    const { ownMicrosoft, entryFolderPath } = await import("./folders/by-path");
+    const { bgpLibrary, searchDrive } = await import("./folders/graph");
+    const own = await ownMicrosoft(req);
+    if (own) {
+      const lib = await bgpLibrary(own.token);
+      // Search terms: the street/building name (first part of address) + postcode
+      const streetTerm = address.split(",")[0].trim();
+      const queries = [streetTerm, postcode].filter((q) => q && q.length >= 3);
+      const seen = new Set<string>();
+      for (const q of queries) {
+        try {
+          for (const item of (await searchDrive(own.token, lib.driveId, q, 40)).slice(0, 40)) {
+            if (seen.has(item.itemId)) continue;
+            seen.add(item.itemId);
+            const hit = {
+              name: item.name,
+              path: entryFolderPath(item),
+              webUrl: item.webUrl || "",
+              modifiedAt: item.modified ?? undefined,
+              sizeMB: item.size ? Math.round((item.size / 1024 / 1024) * 100) / 100 : undefined,
+              type: item.mimeType || (item.isFolder ? "folder" : "file"),
+            };
+            sharepointHits.push(hit);
+            // Any brochure-like file name also gets surfaced in brochureFiles
+            if (!item.isFolder && /brochure|particulars|teaser|flyer|memorandum|om\.pdf|pitch/i.test(item.name)) {
+              brochureFiles.push({
+                source: "sharepoint",
                 name: item.name,
-                path,
-                webUrl: item.webUrl,
-                modifiedAt: item.lastModifiedDateTime,
-                sizeMB: item.size ? Math.round((item.size / 1024 / 1024) * 100) / 100 : undefined,
-                type: item.file?.mimeType || (item.folder ? "folder" : "file"),
-              };
-              sharepointHits.push(hit);
-              // Any brochure-like file name also gets surfaced in brochureFiles
-              if (item.file && /brochure|particulars|teaser|flyer|memorandum|om\.pdf|pitch/i.test(item.name)) {
-                brochureFiles.push({
-                  source: "sharepoint",
-                  name: item.name,
-                  ref: item.id,
-                  date: item.lastModifiedDateTime,
-                  webUrl: item.webUrl,
-                });
-              }
+                ref: item.itemId,
+                date: item.modified ?? undefined,
+                webUrl: item.webUrl ?? undefined,
+              });
             }
-          } catch (err: any) {
-            console.warn("[pathway stage1] SharePoint search error:", err?.message);
           }
+        } catch (err: any) {
+          console.warn("[pathway stage1] SharePoint search error:", err?.message);
         }
       }
     }
@@ -4369,7 +4339,7 @@ async function runStage4(runId: string, req: Request): Promise<void> {
       const { downloadPlanningPdf, pickDrawingsToDownload } = await import("./planning-docs");
       const spRoot = run.sharepointFolderPath || (run.stageResults as StageResults)?.stage1?.folderTree?.root;
       if (spRoot && planningDocs.length) {
-        const drawingsFolder = `${spRoot.replace(/^BGP share drive\//, "")}/05 Planning/Drawings`;
+        const { saveFileAtLibraryPath } = await import("./folders/by-path");
         const shortlist = pickDrawingsToDownload(
           planningDocs.slice(0, 3).map(a => ({ ref: a.ref, docs: a.docs })),
           { maxPerApp: 6, totalCap: 15 },
@@ -4385,14 +4355,12 @@ async function runStage4(runId: string, req: Request): Promise<void> {
           const drawPart = (item.doc.drawingNumber || "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 20);
           const filename = `${safeRef}__${drawPart || labelPart || "drawing"}.pdf`.replace(/\/+/g, "-");
           try {
+            // Into the run's folder, as the person running it, through the folder engine.
             const up = await Promise.race([
-              executeUploadFileToSharePoint(
-                { folderPath: drawingsFolder, filename, content: buf, contentType: "application/pdf" },
-                req,
-              ),
+              saveFileAtLibraryPath(req, spRoot, ["05 Planning", "Drawings"], filename, new Uint8Array(buf), { via: "pathway", runId }),
               new Promise<any>((_, reject) => setTimeout(() => reject(new Error("SP upload timeout")), 60_000)),
             ]);
-            const webUrl = up?.file?.webUrl;
+            const webUrl = up?.webUrl;
             if (webUrl) {
               item.doc.downloadedUrl = webUrl;
               item.doc.downloadedName = filename;
@@ -5058,17 +5026,19 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         patch.modelVersionLabel = seed.modelVersionLabel;
         patch.workbookUrl = seed.workbookUrl;
 
-        // Push the generated workbook to SharePoint so the user can
+        // File the generated workbook in SharePoint so the user can
         // open it from the Pathway UI / share with the team — the
         // local `/api/models/runs/:id/download` URL is BGP-only and
         // requires auth, but a SharePoint URL is the canonical
-        // shareable location. Best-effort: failures don't block the
-        // model seed; the local URL still works.
+        // shareable location. It goes under "Models" in the folder
+        // linked to the run, else its property's (Folders); with none
+        // linked it is not filed. Failures don't block the model seed;
+        // the local URL still works.
         try {
           const { storage } = await import("./storage");
           const { default: fs } = await import("fs");
           const { default: path } = await import("path");
-          const { uploadFileToSharePoint } = await import("./microsoft");
+          const { fileAppDocument } = await import("./document-filing");
           const modelRun = await storage.getExcelModelRun(seed.modelRunId);
           if (modelRun?.generatedFilePath) {
             // Resolve through the same path-rebuilding logic the
@@ -5083,19 +5053,17 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
               buf = fs.readFileSync(modelRun.generatedFilePath);
             }
             if (buf) {
-              const safeAddress = (run.address || "Property").replace(/[\/\\:*?"<>|]/g, "-");
-              const folderPath = run.sharepointFolderPath
-                ? `${run.sharepointFolderPath}/Models`
-                : `BGP share drive/Investment/${safeAddress}/Models`;
               const fileName = `${seed.modelRunName.replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
-              const upload = await uploadFileToSharePoint(
-                buf,
-                fileName,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                folderPath,
-              );
-              patch.workbookSharepointUrl = upload.webUrl;
-              console.log(`[pathway stage7] uploaded workbook to SharePoint: ${upload.webUrl}`);
+              const filed = await fileAppDocument({
+                record: { type: "pathway_run", id: runId }, subfolder: "Models", name: fileName, bytes: buf,
+                userId: (_req as any)?.session?.userId || (_req as any)?.tokenUserId || null, what: "Pathway model",
+              });
+              if (filed.filed) {
+                patch.workbookSharepointUrl = filed.webUrl || undefined;
+                console.log(`[pathway stage7] filed workbook in SharePoint: ${filed.webUrl}`);
+              } else {
+                console.warn(`[pathway stage7] ${filed.note}`);
+              }
             } else {
               console.warn("[pathway stage7] workbook file not found on disk, skipping SharePoint upload");
             }
@@ -5155,23 +5123,22 @@ async function runStage8(runId: string, req: Request): Promise<void> {
       .filter(b => (b.source === "sharepoint" || b.source === "sharepoint-uploaded") && /\.pdf$/i.test(b.name))
       .slice(0, 6);
     if (spBrochures.length) {
-      const { getValidMsToken } = await import("./microsoft");
-      const token = await getValidMsToken(req).catch(() => null);
-      const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
-      const driveId = token ? await getSharePointDriveId(token) : null;
-      if (token && driveId) {
+      // As the person running the stage, on their own Microsoft 365, through the folder engine.
+      const { ownMicrosoft } = await import("./folders/by-path");
+      const { bgpLibrary, downloadFile, openLink } = await import("./folders/graph");
+      const { isGraphId, bgpSharePointUrl } = await import("@shared/folders");
+      const own = await ownMicrosoft(req);
+      if (own) {
+        const lib = await bgpLibrary(own.token);
         for (const bro of spBrochures) {
           try {
-            const resp = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${bro.ref}/content`,
-              { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" },
-            );
-            if (!resp.ok) {
-              console.warn(`[pathway stage8] brochure download ${bro.name} failed: ${resp.status}`);
-              continue;
-            }
-            const buf = Buffer.from(await resp.arrayBuffer());
-            brochurePdfs.push({ name: bro.name, buffer: buf, webUrl: bro.webUrl });
+            // A search hit keeps its item id; a brochure filed from an email keeps the email's, so it is opened by its address.
+            const at = bro.source === "sharepoint" && isGraphId(bro.ref)
+              ? { driveId: lib.driveId, itemId: bro.ref }
+              : bgpSharePointUrl(bro.webUrl) ? await openLink(own.token, String(bro.webUrl)) : null;
+            if (!at) continue;
+            const { bytes } = await downloadFile(own.token, at.driveId, at.itemId);
+            brochurePdfs.push({ name: bro.name, buffer: Buffer.from(bytes), webUrl: bro.webUrl });
           } catch (err: any) {
             console.warn(`[pathway stage8] brochure download error (${bro.name}):`, err?.message);
           }

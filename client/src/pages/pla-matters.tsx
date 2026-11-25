@@ -5,8 +5,8 @@
  * dilapidations, service charge and general advisory matter, anchored to
  * a canonical property via the Property Resolver. New matters are created
  * by typing an address into the resolver bar — once the property's picked,
- * the matter inherits canonical identity and the Lease Advisory folder
- * template gets applied in SharePoint.
+ * the matter inherits canonical identity. Its Folders are the folder
+ * engine's: a new folder there starts as the Lease Advisory folders.
  */
 
 import { useMemo, useState } from "react";
@@ -36,6 +36,7 @@ import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { InlineNumber, InlineDate, InlineLinkSelect } from "@/components/inline-edit";
+import { RecordFolders } from "@/components/folders/record-folders";
 import type { PlaMatter, CrmComp } from "@shared/schema";
 
 const MATTER_TYPES: Array<{ value: string; label: string }> = [
@@ -625,30 +626,6 @@ function MatterDetailView({ id }: { id: string }) {
             <Button variant="outline" size="sm" onClick={() => setBriefsOpen(true)} className="gap-1.5">
               <FileText className="h-3.5 w-3.5" /> Generate document
             </Button>
-            {matter.sharepointFolderUrl ? (
-              <Button variant="outline" size="sm" asChild>
-                <a href={matter.sharepointFolderUrl} target="_blank" rel="noreferrer">SharePoint folder</a>
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const r = await fetch(`/api/pla/matters/${id}/apply-folder-template`, {
-                    method: "POST", credentials: "include", headers: getAuthHeaders(),
-                  });
-                  if (r.ok) {
-                    toast({ title: "Folder template applied" });
-                    refetch();
-                  } else {
-                    const e = await r.json().catch(() => null);
-                    toast({ title: "Couldn't apply folder template", description: e?.error || `${r.status}`, variant: "destructive" });
-                  }
-                }}
-              >
-                Apply folder template
-              </Button>
-            )}
             {matter.status !== "closed" && (
               <Button variant="outline" size="sm" onClick={() => closeMatter.mutate()}>Close instruction</Button>
             )}
@@ -667,6 +644,18 @@ function MatterDetailView({ id }: { id: string }) {
             </Link>
             <MatterEvidencePlanLink propertyId={matter.propertyId} />
           </div>
+        </CardContent></Card>
+
+        {/* Folders (Woody, 24 November 2026; docs/folders-review-2026-11-20.md): the matter's own,
+            then its property's. A new folder starts as the Lease Advisory folders; nothing is
+            made under "BGP share drive" by itself any more. */}
+        <Card><CardContent className="p-4">
+          <RecordFolders
+            recordType="pla_matter"
+            recordId={matter.id}
+            recordName={`${typeLabel(matter.matterType)} · ${matter.propertyName || "the property"}`}
+            bare
+          />
         </CardContent></Card>
 
         {/* Negotiation positions */}
@@ -758,7 +747,7 @@ function MatterDetailView({ id }: { id: string }) {
                   });
                   if (res.ok) {
                     const data = await res.json();
-                    toast({ title: "Schedule generated", description: `${data.rowCount} comps · uploading to SharePoint` });
+                    toast({ title: "Schedule generated", description: `${data.rowCount} comps · ${data.sharepointNote || "uploading to SharePoint"}` });
                     refetch();
                   } else {
                     const e = await res.json().catch(() => null);
@@ -1965,7 +1954,7 @@ function DocumentBriefsDialog({
                 sandbox="allow-same-origin"
               />
               <div className="text-[10px] text-muted-foreground italic px-2 py-1">
-                HTML saves to the canonical SharePoint folder per brief category. PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
+                Save to SharePoint files the HTML in the folder linked to this matter, or else its property, under the brief's own folder (Rent Review / Representations and the like). PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
               </div>
             </CardContent>
           </Card>

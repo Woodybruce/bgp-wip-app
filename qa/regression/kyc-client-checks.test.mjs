@@ -74,8 +74,9 @@ test("staff routes are staff only; the test send is admin only and goes to the a
   assert.match(portal, /"\/api\/admin\/kyc-emails\/test", adminOnly/);
   const body = testRoute.slice(0, testRoute.indexOf("export default"));
   const sends = (body.match(/sendKycEmail\(\{/g) || []).length;
-  const toAdminOnly = (body.match(/sendKycEmail\(\{\s*to: \[email\],\s*build:/g) || []).length;
-  const toRecipient = (body.match(/sendKycEmail\(\{\s*to: \[recipient\.email\],\s*cc,\s*build:/g) || []).length;
+  // Each is a test, so the AML officers are not copied on it (24 November 2026).
+  const toAdminOnly = (body.match(/sendKycEmail\(\{\s*to: \[email\], test: true,\s*build:/g) || []).length;
+  const toRecipient = (body.match(/sendKycEmail\(\{\s*to: \[recipient\.email\],\s*cc, test: true,\s*build:/g) || []).length;
   assert.ok(sends >= 4 && toRecipient === 1 && sends === toAdminOnly + toRecipient, "every test email goes to the admin who pressed it, except the request, which may go to a colleague");
   // The colleague (Woody, 17 November 2026: a test for Jack): only the
   // request, only an active login with a BGP address, copied to the admin.
@@ -190,4 +191,39 @@ test("the client checks run on their own switch, not the old in-app AML one (Woo
   assert.doesNotMatch(card, /data\.inAppAml/);
   assert.match(deals, /const clientChecks = !!amlStepStatus\?\.clientChecks;/);
   assert.doesNotMatch(deals, /amlInApp|inAppAml/);
+});
+
+test("every AML email copies the AML officers, except an admin's test (Woody, 24 November 2026)", () => {
+  assert.match(portal, /const officers = opts\.test \? \[\] : await import\("\.\/aml-authority"\)\.then\(m => m\.amlOfficerEmails\(\)\)/);
+  assert.match(portal, /const cc = kycCopyList\(to, opts\.cc \|\| \[\], officers\);/);
+  // The admin's test sends say so; emails about a test request say so.
+  const tests = portal.slice(portal.indexOf('kind === "finished"'), portal.indexOf("A failed send still hands back the test page"));
+  assert.equal((tests.match(/test: true,/g) || []).length >= 3, true, "each sample email is a test");
+  assert.match(portal, /cc, test: true,/, "the request sent to the admin or a colleague is a test");
+  for (const file of ["server/kyc-red-flags.ts", "server/joint-agent-checks.ts"]) assert.match(read(file), /test: !!row\.is_test/);
+  // The confirmation and the history say who was really copied.
+  assert.match(portal, /copied to \$\{\(sent\.cc \|\| cc\)\.join/);
+  assert.match(portal, /cc: sent\.cc \|\| cc \};/);
+});
+
+test("client checks are never sent with a list made before BGP's checks read the register (24 November 2026, #4664)", () => {
+  // The server waits for a run going, refuses while it still goes, and refuses a list made before the latest run.
+  assert.match(portal, /prechecks\.precheckRunning\(party\.companyId, party\.entityId\)/);
+  assert.match(portal, /code: "CHECKS_RUNNING"/);
+  assert.match(portal, /input\.basedOn !== undefined && listMadeBeforeChecks\(input\.basedOn, pre\?\.ranAt \|\| null\)/);
+  assert.match(portal, /code: "CHECKS_UPDATED"/);
+  assert.match(portal, /basedOn: z\.string\(\)\.max\(40\)\.nullable\(\)\.optional\(\)/);
+  assert.match(portal, /\.\.\.\(err\?\.code \? \{ code: err\.code \} : \{\}\)/);
+  assert.match(portal, /precheckRanAt: pre\?\.ranAt \|\| null, precheckRunning, trustAsk/);
+  // The window waits while the checks read, says so, sends what its list was made from, and makes the list again.
+  const win = read("client/src/components/kyc-client-checks.tsx");
+  assert.match(win, /const reading = !!party\?\.precheckRunning;/);
+  assert.match(win, /const canSend = !!party && !reading &&/);
+  assert.match(win, /data-testid="client-checks-reading"/);
+  assert.match(win, /basedOn,\n\s+viaAgent:/);
+  assert.match(win, /e\?\.code === "CHECKS_UPDATED" \|\| e\?\.code === "CHECKS_RUNNING"/);
+  assert.match(win, /refetchInterval: query => \(query\.state\.data\?\.parties \|\| \[\]\)\.some\(p => p\.precheckRunning\) \? 3000 : false/);
+  // The AML box asks the client checks to read again when a run starts or finishes.
+  const box = read("client/src/components/deal-aml-status.tsx");
+  assert.match(box, /if \(before && runs\(before\) !== runs\(next\)\) queryClient\.invalidateQueries\(\{ queryKey: \["\/api\/aml\/deal", dealId, "client-checks"\] \}\)/);
 });

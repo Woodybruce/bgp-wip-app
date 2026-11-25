@@ -25,7 +25,7 @@ import { CLOSED_STATUSES, TERMINAL_STATUSES, dealLeftTrackerSql, investmentDealS
 import { amlBucket, amlDeadline, amlDealClosed, amlDue, amlLate, amlStage, amlWaitingOn, daysSince, type AmlDashboardRow } from "@shared/aml-dashboard";
 import { applyFlagReviews, dealRedFlags, isSanctionsFlag, partyRedFlags, type KycRedFlag } from "@shared/kyc-red-flags";
 import { payerRedFlags } from "@shared/deal-billing";
-import { guarantorRedFlags } from "@shared/deal-guarantor";
+import { guarantorRedFlags, signerRedFlags } from "@shared/deal-guarantor";
 import { dealClientRole } from "@shared/deal-parties";
 import { isPrecheckResult, normaliseStoredPrecheck, ownersAbroadOf } from "@shared/kyc-prechecks";
 import { amlRegime, dueDiligenceLevel, simplifiedCase, standardBasis, superPrimeWeigh } from "@shared/aml-policy";
@@ -77,6 +77,16 @@ function withGuarantorFlags(p: { brandId: string; deal: any }, prechecks: any[],
   return [...flags, ...mine.flatMap(g => {
     const pre = prechecks.find((r: any) => r.crm_company_id === p.brandId && (r.trading_entity_id || null) === g.entityId && isPrecheckResult(r.result)) || null;
     return guarantorRedFlags({ guarantor: { id: g.entityId, name: g.name }, precheck: pre?.result || null });
+  })];
+}
+
+// The other companies that sign for a party (24 November 2026): their flags join it the same way.
+function withSignerFlags(p: { brandId: string; deal: any }, prechecks: any[], flags: KycRedFlag[], signers: Array<{ dealId: string; companyId: string; entityId: string; name: string }>): KycRedFlag[] {
+  const mine = signers.filter(g => g.dealId === String(p.deal.id) && g.companyId === p.brandId);
+  if (!mine.length) return flags;
+  return [...flags, ...mine.flatMap(g => {
+    const pre = prechecks.find((r: any) => r.crm_company_id === p.brandId && (r.trading_entity_id || null) === g.entityId && isPrecheckResult(r.result)) || null;
+    return signerRedFlags({ signer: { id: g.entityId, name: g.name }, precheck: pre?.result || null });
   })];
 }
 
@@ -137,8 +147,9 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
   const { loadNotRequired } = await import("./aml-policy");
   // KYC4U is no longer used (23 November 2026): it holds no party (shared/aml-dashboard.ts).
   const inHouse = await import("./aml-authority").then(m => m.readInHouseEdd()).then(v => !!v.on).catch(() => true);
-  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors, recordHistory] = await Promise.all([
-    loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId, fullChecks: amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "full" }))),
+  const [states, companies, investigations, prechecks, tokens, idChecks, drafts, kyc4uLatest, agentUsers, reviews, notRequired, reliances, guarantors, recordHistory, signers] = await Promise.all([
+    loadPartyKyc(pool, parties.map(p => ({ role: p.key, brandId: p.brandId, entityId: p.entityId, fullChecks: amlRegime({ dealType: p.deal.deal_type, team: p.deal.team, rentPa: p.deal.rent_pa }).regime === "full",
+      dealId: String(p.deal.id), signerKey: `${p.deal.id}:${p.role}` }))),
     read("KYC records", async () => (await pool.query(
       `SELECT id, name, company_type, aml_pep_status, aml_risk_level, aml_edd_required, aml_edd_reason, aml_subject_type FROM crm_companies WHERE id = ANY($1::varchar[])`, [brandIds])).rows, none),
     read("screening records", async () => (await pool.query(
@@ -195,6 +206,8 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     read("the guarantors", () => import("./deal-guarantors").then(m => m.guarantorRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
     // The KYC records' own history, as the transaction's AML box reads it: what set each record flag (24 November 2026).
     read("the KYC records' history", () => loadRecordHistory(pool, brandIds), {} as Awaited<ReturnType<typeof loadRecordHistory>>),
+    // The other companies that sign for a party (24 November 2026).
+    read("the other companies that sign", () => import("./deal-guarantors").then(m => m.signerRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();
@@ -224,7 +237,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const jointLive = allTokens.filter((t: any) => isJoint(t) && !t.revoked_at);
     const jointAskedAt = jointLive.map((t: any) => t.request?.sentAt || (t.request?.manual ? t.created_at : null)).filter(Boolean).sort().pop() || null;
     const jointInAt = jointLive.map((t: any) => t.request?.jointAgent?.reliance?.agreedAt || (Number(t.files) > 0 ? t.last_used_at || t.created_at : null)).filter(Boolean).sort().pop() || null;
-    const live = applyFlagReviews(withGuarantorFlags(p, prechecks, withPayerFlags(p, prechecks, partyRedFlags({
+    const live = applyFlagReviews(withSignerFlags(p, prechecks, withGuarantorFlags(p, prechecks, withPayerFlags(p, prechecks, partyRedFlags({
       company: companyRow,
       recordHistory: recordHistory[p.brandId] || [],
       latestInvestigation: latest ? { sanctions_match: latest.sanctions_match, conducted_at: latest.conducted_at, precheck: !!latest.precheck } : null,
@@ -234,7 +247,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         status: s.status, decision_reason: s.decision_reason, received_at: s.received_at,
         name: [s.first_name, s.last_name].filter(Boolean).join(" ") || null,
       })),
-    })), guarantors), reviewsForParty(reviews, p.brandId, p.entityId)).live;
+    })), guarantors), signers), reviewsForParty(reviews, p.brandId, p.entityId)).live;
     const onDeal = dealFlags.get(String(p.deal.id)) || [];
     const superPrime = superPrimeWeigh({ dealType: p.deal.deal_type, team: p.deal.team, pricing: p.deal.pricing, postcode: p.deal.postcode });
     const sdd = simplifiedCase({ precheck: pre?.result || null, partyName: companyRow?.name || null, subjectType: companyRow?.aml_subject_type });
@@ -302,7 +315,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       late: amlLate(stage, deadline),
       redFlags: allFlags,
       flagDetails: shownFlags,
-      waitingOn: amlWaitingOn(stage, allFlags.length),
+      waitingOn: amlWaitingOn(stage, allFlags.length, sanctionsOnly),
       movedDays: daysSince([
         pre?.conducted_at, ...partyTokens.flatMap((t: any) => [t.created_at, t.last_used_at, t.completed_at]),
         ...openDrafts.flatMap((d: any) => [d.created_at, d.filled_at]), state.approvedAt,

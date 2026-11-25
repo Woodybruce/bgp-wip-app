@@ -425,7 +425,7 @@ const clip = (value: unknown, max: number): string => String(value ?? "").replac
 // "No public-role information" says nothing too (24 November 2026, LEGO's
 // check): up to three words may stand between "no" and what was not found.
 const NOTHING_FOUND = /\b(found|finds|identified|located)\s+no\b|\bno\s+(?!longer\b)(?:[\w'’-]+\s+){0,3}?(source|sources|evidence|record|records|indication|indications|information|mention|mentions|report|reports|result|results|link|links|connection|suggestion|credible)\b|\b(does|did|do)\s+not\s+(establish|show|indicate|suggest|appear|identify|find|reveal|confirm)\b|\bnot\s+(identified|found|listed|named|known)\s+(as|to\s+be)\b|\bthere\s+(is|was|are|were)\s+no\b|\bnothing\s+(was\s+)?(found|identified|suggest|indicat)|\bnone\s+(was\s+|were\s+)?(found|identified)\b|\b(could|can)\s*n[o']t\s+(find|identify|establish|confirm)\b|\bunable\s+to\s+(find|identify|establish|confirm|verify)\b|\bis\s+not\s+(a\s+)?(politically\s+exposed|pep\b|state[-\s]owned|government[-\s]owned)/i;
-const REGISTER_ONLY = /\b(companies\s+house|the\s+register|public\s+register|registry)\b.*\b(lists?|shows?|names?|records?)\b|\b(lists?|shows?|names?|records?)\b.*\b(as\s+(the\s+)?(company'?s\s+)?(active\s+)?(sole\s+)?(director|officer|secretary|member|person\s+with\s+significant\s+control|shareholder))\b|\b(available|public)\s+records?\s+(lists?|shows?|names?)\b|\bwas\s+incorporated\s+(on|in)\b|\bconfirms?\b.*\b(company\s+number|registered\s+(office|address)|incorporat\w*|company\s+status)\b|\bmatching\s+the\s+(queried|searched|named|given)\s+(company|entity|person)\b/i;
+const REGISTER_ONLY = /\b(companies\s+house|the\s+register|public\s+register|registry)\b.*\b(lists?|shows?|names?|records?|identif(?:y|ies|ied))\b|\b(lists?|shows?|names?|records?)\b.*\b(as\s+(the\s+)?(company'?s\s+)?(active\s+)?(sole\s+)?(director|officer|secretary|member|person\s+with\s+significant\s+control|shareholder))\b|\b(available|public)\s+records?\s+(lists?|shows?|names?)\b|\bwas\s+incorporated\s+(on|in)\b|\bconfirms?\b.*\b(company\s+number|registered\s+(office|address)|incorporat\w*|company\s+status)\b|\bmatching\s+the\s+(queried|searched|named|given)\s+(company|entity|person)\b/i;
 const BUT_THEN = /\b(but|however|although|though|yet|whereas)\b(.*)$/i;
 // The summary is cut at 300 characters (checkWebAnswer). A last sentence cut
 // short that opens by saying nothing was found ("No qualifying publi") is read
@@ -615,6 +615,9 @@ export interface ProviderMatch {
   // The profile gives only a year, one either side of the person's: the only
   // way it agrees (24 November 2026; see providerMatchFlags).
   birthYearNear?: boolean;
+  // The profile agrees only as a year with no month, the person's own year
+  // included: articles give an age, so the year is a guess (24 November 2026).
+  birthYearOnly?: boolean;
   // ComplyAdvantage said it matched but its profiles could not be read.
   unread?: boolean;
 }
@@ -993,6 +996,9 @@ export interface PrecheckCompany {
   // Listed on a market, in words, and what that means for the checks.
   listing: string | null;
   listingNote: string | null;
+  // Not listed itself: owned through one company at each level by a listed
+  // one (standard due diligence under BGP's policy, not simplified).
+  listedViaParent?: boolean;
   directors: string[];
   owners: Array<{ name: string; control: string }>;
   ownerNote: string | null;
@@ -1058,6 +1064,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     business: (ch.sicCodes || []).map(sicWords),
     listing,
     listingNote,
+    listedViaParent: !!ch.listing?.viaParent,
     directors: ch.officers.filter(o => /director|member/i.test(o.role)).map(o => o.name),
     owners: ch.owners.map(o => ({ name: o.name, control: ownerControlLine(o) || "significant control" })),
     ownerNote: ch.listing ? null : ch.owners.length ? null : ch.statements.length ? ch.statements.map(s => s.words).join("; ") : "No one with significant control is on the register.",
@@ -1312,12 +1319,13 @@ export function providerMatchFlags(m: ProviderMatch, line?: Pick<ProviderLine, "
   }
   // A match from before this rule with no profile behind it could not be read.
   if (m.unread ?? !m.profileId) return true;
-  // A year one either side of the person's, with no month, is a possible
-  // namesake for adverse media and the like (24 November 2026: the Jethro Tull
-  // musician Ian Anderson, born 1947, raised against a charity trustee Ian
-  // Macfarlane Anderson, born November 1948). Articles give an age, so the
-  // year is a guess. A public role or a sanctions list still counts it.
-  if (m.birthYearAgrees === true && !(m.birthYearNear === true && kind !== "pep")) return true;
+  // A year with no month is a possible namesake for adverse media and the like
+  // (24 November 2026: the Jethro Tull musician Ian Anderson, born 1947, raised
+  // against a charity trustee Ian Macfarlane Anderson, born November 1948, first
+  // as 1947, then as 1948 from his age in a 2026 article). Articles give an age,
+  // so the year is a guess: a month that agrees ties the person, a year alone
+  // does not. A public role or a sanctions list still counts the year.
+  if (m.birthYearAgrees === true && !((m.birthYearNear === true || m.birthYearOnly === true) && kind !== "pep")) return true;
   if (dated && line!.dobKnown) return false;
   return m.score != null && m.score >= (kind === "pep" ? PROVIDER_FLAG_BARS.pep : PROVIDER_FLAG_BARS.other);
 }
@@ -1466,7 +1474,7 @@ export function precheckNamesakes(result: Pick<KycPrecheckResult, "complyAdvanta
         name: line.name, via: "ComplyAdvantage", url: null,
         what: [providerKindWords(m.kind), m.name && m.name !== line.name ? `profile "${m.name}"` : "", m.source || "",
           m.score != null ? `match ${Math.round(m.score * 100)}%` : "no match score",
-          m.birthYearAgrees === false ? "birth year differs" : m.birthYearAgrees === true && m.birthYearNear ? "the profile gives only a year, one either side of theirs" : line.person && line.dobKnown && m.birthYearAgrees == null ? "no date of birth on the profile" : ""].filter(Boolean).join(", "),
+          m.birthYearAgrees === false ? "birth year differs" : m.birthYearAgrees === true && m.birthYearNear ? "the profile gives only a year, one either side of theirs" : m.birthYearAgrees === true && m.birthYearOnly ? "the profile gives only a year of birth, no month" : line.person && line.dobKnown && m.birthYearAgrees == null ? "no date of birth on the profile" : ""].filter(Boolean).join(", "),
       });
     }
   }
@@ -1663,7 +1671,10 @@ const DISTRESS = /liquidation|receivership|administration|insolvency|voluntary-a
 
 // sanctionsCurrent: this pre-check is the party's latest screening, so its
 // sanctions lines stand (a later screening replaces them).
-export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCurrent: boolean }): KycRedFlag[] {
+// publicBody: the party is recorded as a UK public body (25 November 2026, Wirral
+// Metropolitan Borough Council for Merseyside Pension Fund): it IS the state,
+// so the web search finding it owned or controlled by the state is no red flag.
+export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCurrent: boolean; publicBody?: boolean }): KycRedFlag[] {
   const flags: KycRedFlag[] = [];
   const at = result.ranAt || null;
   const source = "BGP's checks before asking";
@@ -1718,6 +1729,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   }
   for (const line of result.web.lines) {
     for (const kind of ["public_role", "adverse_media"] as const) {
+      if (opts.publicBody && kind === "public_role" && webLineIsCompany(line)) continue;
       const sure = webFindingsOf(line).filter(f => f.kind === kind && !webFindingUnsure(line, f));
       if (!sure.length) continue;
       // For a company the search asks whether the state or a politically exposed person owns or controls it.

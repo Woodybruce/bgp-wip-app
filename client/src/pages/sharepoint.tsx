@@ -20,11 +20,9 @@ import {
   Download,
   RefreshCw,
   FolderPlus,
-  Users,
   Loader2,
   CheckCircle2,
   AlertCircle,
-  Star,
   X,
   Eye,
   FileVideo,
@@ -51,7 +49,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { User } from "@shared/schema";
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -67,18 +64,6 @@ interface DriveItem {
   file?: { mimeType: string };
   "@microsoft.graph.downloadUrl"?: string;
   parentReference?: { driveId: string };
-  thumbnails?: Array<{
-    large?: { url: string; width: number; height: number };
-    medium?: { url: string; width: number; height: number };
-    small?: { url: string; width: number; height: number };
-  }>;
-}
-
-interface TeamFolder {
-  name: string;
-  id: string;
-  webUrl: string;
-  childCount: number;
 }
 
 function getFileIcon(item: DriveItem) {
@@ -216,24 +201,11 @@ function formatDate(dateStr?: string) {
   });
 }
 
-const teamColors: Record<string, string> = {
-  "Investment": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  "London F&B": "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-  "London Retail": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-  "Lease Advisory": "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
-  "National Leasing": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  "Tenant Rep": "bg-purple-500/10 text-purple-600 dark:text-purple-400",
-  "Development": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  "Office / Corporate": "bg-gray-500/10 text-gray-600 dark:text-gray-400",
-  "Landsec": "bg-orange-500/10 text-orange-600 dark:text-orange-400",
-};
-
 function FileThumbnail({ item, driveId, size = "small" }: { item: DriveItem; driveId: string | null; size?: "small" | "medium" | "large" }) {
   const [imgError, setImgError] = useState(false);
-  const hasThumbnail = item.thumbnails && item.thumbnails.length > 0;
   const thumbUrl = getThumbnailUrl(item, driveId, size);
 
-  if (!item.folder && (hasThumbnail || isImageFile(item)) && thumbUrl && !imgError) {
+  if (!item.folder && isImageFile(item) && thumbUrl && !imgError) {
     return (
       <div className={`rounded-md overflow-hidden bg-muted flex items-center justify-center shrink-0 ${
         size === "small" ? "w-10 h-10" : size === "medium" ? "w-16 h-16" : "w-24 h-24"
@@ -327,7 +299,9 @@ function FilePreviewPanel({ item, driveId, onClose }: { item: DriveItem; driveId
   );
 }
 
-function ConnectPrompt() {
+// `own`: you have not connected your own Microsoft 365. Files on this page
+// open on your own connection only, never a colleague's (24 November 2026).
+function ConnectPrompt({ own = false }: { own?: boolean }) {
   const [connecting, setConnecting] = useState(false);
   const { toast } = useToast();
 
@@ -355,7 +329,6 @@ function ConnectPrompt() {
         setConnecting(false);
         queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
         queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
         toast({ title: "Connected to Microsoft 365", description: "Your SharePoint files are now available." });
       }
     };
@@ -367,6 +340,8 @@ function ConnectPrompt() {
   useEffect(() => {
     if (!connecting) return;
     const interval = setInterval(async () => {
+      // Own: the files are read again; the page shows them once they open as you.
+      if (own) { queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] }); return; }
       try {
         const res = await fetch("/api/microsoft/status", { credentials: "include", headers: getAuthHeaders() });
         if (res.ok) {
@@ -375,20 +350,19 @@ function ConnectPrompt() {
             setConnecting(false);
             queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
             queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
             toast({ title: "Connected to Microsoft 365", description: "Your SharePoint files are now available." });
           }
         }
       } catch {}
     }, 3000);
     return () => clearInterval(interval);
-  }, [connecting, toast]);
+  }, [connecting, toast, own]);
 
   return (
     <div className="p-4 sm:p-6">
       <div className="space-y-1 mb-6">
         <h1 className="text-2xl font-bold tracking-tight">SharePoint & Files</h1>
-        <p className="text-sm text-muted-foreground">Connect to Microsoft 365 to access your files</p>
+        <p className="text-sm text-muted-foreground">{own ? "Files here open as you, on your own Microsoft 365, never as a colleague." : "Connect to Microsoft 365 to access your files"}</p>
       </div>
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 text-center space-y-4">
@@ -396,10 +370,11 @@ function ConnectPrompt() {
             <Cloud className="w-8 h-8 text-primary" />
           </div>
           <div>
-            <h3 className="font-semibold text-lg">Connect to Microsoft 365</h3>
+            <h3 className="font-semibold text-lg">{own ? "Connect your own Microsoft 365" : "Connect to Microsoft 365"}</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Sign in with your Microsoft account to access SharePoint files, calendar, and email.
-              A new tab will open for sign-in.
+              {own
+                ? "Sign in with your own Microsoft account to open SharePoint files and folders as yourself. A new tab will open for sign-in."
+                : "Sign in with your Microsoft account to access SharePoint files, calendar, and email. A new tab will open for sign-in."}
             </p>
           </div>
           <Button onClick={handleConnect} disabled={connecting} data-testid="button-connect-microsoft">
@@ -420,135 +395,6 @@ function ConnectPrompt() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function TeamFoldersSection({
-  onOpenFolder,
-}: {
-  onOpenFolder: (folderId: string, folderName: string, driveId: string) => void;
-}) {
-  const { toast } = useToast();
-  const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
-  const userTeam = user?.team;
-
-  const { data: teamFoldersData, isLoading: foldersLoading } = useQuery<{
-    folders: TeamFolder[];
-    driveId: string;
-  }>({
-    queryKey: ["/api/microsoft/team-folders"],
-  });
-
-  const setupMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/microsoft/team-folders/setup");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-      const created = data.folders?.filter((f: any) => f.status === "created").length || 0;
-      const existing = data.folders?.filter((f: any) => f.status === "exists").length || 0;
-      toast({
-        title: "Team folders ready",
-        description: created > 0
-          ? `Created ${created} new folder(s). ${existing} already existed.`
-          : "All team folders already exist.",
-      });
-    },
-    onError: () => {
-      toast({
-        title: "Setup failed",
-        description: "Could not create team folders. Check SharePoint permissions.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const folders = teamFoldersData?.folders || [];
-  const driveId = teamFoldersData?.driveId || "";
-  const hasFolders = folders.length > 0;
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Users className="w-4 h-4" />
-          Team Folders
-        </CardTitle>
-        {!hasFolders && !foldersLoading && (
-          <Button
-            size="sm"
-            onClick={() => setupMutation.mutate()}
-            disabled={setupMutation.isPending}
-            data-testid="button-setup-team-folders"
-          >
-            {setupMutation.isPending ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                Creating...
-              </>
-            ) : (
-              <>
-                <FolderPlus className="w-3.5 h-3.5 mr-1.5" />
-                Create Team Folders
-              </>
-            )}
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent className="pt-0">
-        {foldersLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}
-          </div>
-        ) : hasFolders ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[...folders].sort((a, b) => {
-              if (a.name === userTeam) return -1;
-              if (b.name === userTeam) return 1;
-              return 0;
-            }).map((folder) => {
-              const isUserTeam = folder.name === userTeam;
-              return (
-                <Card
-                  key={folder.name}
-                  className={`cursor-pointer hover:border-primary/50 transition-colors ${isUserTeam ? "ring-2 ring-primary/30 border-primary/40" : ""}`}
-                  onClick={() => onOpenFolder(folder.id, folder.name, driveId)}
-                  data-testid={`team-folder-${folder.name.toLowerCase().replace(/\s/g, "-")}`}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${teamColors[folder.name] || "bg-muted text-muted-foreground"}`}>
-                        <FolderOpen className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-semibold truncate">{folder.name}</p>
-                          {isUserTeam && (
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
-                              <Star className="w-2.5 h-2.5 mr-0.5" />
-                              Your Team
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground">{folder.childCount} items</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-6 text-muted-foreground">
-            <FolderPlus className="w-8 h-8 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">No team folders found in SharePoint</p>
-            <p className="text-xs mt-1">Click "Create Team Folders" to set up London, National, Tenant Rep, and Development folders</p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -671,6 +517,10 @@ function StaffSharePoint() {
         queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
         throw new Error("Session expired — reconnecting...");
       }
+      if (res.status === 428) {
+        const body = await res.json().catch(() => null);
+        throw Object.assign(new Error(body?.message || "Connect your own Microsoft 365 first."), { connect: true });
+      }
       if (!res.ok) throw new Error("Failed to fetch files");
       const data = await res.json();
       if (data.driveId && !driveId) {
@@ -721,7 +571,6 @@ function StaffSharePoint() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
       toast({ title: "Deleted", description: "Sent to the SharePoint recycle bin." });
     },
     onError: (e: any) => toast({ title: "Couldn't delete", description: e?.message, variant: "destructive" }),
@@ -833,7 +682,6 @@ function StaffSharePoint() {
       if (event.data?.type === "microsoft_connected") {
         queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
         queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
         toast({ title: "Reconnected to Microsoft 365" });
       }
     };
@@ -856,14 +704,12 @@ function StaffSharePoint() {
   if (!status?.connected) {
     return <ConnectPrompt />;
   }
+  if ((filesError as any)?.connect) {
+    return <ConnectPrompt own />;
+  }
 
   const openFolder = (item: DriveItem) => {
     setFolderStack([...folderStack, { id: item.id, name: item.name }]);
-  };
-
-  const openTeamFolder = (folderId: string, folderName: string, teamDriveId: string) => {
-    if (teamDriveId) setDriveId(teamDriveId);
-    setFolderStack([{ id: folderId, name: folderName }]);
   };
 
   const goBack = () => {
@@ -874,7 +720,6 @@ function StaffSharePoint() {
     // First try: just refresh the status/token silently
     queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
     queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
 
     // Check if that worked
     try {
@@ -943,10 +788,6 @@ function StaffSharePoint() {
           </Button>
         </div>
       </div>
-
-      {folderStack.length === 0 && (
-        <TeamFoldersSection onOpenFolder={openTeamFolder} />
-      )}
 
       {folderStack.length > 0 && (
         <Button variant="ghost" size="sm" onClick={goBack} data-testid="button-go-back">

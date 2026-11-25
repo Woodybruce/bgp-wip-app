@@ -15,6 +15,7 @@
 //   POST /api/deals/:id/parties/:role/kyc4u-result/read   multipart: files[]: where each will be filed and what KYC4U's report says (saves nothing)
 //   POST /api/deals/:id/parties/:role/public-figure       multipart: key, note, links, files[]: a person verified from public sources
 //   POST /api/deals/:id/parties/:role/public-figure/:checkId/withdraw
+//   PUT  /api/deals/:id/parties/:role/person-details (a private individual's date of birth and nationality)
 //   POST /api/deals/:id/parties/:role/reliance            multipart: the firm, its supervisor, the date it agreed, the confirmations, note, files[]
 //   POST /api/deals/:id/parties/:role/reliance/:relianceId/withdraw
 //   POST /api/deals/:id/parties/:role/not-required        { reason, comment }: no checks needed on this party
@@ -50,6 +51,8 @@ import { amlFileDocWords } from "@shared/aml-file";
 import { PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personVerifiedWords } from "@shared/kyc-people";
 import { relianceInput, relianceWords } from "@shared/aml-reliance";
 import { sddNoteProblem, type SavedSddNote } from "@shared/aml-sdd";
+import { personDetailsInput, personDetailsWords, personDobNeeded, type PersonDetailsView } from "@shared/kyc-person-details";
+import { listedSignOffNote } from "@shared/sign-off-note";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
@@ -99,7 +102,7 @@ export async function loadAmlParty(db: Db, dealId: string, role: DealPartyRole, 
   // the approval then covers a sale or a letting at £10,000 a month or more.
   const fullOnSmall = !!opts.full && natural === "sanctions_only";
   const regime: AmlRegime = fullOnSmall ? "full" : natural;
-  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full" }]))[role];
+  const state = (await loadPartyKyc(db, [{ role, brandId: deal.brand_id, entityId: entity?.id || null, fullChecks: regime === "full", dealId }]))[role];
   if (!state?.brandName) return null;
   const sameCompany = !!entity && sameLegalCompany(
     { id: deal.brand_id, name: entity.brand_name, companiesHouseNumber: entity.brand_number || null, legalName: entity.uk_entity_name || entity.ch_name || null, status: null, expiresAt: null, approvedBy: null },
@@ -147,7 +150,7 @@ export interface KnownFacts {
 }
 
 /** What BGP's sign-off rule needs, read from the records (the note aside), and the party's level under the policy. */
-export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null }> {
+export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts = {}): Promise<Omit<SignOffFacts, "note"> & { level: PartyDueDiligence | null; person: PersonDetailsView | null; fileNote: string | null }> {
   const verdict = kycVerdict(party.state);
   const flags = known.redFlags ?? await (await import("./kyc-red-flags"))
     .loadDealRedFlags(party.dealId, [party.brandId], party.entityId ? { [party.brandId]: party.entityId } : {});
@@ -190,15 +193,26 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
   const kind = partySubjectKind(held?.aml_subject_type, signer ? { kind: signer.entity_kind } : null);
   // A trust is checked by BGP's officers, never KYC4U (Jack, 23 November 2026).
   const trust = String(held?.aml_subject_type || "").trim().toLowerCase() === "trust";
+  // A private individual's date of birth and nationality, typed in by BGP (24 November 2026):
+  // a sanctions-only sign-off waits for the date, and for a run of the checks made after it.
+  const personDetails = kind === "individual"
+    ? await import("./kyc-person-details").then(m => m.readPersonDetails(party.brandId, party.entityId, db)).catch(() => null)
+    : null;
+  const dobNeeded = personDobNeeded({ kind, sanctionsOnly: party.regime === "sanctions_only", trust });
+  let requests: import("@shared/kyc-people").PeopleRequest[] = [];
   const people = await import("./kyc-people")
-    .then(async m => m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId },
-      await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId })))
+    .then(async m => {
+      requests = await m.dealPeopleRequests(party.dealId, db, party.dealId ? undefined : { companyId: party.brandId, entityId: party.entityId });
+      return m.partyPeopleFor({ companyId: party.brandId, entityId: party.entityId, kind, dealId: party.dealId }, requests);
+    })
     .catch(() => null);
   // People that could not be read count as outstanding: a note is asked for.
   const outstanding = people ? people.outstanding : ["the people to check could not be read"];
   // Another firm's checks the officers rely on (reg 39) stand in for the client checks.
   const reliance = people?.reliance?.words || null;
   const finished = mainFinished && !outstanding.length;
+  const partyFlags = (flags?.parties?.[party.brandId] || []).length + (flags?.deal || []).length;
+  const fileNote = await fileNoteFor(party, { kind, trust, flags: partyFlags, unread: (flags?.unchecked || []).length > 0, people, requests, mainFinished }).catch(() => null);
   return {
     rejected: party.state.status === "rejected",
     current: verdict.approved ? { by: party.state.approvedBy, until: party.state.expiresAt ? new Date(party.state.expiresAt).toISOString() : null } : null,
@@ -227,18 +241,55 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
       .then(m => m.guarantorViews(party.dealId!, db))
       .then(list => list.filter(g => g.companyId === party.brandId).map(g => ({ name: g.name, state: g.checks.state })))
       .catch(() => [{ name: "the guarantors (could not be read)", state: "not_run" as const }]),
+    // The other companies that sign for the party: the same (24 November 2026).
+    signerChecks: !party.dealId ? [] : await import("./deal-guarantors")
+      .then(m => m.signerViews(party.dealId!, db))
+      .then(list => list.filter(g => g.companyId === party.brandId && g.role === party.role).map(g => ({ name: g.name, state: g.checks.state })))
+      .catch(() => [{ name: "the other companies that sign (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
+    dobNeeded: dobNeeded && !personDetails,
+    dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
+    person: kind === "individual" ? { details: personDetails, needed: dobNeeded, words: personDetailsWords(personDetails) } : null,
+    fileNote,
   };
 }
 
+// The sign-off note for a listed company, or one owned through a listed
+// company, written from the file (Woody, 24 November 2026: "Yes do the sign
+// off note"). Read again here at sign-off, never taken from the request.
+async function fileNoteFor(party: AmlSubject, f: {
+  kind: string; trust: boolean; flags: number; unread: boolean;
+  people: import("@shared/kyc-people").PartyPeople | null; requests: import("@shared/kyc-people").PeopleRequest[]; mainFinished: boolean;
+}): Promise<string | null> {
+  if (f.kind !== "company" || f.trust || f.unread || f.flags > 0 || party.regime !== "full" || !f.people) return null;
+  const { latestPrecheck } = await import("./kyc-prechecks");
+  const stored = await latestPrecheck(party.brandId, party.entityId).catch(() => null);
+  if (!stored?.result?.companiesHouse?.listing) return null;
+  // The request to the person dealing with us for the company, the latest one not cancelled.
+  const main = [...f.requests].reverse().find(r => !r.person && !r.trustDocs && !r.cancelled && r.companyId === party.brandId) || null;
+  const acting = main ? f.people.people.find(p => p.roles.includes("acting")) || null : null;
+  return listedSignOffNote({
+    precheck: stored.result, redFlags: f.flags, sanctionsOnly: false, company: true,
+    acting: main ? {
+      name: acting?.name || main.recipientName || null, sentAt: main.sentAt, finished: f.mainFinished,
+      idState: acting?.id.state || null, authoritySent: main.files.some(x => x.docKey === "authority"),
+    } : null,
+    outstanding: f.mainFinished ? f.people.outstanding : [],
+  });
+}
+
 /** For the deal's AML card: may the party be signed off now, and is a note needed. edd: enhanced due diligence by BGP, the officers' to sign off. */
-export function signOffView(facts: Omit<SignOffFacts, "note">): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[] } {
+export function signOffView(facts: Omit<SignOffFacts, "note"> & { person?: PersonDetailsView | null; fileNote?: string | null }): { blocked: string | null; needsNote: boolean; edd: boolean; outstanding: string[]; person: PersonDetailsView | null; fileNote: string | null } {
   const edd = signOffEnhanced(facts) && signOffInHouse(facts);
   return {
     blocked: signOffDenial({ ...facts, note: "x".repeat(Math.max(SIGN_OFF_NOTE_MIN, IN_HOUSE_EDD_NOTE_MIN)) }),
     needsNote: edd || (!facts.clientChecksFinished && !facts.sanctionsOnly && !facts.reliance),
     edd,
     outstanding: facts.sanctionsOnly || facts.reliance ? [] : facts.clientChecksOutstanding || [],
+    // A private individual's date of birth and nationality (24 November 2026).
+    person: facts.person ?? null,
+    // Written from the file for a listed company (24 November 2026): shown in the Sign off box, kept with the approval.
+    fileNote: facts.fileNote ?? null,
   };
 }
 
@@ -432,18 +483,29 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       facts.precheck ? `BGP's checks before asking ${facts.precheck.ranAt.slice(0, 10)}` : null,
       party.regime === "sanctions_only" ? null : facts.reliance ? `${facts.reliance} (MLR 2017 reg 39)` : facts.clientChecksFinished ? "client checks finished" : `client checks not finished${facts.clientChecksOutstanding?.length ? ` (still to come: ${facts.clientChecksOutstanding.join("; ")})` : ""}`,
       note ? `note: ${note}` : null,
+      // A listed company's note, written from the file (24 November 2026): named here, kept in full below.
+      facts.fileNote ? "the note written from the file" : null,
     ].filter(Boolean).join("; ");
     const who = me.as === "agent" ? `${me.name} (agent on the transaction)` : `${me.name}${me.officerRole === "nominated" ? " (Nominated Officer)" : me.officerRole === "deputy" ? " (Deputy Nominated Officer)" : ""}`;
-    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}`;
+    const line = `BGP sign-off on ${party.dealName} (${DEAL_PARTY_LABEL[role].toLowerCase()}) by ${who}: ${relied}${facts.fileNote ? `. Written from the file: ${facts.fileNote}` : ""}`;
     const before = party.state.status || "no checks";
     if (party.entityId) {
       const { approveEntityKyc } = await import("./account-entities");
+      const evidence = { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
+        fileNote: facts.fileNote || null, level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } };
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
-        reminderCompanyId: party.brandId, notes: line, recheckYears: years,
-        evidence: { bgpSignOff: { by: me.name, userId: me.id, as: me.as, at: new Date().toISOString(), dealId: party.dealId, role, note: note || null,
-          level, regime: party.regime, precheckRanAt: facts.precheck?.ranAt || null, clientChecksFinished: facts.clientChecksFinished } },
+        reminderCompanyId: party.brandId, notes: line, recheckYears: years, evidence,
       });
       if (r.status !== 200) return res.status(r.status).json({ message: "The company that signs was not found." });
+      // Each other company that signs for the party is a customer too: the
+      // sign-off, which waited for BGP's checks on it, approves it as well (24 November 2026).
+      const others = party.dealId ? await import("./deal-guarantors").then(m => m.signerRows([party.dealId!]))
+        .then(list => list.filter(g => g.companyId === party.brandId && g.role === role)).catch(() => []) : [];
+      for (const g of others) {
+        await approveEntityKyc("trading_entity", g.entityId, me.name, {
+          reminderCompanyId: party.brandId, notes: `${line} (signing with ${partyName(party)})`, recheckYears: years, evidence,
+        }).catch((e: any) => console.warn("[deal-party-aml] other company that signs not approved:", e?.message));
+      }
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
       await recomputeDealsForTradingEntity(party.entityId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
     } else {
@@ -498,6 +560,26 @@ router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Resp
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
     console.error("[deal-party-aml] set aside failed:", err?.message);
     res.status(500).json({ message: "The red flag could not be set aside." });
+  }
+});
+
+// The app's draft of the reason (Woody, 24 November 2026: "can you get the app to
+// review and put a suggestions of why can set aside these flags in this box?"). Reads
+// the flag again here; saves nothing. server/flag-set-aside.ts.
+router.post("/api/deals/:id/red-flags/suggest", async (req: Request, res: Response) => {
+  try {
+    const me = await decider(req);
+    if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
+    const key = text(req.body?.key).slice(0, 300);
+    if (!key) return res.status(400).json({ message: "Which red flag?" });
+    const role = req.body?.role == null || req.body.role === "" ? null : String(req.body.role);
+    const { dealFlagSubject, suggestSetAside } = await import("./flag-set-aside");
+    const subject = await dealFlagSubject(String(req.params.id), role);
+    res.json(await suggestSetAside({ dealId: String(req.params.id), ...subject, key }));
+  } catch (err: any) {
+    if (err?.name === "SuggestRefusal") return res.status(err.status || 409).json({ message: err.message });
+    console.error("[deal-party-aml] suggest failed:", err?.message);
+    res.status(500).json({ message: "The app could not draft a reason." });
   }
 });
 
@@ -825,6 +907,39 @@ async function recordPersonVerified(req: Request, res: Response, certified: bool
 
 router.post(["/api/deals/:id/parties/:role/certified-documents/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/certified-documents/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, true));
 router.post(["/api/deals/:id/parties/:role/public-figure/:checkId/withdraw", "/api/client-kyc/:companyId/subjects/:entity/public-figure/:checkId/withdraw"], (req: Request, res: Response) => withdrawPersonVerified(req, res, false));
+
+// A private individual's date of birth and nationality, typed in by BGP with no
+// documents (Woody, 24 November 2026): any BGP person signed in as themselves,
+// on a transaction's party or a client file. BGP's checks run again with them,
+// so the screening tells the person from a namesake. The date itself goes on
+// the KYC history only, never on the transaction's history.
+router.put(["/api/deals/:id/parties/:role/person-details", "/api/client-kyc/:companyId/subjects/:entity/person-details"], async (req: Request, res: Response) => {
+  try {
+    const userId = String((req as any).session?.userId || (req as any).tokenUserId || "");
+    if (!userId) return res.status(401).json({ message: "Not signed in." });
+    const { contactViewer } = await import("./contact-viewer");
+    if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const party = await subjectFor(req, res);
+    if (!party) return;
+    if ((await partyKindOf(pool, party)) !== "individual") {
+      return res.status(409).json({ message: "Only a private individual's date of birth is recorded here: a company's people come from its register." });
+    }
+    const input = personDetailsInput(req.body);
+    if (!input.ok) return res.status(400).json({ message: input.message });
+    const u = (await pool.query(`SELECT id, name, email FROM users WHERE id = $1`, [userId])).rows[0];
+    const by = { id: userId, name: text(u?.name) || text(u?.email) || "BGP" };
+    const { savePersonDetails } = await import("./kyc-person-details");
+    const details = await savePersonDetails(party.brandId, party.entityId, input, by);
+    if (party.dealId) await dealAudit(party.dealId, "aml_person_details", null, "recorded", `${subjectLabel(party)}: ${partyName(party)}: date of birth${input.nationality ? " and nationality" : ""} recorded by BGP`, by);
+    // The screening runs again with the date of birth.
+    const { startPrecheck } = await import("./kyc-prechecks");
+    const started = await startPrecheck(party.brandId, { dealId: party.dealId, userId, force: true, entityId: party.entityId }).catch(() => null);
+    res.json({ details, words: personDetailsWords(details), started });
+  } catch (e: any) {
+    console.error("[deal-party-aml] person details:", e?.message);
+    res.status(500).json({ message: "The date of birth could not be saved." });
+  }
+});
 async function withdrawPersonVerified(req: Request, res: Response, certified: boolean) {
   try {
     const me = certified ? await decider(req) : await adminDecider(req);

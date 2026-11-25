@@ -12,7 +12,6 @@ import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalC
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
-import { getSharePointDriveId } from "./utils/sharepoint-operations";
 import { extractTextFromFile } from "./utils/file-extractor";
 import * as fs from "fs";
 import * as os from "os";
@@ -1174,31 +1173,32 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
   let created = 0;
 
   try {
+    // A background read of the BGP library with the app's own token, through the folder engine.
     const token = await getAppToken();
-    const driveId = await getSharePointDriveId(token);
-    if (!driveId) {
+    const { bgpLibrary, entryByPath, listChildren, downloadFile } = await import("./folders/graph");
+    const lib = await bgpLibrary(token).catch(() => null);
+    if (!lib) {
       console.log("[Comp Extract] No SharePoint drive found");
       return { extracted: 0, created: 0 };
     }
 
     const compsFolderPaths = ["Comps", "Comparables", "Leasing Comps", "Comp Data"];
-    let files: any[] = [];
+    let files: Array<{ driveId: string; id: string; name: string; size: number | null; lastModifiedDateTime: string | null; webUrl: string | null }> = [];
 
     for (const folderName of compsFolderPaths) {
       try {
-        const encoded = encodeURIComponent(folderName);
-        // Include webUrl so each extracted comp can deep-link back to the SP
-        // file it came from rather than just being labelled "File".
-        const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,size,lastModifiedDateTime,file,webUrl&$top=20&$orderby=lastModifiedDateTime desc`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const folderFiles = (data?.value || []).filter((f: any) => f.file);
-          files = files.concat(folderFiles.map((f: any) => ({ ...f, driveId })));
-          if (folderFiles.length > 0) {
-            console.log(`[Comp Extract] Found ${folderFiles.length} files in SharePoint/${folderName}`);
-          }
+        const folder = await entryByPath(token, lib.driveId, folderName);
+        if (!folder?.isFolder) continue;
+        // The newest 20, with each file's address so an extracted comp can
+        // deep-link back to the SP file it came from rather than just being
+        // labelled "File".
+        const folderFiles = (await listChildren(token, lib.driveId, folder.itemId))
+          .filter(f => !f.isFolder)
+          .sort((x, y) => String(y.modified || "").localeCompare(String(x.modified || "")))
+          .slice(0, 20);
+        files = files.concat(folderFiles.map(f => ({ driveId: f.driveId, id: f.itemId, name: f.name, size: f.size, lastModifiedDateTime: f.modified, webUrl: f.webUrl })));
+        if (folderFiles.length > 0) {
+          console.log(`[Comp Extract] Found ${folderFiles.length} files in SharePoint/${folderName}`);
         }
       } catch { }
     }
@@ -1219,13 +1219,7 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
 
     for (const file of eligibleFiles.slice(0, 5)) {
       try {
-        const downloadResp = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${file.driveId}/items/${file.id}/content`,
-          { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" }
-        );
-        if (!downloadResp.ok) continue;
-
-        const buffer = Buffer.from(await downloadResp.arrayBuffer());
+        const buffer = Buffer.from((await downloadFile(token, file.driveId, file.id, 10 * 1024 * 1024)).bytes);
         const tmpFile = path.join(os.tmpdir(), `bgp_comp_${Date.now()}_${file.name}`);
         fs.writeFileSync(tmpFile, buffer);
 

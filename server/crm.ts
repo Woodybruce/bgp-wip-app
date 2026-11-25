@@ -2762,26 +2762,6 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  // Per-team and extra SharePoint folders for the property's Files tabs
-  // (crm_properties.sharepoint_team_folders, raw SQL). Staff only.
-  app.get("/api/crm/properties/:id/sharepoint-folders", requireAuth, async (req, res) => {
-    try {
-      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for client accounts" });
-      const { propertyFolderLinks } = await import("./sharepoint-property-files");
-      const links = await propertyFolderLinks(pool, String(req.params.id));
-      if (!links) return res.status(404).json({ error: "Not found" });
-      res.json(links);
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
-  });
-
-  app.put("/api/crm/properties/:id/sharepoint-folders", requireAuth, async (req, res) => {
-    try {
-      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for client accounts" });
-      const { setPropertyFolderLink } = await import("./sharepoint-property-files");
-      res.json(await setPropertyFolderLink(pool, String(req.params.id), req.body?.label, req.body?.url));
-    } catch (e: any) { res.status(e?.status || 500).json({ error: e.message }); }
-  });
-
   app.delete("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);
@@ -3059,11 +3039,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
       const stopped = await stoppedDealIds(ids.map(String));
       if (stopped.size) return res.status(409).json({ error: `${stopped.size === 1 ? "One of these transactions" : `${stopped.size} of these transactions`}: ${AML_STOP_REFUSAL}`, code: "AML_STOPPED" });
+      // Draft invoices go from Xero with them; an approved or paid one keeps them all (server/xero-invoice-actions.ts).
+      const { xeroBeforeDealDelete } = await import("./xero-invoice-actions");
+      const xero = await xeroBeforeDealDelete(ids.map(String), (req as any).session || null);
+      if (!xero.ok) return res.status(409).json({ error: xero.message, code: xero.code });
       for (const id of ids) {
         await storage.deleteCrmDeal(id);
       }
       res.json({ ok: true, deleted: ids.length });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { res.status(e?.status === 409 ? 409 : 500).json({ error: e.message, ...(e?.code ? { code: e.code } : {}) }); }
   });
 
   app.get("/api/crm/company-property-links", async (req, res) => {
@@ -3229,8 +3213,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (signs > 0) return res.status(409).json({ error: `This company signs ${plural(signs, "transaction", "transactions")}. Change who signs first.` });
       const pays = await pointing(`SELECT COUNT(*)::int AS n FROM crm_deals WHERE invoice_payer_entity_id = $1`);
       if (pays > 0) return res.status(409).json({ error: `This company pays on ${plural(pays, "transaction", "transactions")}. Take it off there first.` });
-      const guarantees = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE trading_entity_id = $1 AND removed_at IS NULL`);
+      // deal_guarantors keys the company by entity_id (the column was misnamed
+      // here until 24 November 2026, so the check never fired). A row of kind
+      // 'signer' is another company that signs for a party.
+      const guarantees = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL AND COALESCE(kind, 'guarantor') = 'guarantor'`);
       if (guarantees > 0) return res.status(409).json({ error: `This company guarantees ${plural(guarantees, "transaction", "transactions")}. Remove it as guarantor first.` });
+      const alsoSigns = await pointing(`SELECT COUNT(*)::int AS n FROM deal_guarantors WHERE entity_id = $1 AND removed_at IS NULL AND kind = 'signer'`);
+      if (alsoSigns > 0) return res.status(409).json({ error: `This company signs ${plural(alsoSigns, "transaction", "transactions")} with another company. Take it off there first.` });
       const amlRecords = (await Promise.all([
         pointing(`SELECT COUNT(*)::int AS n FROM kyc_documents WHERE trading_entity_id = $1`),
         pointing(`SELECT COUNT(*)::int AS n FROM kyc_investigations WHERE trading_entity_id = $1`),
@@ -4181,19 +4170,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         req.body.kycApprovedBy = changedByName;
       }
 
-      // Auto-detect EDD requirement based on deal value and risk factors
+      // A PEP on the transaction marks it for enhanced due diligence. Its price
+      // no longer does (24 November 2026): a super-prime price is weighed on
+      // each party, never a red flag by itself (risk assessment Issue 3).
       if (req.body.pricing !== undefined || req.body.amlPepStatus !== undefined) {
-        const pricing = req.body.pricing ?? oldDeal?.pricing ?? 0;
         const pepStatus = req.body.amlPepStatus ?? oldDeal?.amlPepStatus;
-        const assetClass = req.body.assetClass ?? oldDeal?.assetClass ?? "";
-        const isLondon = (oldDeal?.name || "").toLowerCase().includes("london") || assetClass.toLowerCase().includes("london");
-        const superPrimeThreshold = isLondon ? 5_000_000 : 1_000_000;
-        const eddReasons: string[] = [];
-        if (pricing >= superPrimeThreshold) eddReasons.push("super_prime");
-        if (pepStatus && pepStatus !== "clear") eddReasons.push("pep");
-        if (eddReasons.length > 0 && !oldDeal?.amlEddRequired) {
+        if (pepStatus && pepStatus !== "clear" && !oldDeal?.amlEddRequired) {
           req.body.amlEddRequired = true;
-          req.body.amlEddReason = eddReasons.join(",");
+          req.body.amlEddReason = "pep";
         }
       }
 
@@ -4725,6 +4709,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     "xeroContactId", "xeroContactName", "kycApproved", "amlCheckCompleted",
     "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
     "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
+    // People added on the transaction's People card: BGP's own CRM contacts.
+    "deal_people",
   ]);
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {
@@ -4740,8 +4726,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         .orderBy(sql`created_at DESC`);
       // BGP's AML working is never a client's to read: every line about the
       // checks (aml_sign_off, aml_red_flag, aml_reliance, aml_stopped,
-      // kyc4u_result, client_checks_sent ...), as the five-year deletion reads them.
-      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field) && !/^(aml|kyc|client_checks)/i.test(String(l.field || ""))) : logs);
+      // kyc4u_result, client_checks_sent ...), as the five-year deletion reads them,
+      // nor BGP's invoicing (xero_invoice_approved, _emailed, _voided ...: 24 November 2026).
+      res.json(scopeCompanyId ? logs.filter((l) => !CLIENT_HIDDEN_AUDIT_FIELDS.has(l.field) && !/^(aml|kyc|client_checks|xero)/i.test(String(l.field || ""))) : logs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4887,9 +4874,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const { AML_STOP_REFUSAL } = await import("@shared/aml-stop");
         return res.status(409).json({ error: AML_STOP_REFUSAL, code: "AML_STOPPED" });
       }
+      // Its draft invoices are deleted in Xero with it; an approved or paid one keeps it (server/xero-invoice-actions.ts).
+      const { xeroBeforeDealDelete } = await import("./xero-invoice-actions");
+      const xero = await xeroBeforeDealDelete([String(req.params.id)], (req as any).session || null);
+      if (!xero.ok) return res.status(409).json({ error: xero.message, code: xero.code });
       await storage.deleteCrmDeal(String(req.params.id));
       res.json({ ok: true });
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) { res.status(e?.status === 409 ? 409 : 500).json({ error: e.message, ...(e?.code ? { code: e.code } : {}) }); }
   });
 
   app.get("/api/crm/fee-allocations", async (req, res) => {
@@ -5152,6 +5143,17 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
 
       const extracted = parseAiJson(content);
+      // A sum the document gives as a figure and in words that disagree is
+      // read by the words (One Clapham, 24 November 2026: "£2,325m (Two
+      // Million, Three Hundred & Twenty-Five Thousand Pounds)").
+      if (extracted && typeof extracted === "object") {
+        const { sumByWords } = await import("@shared/deal-hots");
+        for (const key of ["price", "rentPa", "capitalContribution", "fee"]) {
+          const n = Number(String(extracted[key] ?? "").replace(/[£,\s]/g, ""));
+          const byWords = Number.isFinite(n) && n > 0 ? sumByWords(text, n) : null;
+          if (byWords) extracted[key] = byWords.words;
+        }
+      }
       console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for ${req.params.id ? `deal ${req.params.id}` : "a new deal"}`);
 
       res.json({

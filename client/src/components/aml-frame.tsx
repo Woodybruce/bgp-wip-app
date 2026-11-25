@@ -10,7 +10,7 @@
 // (account-entities-panel.tsx) and the CRM lists' KYC chip all use them. Each
 // step's words come from one rule, shared/aml-steps.ts. Add a look here, never
 // a second copy on a screen.
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, Clock, ExternalLink, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AML_STAGE_LABEL, amlDealStatusWords, type AmlStage } from "@shared/aml-dashboard";
@@ -272,32 +272,55 @@ export function AmlScreeningHead({ action, level, testId }: {
 
 const CARD_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 
-/** One card in the CRM lists' look: a title with chips beside it, a grey line, labelled rows, a footer. */
+/**
+ * One card in the CRM lists' look: a title with chips beside it, a grey line, labelled rows, a footer.
+ * On a computer every card is one height (Woody, 24 November 2026: "can you sort the cards so they all
+ * the same size and add scroll within as required"): the title and the footer stay put and the rows
+ * scroll inside the card, with a fade while more is below. 288px fits about three cards in four on live
+ * (measured that day: transactions 145 to 378px, companies 187 to 315px). A phone keeps each card's own
+ * height: one column, and no scroll box inside the page's.
+ */
 export function AmlCard({ title, sub, chips, rows, footer, onOpen, selected, testId }: {
   title: ReactNode; sub?: ReactNode; chips?: ReactNode; rows: Array<[string, ReactNode]>; footer?: ReactNode;
   onOpen: () => void; selected?: boolean; testId?: string;
 }) {
+  const body = useRef<HTMLDListElement>(null);
+  const [more, setMore] = useState(false);
+  const check = () => { const el = body.current; if (el) setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 2); };
+  // After every render (the rows may have changed), on scrolling, and when the card changes size.
+  useEffect(check);
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    el.addEventListener("scroll", check, { passive: true });
+    const seen = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(check);
+    seen?.observe(el);
+    return () => { el.removeEventListener("scroll", check); seen?.disconnect(); };
+  }, []);
   return (
     <div role="link" tabIndex={0} onClick={onOpen} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      className={cn("flex min-w-0 cursor-pointer flex-col gap-2.5 rounded-xl border border-card-border bg-card p-3 shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      className={cn("flex min-w-0 cursor-pointer flex-col gap-2.5 overflow-hidden rounded-xl border border-card-border bg-card p-3 shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-72",
         selected && "ring-2 ring-primary")}
       data-testid={testId}>
-      <div className="flex items-start gap-2">
+      <div className="flex shrink-0 items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="break-words font-semibold leading-snug">{title}</div>
           {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
         </div>
         {chips && <div className="flex shrink-0 flex-col items-end gap-1">{chips}</div>}
       </div>
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
-        {rows.map(([label, value]) => (
-          <div key={label} className="contents">
-            <dt className={cn(CARD_LABEL, "pt-0.5")}>{label}</dt>
-            <dd className="min-w-0 break-words">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {footer && <div className="mt-auto border-t border-border pt-2 text-xs text-muted-foreground">{footer}</div>}
+      <div className="relative min-h-0 flex-1">
+        <dl ref={body} className="grid h-full grid-cols-[auto_minmax(0,1fr)] content-start gap-x-3 gap-y-1.5 overflow-y-auto text-sm">
+          {rows.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className={cn(CARD_LABEL, "pt-0.5")}>{label}</dt>
+              <dd className="min-w-0 break-words">{value}</dd>
+            </div>
+          ))}
+        </dl>
+        {more && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-card to-transparent" />}
+      </div>
+      {footer && <div className="shrink-0 border-t border-border pt-2 text-xs text-muted-foreground">{footer}</div>}
     </div>
   );
 }

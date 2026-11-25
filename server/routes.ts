@@ -7785,8 +7785,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(403).json({ message: "The brief document is made by BGP and the client" });
       }
       const { generateBriefDocument } = await import("./unit-brief-doc");
-      const result = await generateBriefDocument(String(req.params.id));
-      res.json({ ...result, sharepoint: !!result.sharepointUrl });
+      const result = await generateBriefDocument(String(req.params.id), { userId: docViewer.userId });
+      // Linking a folder is BGP's: only BGP staff are told how to get it filed.
+      res.json({ ...result, sharepointNote: docViewer.isStaff ? result.sharepointNote : undefined, sharepoint: !!result.sharepointUrl });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to generate brief document" });
     }

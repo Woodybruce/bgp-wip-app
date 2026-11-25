@@ -91,6 +91,8 @@ export interface RiskAssessmentInput {
   dealFlags: KycRedFlag[];
   agents: Array<{ roleWords: string; name: string; words: string }>;
   solicitors: SolicitorCheck[];
+  // A letting under £10,000 a month: sanctions checks only, nothing asked of anyone.
+  sanctionsOnly?: boolean;
   now?: Date;
 }
 
@@ -157,6 +159,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const notAsked = (key: string) => p.requests.flatMap(r => r.notAsked || []).find(n => n.key === key) || null;
   const hasDoc = (type: string) => p.documents.some(d => d.type === type);
   const structureChart: RiskRow = p.individual ? { label: "Structure chart", value: "Not applicable: a private individual", tone: "info" }
+    : c?.listing && c.listedViaParent ? { label: "Structure chart", value: `Not required: owned through one company at each level by a listed company (${[c.name, ...(c.chain || [])].join(" > ")}); the officers confirm the chain`, tone: "ok" }
     : c?.listing ? { label: "Structure chart", value: "Not required: listed on a regulated market (MLR 2017 reg 28(5))", tone: "ok" }
     : docsDone("ownership") || hasDoc("structure_chart") ? { label: "Structure chart", value: "Received", tone: "ok" }
     : abroad.length ? { label: "Structure chart", value: `Needed: owned through ${abroad.map(a => `${a.name} (${a.country})`).join(" and ")}; the officers identify the owners`, tone: "attention" }
@@ -287,6 +290,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
     };
   });
   const ownersNote = p.individual ? "A private individual: the people named on the transaction."
+    : c?.listing && c.listedViaParent ? "Owned through a listed company: no individual owners to identify, the owner is the listed company. Standard due diligence (BGP's policy); the officers confirm the chain."
     : c?.listing ? "Listed on a regulated market: no beneficial owners to identify (MLR 2017 reg 28(5))."
     : abroad.length && !ownerRows.length ? "The owners are behind a company registered abroad: the officers identify them."
     : !ownerRows.length ? (c ? "The register names no person who owns or controls the company." : "Not known yet: the register has not been read.")
@@ -300,7 +304,7 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   const riskIdentified = [...live.map(flagText), ...(trading?.words ? [`To weigh: ${trading.words}`] : []), ...abroad.map(a => `Owned through a company registered abroad: ${a.name} (${a.country})`)];
   const mitigating = [
     ...p.aside.map(a => `${a.flag.label}: set aside by ${a.review.by || "an officer"}${a.review.at ? ` on ${day(a.review.at)}` : ""}: "${a.review.comment}"`),
-    ...(c?.listing ? ["Listed on a regulated market: simplified due diligence may apply (MLR 2017 reg 37)"] : []),
+    ...(c?.listing ? [c.listedViaParent ? `${c.listing}: no individual owners to identify` : "Listed on a regulated market: simplified due diligence may apply (MLR 2017 reg 37)"] : []),
     ...people.filter(x => x.publicFigure).map(x => `${x.name} ${x.publicFigure!.method === "certified" ? "verified from certified documents" : "verified from public sources"} by ${x.publicFigure!.by}`),
     ...(relied ? [`${relied.words}: the firm's checks are relied on under MLR 2017 reg 39`] : []),
     ...(p.kyc4u?.assessment?.levelOfRisk ? [`KYC4U rated the party ${p.kyc4u.assessment.levelOfRisk.toLowerCase()} risk${p.kyc4u.assessment.jobId ? ` (${p.kyc4u.assessment.jobId})` : ""}`] : []),
@@ -315,7 +319,13 @@ export function buildRiskAssessment(input: RiskAssessmentInput): RiskAssessment 
   else if (abroad.length) conclusion.push((input.inHouse !== false) ? "Owned through a company registered abroad: the officers identify the people behind it, then the Nominated Officer or a Deputy signs it off." : "Owned through a company registered abroad: it goes to KYC4U to identify the owners; the Nominated Officer or a Deputy adds KYC4U's result.");
   else if (outstanding.length) conclusion.push(`Not concluded: still to come: ${outstanding.join("; ")}.`);
   else if (!p.precheckRan) conclusion.push("Not concluded: BGP's checks before asking have not run.");
-  else conclusion.push("Lower risk: no higher-risk factors identified and the checks asked for are in; ready for sign-off.");
+  // Nothing asked of anyone yet (24 November 2026, Vodafone #4664 read "the
+  // checks asked for are in" when no one had been asked anything).
+  else if (!input.sanctionsOnly && !p.individual && !contact && !p.requests.length) conclusion.push("Not concluded: no one is named yet who acts for the company with BGP. Name them, then send them the client checks (their identity and their authority to act).");
+  else if (!input.sanctionsOnly && !p.requests.length) conclusion.push("No higher-risk factors identified so far. The client checks have not been sent yet.");
+  else conclusion.push(input.sanctionsOnly
+    ? "Lower risk: a letting under £10,000 a month, sanctions checks only, and no possible sanctions match; ready for sign-off."
+    : "Lower risk: no higher-risk factors identified and the checks asked for are in; ready for sign-off.");
   if (p.kyc4u?.assessment?.conclusion) conclusion.push(`KYC4U's conclusion${p.kyc4u.assessment.jobId ? ` (${p.kyc4u.assessment.jobId})` : ""}: ${p.kyc4u.assessment.conclusion}`);
 
   // ── The counterparty's agent and solicitors.

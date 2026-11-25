@@ -3,9 +3,9 @@
 // build for AML"). Each opens what is behind it, and the officers can set one
 // aside with a comment or put it back. The addresses come from the AML scope
 // (client/src/lib/aml-scope.tsx): a transaction's, or a client file's.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Flag, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Flag, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ import { RaiseReportButton } from "@/components/aml-register";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
 import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { precheckDay } from "@shared/kyc-prechecks";
+import { SET_ASIDE_VERDICT_WORDS, type SetAsideSuggestion } from "@shared/flag-set-aside";
 
 // A red flag makes the party the officers' (enhanced due diligence; it went to
 // KYC4U until 23 November 2026, when Woody stopped using them).
@@ -45,17 +46,28 @@ function FlagFacts({ flag }: { flag: KycRedFlag }) {
   );
 }
 
+// The app reads the flag and drafts the reason into the box when the dialog opens (Woody,
+// 24 November 2026: "can you get the app to review and put a suggestions of why can set
+// aside these flags in this box?"). The officer reads and edits it; Set aside is the only save.
 function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: string; role: string | null; flag: KycRedFlag; onClose: () => void; onChanged?: () => void }) {
   const { toast } = useToast();
   const urls = useAmlUrls();
-  // An old automatic flag the current screening does not bear out comes with words to start from; the officer reads and edits them.
   const [comment, setComment] = useState("");
+  const [typed, setTyped] = useState(false);
+  const suggest = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `${urls.redFlags(dealId)}/suggest`, { role, key: flag.key })).json() as Promise<SetAsideSuggestion>,
+    onSuccess: (r) => { if (r.comment && !typed) setComment(r.comment); },
+  });
+  // Asked once, when the box opens.
+  useEffect(() => { suggest.mutate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `${urls.redFlags(dealId)}/set-aside`, { role, key: flag.key, comment })).json(),
     onSuccess: () => { refreshAml(dealId, onChanged); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
     onError: (e: any) => toast({ title: "Not set aside", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
   });
   const short = comment.trim().length < FLAG_REVIEW_COMMENT_MIN;
+  const draft = suggest.data;
+  const verdictTone = draft?.verdict === "set_aside" ? "text-foreground" : draft?.verdict === "keep" ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400";
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg" data-testid="kyc-flag-set-aside-dialog">
@@ -68,7 +80,21 @@ function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: st
           </div>
           <div className="space-y-1">
             <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why it is not a concern</Label>
-            <Textarea value={comment} onChange={e => setComment(e.target.value)} rows={3} placeholder="e.g. The article is about a merger review by the CMA, cleared in 2016: no finding of wrongdoing." data-testid="input-kyc-flag-comment" />
+            <div className="flex items-start gap-1.5 text-xs" data-testid="kyc-flag-suggestion">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                {suggest.isPending ? <span className="text-muted-foreground">The app is reading the findings…</span>
+                  : suggest.isError ? <span className="text-muted-foreground">The app could not draft a reason. Write it yourself.</span>
+                  : draft?.verdict ? <span className={verdictTone} data-testid="kyc-flag-suggestion-verdict">{SET_ASIDE_VERDICT_WORDS[draft.verdict]}{draft.comment ? ". Its draft is below: read it and change what you need." : "."}</span>
+                  : draft?.unavailable ? <span className="text-muted-foreground" data-testid="kyc-flag-suggestion-unavailable">{draft.unavailable}</span>
+                  : null}
+                {draft?.comment && typed && comment !== draft.comment && (
+                  <button type="button" className="ml-2 underline decoration-dotted underline-offset-2 text-muted-foreground hover:text-foreground" onClick={() => setComment(draft.comment)} data-testid="kyc-flag-suggestion-use">Use the app's draft</button>
+                )}
+              </div>
+            </div>
+            <Textarea value={comment} onChange={e => { setTyped(true); setComment(e.target.value); }} rows={7}
+              placeholder={suggest.isPending ? "" : "e.g. The article is about a merger review by the CMA, cleared in 2016: no finding of wrongdoing."} data-testid="input-kyc-flag-comment" />
             <p className="text-[11px] text-muted-foreground">Kept on the KYC record with your name and the date. If the checks find something new about it, it is raised again.</p>
           </div>
         </div>

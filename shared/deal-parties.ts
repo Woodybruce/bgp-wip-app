@@ -211,6 +211,8 @@ export interface DealPartyView {
   billing?: DealPartyBilling | null;
   // A tenant's or a buyer's guarantors (23 November 2026; shared/deal-guarantor.ts).
   guarantors?: DealGuarantorView[];
+  // The other companies (or people) that sign for the party too (24 November 2026; shared/deal-guarantor.ts).
+  signers?: DealGuarantorView[];
 }
 
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();

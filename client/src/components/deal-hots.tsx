@@ -22,7 +22,7 @@ import type { DealPartyRole } from "@shared/deal-parties";
 import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billing-entity-create";
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "");
-const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
+export const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes("Files");
 const ROLE_FIELD: Record<DealPartyRole, string> = { landlord: "landlordId", tenant: "tenantId", vendor: "vendorId", purchaser: "purchaserId" };
 const ROLE_TYPE: Record<DealPartyRole, string> = { landlord: "Landlord", tenant: "Tenant", vendor: "Vendor", purchaser: "Purchaser" };
 const CLOSED = ["dissolved", "converted-closed", "removed", "closed", "liquidation"];
@@ -79,7 +79,7 @@ function useHotsReader(dealId: string, opts: { inEditor?: boolean; onOpenChange?
   return { busy, read, dialog };
 }
 
-const HOTS_ACCEPT = ".pdf,.docx,.doc,.txt,.rtf";
+export const HOTS_ACCEPT = ".pdf,.docx,.doc,.txt,.rtf";
 
 /** The button: choose the document, read it, show the dialog. */
 // inEditor: opened from the party box, whose own dialog must not close under it
@@ -440,6 +440,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
                       <span className="font-medium tabular-nums">{hotsTermWords(t.kind, t.value)}</span>
                       {t.state === "differs" && <span className="ml-2 text-amber-800 dark:text-amber-300">the transaction has {hotsTermWords(t.kind, t.current)}</span>}
                       <Quote text={t.quote} />
+                      {t.note && <span className="mt-0.5 block text-[11px] text-amber-800 dark:text-amber-300" data-testid={`deal-hots-term-note-${t.key}`}>{t.note}</span>}
                     </span>
                     {t.state === "same"
                       ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Same</span>

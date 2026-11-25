@@ -54,16 +54,6 @@ export interface OwnershipCompanyRef { id: string; name: string; companiesHouseN
 /** Where the KYC on a company stands, in the transaction's own words. */
 export interface OwnershipKyc { status: string | null; words: string; expiresAt: string | null; approvedBy: string | null }
 
-/** BGP's checks before asking on a company filed under the owner. */
-export interface OwnershipChecks {
-  running: boolean;
-  ranAt: string | null;
-  unfinished: string | null;
-  sanctions: "clear" | "possible" | "not_screened" | null;
-  redFlags: string[];
-  lines: Array<{ label: string; state: "ok" | "attention" | "info" | "not_run"; detail: string | null }>;
-}
-
 // What pressing Use does for one owner on a title. A freehold title's owner
 // is the building's owner: the title goes on the record, an empty Owner is set,
 // an empty Freeholder is set to the Owner and the company is filed under the
@@ -85,29 +75,43 @@ export type TitleUsePlan =
   }
   | {
     kind: "long_leaseholder";
-    /** The CRM company already holding this company, or a new one. */
-    company: "existing" | "create";
+    /** The Long leaseholder pill: set to the CRM company already holding this company, or a new one; or kept (already set). */
+    company: "existing" | "create" | "keep";
+    /** The company is filed under the Long leaseholder for the AML (24 November 2026, Touchwood). */
+    files: boolean;
+  }
+  | {
+    // A building held on a long lease: a freehold found is the Freeholder's. The head lease stays
+    // on the record and the Owner is not touched (24 November 2026, Touchwood).
+    kind: "freeholder";
+    company: "existing" | "create" | "keep";
+    files: boolean;
   };
 
 export interface ProprietorView extends LandRegistryProprietor {
-  /** Filed under the property's Owner as one of its companies. */
+  /** The account this title's owner is filed under for the AML: the Owner for a freehold, the Long leaseholder for a head lease. */
+  account: OwnershipCompanyRef | null;
+  /** Filed under that account as one of its companies. */
   filed: { entityId: string; name: string } | null;
-  /** The Owner's own CRM record is this company. */
-  isOwner: boolean;
-  /** Another CRM company with this number or name (when the Owner is empty, Use sets it). */
+  /** The account's own CRM record is this company. */
+  isAccount: boolean;
+  /** Another CRM company with this number or name (when the role is empty, Use sets it). */
   crm: OwnershipCompanyRef | null;
   /** Filed under another account in the CRM. */
   elsewhere: { entityId: string; name: string; under: OwnershipCompanyRef } | null;
   /** What pressing Use does; null when there is nothing left to do. */
   use: TitleUsePlan | null;
-  /** Its KYC and BGP's checks, once it is filed under the Owner. */
+  /** Its KYC, once it is filed under the account; the KYC itself is the shared client KYC window. */
   kyc: OwnershipKyc | null;
-  checks: OwnershipChecks | null;
 }
 
 export interface TitleView extends Omit<LandRegistryTitle, "proprietors"> {
-  /** Why it is listed: its address names the building's number and street, or its name; the title on the record; or only the postcode. */
-  fit: "address" | "name" | "record" | "postcode";
+  /**
+   * Why it is listed: its address names the building's number and street, or its name; the title on the record;
+   * only the postcode; a freehold naming the building outside its postcode ("elsewhere") or on its street ("street");
+   * a lease of a unit here ("unit"); or a title number a person typed ("typed").
+   */
+  fit: "address" | "name" | "record" | "postcode" | "elsewhere" | "street" | "unit" | "typed";
   onRecord: boolean;
   proprietors: ProprietorView[];
 }
@@ -120,6 +124,16 @@ export interface PropertyOwnershipView {
   titles: TitleView[];
   /** Other titles in the postcode, when nothing at Land Registry names this address. */
   postcodeTitles: TitleView[];
+  /** Leases of units in the building (a tenant's lease, never its owner). */
+  unitLeases: TitleView[];
+  /**
+   * With no freehold among the titles: freeholds that may be the building's, found beyond its postcode
+   * (naming the building in its town, or on its street), and the words searched.
+   */
+  freeholds: { searched: { name: string | null; street: string | null; town: string | null }; titles: TitleView[] } | null;
+  /** A title number a person typed, looked up (null when the lists hold no owner for it). */
+  typed?: TitleView | null;
+  typedNumber?: string;
   roles: Array<{ field: OwnershipRoleField; label: string; company: (OwnershipCompanyRef & { kyc: OwnershipKyc | null }) | null }>;
   owner: OwnershipCompanyRef | null;
 }
@@ -194,6 +208,103 @@ export function titleFit(titleAddress: unknown, place: { name?: unknown; number?
   return null;
 }
 
+// ── Beyond the postcode (24 November 2026, Touchwood) ──────────────────────
+// Woody on Touchwood, Solihull: "picked up the long leasehold interest but not
+// the freehold". The search read only the building's postcode, and a big
+// site's freehold is often registered at another address or with no postcode
+// at all (Solihull Council holds much of Touchwood's). With no freehold found,
+// the card also lists freeholds naming the building in its town, and
+// freeholds on its street, for a person to pick; and a lease of a unit here is
+// a tenant's, never offered as the building's Long leaseholder.
+
+/** A lease of a unit, shop, kiosk, suite, flat or floor: a tenant's lease, not the building's. */
+export function isUnitLease(address: unknown): boolean {
+  const a = text(address);
+  if (!a) return false;
+  return /\b(?:units?|shops?|kiosks?|stands?|stalls?|suites?|flats?|apartments?)\s+(?:no\.?\s*)?[a-z]{0,3}\s?\d/i.test(a)
+    || /\b(?:ground|first|second|third|fourth|fifth|sixth|lower ground|upper ground|basement|mezzanine)\s+floors?\b/i.test(a);
+}
+
+// Words that say only what kind of place it is: a name of these alone is too general to search for.
+const SEARCH_GENERIC = new Set([
+  "the", "and", "of", "at", "on", "in", "house", "building", "buildings", "centre", "center", "shopping", "mall", "court", "place",
+  "tower", "towers", "hall", "park", "plaza", "square", "street", "road", "lane", "unit", "units", "shop", "shops", "store", "stores",
+  "office", "offices", "estate", "land", "site", "works", "yard", "retail", "block", "new", "old", "north", "south", "east", "west",
+  "upper", "lower", "high", "one", "two", "three", "four", "five",
+]);
+// A name's ending that varies between the CRM and Land Registry ("Westgate Shopping Centre" is "Westgate Centre" there).
+const KIND_SUFFIX = /\s+(?:shopping centre|shopping center|shopping mall|shopping park|retail park|centre|center|building|buildings)$/;
+
+/**
+ * The building's own name, to look for at Land Registry beyond its postcode:
+ * "touchwood" from "Touchwood, Solihull", "westgate" from "Westgate Shopping
+ * Centre, Oxford", "millennium bridge house". Null for a street address, or
+ * a name with no word of its own ("The Mall").
+ */
+export function buildingSearchTerm(name: unknown): string | null {
+  const first = words(text(name).split(",")[0]).replace(/^the\s+/, "");
+  if (!first || /^\d/.test(first)) return null;
+  const term = first.replace(KIND_SUFFIX, "").trim();
+  return term.split(" ").some(w => w.length >= 4 && !SEARCH_GENERIC.has(w) && !/^\d/.test(w)) ? term : null;
+}
+
+const STREET_END = /\b(road|street|lane|avenue|way|walk|place|square|row|hill|gardens|terrace|crescent|drive|close|parade|grove|mews|yard|wharf|quay|circus|green|court|broadway|boulevard|embankment|precinct)$/i;
+const POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+
+/** The street the building's address names without a number ("Homer Road" from "Touchwood, Homer Road, Solihull B91 3GJ"). */
+export function unnumberedStreet(address: unknown): string | null {
+  const fields = address && typeof address === "object" ? address as Record<string, unknown> : {};
+  const all = typeof address === "string" ? address : Object.values(fields).filter(v => typeof v === "string").join(", ");
+  for (const part of all.split(",")) {
+    const t = text(part.replace(POSTCODE_RE, ""));
+    if (t && !/\d/.test(t) && STREET_END.test(t) && t.split(" ").length <= 5) return t;
+  }
+  return null;
+}
+
+/** The building's town: the address part beside its postcode ("Solihull"), else the last part of its name. */
+export function postTown(address: unknown, name?: unknown): string | null {
+  const fields = address && typeof address === "object" ? address as Record<string, unknown> : {};
+  const all = typeof address === "string" ? address : Object.values(fields).filter(v => typeof v === "string").join(", ");
+  const parts = all.split(",").map(text).filter(Boolean);
+  const ok = (t: string) => !!t && /^[a-z][a-z' -]*$/i.test(t) && t.length >= 3 && t.split(" ").length <= 3 && !STREET_END.test(t);
+  for (const part of parts) {
+    if (!POSTCODE_RE.test(part)) continue;
+    const t = text(part.replace(POSTCODE_RE, ""));
+    if (ok(t)) return t;
+  }
+  const last = text(text(name).split(",").slice(1).pop());
+  if (ok(last)) return last;
+  const tail = parts.length > 1 ? text(parts[parts.length - 1].replace(POSTCODE_RE, "")) : "";
+  return ok(tail) ? tail : null;
+}
+
+/** The address names the building (its own words, whole) and its town. */
+export function addressNamesBuilding(titleAddress: unknown, term: string, town: string | null): boolean {
+  const at = ` ${words(titleAddress)} `;
+  const name = words(term);
+  if (!at.includes(` ${name} `)) return false;
+  // A street named after the building ("garages at Touchwood Hall Close") is not the building (24 November 2026):
+  // the building's name counts only where the part of the address it is in does not go on to a street's name.
+  const named = text(titleAddress).split(",").some(part => {
+    const w = ` ${words(part)} `;
+    const at2 = w.indexOf(` ${name} `);
+    if (at2 < 0) return false;
+    const rest = w.slice(at2 + name.length + 2).trim().split(" ").filter(Boolean);
+    return !(rest.length >= 1 && rest.length <= 3 && STREET_WORDS.has(rest[rest.length - 1]));
+  });
+  return named && (!town || at.includes(` ${words(town)} `));
+}
+
+const STREET_WORDS = new Set(["road", "rd", "street", "st", "close", "lane", "avenue", "drive", "way", "grove", "gardens", "crescent", "terrace", "mews", "rise", "row", "walk"]);
+
+/** Land Registry's country for a company abroad, as people write it: "JERSEY" is "Jersey". */
+export function countryWords(country: unknown): string | null {
+  const t = text(country);
+  if (!t) return null;
+  return t.toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase()).replace(/\b(And|Of|The)\b/g, w => w.toLowerCase());
+}
+
 /** The same company: the same UK number, else the same legal name. */
 export function sameRegisteredCompany(a: { name: unknown; number?: unknown }, b: { name: unknown; number?: unknown }): boolean {
   if (text(a.number) && text(b.number)) return sameCompaniesHouseNumber(a.number, b.number);
@@ -206,11 +317,20 @@ export function titleUsePlan(input: {
   onRecord: boolean;
   tenure: string | null;
   owner: { id: string } | null;
-  proprietor: { filed: boolean; crm: { id: string } | null; isOwner?: boolean };
+  proprietor: { filed: boolean; crm: { id: string } | null };
   roles: { freeholderId: string | null; longLeaseholderId: string | null };
+  /** A lease of a unit here: a tenant's lease, never the building's Long leaseholder. */
+  unitLease?: boolean;
 }): TitleUsePlan | null {
   if (text(input.tenure).toLowerCase() === "leasehold") {
-    return input.roles.longLeaseholderId ? null : { kind: "long_leaseholder", company: input.proprietor.crm ? "existing" : "create" };
+    if (input.unitLease) return null;
+    // The head lease's owner is the Long leaseholder: set the empty pill, and file the company under it for the AML.
+    if (!input.roles.longLeaseholderId) return { kind: "long_leaseholder", company: input.proprietor.crm ? "existing" : "create", files: true };
+    return input.proprietor.filed ? null : { kind: "long_leaseholder", company: "keep", files: true };
+  }
+  if (input.roles.longLeaseholderId && !input.onRecord && text(input.tenure).toLowerCase() === "freehold") {
+    if (!input.roles.freeholderId) return { kind: "freeholder", company: input.proprietor.crm ? "existing" : "create", files: true };
+    return input.proprietor.filed ? null : { kind: "freeholder", company: "keep", files: true };
   }
   const plan: TitleUsePlan = {
     kind: "owner",
@@ -222,20 +342,43 @@ export function titleUsePlan(input: {
   return plan.records || plan.owner !== "keep" || plan.files || plan.freeholder ? plan : null;
 }
 
+// BGP's checks start by themselves on a company filed here for the AML (Woody,
+// 24 November 2026: yes to "should checks start by themselves when you set a
+// building's owner, rather than when someone presses KYC?"). This supersedes
+// "checks only when a person asks" of 23 November.
+const CHECKS_START = "and starts BGP's checks";
+
+/** What happened to BGP's checks on the company Use filed, for the toast after the line that names it; null when the checks are switched off. */
+export function ownershipChecksWords(start: string | null): string | null {
+  if (start === "started") return "BGP's checks started";
+  if (start === "running") return "BGP's checks already running";
+  if (start === "fresh") return "BGP's checks ran in the last 30 days";
+  if (start === "cap") return "BGP's checks wait for tomorrow: today's allowance is used";
+  if (start === "off" || start === "needs_company") return null;
+  return "BGP's checks did not start: press KYC to try again";
+}
+
 /** The words for what Use does, for the screen ("Records title NGL123 on the building, files it under TPG Angelo Gordon for the AML"). */
-export function titleUseWords(plan: TitleUsePlan, ctx: { titleNumber: string; ownerName: string | null; proprietorName: string; crmName?: string | null; storedTitle?: string | null }): string {
-  if (plan.kind === "long_leaseholder") {
-    return plan.company === "existing"
-      ? `Sets the Long leaseholder to ${ctx.crmName || ctx.proprietorName}.`
-      : `Adds ${ctx.proprietorName} to the CRM and sets it as the Long leaseholder.`;
+export function titleUseWords(plan: TitleUsePlan, ctx: { titleNumber: string; ownerName: string | null; proprietorName: string; crmName?: string | null; storedTitle?: string | null; accountName?: string | null }): string {
+  if (plan.kind === "long_leaseholder" || plan.kind === "freeholder") {
+    const role = plan.kind === "long_leaseholder" ? "Long leaseholder" : "Freeholder";
+    if (plan.company === "keep") {
+      if (!plan.files) return "";
+      const under = ctx.accountName || `the ${role}`;
+      return ctx.accountName && legalNameKey(ctx.accountName) === legalNameKey(ctx.proprietorName) ? `Files it for the AML ${CHECKS_START}.` : `Files ${ctx.proprietorName} under ${under} for the AML ${CHECKS_START}.`;
+    }
+    const holder = plan.company === "existing" ? ctx.crmName || ctx.proprietorName : ctx.proprietorName;
+    const set = plan.company === "existing" ? `Sets the ${role} to ${holder}` : `Adds ${ctx.proprietorName} to the CRM and sets it as the ${role}`;
+    if (!plan.files) return `${set}.`;
+    return legalNameKey(holder) === legalNameKey(ctx.proprietorName) ? `${set}, files it for the AML ${CHECKS_START}.` : `${set}, files ${ctx.proprietorName} under it for the AML ${CHECKS_START}.`;
   }
   const owner = ctx.ownerName || ctx.crmName || ctx.proprietorName;
   const replaces = ctx.storedTitle && ctx.storedTitle !== ctx.titleNumber ? ` in place of ${ctx.storedTitle}` : "";
   const parts = [
     plan.records ? `records title ${ctx.titleNumber} on the building${replaces}` : "",
     plan.owner === "existing" ? `sets the Owner to ${ctx.crmName || ctx.proprietorName}` : plan.owner === "create" ? `adds ${ctx.proprietorName} to the CRM as the Owner` : "",
-    plan.files ? `files ${ctx.proprietorName} under ${owner} for the AML` : "",
     plan.freeholder ? `sets the Freeholder to ${owner}` : "",
+    plan.files ? `files ${ctx.proprietorName} under ${owner} for the AML ${CHECKS_START}` : "",
   ].filter(Boolean);
   const said = parts.join(", ");
   return said ? `${said[0].toUpperCase()}${said.slice(1)}.` : "";

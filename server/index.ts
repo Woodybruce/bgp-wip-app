@@ -1652,6 +1652,13 @@ const schemaStartup = (async () => {
     `DELETE FROM crm_contact_deals a USING crm_contact_deals b
       WHERE a.contact_id = b.contact_id AND a.deal_id = b.deal_id AND a.id > b.id`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_deals_pair ON crm_contact_deals(contact_id, deal_id)`,
+    // Everyone on a transaction (Woody, 24 November 2026; server/deal-people.ts):
+    // a contact added on the People card says who they are there and who added them.
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS deal_group text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS deal_label text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_by varchar`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_by_name text`,
+    `ALTER TABLE crm_contact_deals ADD COLUMN IF NOT EXISTS added_at timestamptz`,
     `DELETE FROM crm_contact_properties a USING crm_contact_properties b
       WHERE a.contact_id = b.contact_id AND a.property_id = b.property_id AND a.id > b.id`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_properties_pair ON crm_contact_properties(contact_id, property_id)`,
@@ -3104,6 +3111,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       removed_by_name text
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS deal_guarantors_live_uq ON deal_guarantors (deal_id, role, entity_id) WHERE removed_at IS NULL`,
+    // Another company that signs for the same party (Woody, 24 November 2026:
+    // "can we add 2 entities?"): a row of kind 'signer'. server/deal-guarantors.ts.
+    `ALTER TABLE deal_guarantors ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'guarantor'`,
     // A trust's structure, checked by BGP itself (Jack, 23 November 2026:
     // "Remove KYC4u on trusts. We need you to build the trust structuring"):
     // one per trust record, shared by its deals. server/trust-structure.ts.
@@ -3161,6 +3171,40 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
     // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
     `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
+    // A private individual's date of birth and nationality, typed in by BGP
+    // (Woody, 24 November 2026): one row per party record (the brand, and the
+    // person who signs when there is one). BGP's checks screen with them, and
+    // a sanctions-only sign-off of a private individual waits for the date.
+    // server/kyc-person-details.ts.
+    `CREATE TABLE IF NOT EXISTS kyc_person_details (
+      id serial PRIMARY KEY,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      date_of_birth date NOT NULL,
+      nationality text,
+      recorded_by varchar,
+      recorded_by_name text,
+      recorded_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS kyc_person_details_party_idx ON kyc_person_details (company_id, COALESCE(trading_entity_id, ''))`,
+    // Fable's written view of a party's AML file (Woody, 24 November 2026:
+    // "an AI led commentary with fable 5 giving a proper view on whats been
+    // found"): one row per view written, kept against the facts it was
+    // written from (facts_hash), so it is shown again until the file changes.
+    // server/aml-commentary.ts.
+    `CREATE TABLE IF NOT EXISTS aml_risk_commentaries (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      role varchar NOT NULL,
+      facts_hash varchar(64) NOT NULL,
+      commentary jsonb NOT NULL,
+      facts jsonb NOT NULL,
+      model text,
+      created_by varchar,
+      created_by_name text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS aml_risk_commentaries_deal_idx ON aml_risk_commentaries (deal_id, role, created_at DESC)`,
     // Documents BGP uploads on a party (Woody, 23 November 2026: "upload
     // documents ... the app must read these and check they are acceptable"):
     // the reading of each (server/kyc-documents.ts), whether an agent saw the
@@ -3386,6 +3430,58 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS scheme text`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS scheme text`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS requires_po boolean`,
+    // Folders: one engine (Woody, 24 November 2026: "go ahead with the folder
+    // suggestion"; docs/folders-review-2026-11-20.md, 4.2). A record's folder
+    // links by Microsoft's drive and item ids, several to a record; unlinking
+    // keeps the row. Every link change and folder action is a row of
+    // folder_actions. server/folders/. Additive.
+    `CREATE TABLE IF NOT EXISTS record_folders (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      record_type text NOT NULL,
+      record_id text NOT NULL,
+      drive_id text NOT NULL,
+      item_id text NOT NULL,
+      label text NOT NULL,
+      colour text,
+      position integer NOT NULL DEFAULT 0,
+      drive_kind text,
+      web_url text,
+      cached_name text,
+      cached_path text,
+      status text NOT NULL DEFAULT 'ok',
+      source text NOT NULL,
+      linked_by varchar,
+      linked_at timestamptz NOT NULL DEFAULT now(),
+      checked_at timestamptz,
+      removed_at timestamptz,
+      removed_by varchar
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS record_folders_live_uq ON record_folders (record_type, record_id, drive_id, item_id) WHERE removed_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS record_folders_item_idx ON record_folders (drive_id, item_id)`,
+    // Shared with a client (Woody, 24 November 2026, decision 6): BGP staff
+    // share a linked folder with the client company whose logins can open the
+    // record; it then shows in that client's data room. server/folders/share.ts.
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_with_company_id text`,
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_by varchar`,
+    `ALTER TABLE record_folders ADD COLUMN IF NOT EXISTS shared_at timestamptz`,
+    `CREATE TABLE IF NOT EXISTS folder_actions (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      at timestamptz NOT NULL DEFAULT now(),
+      user_id varchar,
+      ms_account text,
+      action text NOT NULL,
+      record_type text,
+      record_id text,
+      drive_id text,
+      item_id text,
+      name_before text,
+      name_after text,
+      parent_before text,
+      parent_after text,
+      ok boolean NOT NULL DEFAULT true,
+      error text,
+      detail jsonb
+    )`,
   ];
 
   let ok = 0, skipped = 0;
@@ -4530,6 +4626,7 @@ import { setupModelsRoutes } from "./models";
 import { setupDocumentTemplateRoutes } from "./document-templates";
 import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
+import { setupXeroInvoiceRoutes } from "./xero-invoice-actions";
 import { registerXeroFinancialRoutes } from "./xero-financials";
 import { registerCashflowRoutes } from "./cashflow-board";
 import { registerFinanceBoardRoutes } from "./finance-board";
@@ -4609,6 +4706,8 @@ import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
+import amlCommentaryRouter from "./aml-commentary";
+import dealPeopleRouter from "./deal-people";
 import amlSecondReadRouter from "./aml-second-read";
 import trustStructureRouter from "./trust-structure";
 import amlPolicyRouter from "./aml-policy";
@@ -4629,7 +4728,6 @@ import accountTeamsRouter from "./account-teams";
 import agentRelationshipRouter from "./agent-relationship";
 import investmentBuyersRouter from "./investment-buyers";
 import propertyOwnershipRouter from "./property-ownership";
-import propertySetupRouter from "./property-setup";
 import propertyReviewRouter from "./property-review";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
@@ -5037,6 +5135,13 @@ app.use((req, res, next) => {
     // promote sweeps both run many UPDATEs in series — the default
     // 45s timeout cuts them off mid-pass, leaving partial state.
     timeoutMs = 180000;
+  } else if (req.path.startsWith('/api/folders/') && (req.path.includes('/upload') || req.path.endsWith('/create'))) {
+    // Folders: a file or a 10 MB piece passed on to SharePoint, or a new
+    // property folder with its five folders made one after another.
+    timeoutMs = 180000;
+  } else if (req.path.startsWith('/api/admin/folders/migration')) {
+    // Folders: the migration report opens every stored folder address once.
+    timeoutMs = 600000;
   } else if (req.path.includes('/sharepoint-candidates') || req.path.includes('/from-sharepoint')) {
     // Walking a property's linked folder plus a Microsoft 365 search, and
     // downloading a large brochure PDF from SharePoint.
@@ -5847,6 +5952,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupDocumentTemplateRoutes(app);
   setupCanvaRoutes(app);
   setupXeroRoutes(app);
+  setupXeroInvoiceRoutes(app);
   registerXeroFinancialRoutes(app);
   registerCashflowRoutes(app);
   registerFinanceBoardRoutes(app);
@@ -5959,6 +6065,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(portfolioPropertiesRouter);
   app.use(clientTeamsRouter);
   app.use(clientSharepointRouter);
+  // The folder engine (docs/folders-review-2026-11-20.md): BGP staff only, each
+  // on their own Microsoft 365. Client logins are refused /api/folders/ by the
+  // client gateway above and keep the data room on /api/client/sharepoint/.
+  const { appFoldersRouter } = await import("./folders/routes");
+  app.use(await appFoldersRouter());
   app.use(activitySummaryRouter);
   app.use(expansionIntelRouter);
   // The measured inputs to the Expansion score: the store count, and the
@@ -6004,6 +6115,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(amlDashboardRouter);
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);
+  app.use(amlCommentaryRouter);
+  app.use(dealPeopleRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);
   app.use(trustStructureRouter);
@@ -6028,7 +6141,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(agentRelationshipRouter);
   app.use(investmentBuyersRouter);
   app.use(propertyOwnershipRouter);
-  app.use(propertySetupRouter);
   app.use(propertyReviewRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);

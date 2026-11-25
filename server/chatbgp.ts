@@ -20,7 +20,7 @@ import { jointAgentThreadKindById } from "./chat-joint-agent";
 import { buildChatToolResultContent } from "./chat-tool-result";
 import { getRelevantStaffMemoryContext } from "./utils/chat-memory-context";
 import mammoth from "mammoth";
-import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
+import { getValidMsToken } from "./microsoft";
 import { listAllChildren } from "./microsoft-graph-pagination";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { shouldBufferHmlrDelivery, verifyHmlrChatDelivery, type HmlrDeliveryReceipt } from "./hmlr-chat-delivery-guard";
@@ -943,6 +943,8 @@ function getToolProgressLabel(toolName: string): string {
     create_document_template: "Creating template...",
     create_sharepoint_folder: "Creating folder...",
     move_sharepoint_item: "Moving file...",
+    get_record_folders: "Reading the record's folders...",
+    link_record_folder: "Linking the folder...",
     get_email_attachments: "Getting attachments...",
     download_email_attachment: "Downloading attachment...",
     list_project_files: "Browsing project files...",
@@ -1551,17 +1553,17 @@ You are an active operational agent with full CRM read/write access, internet se
 - **AML / KYC**: BGP's AML policy (Issue 5, November 2026, with the firm-wide risk assessment, Issue 4; the copies on Transactions → AML → Policy are the source of truth) names Jack Barratt as Nominated Officer (MLRO) and Layla O'Driscoll and Woody Bruce as Deputy Nominated Officers and Deputy Compliance Officers; the officers who decide in the app are set in the AML policy panel on Transactions → AML. KYC4U is no longer used (since 23 November 2026): enhanced due diligence is done in-house by the Nominated Officer or a Deputy. KYC4U's past checks and every file copied from their site stay on record (Subscriptions & APIs → KYC4U) and still count. On each transaction (Parties & AML) the app runs BGP's checks before asking (Companies House, sanctions lists, web and ComplyAdvantage screening) and the client checks; each party gets a level of due diligence: simplified (a listed company, with no owners to verify; an FCA-authorised fund or UK public body, whose owners are still identified; never a company owned by a listed one, which is standard), standard, or enhanced (a red flag or a policy factor: public role, sanctions, adverse media, a trust, an unregulated pooled fund, a high-risk or golden-visa country, a higher-risk sector, owners abroad; a super-prime sale is weighed with the rest, not enhanced by itself). A standard party is signed off by an agent on the transaction, the Nominated Officer or a Deputy, for 3 years; an enhanced one by the Nominated Officer or a Deputy with a note of what was checked (1 year). Since Issue 3 a company is evidenced by its Companies House record (or home register) with BGP's screening (a credit report is optional; since Issue 5 a company registered or owned overseas is checked from its own register's extract, issued in the last three months, sent by the client or dropped on the party's Upload documents, and read, translated and checked in the app: BGP uses no Dun & Bradstreet or Creditsafe, and a translation made in the app is not a certified one, which HMRC can ask for), a Veriff identity check with its live face match counts as meeting the person (certified copies are then not needed), and a newly formed company with no accounts gives its parent's latest accounts or how the transaction is funded. Lettings under £10,000 a month need sanctions checks only. Since Issue 4 the counterparty on a joint instruction is always checked (the joint agent's documents, or BGP's own checks): the officers mark a party Not required only when no transaction was done with it. All checks must be complete before exchange or completion of a lease; a transaction moved on with checks outstanding warns and emails the officers. To start the checks on a party, send the user to the transaction's Parties & AML (Send client checks); never offer to send anything to KYC4U. check_covenant for covenant strength / financial health / credit risk (house A-E grade). deep_investigate for ownership / company intelligence (not a KYC check).
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
-- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
+- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item take BGP SharePoint and OneDrive links, or a path inside BGP - Share Drive (the team's tree; never the retired "BGP share drive"). For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. They run as the person asking, on their own Microsoft 365: if a tool says to connect, tell them to connect it on the SharePoint page, never that SharePoint is down. A property's, transaction's or company's folders: get_record_folders; to put a folder on one (it then shows under Folders on its page), link_record_folder, only when asked.
 - **Units and what a deal is waiting on**: for "who is in unit X", "which unit is <brand> in", "when does <tenant>'s lease end" or "what is vacant at <property>" call get_property_units (the property page's own unit list: tenancy schedule, Letting Tracker and live deals). For "what is this deal or unit waiting on", "who is holding it up" or "what is next on the checklist" call get_deal_waiting_on (the deal clock and the deal checklist). Both are recorded: never answer these from the leasing schedule board, and never say a tenant is not at a property or that a waiting-on is not recorded until these two have been tried.
 - **Leasing schedule**: query_leasing_schedule for read of the older leasing schedule board. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
 - **Editable text documents**: generate_word (Word, .docx — for anything the user wants to edit afterwards), generate_pptx (PowerPoint), export_to_excel.
 - **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). **Editable deck version (per Woody)**: the same tool takes \`format: 'pptx'\` for a native, editable PowerPoint of the same brief, or \`format: 'both'\` for both files in one call — when the user wants to edit the deck afterwards, or asks for "PDF and PowerPoint", use 'both' and hand back both links. The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
-- **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
+- **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a folder in BGP - Share Drive. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **Map images in documents (HARD DEFAULT, per Woody)**: any Google Static Maps image you embed in a brief / document / email uses \`maptype=hybrid\` (satellite with road labels) — never roadmap unless the user explicitly asks for a road-map style. Keep annotated pin counts per map legible (≤10 markers; split into two maps beyond that). Write the staticmap URL WITHOUT a \`key\` parameter and never invent one — the PDF renderer injects BGP's real key and embeds the fetched image data into the document automatically (a made-up key = grey box).
-- **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
+- **SharePoint folders**: Always create inside BGP - Share Drive, where the user says; nothing new goes in the retired "BGP share drive". A missing folder is made only below a top-level folder that is there, and a name already there is never replaced.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
 - **Property Pathways**: A pathway (start_property_pathway → advance_property_pathway) is a heavy, multi-stage investigation. Run ONE at a time, stage by stage — never try to batch several pathways into a single turn, you will run out of time and the request will time out. If the user asks for several at once (e.g. "do pathways for these 5 addresses"), do NOT fire them all off together: start the FIRST address, work through its stages as normal, then tell the user that's the first one underway and offer to start the next address when they're ready. Make it clear you're deliberately doing them one at a time so none of them time out — not refusing the rest.
 - **Pathway Land Registry gate (HARD RULE)**: Every pathway is pinned to a Land Registry title. The first call to start_property_pathway with just an address will return needsLandRegConfirmation: true and a list of candidate titles — that is NOT a failure, it's the gate working. Show the user the candidate titles (proprietor name + tenure + property address) and ask them to pick one. Only then call start_property_pathway again with confirmedTitleNumber set. If HMLR returned no matches, tell the user that and ask whether to proceed off-register — only set skipLandRegConfirmation: true after they explicitly agree. Never silently fall back to skipping the gate, never pick a title for the user.
@@ -2334,12 +2336,16 @@ export async function clientChatGuard(req: any): Promise<{ isClient: boolean; co
 // The CRM plan tools (server/chatbgp-crm-strategy.ts): one list for both tool
 // paths below, so a tool added to one is in the other.
 const CRM_PLAN_TOOL_NAMES = new Set(["start_crm_strategy", "get_crm_plan", "add_crm_event", "update_crm_strategy", "update_crm_action"]);
+// The folder tools (server/chatbgp-folder-tools.ts): one list for both tool
+// paths, the same eight the tool file runs.
+const FOLDER_TOOL_NAMES = new Set(["browse_sharepoint_folder", "read_sharepoint_file", "create_sharepoint_folder", "move_sharepoint_item", "upload_to_sharepoint", "copy_dropbox_to_sharepoint", "get_record_folders", "link_record_folder"]);
 export const CLIENT_BLOCKED_TOOLS = new Set([
   // 0. The investment team's own research library (server/investment-research-intel.ts)
   "get_market_research",
   // 1. BGP systems (the SharePoint carve-out)
   "browse_sharepoint_folder", "create_sharepoint_folder", "move_sharepoint_item",
   "read_sharepoint_file", "upload_to_sharepoint", "copy_dropbox_to_sharepoint",
+  "get_record_folders", "link_record_folder",
   "browse_dropbox", "download_email_attachment", "get_email_attachments",
   "search_emails", "reply_email", "send_email", "send_whatsapp",
   "query_calendar", "search_calendar",
@@ -2885,131 +2891,9 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "create_sharepoint_folder",
-      description: "Create a folder in the BGP SharePoint site. All folders must be inside the 'BGP share drive' root folder. Team folders are at 'BGP share drive/Investment', 'BGP share drive/London F&B', 'BGP share drive/London Retail', etc. Can create folders inside team folders or any existing folder by providing its path. Call multiple times for nested structures.",
-      parameters: {
-        type: "object",
-        properties: {
-          folderName: {
-            type: "string",
-            description: "The name of the folder to create",
-          },
-          parentPath: {
-            type: "string",
-            description: "The path to the parent folder, e.g. 'London' to create inside the London team folder, or 'London/10 Eaton Place' to create inside a subfolder. Leave empty or '/' to create at root.",
-          },
-        },
-        required: ["folderName"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "read_sharepoint_file",
-      description: "Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "A SharePoint sharing URL (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:x:/g/personal/...) or a file path in the BGP SharePoint document library (e.g. 'Investment/Deal Files/report.xlsx'). Can be omitted when using driveId + itemId.",
-          },
-          driveId: {
-            type: "string",
-            description: "The driveId from a previous browse_sharepoint_folder result. Use together with itemId to read a file without needing a sharing URL.",
-          },
-          itemId: {
-            type: "string",
-            description: "The itemId from a previous browse_sharepoint_folder result. Use together with driveId to read a file directly.",
-          },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "browse_sharepoint_folder",
-      description: "Browse the contents of a SharePoint or OneDrive folder. Use this when the user shares ANY SharePoint or OneDrive folder link (containing /:f:/) or asks you to look at what's in a folder. Supports both team SharePoint and personal OneDrive URLs. Returns a list of files and subfolders with their names, types, sizes, driveId and itemId. To drill into a subfolder, call this tool again with the subfolder's driveId and itemId from the previous result — this is the most reliable way to navigate subfolders on personal OneDrive.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "A SharePoint sharing URL for a folder (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/...) OR a folder path in the BGP SharePoint document library (e.g. 'Investment/Deal Files', 'London Retail'). Use '/' to browse the root. When drilling into subfolders from a previous browse result, you can omit this and use driveId + itemId instead.",
-          },
-          driveId: {
-            type: "string",
-            description: "The driveId of a subfolder returned from a previous browse_sharepoint_folder call. Use together with itemId to drill into subfolders without needing a sharing URL.",
-          },
-          itemId: {
-            type: "string",
-            description: "The itemId of a subfolder returned from a previous browse_sharepoint_folder call. Use together with driveId to drill into subfolders.",
-          },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "move_sharepoint_item",
-      description: "Move a file or folder from one location to another in the BGP SharePoint site. Use when the user asks to move, reorganise, or relocate files/folders. You can move items by their SharePoint path (e.g. 'Investment/Old Folder/report.xlsx') to a new destination folder path (e.g. 'Investment/New Folder'). Can also optionally rename the item during the move.",
-      parameters: {
-        type: "object",
-        properties: {
-          sourcePath: {
-            type: "string",
-            description: "The current path of the file or folder in SharePoint (e.g. 'Investment/Deal Files/report.xlsx' or 'London/Old Folder'). Can also be a SharePoint sharing URL.",
-          },
-          destinationFolderPath: {
-            type: "string",
-            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Retail/Active Transactions'). Use '/' for root.",
-          },
-          newName: {
-            type: "string",
-            description: "Optional: rename the item during the move. If not provided, the item keeps its original name.",
-          },
-        },
-        required: ["sourcePath", "destinationFolderPath"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "upload_to_sharepoint",
-      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Only use for files generated by another tool (export_to_excel, generate_word, generate_claude_designed_pdf, etc.) or files the user has uploaded into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead, which handles the Graph download → SharePoint upload in one step. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
-      parameters: {
-        type: "object",
-        properties: {
-          chatMediaFilename: {
-            type: "string",
-            description: "The filename from chat-media storage (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). This is the filename portion from the /api/chat-media/ URL — NOT the original file name from an email attachment.",
-          },
-          destinationFolderPath: {
-            type: "string",
-            description: "The SharePoint folder path to upload into (e.g. 'Leasing Comps/hotels', 'Investment/Deal Files'). The folder will be created if it doesn't exist.",
-          },
-          fileName: {
-            type: "string",
-            description: "Optional: custom filename for the uploaded file. If not provided, uses the original filename.",
-          },
-        },
-        required: ["chatMediaFilename", "destinationFolderPath"],
-      },
-    },
-  });
+  // The folder tools: SharePoint and OneDrive through the folder engine, as
+  // the person asking (server/chatbgp-folder-tools.ts). BGP staff only.
+  tools.push(...(await import("./chatbgp-folder-tools")).FOLDER_TOOL_DEFINITIONS);
 
   tools.push({
     type: "function",
@@ -3752,7 +3636,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           attachmentId: { type: "string", description: "The attachment ID from get_email_attachments results." },
           mailboxEmail: { type: "string", description: "The owner of the mailbox the message lives in. REQUIRED when the message was returned by search_emails with mailbox=<email> or mailbox=all. The search result's mailboxEmail field has this value." },
           action: { type: "string", enum: ["read", "save_to_sharepoint"], description: "What to do with the attachment. 'read' returns the content. 'save_to_sharepoint' saves it to SharePoint (requires folderPath)." },
-          folderPath: { type: "string", description: "SharePoint folder path to save the attachment to (required when action is 'save_to_sharepoint'). e.g. 'Deals/Brixton Market'" },
+          folderPath: { type: "string", description: "The folder to save the attachment to, as a path inside BGP - Share Drive (required when action is 'save_to_sharepoint'), e.g. 'Investment/Brixton Market'. Missing folders below a top-level folder are made; a file of the same name already there is kept and this one gets a number. Saved as the person asking, on their own Microsoft 365." },
         },
         required: ["messageId", "attachmentId"],
       },
@@ -5101,33 +4985,6 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
-      name: "copy_dropbox_to_sharepoint",
-      description: "Copy one or more files from Dropbox into a SharePoint folder, preserving the binary file (not just text). Use when the user asks to 'pull files into a SharePoint folder', 'file these to SharePoint', or 'move these PDFs to a shared folder'. Creates the destination folder if it doesn't exist.",
-      parameters: {
-        type: "object",
-        properties: {
-          files: {
-            type: "array",
-            description: "List of Dropbox files to copy.",
-            items: {
-              type: "object",
-              properties: {
-                dropboxPath: { type: "string", description: "Dropbox file path (e.g. '/Brixton/Target Tenants/Prospectus/Brixton Master Plan.pdf')" },
-                renameTo: { type: "string", description: "Optional: rename the file on upload. Defaults to original filename." },
-              },
-              required: ["dropboxPath"],
-            },
-          },
-          destinationFolderPath: { type: "string", description: "SharePoint folder path (e.g. 'Investment/Islington Square/Placemaking References'). Folder is created if missing." },
-        },
-        required: ["files", "destinationFolderPath"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "ingest_url",
       description: "Fetch and read content from an external URL — works with PDFs, research reports, web pages, and ZIP downloads (unpacks in memory and reads the spreadsheets/PDFs/text inside — e.g. the Propel multi-site database ZIP). Spreadsheets found in a ZIP are ALSO staged in full into the ingested_spreadsheet_rows table, so after ingesting you can cross-reference or filter EVERY row with sql_query (the tool result tells you the ingest_key and columns) — the inline preview is only the first slice. Use when the user shares a link and wants you to read, summarise, cross-reference, or add it to the news feed. Can also save the content as a news article.",
       parameters: {
@@ -6013,7 +5870,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   return result;
 }
 
-async function executeModelRun(args: { templateId: string; name: string; inputValues: Record<string, any> }) {
+async function executeModelRun(args: { templateId: string; name: string; inputValues: Record<string, any> }, askedBy?: string | null) {
   const template = await storage.getExcelTemplate(args.templateId);
   if (!template) throw new Error("Model template not found");
 
@@ -6081,39 +5938,24 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
   try {
     const { getAppGraphToken } = await import("./microsoft");
     const msToken = await getAppGraphToken();
-    if (msToken) {
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
-      if (siteRes.ok) {
-        const site = await siteRes.json();
-        const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
-        if (drivesRes.ok) {
-          const drives = await drivesRes.json();
-          const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
-          if (bgpDrive) {
-            const fileName = `${(args.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
-            const folderPath = "Models/Live";
-            const encoded = encodeURIComponent(folderPath).replace(/%2F/g, "/");
-            const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
-            const fileBuffer = fs.readFileSync(runFilePath);
-            const uploadRes = await fetch(uploadUrl, {
-              method: "PUT",
-              headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-              body: fileBuffer,
-            });
-            if (uploadRes.ok) {
-              const uploadResult = await uploadRes.json();
-              const { db } = await import("./db");
-              const { excelModelRuns } = await import("@shared/schema");
-              const { eq } = await import("drizzle-orm");
-              await db.update(excelModelRuns).set({
-                sharepointUrl: uploadResult.webUrl,
-                sharepointDriveItemId: uploadResult.id,
-              }).where(eq(excelModelRuns.id, run.id));
-              console.log(`[model-run] Auto-synced to SharePoint: ${uploadResult.webUrl}`);
-            }
-          }
-        }
-      }
+    if (msToken && askedBy) {
+      // The app's copy of the run in "Models/Live" at the top of the BGP
+      // library, through the folder engine; logged with who asked for the run.
+      const { bgpLibrary } = await import("./folders/graph");
+      const { folderAtPath, saveFileInto } = await import("./folders/by-path");
+      const log = { db: pool, actor: { userId: askedBy, account: "app" }, detail: { via: "run_model" } };
+      const lib = await bgpLibrary(msToken);
+      const folder = await folderAtPath(msToken, lib, ["Models", "Live"], { make: log });
+      const fileName = `${(args.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}.xlsx`;
+      const uploadResult = await saveFileInto(msToken, folder, fileName, new Uint8Array(fs.readFileSync(runFilePath)), log);
+      const { db } = await import("./db");
+      const { excelModelRuns } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(excelModelRuns).set({
+        sharepointUrl: uploadResult.webUrl,
+        sharepointDriveItemId: uploadResult.itemId,
+      }).where(eq(excelModelRuns.id, run.id));
+      console.log(`[model-run] Auto-synced to SharePoint: ${uploadResult.webUrl}`);
     }
   } catch (spErr: any) {
     console.log(`[model-run] SharePoint auto-sync skipped: ${spErr?.message}`);
@@ -6181,307 +6023,6 @@ async function resolveOneDriveShortLink(url: string): Promise<string> {
   return url;
 }
 
-async function getSharePointDriveId(token: string): Promise<string | null> {
-  const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-  const siteRes = await fetch(siteUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!siteRes.ok) return null;
-  const site = await siteRes.json();
-
-  const drivesUrl = `https://graph.microsoft.com/v1.0/sites/${site.id}/drives`;
-  const drivesRes = await fetch(drivesUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!drivesRes.ok) return null;
-  const drivesData = await drivesRes.json();
-  const docsDrive = drivesData.value?.find((d: any) => d.name === "Documents" || d.name === "Shared Documents") || drivesData.value?.[0];
-  return docsDrive?.id || null;
-}
-
-async function executeCreateSharePointFolder(
-  args: { folderName: string; parentPath?: string },
-  token: string | null
-): Promise<{ success: boolean; name: string; path: string; webUrl?: string; error?: string }> {
-  if (!token) {
-    return { success: false, name: args.folderName, path: args.parentPath || "/", error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." };
-  }
-
-  const driveId = await getSharePointDriveId(token);
-  if (!driveId) {
-    return { success: false, name: args.folderName, path: args.parentPath || "/", error: "Could not find the BGP SharePoint site. Check your Microsoft 365 connection." };
-  }
-
-  const parentPath = args.parentPath?.trim();
-  let createUrl: string;
-
-  if (!parentPath || parentPath === "/" || parentPath === "") {
-    createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-  } else {
-    const cleanPath = parentPath.replace(/^\/+|\/+$/g, "");
-    createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, "/")}:/children`;
-  }
-
-  console.log(`[ChatBGP] Creating folder "${args.folderName}" at parent "${parentPath || '/'}" -> ${createUrl}`);
-
-  const response = await fetch(createUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      name: args.folderName,
-      folder: {},
-      "@microsoft.graph.conflictBehavior": "fail",
-    }),
-  });
-
-  const fullPath = parentPath && parentPath !== "/" ? `${parentPath}/${args.folderName}` : args.folderName;
-
-  if (!response.ok) {
-    if (response.status === 409) {
-      console.log(`[ChatBGP] Folder already exists: ${fullPath}`);
-      return { success: true, name: args.folderName, path: fullPath, error: "Folder already exists (this is fine)" };
-    }
-    if (response.status === 404) {
-      console.log(`[ChatBGP] Parent folder not found: ${parentPath}`);
-      return { success: false, name: args.folderName, path: fullPath, error: `Parent folder "${parentPath}" was not found. You may need to create it first.` };
-    }
-    const errText = await response.text();
-    console.error("ChatBGP create folder error:", response.status, errText);
-    return { success: false, name: args.folderName, path: fullPath, error: `Failed to create folder (${response.status})` };
-  }
-
-  const folder = await response.json();
-  return { success: true, name: args.folderName, path: fullPath, webUrl: folder.webUrl };
-}
-
-async function executeMoveSharePointItem(
-  args: { sourcePath: string; destinationFolderPath: string; newName?: string },
-  token: string | null
-): Promise<{ success: boolean; name: string; from: string; to: string; webUrl?: string; error?: string }> {
-  if (!token) {
-    return { success: false, name: "", from: args.sourcePath, to: args.destinationFolderPath, error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." };
-  }
-
-  const driveId = await getSharePointDriveId(token);
-  if (!driveId) {
-    return { success: false, name: "", from: args.sourcePath, to: args.destinationFolderPath, error: "Could not find the BGP SharePoint site." };
-  }
-
-  try {
-    let sourceItemId: string | null = null;
-    let sourceName: string = "";
-    const sourcePath = (await resolveOneDriveShortLink(args.sourcePath.trim())).trim();
-
-    if (sourcePath.includes("sharepoint.com") && sourcePath.includes("/:")) {
-      const encodedUrl = Buffer.from(sourcePath).toString("base64")
-        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const sharingUrl = `u!${encodedUrl}`;
-      const driveItemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/shares/${sharingUrl}/driveItem`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (driveItemRes.ok) {
-        const driveItem = await driveItemRes.json();
-        sourceItemId = driveItem.id;
-        sourceName = driveItem.name;
-      } else {
-        return { success: false, name: "", from: sourcePath, to: args.destinationFolderPath, error: `Could not access source item from sharing URL (${driveItemRes.status})` };
-      }
-    } else {
-      const cleanSource = sourcePath.replace(/^\/+|\/+$/g, "");
-      const encodedSource = encodeURIComponent(cleanSource).replace(/%2F/g, "/");
-      const itemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedSource}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (itemRes.ok) {
-        const item = await itemRes.json();
-        sourceItemId = item.id;
-        sourceName = item.name;
-      } else {
-        return { success: false, name: "", from: cleanSource, to: args.destinationFolderPath, error: `Source item not found: ${cleanSource}` };
-      }
-    }
-
-    if (!sourceItemId) {
-      return { success: false, name: sourceName, from: sourcePath, to: args.destinationFolderPath, error: "Could not resolve source item." };
-    }
-
-    let destFolderId: string | null = null;
-    const destPath = args.destinationFolderPath.trim();
-
-    if (!destPath || destPath === "/") {
-      const rootRes = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/root`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (rootRes.ok) {
-        const root = await rootRes.json();
-        destFolderId = root.id;
-      }
-    } else {
-      const cleanDest = destPath.replace(/^\/+|\/+$/g, "");
-      const encodedDest = encodeURIComponent(cleanDest).replace(/%2F/g, "/");
-      const destRes = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedDest}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (destRes.ok) {
-        const destItem = await destRes.json();
-        if (!destItem.folder) {
-          return { success: false, name: sourceName, from: sourcePath, to: destPath, error: `Destination "${cleanDest}" is a file, not a folder.` };
-        }
-        destFolderId = destItem.id;
-      } else {
-        return { success: false, name: sourceName, from: sourcePath, to: destPath, error: `Destination folder not found: "${cleanDest}". You may need to create it first.` };
-      }
-    }
-
-    if (!destFolderId) {
-      return { success: false, name: sourceName, from: sourcePath, to: destPath, error: "Could not resolve destination folder." };
-    }
-
-    const patchBody: any = {
-      parentReference: { driveId, id: destFolderId },
-    };
-    if (args.newName) {
-      patchBody.name = args.newName;
-    }
-
-    const moveRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${sourceItemId}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(patchBody),
-      }
-    );
-
-    if (!moveRes.ok) {
-      const errText = await moveRes.text();
-      console.error("SharePoint move error:", moveRes.status, errText);
-      if (moveRes.status === 409) {
-        return { success: false, name: sourceName, from: sourcePath, to: destPath, error: `An item with the same name already exists in the destination folder.` };
-      }
-      return { success: false, name: sourceName, from: sourcePath, to: destPath, error: `Failed to move item (${moveRes.status})` };
-    }
-
-    const movedItem = await moveRes.json();
-    return {
-      success: true,
-      name: movedItem.name || sourceName,
-      from: sourcePath,
-      to: destPath,
-      webUrl: movedItem.webUrl,
-    };
-  } catch (err: any) {
-    console.error("SharePoint move error:", err?.message);
-    return { success: false, name: "", from: args.sourcePath, to: args.destinationFolderPath, error: `Failed to move item: ${err?.message}` };
-  }
-}
-
-async function browseSharePointFolder(
-  url: string,
-  token: string
-): Promise<{ success: boolean; items?: Array<{ name: string; type: string; size?: number; webUrl: string; driveId?: string; itemId?: string; lastModified?: string }>; error?: string }> {
-  try {
-    const input = (await resolveOneDriveShortLink(url.trim())).trim();
-    const isSharePointLink = input.includes("sharepoint.com") && (input.includes("/:") || input.includes("/sites/"));
-    const isDirectPath = !input.startsWith("http");
-
-    let driveId: string | null = null;
-    let itemId: string | null = null;
-
-    if (isSharePointLink) {
-      const encodedUrl = Buffer.from(input).toString("base64")
-        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const sharingUrl = `u!${encodedUrl}`;
-
-      const driveItemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/shares/${sharingUrl}/driveItem`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (!driveItemRes.ok) {
-        return { success: false, error: `Could not access folder (${driveItemRes.status}). The link may require sharing permissions or may have expired.` };
-      }
-
-      const driveItem = await driveItemRes.json();
-      driveId = driveItem.parentReference?.driveId;
-      itemId = driveItem.id;
-
-      if (!driveItem.folder) {
-        return { success: false, error: "This link points to a file, not a folder. Use read_sharepoint_file to read file contents." };
-      }
-    } else if (isDirectPath) {
-      const resolvedDriveId = await getSharePointDriveId(token);
-      if (!resolvedDriveId) {
-        return { success: false, error: "Could not find the BGP SharePoint site." };
-      }
-      driveId = resolvedDriveId;
-
-      const cleanPath = input.replace(/^\/+|\/+$/g, "");
-      if (!cleanPath || cleanPath === "") {
-        const rootRes = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${driveId}/root`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (rootRes.ok) {
-          const root = await rootRes.json();
-          itemId = root.id;
-        } else {
-          return { success: false, error: "Could not access the root folder." };
-        }
-      } else {
-        const encodedPath = encodeURIComponent(cleanPath).replace(/%2F/g, "/");
-        const itemRes = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (itemRes.ok) {
-          const item = await itemRes.json();
-          if (!item.folder) {
-            return { success: false, error: `"${cleanPath}" is a file, not a folder. Use read_sharepoint_file to read file contents.` };
-          }
-          itemId = item.id;
-        } else {
-          return { success: false, error: `Folder not found at path: "${cleanPath}"` };
-        }
-      }
-    } else {
-      return { success: false, error: "Unrecognised URL format. Please provide a SharePoint sharing link or a folder path like 'Investment/Deal Files'." };
-    }
-
-    if (!driveId || !itemId) {
-      return { success: false, error: "Could not resolve the folder." };
-    }
-
-    let childrenValue: any[];
-    try {
-      childrenValue = await listSharePointFolderChildren(driveId, itemId, token);
-    } catch (e: any) {
-      if (e?.graphStatus) return { success: false, error: `Could not list folder contents (${e.graphStatus})` };
-      throw e; // outer catch → "Failed to browse folder: …"
-    }
-
-    const items = childrenValue.map((child: any) => ({
-      name: child.name,
-      type: child.folder ? "folder" : "file",
-      size: child.size,
-      webUrl: child.webUrl,
-      driveId,
-      itemId: child.id,
-      lastModified: child.lastModifiedDateTime,
-    }));
-
-    return { success: true, items };
-  } catch (err: any) {
-    return { success: false, error: `Failed to browse folder: ${err?.message}` };
-  }
-}
-
 // Graph pages drive-item children listings — follow @odata.nextLink (via the
 // shared helper) so folders over one page ($top=200) don't silently truncate
 // for the AI browse tools.
@@ -6498,35 +6039,6 @@ async function listSharePointFolderChildren(driveId: string, itemId: string, tok
     },
     `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder,lastModifiedDateTime`,
   );
-}
-
-async function browseSharePointFolderByIds(
-  driveId: string,
-  itemId: string,
-  token: string
-): Promise<{ success: boolean; items?: Array<{ name: string; type: string; size?: number; webUrl: string; driveId?: string; itemId?: string; lastModified?: string }>; error?: string }> {
-  try {
-    let childrenValue: any[];
-    try {
-      childrenValue = await listSharePointFolderChildren(driveId, itemId, token);
-    } catch (e: any) {
-      if (e?.graphStatus) return { success: false, error: `Could not list folder contents (${e.graphStatus})` };
-      throw e; // outer catch → "Failed to browse folder: …"
-    }
-    const items = childrenValue.map((child: any) => ({
-      name: child.name,
-      type: child.folder ? "folder" : "file",
-      size: child.size,
-      webUrl: child.webUrl,
-      driveId,
-      itemId: child.id,
-      lastModified: child.lastModifiedDateTime,
-    }));
-
-    return { success: true, items };
-  } catch (err: any) {
-    return { success: false, error: `Failed to browse folder: ${err?.message}` };
-  }
 }
 
 async function browseSharePointFolderRecursive(
@@ -6720,233 +6232,6 @@ export async function getKnowledgeContext(): Promise<string> {
   } catch (err) {
     console.error("getKnowledgeContext error:", err);
     return "";
-  }
-}
-
-async function executeReadSharePointFile(
-  args: { url?: string; driveId?: string; itemId?: string },
-  token: string | null
-): Promise<{ success: boolean; fileName?: string; content?: string; webUrl?: string; error?: string }> {
-  if (args.driveId && args.itemId && token) {
-    try {
-      const itemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${args.driveId}/items/${args.itemId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!itemRes.ok) return { success: false, error: `Could not access file (${itemRes.status})` };
-      const item = await itemRes.json();
-      const fileName = item.name || "unknown";
-      const webUrl = item.webUrl || "";
-
-      let downloadUrl = item["@microsoft.graph.downloadUrl"];
-      if (!downloadUrl) {
-        const contentRes = await fetch(
-          `https://graph.microsoft.com/v1.0/drives/${args.driveId}/items/${args.itemId}/content`,
-          { headers: { Authorization: `Bearer ${token}` }, redirect: "manual" }
-        );
-        if (contentRes.status === 302) {
-          downloadUrl = contentRes.headers.get("location");
-        }
-      }
-      if (!downloadUrl) return { success: false, error: `Could not get download URL for ${fileName}` };
-
-      const fileRes = await fetch(downloadUrl);
-      if (!fileRes.ok) return { success: false, error: `Download failed (${fileRes.status})` };
-      const buffer = Buffer.from(await fileRes.arrayBuffer());
-      const tmpPath = path.join(process.cwd(), "ChatBGP", `tmp-sp-${Date.now()}-${path.basename(fileName)}`);
-      const fsModule = await import("fs");
-      const dir = path.dirname(tmpPath);
-      if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
-      fsModule.writeFileSync(tmpPath, buffer);
-      try {
-        const text = await extractTextFromFile(tmpPath, fileName);
-        return { success: true, fileName, content: text.slice(0, 30000), webUrl };
-      } finally {
-        try { fsModule.unlinkSync(tmpPath); } catch {}
-      }
-    } catch (err: any) {
-      return { success: false, error: `Failed to read file: ${err?.message}` };
-    }
-  }
-
-  const rawUrl = (args.url || "").trim();
-  if (!rawUrl) return { success: false, error: "No URL or driveId/itemId provided." };
-
-  const chatMediaMatch = rawUrl.match(/\/api\/chat-media\/([^?\s]+)/);
-  if (chatMediaMatch) {
-    const mediaFilename = chatMediaMatch[1];
-    const mediaPath = path.join(process.cwd(), "ChatBGP", "chat-media", mediaFilename);
-    const fsModule = await import("fs");
-
-    if (mediaFilename.includes("..") || mediaFilename.includes("/") || mediaFilename.includes("\\") || mediaFilename.includes("%")) {
-      return { success: false, error: "Invalid filename" };
-    }
-
-    if (!fsModule.existsSync(mediaPath)) {
-      const dbFile = await getFile(`chat-media/${mediaFilename}`);
-      if (dbFile && dbFile.data) {
-        const dir = path.dirname(mediaPath);
-        if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
-        fsModule.writeFileSync(mediaPath, dbFile.data);
-      } else {
-        const allKeys = await findChatMediaByOriginalName(mediaFilename);
-        if (allKeys) {
-          const dir = path.dirname(mediaPath);
-          if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
-          fsModule.writeFileSync(mediaPath, allKeys.data);
-        } else {
-          return { success: false, error: `Chat file not found: ${mediaFilename}. The file may have been uploaded in a previous session that wasn't persisted. Please re-upload the file.` };
-        }
-      }
-    }
-
-    const origName = mediaFilename.replace(/^\d+-/, "");
-    try {
-      const text = await extractTextFromFile(mediaPath, origName);
-      return { success: true, fileName: origName, content: text.slice(0, 30000), webUrl: rawUrl };
-    } catch (err: any) {
-      return { success: false, error: `Could not read chat file ${origName}: ${err?.message}` };
-    }
-  }
-
-  if (!token) {
-    return { success: false, error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." };
-  }
-
-  const inputUrl = (await resolveOneDriveShortLink(rawUrl)).trim();
-  let downloadUrl: string | null = null;
-  let fileName = "unknown";
-  let webUrl = inputUrl;
-
-  try {
-    const isSharePointLink = inputUrl.includes("sharepoint.com") && inputUrl.includes("/:") ;
-    const isOneDrivePersonal = inputUrl.includes("-my.sharepoint.com");
-    const isDirectPath = !inputUrl.startsWith("http");
-
-    if (isSharePointLink) {
-      const encodedUrl = Buffer.from(inputUrl).toString("base64")
-        .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const sharingUrl = `u!${encodedUrl}`;
-
-      const driveItemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/shares/${sharingUrl}/driveItem`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (driveItemRes.ok) {
-        const driveItem = await driveItemRes.json();
-        fileName = driveItem.name || "unknown";
-        webUrl = driveItem.webUrl || inputUrl;
-
-        if (driveItem["@microsoft.graph.downloadUrl"]) {
-          downloadUrl = driveItem["@microsoft.graph.downloadUrl"];
-        } else if (driveItem.parentReference?.driveId && driveItem.id) {
-          const contentRes = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${driveItem.parentReference.driveId}/items/${driveItem.id}/content`,
-            { headers: { Authorization: `Bearer ${token}` }, redirect: "manual" }
-          );
-          if (contentRes.status === 302) {
-            downloadUrl = contentRes.headers.get("location");
-          } else if (contentRes.ok) {
-            downloadUrl = `https://graph.microsoft.com/v1.0/drives/${driveItem.parentReference.driveId}/items/${driveItem.id}/content`;
-          }
-        }
-      } else {
-        const errText = await driveItemRes.text();
-        console.error("SharePoint shares API error:", driveItemRes.status, errText);
-
-        if (isOneDrivePersonal) {
-          return {
-            success: false,
-            error: `Could not access this file. It may be in a personal OneDrive and requires sharing permissions. The link points to: ${inputUrl}`,
-          };
-        }
-        return { success: false, error: `Could not access this SharePoint file (${driveItemRes.status}). It may require additional sharing permissions.` };
-      }
-    } else if (isDirectPath) {
-      const driveId = await getSharePointDriveId(token);
-      if (!driveId) {
-        return { success: false, error: "Could not find the BGP SharePoint site." };
-      }
-
-      const cleanPath = inputUrl.replace(/^\/+|\/+$/g, "");
-      const encodedPath = encodeURIComponent(cleanPath).replace(/%2F/g, "/");
-      const itemRes = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (itemRes.ok) {
-        const item = await itemRes.json();
-        fileName = item.name || cleanPath.split("/").pop() || "unknown";
-        webUrl = item.webUrl || "";
-
-        if (item["@microsoft.graph.downloadUrl"]) {
-          downloadUrl = item["@microsoft.graph.downloadUrl"];
-        } else {
-          downloadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}:/content`;
-        }
-      } else {
-        return { success: false, error: `File not found at path: ${cleanPath}` };
-      }
-    } else {
-      return { success: false, error: "Unrecognised URL format. Please provide a SharePoint sharing link or a file path like 'Investment/report.xlsx'." };
-    }
-
-    if (!downloadUrl) {
-      return { success: false, error: "Could not get download URL for this file." };
-    }
-
-    const ext = path.extname(fileName).toLowerCase();
-    const supportedExts = [".xlsx", ".xls", ".docx", ".pdf", ".pptx", ".csv", ".tsv", ".txt", ".md", ".markdown", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".rtf"];
-    if (!supportedExts.includes(ext)) {
-      return {
-        success: true,
-        fileName,
-        webUrl,
-        content: `This file (${fileName}) is a ${ext || "unknown"} format which I can't read directly. You can open it in your browser: ${webUrl}`,
-      };
-    }
-
-    const fetchHeaders: Record<string, string> = {};
-    if (downloadUrl.includes("graph.microsoft.com")) {
-      fetchHeaders["Authorization"] = `Bearer ${token}`;
-    }
-
-    const fileRes = await fetch(downloadUrl, { headers: fetchHeaders });
-    if (!fileRes.ok) {
-      return { success: false, error: `Failed to download file (${fileRes.status})` };
-    }
-
-    const buffer = Buffer.from(await fileRes.arrayBuffer());
-
-    const tempDir = path.join(process.cwd(), "ChatBGP", "sp-temp");
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, `sp-${Date.now()}-${path.basename(fileName)}`);
-    try {
-      fs.writeFileSync(tempPath, buffer);
-    } catch (writeErr: any) {
-      console.error("[chatbgp] Failed to write SP temp file:", writeErr?.message);
-      return { success: false, error: "Failed to write temporary file for extraction" };
-    }
-
-    try {
-      const text = await extractTextFromFile(tempPath, fileName);
-      const truncated = text.slice(0, 20000);
-      return {
-        success: true,
-        fileName,
-        webUrl,
-        content: truncated.length < text.length
-          ? `${truncated}\n\n[Content truncated — showing first ${truncated.length} of ${text.length} characters]`
-          : truncated,
-      };
-    } finally {
-      try { fs.unlinkSync(tempPath); } catch {}
-    }
-  } catch (err: any) {
-    console.error("SharePoint file read error:", err?.message);
-    return { success: false, error: `Failed to read file: ${err?.message}` };
   }
 }
 
@@ -7940,6 +7225,11 @@ export async function executeCrmToolRaw(
   if (CRM_PLAN_TOOL_NAMES.has(fnName)) {
     const { runCrmStrategyTool } = await import("./chatbgp-crm-strategy");
     return runCrmStrategyTool(fnName as any, fnArgs, req);
+  }
+
+  if (FOLDER_TOOL_NAMES.has(fnName)) {
+    const { runFolderTool } = await import("./chatbgp-folder-tools");
+    return runFolderTool(fnName as any, fnArgs, req);
   }
 
   if (fnName === "create_task") {
@@ -9998,7 +9288,8 @@ export async function executeCrmToolRaw(
     };
     const deleteFn = deleteMap[fnArgs.entityType];
     if (!deleteFn) return { data: { error: `Unknown entity type: ${fnArgs.entityType}` } };
-    await deleteFn(fnArgs.id);
+    // A transaction with an approved or paid Xero invoice is kept (server/xero-invoice-actions.ts).
+    try { await deleteFn(fnArgs.id); } catch (e: any) { if (e?.status === 409) return { data: { error: e.message } }; throw e; }
     return { data: { success: true, action: "deleted", entity: fnArgs.entityType, id: fnArgs.id, name: fnArgs.confirmName }, action: { type: "crm_deleted", entityType: fnArgs.entityType, id: fnArgs.id } };
   }
 
@@ -10091,17 +9382,6 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] save_signature error:", err?.message);
       return { data: { error: `Saving the signature failed: ${err?.message}` } };
-    }
-  }
-
-  if (fnName === "copy_dropbox_to_sharepoint") {
-    try {
-      const { copyDropboxToSharepoint } = await import("./chatbgp-design-tools");
-      const result = await copyDropboxToSharepoint(fnArgs, req);
-      return { data: result };
-    } catch (err: any) {
-      console.error("[chatbgp] copy_dropbox_to_sharepoint error:", err?.message);
-      return { data: { error: `Dropbox→SharePoint copy failed: ${err?.message}` } };
     }
   }
 
@@ -10461,9 +9741,10 @@ export async function executeCrmToolRaw(
       const contentType = (attachment.contentType || "").toLowerCase();
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
-        const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
-        return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
+        const { saveToShareDrive } = await import("./chatbgp-folder-tools");
+        const saved = await saveToShareDrive(req, { folderPath: fnArgs.folderPath, name, bytes: new Uint8Array(buffer), from: "email" });
+        if (!saved.success) return { data: { error: saved.error } };
+        return { data: { success: true, action: "saved_to_sharepoint", fileName: saved.fileName, path: saved.path, webUrl: saved.webUrl, message: saved.message } };
       }
 
       const isText = contentType.includes("text") || contentType.includes("csv") || contentType.includes("json") || contentType.includes("xml") || contentType.includes("html");
@@ -13503,6 +12784,13 @@ export async function handleCrmToolCall(
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     return { handled: true, response: { reply: rawResult.data?.message || rawResult.data?.error || "The CRM plan was not changed.", action: rawResult.action } };
   }
+  // The folder tools run through executeCrmToolRaw too (server/chatbgp-folder-tools.ts).
+  // What a read found is summarised; a change answers in the tool's own words.
+  if (FOLDER_TOOL_NAMES.has(fnName)) {
+    const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
+    const found = ["browse_sharepoint_folder", "read_sharepoint_file", "get_record_folders"].includes(fnName) && rawResult.data?.success ? await summaryHelper(rawResult.data) : null;
+    return { handled: true, response: { reply: found || rawResult.data?.message || rawResult.data?.error || "Nothing was changed in SharePoint.", action: rawResult.action } };
+  }
   if (RAW_EXECUTOR_TOOLS.has(fnName)) {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     const reply = await summaryHelper(rawResult.data);
@@ -14013,7 +13301,8 @@ export async function handleCrmToolCall(
     if (!deleteFn) {
       return { handled: true, response: { reply: `Unknown entity type: ${fnArgs.entityType}` } };
     }
-    await deleteFn(fnArgs.id);
+    // A transaction with an approved or paid Xero invoice is kept (server/xero-invoice-actions.ts).
+    try { await deleteFn(fnArgs.id); } catch (e: any) { if (e?.status === 409) return { handled: true, response: { reply: e.message } }; throw e; }
     const reply = await summaryHelper({ success: true, action: "deleted", entity: fnArgs.entityType, id: fnArgs.id, name: fnArgs.confirmName });
     return { handled: true, response: { reply: reply || `${fnArgs.entityType} "${fnArgs.confirmName}" has been deleted.`, action: { type: "crm_deleted", entityType: fnArgs.entityType, id: fnArgs.id } } };
   }
@@ -14327,10 +13616,9 @@ export async function handleCrmToolCall(
       const contentType = (attachment.contentType || "").toLowerCase();
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
-        const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
-        const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
-        return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
+        const { saveToShareDrive } = await import("./chatbgp-folder-tools");
+        const saved = await saveToShareDrive(req, { folderPath: fnArgs.folderPath, name, bytes: new Uint8Array(buffer), from: "email" });
+        return { handled: true, response: { reply: saved.success ? saved.message : saved.error } };
       }
 
       const isText = contentType.includes("text") || contentType.includes("csv") || contentType.includes("json") || contentType.includes("xml") || contentType.includes("html");
@@ -15052,121 +14340,8 @@ export function setupChatBGPRoutes(app: Express) {
     } catch {
       return { data: { success: false, error: "Your account scope could not be verified. Please try again." } };
     }
-    // SharePoint tools
-    if (tcName === "browse_sharepoint_folder") {
-      if (!msToken) return { data: { error: "Microsoft 365 not connected. Please connect via the SharePoint page." } };
-      if (tcArgs.driveId && tcArgs.itemId) {
-        const r = await browseSharePointFolderByIds(tcArgs.driveId, tcArgs.itemId, msToken);
-        return { data: r };
-      }
-      const r = await browseSharePointFolder(tcArgs.url || "/", msToken);
-      return { data: r };
-    }
-    if (tcName === "create_sharepoint_folder") {
-      const r = await executeCreateSharePointFolder(tcArgs, msToken);
-      return { data: r, action: r.success ? { type: "sharepoint_folders", folders: [r] } : undefined };
-    }
-    if (tcName === "move_sharepoint_item") {
-      const r = await executeMoveSharePointItem(tcArgs, msToken);
-      return { data: r, action: r.success ? { type: "sharepoint_move", results: [r] } : undefined };
-    }
-    if (tcName === "read_sharepoint_file") {
-      const r = await executeReadSharePointFile(tcArgs, msToken);
-      return { data: r, action: r.success ? { type: "sharepoint_file", fileName: r.fileName, webUrl: r.webUrl } : undefined };
-    }
-    if (tcName === "upload_to_sharepoint") {
-      if (!msToken) return { data: { error: "Microsoft 365 not connected. The user needs to connect their Microsoft account via the SharePoint page first, then try again." } };
-      try {
-        const chatMediaFilename = tcArgs.chatMediaFilename;
-        if (!chatMediaFilename) return { data: { error: "No filename provided" } };
-
-        let fileBuffer: Buffer | null = null;
-        let originalName = tcArgs.fileName || chatMediaFilename.replace(/^\d+-[a-f0-9]+-/, "");
-        const diskPath = path.join(process.cwd(), "ChatBGP", "chat-media", chatMediaFilename);
-        if (fs.existsSync(diskPath)) {
-          fileBuffer = fs.readFileSync(diskPath);
-        } else {
-          const dbFile = await getFile(`chat-media/${chatMediaFilename}`);
-          if (dbFile) {
-            fileBuffer = dbFile.data;
-            if (dbFile.originalName) originalName = tcArgs.fileName || dbFile.originalName;
-          }
-        }
-        if (!fileBuffer) {
-          // Detect the most common misuse: someone passing an email attachment
-          // filename (which doesn't follow the chat-media `<timestamp>-<hash>-`
-          // pattern) and direct the agent to the correct tool. Same for
-          // SharePoint paths or arbitrary filenames.
-          const looksLikeChatMedia = /^\d+-[a-f0-9]+-/.test(chatMediaFilename);
-          const hint = looksLikeChatMedia
-            ? "It may have expired. Please regenerate the file and try again."
-            : `That filename doesn't look like a chat-media file. If this is an email attachment, use \`download_email_attachment\` with \`action: 'save_to_sharepoint'\` and the folderPath instead — that tool pulls the binary from Graph and uploads it in one step. \`upload_to_sharepoint\` only handles files already in chat-media storage (generated docs, files dragged into the chat).`;
-          return { data: { error: `File not found in chat-media: ${chatMediaFilename}. ${hint}` } };
-        }
-
-        const spSiteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, {
-          headers: { Authorization: `Bearer ${msToken}` },
-        });
-        if (!spSiteRes.ok) return { data: { error: "Could not access SharePoint site" } };
-        const spSite = await spSiteRes.json();
-
-        const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${spSite.id}/drives`, {
-          headers: { Authorization: `Bearer ${msToken}` },
-        });
-        if (!drivesRes.ok) return { data: { error: "Could not access SharePoint drives" } };
-        const drivesData = await drivesRes.json();
-        const docLib = drivesData.value?.find((d: any) => d.name === "Documents" || d.name === "Shared Documents") || drivesData.value?.[0];
-        if (!docLib) return { data: { error: "Could not find SharePoint document library" } };
-        const driveId = docLib.id;
-
-        const folderPath = `BGP share drive/${tcArgs.destinationFolderPath.replace(/^\/+|\/+$/g, "")}`;
-        const segments = folderPath.split("/");
-        let currentPath = "";
-        for (const seg of segments) {
-          const parentPath = currentPath || "";
-          currentPath = currentPath ? `${currentPath}/${seg}` : seg;
-          try {
-            const checkUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(currentPath).replace(/%2F/g, "/")}`;
-            const checkRes = await fetch(checkUrl, { headers: { Authorization: `Bearer ${msToken}` } });
-            if (checkRes.ok) continue;
-          } catch {}
-          try {
-            const createParent = parentPath
-              ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(parentPath).replace(/%2F/g, "/")}:/children`
-              : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-            await fetch(createParent, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name: seg, folder: {}, "@microsoft.graph.conflictBehavior": "fail" }),
-            });
-          } catch {}
-        }
-
-        const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(folderPath).replace(/%2F/g, "/")}/${encodeURIComponent(originalName)}:/content`;
-        const ext = originalName.split(".").pop()?.toLowerCase() || "";
-        const mimeMap: Record<string, string> = { xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", pdf: "application/pdf", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
-        const contentType = mimeMap[ext] || "application/octet-stream";
-
-        const uploadRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${msToken}`, "Content-Type": contentType },
-          body: fileBuffer,
-        });
-
-        if (!uploadRes.ok) {
-          const errText = await uploadRes.text();
-          return { data: { error: `Upload failed (${uploadRes.status}): ${errText.slice(0, 200)}` } };
-        }
-
-        const result = await uploadRes.json();
-        return {
-          data: { success: true, fileName: result.name, webUrl: result.webUrl, size: result.size, folder: tcArgs.destinationFolderPath },
-          action: { type: "sharepoint_file", fileName: result.name, webUrl: result.webUrl },
-        };
-      } catch (err: any) {
-        return { data: { error: `SharePoint upload error: ${err.message}` } };
-      }
-    }
+    // The folder tools (browse, read, create, move, upload and the rest) fall
+    // through to executeCrmToolRaw below, which runs server/chatbgp-folder-tools.ts.
     // Property lookup — geocode then fetch
     // Property Pathway — orchestrator thin wrappers
     if (tcName === "start_property_pathway") {
@@ -15866,7 +15041,7 @@ export function setupChatBGPRoutes(app: Express) {
     }
     // Financial model
     if (tcName === "run_model") {
-      const modelResult = await executeModelRun(tcArgs);
+      const modelResult = await executeModelRun(tcArgs, req.session?.userId || (req as any).tokenUserId || null);
       return { data: modelResult, action: { type: "model_run", runId: modelResult.runId, name: modelResult.name, outputs: modelResult.outputs, outputMapping: modelResult.outputMapping } };
     }
     // Document generation

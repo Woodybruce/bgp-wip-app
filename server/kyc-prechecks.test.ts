@@ -607,6 +607,25 @@ test("web results: one flag per person and kind with every source, and a company
   assert.match(web[1].label, /^Possibly owned or controlled by the state or a politically exposed person: Acme Holdings Limited$/, "an older line is read from the name");
 });
 
+test("a UK public body is the state: its own state-ownership finding is no red flag, adverse media still is (25 November 2026)", () => {
+  const f = (kind: "public_role" | "adverse_media", summary: string, url: string) => ({ kind, summary, url, source: "Site", date: null, category: null, unsureIdentity: false });
+  const run = result({
+    web: { ran: true, skipped: null, lines: [
+      { name: "Wirral Metropolitan Borough Council (as administering authority for Merseyside Pension Fund)", role: "the company", person: false, ran: true,
+        publicRole: "possible", adverseMedia: "possible", unsourced: 0,
+        findings: [f("public_role", "A local authority, part of the state", "https://a.example/1"), f("adverse_media", "Fined for fraud", "https://b.example/2")] },
+      { name: "Jane Officer", role: "named alongside", person: true, ran: true, publicRole: "possible", adverseMedia: "none_found", unsourced: 0,
+        findings: [f("public_role", "A serving minister", "https://c.example/3")] },
+    ] },
+  });
+  const asBody = precheckRedFlags(run, { sanctionsCurrent: true, publicBody: true });
+  assert.ok(!asBody.some(x => /Possibly owned or controlled by the state/.test(x.label)), "the body itself");
+  assert.ok(asBody.some(x => x.kind === "web_adverse"), "adverse media about the body still counts");
+  assert.ok(asBody.some(x => x.label === "Possible public role for Jane Officer"), "a person's public role still counts");
+  // Not recorded as a public body: as before.
+  assert.ok(precheckRedFlags(run, { sanctionsCurrent: true }).some(x => /Possibly owned or controlled by the state/.test(x.label)));
+});
+
 // Owners behind a company registered abroad (Woody, 20 November 2026, on
 // Tureddi Group Limited, owned 75%+ by a Monaco société civile: "the app hasn't
 // flagged this as an issue but the holding company for this business is in
@@ -745,6 +764,10 @@ test("a web finding that only says nothing was found is no finding, and raises n
   const nothing = "Companies House lists Jane Example as the company's active director. The search found no source establishing that the company is government/state-owned or controlled, or that its director is a politically exposed person. The available record lists the director, but does not establish the compa";
   assert.equal(webFindingSaysNothing(nothing), true);
   assert.equal(webFindingSaysNothing("There is no evidence of adverse media about the company."), true);
+  // St George plc's second run (24 November 2026): the register restated with "identifies", then nothing found.
+  assert.equal(webFindingSaysNothing("Companies House identifies The Berkeley Group plc as holding 75% or more of ST GEORGE PLC’s shares and voting rights, with the right to appoint or remove directors. The searched sources describe Berkeley Group as a listed company and provide no indication that this parent is government- or state-own"), true);
+  // ...but the register named beside something found says something.
+  assert.equal(webFindingSaysNothing("Companies House identifies Jane Example as a director. She was convicted of fraud in 2019."), false);
   assert.equal(webFindingSaysNothing("No credible reports were found."), true);
   // Anything that says something keeps the finding.
   assert.equal(webFindingSaysNothing("Jane Example served as Minister of Finance of Exampleland until March 2026 (Reuters)."), false);
@@ -904,7 +927,15 @@ test("the random red flags of 24 November: a longer company name, a web result t
   const dated = { person: true, dobKnown: true };
   const tull = caMatch({ name: "ian anderson", kind: "adverse_media", score: 0.9, profileId: "p-ia", birthYearAgrees: true, birthYearNear: true });
   assert.equal(providerMatchFlags(tull, dated), false);
-  assert.equal(providerMatchFlags({ ...tull, birthYearNear: undefined }, dated), true, "the same year stays a red flag");
+  assert.equal(providerMatchFlags({ ...tull, birthYearNear: undefined }, dated), true, "a check from before: the same year stays a red flag");
+  // The person's own year, with no month (the second live run: the profile gives 1948 from an age): a possible namesake.
+  const ownYear = { ...tull, birthYearNear: false, birthYearOnly: true };
+  assert.equal(providerMatchFlags(ownYear, dated), false);
+  assert.equal(providerMatchFlags({ ...ownYear, kind: "pep" }, dated), true, "a public role counts the year");
+  assert.equal(providerMatchFlags({ ...tull, birthYearNear: false, birthYearOnly: false }, dated), true, "a month that agrees ties them");
+  const fortis2 = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ ...caLine("ANDERSON, Ian Macfarlane", [ownYear]), ...dated }] } });
+  assert.deepEqual(precheckRedFlags(fortis2, { sanctionsCurrent: true }).map(f => f.label), []);
+  assert.match(precheckNamesakes(fortis2)[0].what, /only a year of birth, no month/);
   assert.equal(providerMatchFlags({ ...tull, kind: "pep" }, dated), true, "a public role a year either side stays a red flag");
   assert.equal(providerMatchFlags({ ...tull, kind: "sanctions" }, dated), true, "sanctions stay a red flag");
   const fortis = result({ complyAdvantage: { ran: true, skipped: null, lines: [{ ...caLine("ANDERSON, Ian Macfarlane", [tull]), ...dated }] } });

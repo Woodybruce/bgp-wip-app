@@ -4,7 +4,10 @@
 // a pill on Deals beside the deal list and the Letting Tracker). BGP staff
 // only: the feed (server/aml-dashboard.ts) refuses anyone else, and the Deals
 // hub offers the pill only to staff. The rules are shared/aml-dashboard.ts.
-import { useEffect, useMemo, useRef, useState } from "react";
+// One line per transaction with each party's checks inside it (Woody,
+// 24 November 2026: "combine the 2 (normally) AML checks into just one
+// transaction board or line ... That way doesnt get too crowded").
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search } from "lucide-react";
@@ -14,7 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { DealAmlStatusCard } from "@/components/deal-aml-status";
-import { AmlCard, AmlCardGrid, AmlLateChip, AmlStageChip, DealStatusChip as AmlDealStatusChip, storeAmlView, storedAmlView, type AmlListView } from "@/components/aml-frame";
+import { AmlCard, AmlCardGrid, AmlChip, AmlLateChip, AmlLevelChip, AmlStageChip, DealStatusChip as AmlDealStatusChip, KYC_CHIP_TONE, RedFlagChip, storeAmlView, storedAmlView, type AmlListView } from "@/components/aml-frame";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { AmlFileButton } from "@/components/aml-file-button";
 import { AmlPolicyPanel } from "@/components/aml-policy-panel";
@@ -24,11 +27,17 @@ import { AmlRetentionBoard } from "@/components/aml-retention";
 import { AmlRulesBoard } from "@/components/aml-rules";
 import { AmlDecisionsBoard } from "@/components/aml-decisions";
 import { KycEmailsAdmin } from "@/components/kyc-emails-admin";
-import { KycCompaniesView } from "@/components/kyc-companies/companies-view";
+import { KycCompaniesView, KYC_COMPANIES_KEY } from "@/components/kyc-companies/companies-view";
 import { FileThumbGrid } from "@/components/file-popout";
 import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDocument } from "@/components/aml-files";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { AML_BUCKETS, amlDealStatusWords, bucketCounts, rowMatches, type AmlBucket, type AmlDashboardRow } from "@shared/aml-dashboard";
+import { queryClient } from "@/lib/queryClient";
+import { AmlStartBar, type AmlStart } from "@/components/aml-start";
+
+// New Transaction, loaded only when the New transaction box is used: the
+// Transactions page's own form (24 November 2026).
+const NewTransactionDialog = lazy(() => import("@/pages/deals").then(m => ({ default: m.NewTransactionDialog })));
+import { AML_BUCKETS, amlDealStatusWords, groupAmlByTransaction, leadParty, transactionBucketCounts, transactionMatches, type AmlBucket, type AmlDashboardRow, type AmlTransactionRow } from "@shared/aml-dashboard";
 import { DEAL_PARTY_LABEL, isDealPartyRole } from "@shared/deal-parties";
 
 interface Feed { rows: AmlDashboardRow[]; unchecked: string[] }
@@ -142,7 +151,7 @@ function Flags({ row, onOpen }: { row: AmlDashboardRow; onOpen?: (row: AmlDashbo
 // The level of due diligence with the party's red flags under it, as Late
 // sits under the AML stage (Woody, 23 November 2026: "combined due diligence
 // and red flags same as stage to sit under each").
-function DiligenceCell({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDashboardRow) => void }) {
+function DiligenceCell({ row, onOpen }: { row: AmlDashboardRow; onOpen?: (row: AmlDashboardRow) => void }) {
   return (
     <div className="flex flex-col items-start gap-1">
       <LevelCell row={row} />
@@ -153,11 +162,11 @@ function DiligenceCell({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: Am
 
 // Every agent on the transaction, one to a line (Woody, 23 November 2026:
 // "dont let the agents responsible leak off the page they should be listed").
-function AgentsCell({ row }: { row: AmlDashboardRow }) {
-  if (!row.agents.length) return <span>—</span>;
+function AgentsCell({ agents, testId }: { agents: string[]; testId: string }) {
+  if (!agents.length) return <span>—</span>;
   return (
-    <ul className="space-y-0.5" data-testid={`aml-agents-${row.key}`}>
-      {row.agents.map(a => <li key={a} className="whitespace-nowrap">{a}</li>)}
+    <ul className="space-y-0.5" data-testid={testId}>
+      {agents.map(a => <li key={a} className="whitespace-nowrap">{a}</li>)}
     </ul>
   );
 }
@@ -166,8 +175,9 @@ function AgentsCell({ row }: { row: AmlDashboardRow }) {
 function PartyCell({ row }: { row: AmlDashboardRow }) {
   return (
     <div className="min-w-0">
-      <div className="font-medium truncate">{row.signsAs || row.brandName}</div>
-      <div className="text-[11px] text-muted-foreground truncate">
+      {/* Two lines before it is cut, now each transaction has the height (24 November 2026). */}
+      <div className="font-medium line-clamp-2 break-words" title={row.signsAs || row.brandName}>{row.signsAs || row.brandName}</div>
+      <div className="text-[11px] text-muted-foreground truncate" title={row.signsAs ? row.brandName : undefined}>
         {roleWords(row.role)}{row.signsAs ? <> · {row.brandName}</> : null}
       </div>
     </div>
@@ -177,8 +187,8 @@ function PartyCell({ row }: { row: AmlDashboardRow }) {
 function DealCell({ row }: { row: AmlDashboardRow }) {
   return (
     <div className="min-w-0">
-      <div className="truncate">{row.dealRef != null ? <span className="font-mono text-muted-foreground mr-1">#{row.dealRef}</span> : null}{row.dealName}</div>
-      {row.propertyName && <div className="text-[11px] text-muted-foreground truncate">{row.propertyName}</div>}
+      <div className="line-clamp-2 break-words" title={row.dealName}>{row.dealRef != null ? <span className="font-mono text-muted-foreground mr-1">#{row.dealRef}</span> : null}{row.dealName}</div>
+      {row.propertyName && <div className="text-[11px] text-muted-foreground line-clamp-2 break-words">{row.propertyName}</div>}
     </div>
   );
 }
@@ -190,21 +200,76 @@ function DealStatusChip({ row }: { row: AmlDashboardRow }) {
   return <AmlDealStatusChip status={row.dealStatus} dealType={row.dealType} testId={`aml-deal-status-${row.key}`} />;
 }
 
-// One party as a card, on a phone and in the Cards view (Woody, 24 November 2026:
-// "can we have a cards view of the AML checks? like we do with CRM").
-function AmlPartyCard({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDashboardRow) => void }) {
+// One transaction in the table: the transaction, its status and its agents
+// once, and each party's checks on a line of its own under each other (Woody,
+// 24 November 2026: "combine the 2 (normally) AML checks into just one
+// transaction board or line"). A party's line opens that party; the
+// transaction's own cells open the party on the pill shown.
+function TransactionRows({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: AmlBucket; onOpen: (row: AmlDashboardRow) => void }) {
+  const n = t.parties.length;
+  const first = t.parties[0];
+  const openLead = (e: React.MouseEvent) => { e.stopPropagation(); onOpen(leadParty(t, bucket)); };
+  const block = "px-3 py-2 align-top group-hover/txn:bg-muted/30";
+  const cell = (i: number) => `px-3 py-2 align-top group-hover/txn:bg-muted/30 [tr:hover>&]:bg-muted/60${i ? " border-t border-dashed border-border" : ""}`;
   return (
-    <AmlCard testId={`aml-row-${row.key}`} onOpen={() => onOpen(row)}
-      title={row.signsAs || row.brandName}
-      sub={<>{roleWords(row.role)}{row.signsAs ? <> · {row.brandName}</> : null}</>}
-      chips={<StageChip row={row} />}
-      rows={[
-        ["Transaction", <div className="space-y-1"><DealCell row={row} /><DealStatusChip row={row} /></div>],
-        ["Checks", <DiligenceCell row={row} onOpen={onOpen} />],
-        ["Waiting on", row.waitingOn || "—"],
-        ["Last moved", moved(row.movedDays)],
-      ]}
-      footer={row.agents.length ? <>Agents: {row.agents.join(", ")}</> : null}
+    <tbody className="group/txn border-t border-border" data-testid={`aml-transaction-${t.dealId}`}>
+      {t.parties.map((r, i) => (
+        <tr key={r.key} onClick={() => onOpen(r)} className="cursor-pointer" data-testid={`aml-row-${r.key}`}>
+          {i === 0 && <>
+            {/* Narrower below 1536px so every column, the agents included, fits a laptop screen from 1280px (Woody, 23 November 2026). */}
+            <td rowSpan={n} onClick={openLead} className={`${block} max-w-[190px] 2xl:max-w-[260px]`}><DealCell row={first} /></td>
+            <td rowSpan={n} onClick={openLead} className={block}><DealStatusChip row={first} /></td>
+          </>}
+          <td className={`${cell(i)} max-w-[170px] 2xl:max-w-[230px]`}><PartyCell row={r} /></td>
+          <td className={cell(i)}><StageChip row={r} /></td>
+          <td className={`${cell(i)} max-w-[240px]`}><DiligenceCell row={r} onOpen={onOpen} /></td>
+          <td className={`${cell(i)} min-w-[120px] max-w-[200px]`}>{r.waitingOn}</td>
+          <td className={`${cell(i)} text-right tabular-nums whitespace-nowrap`}>{moved(r.movedDays)}</td>
+          {i === 0 && <td rowSpan={n} onClick={openLead} className={`${block} text-muted-foreground`}><AgentsCell agents={t.agents} testId={`aml-agents-${t.dealId}`} /></td>}
+        </tr>
+      ))}
+    </tbody>
+  );
+}
+
+// A party's checks on its line of a transaction card; pressing it opens the party.
+function PartyLine({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDashboardRow) => void }) {
+  const open = (e: React.SyntheticEvent) => { e.stopPropagation(); onOpen(row); };
+  const when = row.movedDays === null ? null : row.movedDays === 0 ? "moved today" : `moved ${moved(row.movedDays)} ago`;
+  return (
+    <div role="button" tabIndex={0} onClick={open} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(e); } }}
+      className="-mx-1 space-y-1 rounded px-1 py-0.5 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-testid={`aml-row-${row.key}`}>
+      <div className="font-medium leading-snug">{row.signsAs || row.brandName}{row.signsAs ? <span className="font-normal text-muted-foreground"> · {row.brandName}</span> : null}</div>
+      <div className="flex flex-wrap items-center gap-1">
+        <AmlStageChip stage={row.stage} expiresAt={row.expiresAt} testId={`aml-stage-${row.key}`} />
+        {row.late && <AmlLateChip deadline={row.deadline} testId={`aml-late-${row.key}`} />}
+        {row.sanctionsOnly ? <AmlChip className={KYC_CHIP_TONE.none} title="A letting under £10,000 a month: sanctions checks only">Sanctions only</AmlChip>
+          : row.stage !== "not_required" && <AmlLevelChip level={row.level} title={row.levelWhy.join("\n")} />}
+        <RedFlagChip count={row.redFlags.length} testId={`aml-flags-${row.key}`} />
+      </div>
+      {(row.waitingOn !== "Nobody" || when) && (
+        <div className="text-xs text-muted-foreground">
+          {row.waitingOn !== "Nobody" && <>Waiting on: <span className="text-foreground">{row.waitingOn}</span></>}
+          {row.waitingOn !== "Nobody" && when ? " · " : ""}{when}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One transaction as a card, its parties inside it, on a phone and in the Cards
+// view (Woody, 24 November 2026: "can we have a cards view of the AML checks?
+// like we do with CRM", then one line per transaction the same day).
+function AmlTransactionCard({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: AmlBucket; onOpen: (row: AmlDashboardRow) => void }) {
+  const first = t.parties[0];
+  return (
+    <AmlCard testId={`aml-transaction-${t.dealId}`} onOpen={() => onOpen(leadParty(t, bucket))}
+      title={<>{t.dealRef != null ? <span className="mr-1 font-mono font-normal text-muted-foreground">#{t.dealRef}</span> : null}{t.dealName}</>}
+      sub={t.propertyName}
+      chips={<DealStatusChip row={first} />}
+      rows={t.parties.map((r): [string, React.ReactNode] => [roleWords(r.role), <PartyLine row={r} onOpen={onOpen} />])}
+      footer={t.agents.length ? <>Agents: {t.agents.join(", ")}</> : null}
     />
   );
 }
@@ -285,6 +350,10 @@ export default function AmlDashboard() {
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
+  // Started from the top of the page (Woody, 24 November 2026): a new
+  // transaction typed out or from its heads of terms, or a company to add.
+  const [startTx, setStartTx] = useState<AmlStart | null>(null);
+  const [addCompany, setAddCompany] = useState(false);
   // Table or cards, as the CRM lists have it, remembered in this browser; a phone has cards.
   const [view, setView] = useState<AmlListView>(() => storedAmlView("checks"));
   const chooseView = (next: "table" | "card" | "board") => {
@@ -297,6 +366,13 @@ export default function AmlDashboard() {
   const { data: me } = useQuery<{ isAdmin?: boolean } | null>({ queryKey: ["/api/auth/me"] });
   const sections = SECTIONS.filter(x => (!x.officer || roles?.isOfficer) && (!x.admin || me?.isAdmin));
   const shownSection: Section = sections.some(x => x.key === section) ? section : "checks";
+  // Transactions and Companies share one top (Woody, 24 November 2026: "make the
+  // company page the same format as the transactions page on the top so they
+  // match up in terms of design and obviously have the new box"): the start bar
+  // above both, the pills and controls laid out alike, and both fold on scroll.
+  const startsHere = shownSection === "checks" || shownSection === "companies";
+  // Add a company opens the Companies view's own Add a company, once.
+  useEffect(() => { if (addCompany && shownSection === "companies") setAddCompany(false); }, [addCompany, shownSection]);
 
   // The view in the address, replaced (a pill change is never a Back step).
   useEffect(() => {
@@ -309,12 +385,16 @@ export default function AmlDashboard() {
     if (`${location}${search ? `?${search}` : ""}` !== target) setLocation(target, { replace: true });
   }, [bucket, mine, lateOnly, shownSection]);
 
-  const scoped = useMemo(() => (data?.rows || []).filter(r => (!mine || r.mine) && (!lateOnly || r.late) && rowMatches(r, query)), [data, mine, lateOnly, query]);
-  const counts = useMemo(() => bucketCounts(scoped), [scoped]);
-  const lateCount = useMemo(() => (data?.rows || []).filter(r => r.late && (!mine || r.mine) && rowMatches(r, query)).length, [data, mine, query]);
-  // Late first: past the point the policy needs the checks by.
-  const shown = useMemo(() => scoped.filter(r => r.bucket === bucket)
-    .sort((a, b) => (Number(b.late) - Number(a.late)) || (b.redFlags.length - a.redFlags.length) || ((b.movedDays ?? -1) - (a.movedDays ?? -1))), [scoped, bucket]);
+  // One line per transaction, its parties inside it; a pill, Late, Mine and the
+  // search pick transactions, and each line shows every party.
+  const transactions = useMemo(() => groupAmlByTransaction(data?.rows || []), [data]);
+  const scoped = useMemo(() => transactions.filter(t => (!mine || t.mine) && (!lateOnly || t.late) && transactionMatches(t, query)), [transactions, mine, lateOnly, query]);
+  const counts = useMemo(() => transactionBucketCounts(scoped), [scoped]);
+  const lateCount = useMemo(() => transactions.filter(t => t.late && (!mine || t.mine) && transactionMatches(t, query)).length, [transactions, mine, query]);
+  // Late first: past the point the policy needs the checks by; then the most red flags, then the longest still.
+  const stalest = (t: AmlTransactionRow) => Math.max(-1, ...t.parties.map(p => p.movedDays ?? -1));
+  const shown = useMemo(() => scoped.filter(t => t.buckets.includes(bucket))
+    .sort((a, b) => (Number(b.late) - Number(a.late)) || (b.redFlags - a.redFlags) || (stalest(b) - stalest(a))), [scoped, bucket]);
 
   // The top folds once the table is scrolled, so the rows get the screen and
   // the title and pills stay (Woody, 22 November 2026: "the top of the pages
@@ -350,7 +430,9 @@ export default function AmlDashboard() {
       page.removeEventListener("wheel", onWheel);
     };
   }, [pageEl, isMobile]);
-  const foldedTop = folded && !isMobile && shownSection === "checks";
+  // A fold belongs to the table that was scrolled: changing view opens the top again.
+  useEffect(() => { setFolded(false); lastTopRef.current = 0; }, [shownSection]);
+  const foldedTop = folded && !isMobile && startsHere;
   // The table measures the room below it on a window resize: folding moves its
   // top without one, so ask it to measure again once the fold has drawn.
   useEffect(() => {
@@ -370,6 +452,8 @@ export default function AmlDashboard() {
         <div className="md:ml-auto"><RaiseReportButton label="Report a concern" officer={!!roles?.isOfficer} testId="aml-raise-report" /></div>
       </div>
 
+      {startsHere && !foldedTop && <AmlStartBar onTransaction={setStartTx} onCompany={() => { setAddCompany(true); setSection("companies"); }} />}
+
       {shownSection === "policy" && <AmlPolicyPanel />}
 
       {shownSection === "rules" && <AmlRulesBoard />}
@@ -379,7 +463,7 @@ export default function AmlDashboard() {
       {shownSection === "training" && (roles?.managesTraining ? <AmlTrainingBoard /> : <AmlTrainingPanel userId="me" isOwn />)}
       {shownSection === "checks" && !foldedTop && <MyRegisterReports />}
       {shownSection === "emails" && <KycEmailsAdmin />}
-      {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} />}
+      {shownSection === "companies" && <KycCompaniesView isAdmin={!!me?.isAdmin} startAdding={addCompany} />}
 
       {shownSection === "checks" && <>
       <div className="flex flex-wrap items-center gap-2">
@@ -390,7 +474,7 @@ export default function AmlDashboard() {
             </Pill>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+        <div className="flex w-full flex-wrap items-center gap-1.5 md:ml-auto md:w-auto">
           <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
@@ -398,7 +482,7 @@ export default function AmlDashboard() {
           {/* Full width on a phone: at 56 it ran off the screen there. */}
           <div className="relative w-full sm:w-auto">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-full sm:w-56 text-sm" data-testid="aml-search" />
+            <Input value={query} onChange={e => setQuery(e.target.value)} placeholder="Party, transaction, status, property, agent" className="h-8 pl-7 w-full sm:w-64 text-sm" data-testid="aml-search" />
           </div>
         </div>
       </div>
@@ -416,7 +500,7 @@ export default function AmlDashboard() {
       ) : !shown.length ? (
         <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
       ) : isMobile || view === "card" ? (
-        <AmlCardGrid items={shown} testId="aml-cards" render={r => <AmlPartyCard key={r.key} row={r} onOpen={setOpen} />} />
+        <AmlCardGrid items={shown} testId="aml-cards" render={t => <AmlTransactionCard key={t.key} t={t} bucket={bucket} onOpen={setOpen} />} />
       ) : (
         // A scroll bar above the table as well as below it, and the heading row
         // stays in view while the rows scroll under it (Woody, 2026-11-20:
@@ -427,9 +511,9 @@ export default function AmlDashboard() {
           <table className="w-full text-sm" data-testid="aml-table">
             <thead className="bg-muted/50 text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
-                <th className="text-left font-medium px-3 py-2">Party</th>
                 <th className="text-left font-medium px-3 py-2">Transaction</th>
                 <th className="text-left font-medium px-3 py-2">Transaction status</th>
+                <th className="text-left font-medium px-3 py-2">Party</th>
                 <th className="text-left font-medium px-3 py-2">AML stage</th>
                 <th className="text-left font-medium px-3 py-2">Due diligence and red flags</th>
                 <th className="text-left font-medium px-3 py-2">Waiting on</th>
@@ -437,21 +521,7 @@ export default function AmlDashboard() {
                 <th className="text-left font-medium px-3 py-2">Agents</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {shown.map(r => (
-                <tr key={r.key} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-muted/40" data-testid={`aml-row-${r.key}`}>
-                  {/* Narrower below 1536px so every column, the agents included, fits a laptop screen from 1280px (Woody, 23 November 2026). */}
-                  <td className="px-3 py-2 max-w-[170px] 2xl:max-w-[230px]"><PartyCell row={r} /></td>
-                  <td className="px-3 py-2 max-w-[190px] 2xl:max-w-[260px]"><DealCell row={r} /></td>
-                  <td className="px-3 py-2"><DealStatusChip row={r} /></td>
-                  <td className="px-3 py-2"><StageChip row={r} /></td>
-                  <td className="px-3 py-2 max-w-[240px]"><DiligenceCell row={r} onOpen={setOpen} /></td>
-                  <td className="px-3 py-2 min-w-[120px] max-w-[200px]">{r.waitingOn}</td>
-                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{moved(r.movedDays)}</td>
-                  <td className="px-3 py-2 text-muted-foreground"><AgentsCell row={r} /></td>
-                </tr>
-              ))}
-            </tbody>
+            {shown.map(t => <TransactionRows key={t.key} t={t} bucket={bucket} onOpen={setOpen} />)}
           </table>
           </ScrollableTable>
         </div>
@@ -460,6 +530,16 @@ export default function AmlDashboard() {
       </>}
 
       {open && <PartyTrail row={open} onClose={() => setOpen(null)} officer={!!roles?.isOfficer} />}
+      {startTx && (
+        <Suspense fallback={null}>
+          <NewTransactionDialog
+            open
+            onOpenChange={o => { if (!o) { setStartTx(null); queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] }); queryClient.invalidateQueries({ queryKey: [KYC_COMPANIES_KEY] }); } }}
+            initialNote={startTx.note || null}
+            initialHotsFile={startTx.file || null}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

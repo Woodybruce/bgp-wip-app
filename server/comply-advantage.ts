@@ -397,6 +397,9 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
     // a possible namesake for adverse media (providerMatchFlags).
     const agreeing = birthYearAgrees ? dobs.filter(d => profileDobAgrees(d, subject)) : [];
     const birthYearNear = agreeing.length > 0 && agreeing.every(d => d.year !== Number(subject.birthYear));
+    // Agrees only as a year with no month, the person's own year included (24 November 2026: the same
+    // musician's profile gives 1948, the year Ian Macfarlane Anderson was born, worked out from an age).
+    const birthYearOnly = agreeing.length > 0 && agreeing.every(d => d.month == null);
     const kinds = kindsOf(indicators.aml_types);
     for (const k of kinds.length ? kinds : ["warning"]) {
       matches.push({
@@ -412,6 +415,7 @@ export function matchesFromRisks(risks: any[], subject: ScreenSubject, kind: Mes
           datesOfBirth: dobYears,
           birthYearAgrees,
           birthYearNear,
+          birthYearOnly,
           kinds,
           media: k === "adverse_media" ? mediaItems(indicators.media) : [],
         },

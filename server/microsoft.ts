@@ -15,7 +15,7 @@ import { CLOSED_STATUSES, TERMINAL_STATUSES } from "@shared/deal-status";
 import { schemeLimitSql } from "./company-scope";
 import {
   SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER,
-  getSharePointDriveId, createFolderByPath, runChunked, createTreeBatched,
+  getSharePointDriveId, createFolderByPath,
 } from "./sharepoint-graph";
 
 // Re-exported for the many modules that import these constants from here.
@@ -113,6 +113,13 @@ export async function getAppGraphToken(): Promise<string | null> {
 // the delegated Calendars.Read consent that's already in place, without
 // needing the app-only Application permission.
 export async function getDelegatedGraphTokenForUser(userId: string, scopes: string[] = SCOPES): Promise<string | null> {
+  return (await getOwnMsAccess(userId, scopes))?.token ?? null;
+}
+
+// The same token with the Microsoft account it belongs to: the folder engine
+// acts as the person, never as a colleague (Woody, 24 November 2026: decision
+// 7 of docs/folders-review-2026-11-20.md), and logs whose account Graph saw.
+export async function getOwnMsAccess(userId: string, scopes: string[] = SCOPES): Promise<{ token: string; account: string } | null> {
   if (!userId) return null;
   return withMsalCacheLock(async () => {
     try {
@@ -133,7 +140,7 @@ export async function getDelegatedGraphTokenForUser(userId: string, scopes: stri
       const result = await client.acquireTokenSilent({ scopes, account });
       if (result?.accessToken && !isPrivateMicrosoftAccount(result)) {
         await saveMsalCache(String(userId), homeAccountId);
-        return result.accessToken;
+        return { token: result.accessToken, account: String(result.account?.username || account.username || "") };
       }
       return null;
     } catch (e: any) {
@@ -147,53 +154,6 @@ function getRedirectUri(req: Request): string {
   const protocol = req.headers["x-forwarded-proto"] || req.protocol;
   const host = req.headers["x-forwarded-host"] || req.headers.host;
   return `${protocol}://${host}/api/microsoft/callback`;
-}
-
-export async function uploadFileToSharePoint(
-  fileBuffer: Buffer,
-  filename: string,
-  contentType: string,
-  folderPath?: string
-): Promise<{ id: string; name: string; webUrl: string }> {
-  const client = getMsalClient();
-  const tokenResult = await client.acquireTokenByClientCredential({
-    scopes: ["https://graph.microsoft.com/.default"],
-  });
-  if (!tokenResult?.accessToken) throw new Error("Failed to acquire SharePoint app token");
-  const token = tokenResult.accessToken;
-
-  const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-  const siteRes = await fetch(siteUrl, { headers: { Authorization: `Bearer ${token}` } });
-  if (!siteRes.ok) throw new Error("Could not find BGP SharePoint site");
-  const site = await siteRes.json();
-
-  const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!drivesRes.ok) throw new Error("Could not list SharePoint drives");
-  const drives = await drivesRes.json();
-  const drive = drives.value?.[0];
-  if (!drive) throw new Error("No SharePoint drive found");
-
-  const targetFolder = folderPath || `${SHAREPOINT_ROOT_FOLDER}/ChatBGP Documents`;
-  const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${drive.id}/root:/${encodeURIComponent(targetFolder)}/${encodeURIComponent(filename)}:/content`;
-
-  const uploadRes = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": contentType,
-    },
-    body: fileBuffer,
-  });
-
-  if (!uploadRes.ok) {
-    const err = await uploadRes.text();
-    throw new Error(`SharePoint upload failed: ${err.slice(0, 200)}`);
-  }
-
-  const result = await uploadRes.json();
-  return { id: result.id, name: result.name, webUrl: result.webUrl };
 }
 
 
@@ -490,45 +450,28 @@ export function setupMicrosoftRoutes(app: Express) {
     res.json({ message: "Disconnected from Microsoft 365" });
   });
 
-  app.get("/api/microsoft/shared-folder-probe", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+  // Files on the SharePoint page, the dashboard widget and the Excel add-in
+  // open as the person, on their own Microsoft 365, never a colleague's (Woody,
+  // 24 November 2026: decision 7 of docs/folders-review-2026-11-20.md). With
+  // none connected the screens say to connect it on the SharePoint page.
+  const CONNECT_OWN = "Connect your own Microsoft 365 first, on the SharePoint page: files open as you, never as a colleague.";
+  const ownFileToken = async (req: Request, res: Response): Promise<string | null> => {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) {
+      res.status(401).json({ message: "Not authenticated" });
+      return null;
     }
-    try {
-      const shareUrl = req.query.url as string;
-      if (!shareUrl) return res.status(400).json({ message: "url query param required" });
-      const encoded = Buffer.from(shareUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const shareToken = "u!" + encoded;
-      const driveItemUrl = `https://graph.microsoft.com/v1.0/shares/${shareToken}/driveItem?$expand=children`;
-      console.log("[SharePoint Probe] Accessing shared link:", driveItemUrl.substring(0, 120));
-      const r = await fetch(driveItemUrl, { headers: { Authorization: `Bearer ${token}` } });
-      if (!r.ok) {
-        const errText = await r.text();
-        console.log("[SharePoint Probe] Error:", r.status, errText.substring(0, 300));
-        return res.status(r.status).json({ error: errText });
-      }
-      const data = await r.json();
-      console.log("[SharePoint Probe] Success! Folder:", data.name, "Children:", data.children?.length);
-      const summary = {
-        name: data.name,
-        id: data.id,
-        driveId: data.parentReference?.driveId,
-        childCount: data.folder?.childCount,
-        children: data.children?.map((c: any) => ({ name: c.name, size: c.size, folder: !!c.folder, childCount: c.folder?.childCount })),
-      };
-      return res.json(summary);
-    } catch (err: any) {
-      console.error("[SharePoint Probe] Error:", err.message);
-      return res.status(500).json({ error: err.message });
+    const own = await getOwnMsAccess(String(userId));
+    if (!own) {
+      res.status(428).json({ message: CONNECT_OWN, connect: true });
+      return null;
     }
-  });
+    return own.token;
+  };
 
   app.get("/api/microsoft/files", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
 
     try {
       const folderId = req.query.folderId as string | undefined;
@@ -639,7 +582,7 @@ export function setupMicrosoftRoutes(app: Express) {
 
       const items = await listAllChildren(
         fetchPage,
-        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails",
+        url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference",
       );
       if (items.length > 0 && items[0].parentReference?.driveId) {
         res.json({ items, driveId: items[0].parentReference.driveId });
@@ -656,10 +599,8 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/files/content", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = req.query.driveId as string;
       const itemId = req.query.itemId as string;
@@ -684,10 +625,8 @@ export function setupMicrosoftRoutes(app: Express) {
   });
 
   app.get("/api/microsoft/files/thumbnail", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = req.query.driveId as string;
       const itemId = req.query.itemId as string;
@@ -706,172 +645,6 @@ export function setupMicrosoftRoutes(app: Express) {
     } catch (err: any) {
       console.error("Thumbnail error:", err.message);
       res.status(500).json({ error: err.message });
-    }
-  });
-
-  // ── File/folder sharing ───────────────────────────────────────────────
-  // Create a shareable link to a drive item. Defaults to an anonymous
-  // "anyone with the link" view link (share-with-anyone). If the tenant's
-  // external-sharing policy blocks anonymous links, Graph returns 403 — we
-  // fall back to an organization-scoped link and flag it, so callers can
-  // tell the user "anyone" wasn't permitted rather than just failing.
-  app.post("/api/microsoft/files/share-link", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-    try {
-      const { driveId, itemId, type, scope, expirationDateTime, password } = req.body || {};
-      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
-      const linkType = type === "edit" ? "edit" : "view";
-
-      const createLink = async (linkScope: "anonymous" | "organization") => {
-        const body: Record<string, any> = { type: linkType, scope: linkScope };
-        if (linkScope === "anonymous" && expirationDateTime) body.expirationDateTime = expirationDateTime;
-        if (linkScope === "anonymous" && password) body.password = password;
-        const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/createLink`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        return r;
-      };
-
-      const requestedScope: "anonymous" | "organization" = scope === "organization" ? "organization" : "anonymous";
-      let r = await createLink(requestedScope);
-      let fellBackToOrg = false;
-
-      // Anonymous blocked by tenant policy → retry org-scoped.
-      if (!r.ok && requestedScope === "anonymous" && (r.status === 403 || r.status === 400)) {
-        r = await createLink("organization");
-        fellBackToOrg = r.ok;
-      }
-      if (!r.ok) {
-        const detail = await r.text().catch(() => "");
-        return res.status(r.status).json({ error: `Graph createLink failed (${r.status})`, detail });
-      }
-      const data = await r.json();
-      res.json({
-        webUrl: data?.link?.webUrl || null,
-        scope: data?.link?.scope || (fellBackToOrg ? "organization" : requestedScope),
-        type: data?.link?.type || linkType,
-        fellBackToOrg,
-      });
-    } catch (err: any) {
-      console.error("Share link error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Invite named people (internal or external) to a drive item by email.
-  // Used when anonymous links are disallowed, or for granting edit access
-  // to a specific external person rather than anyone-with-the-link.
-  app.post("/api/microsoft/files/invite", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-    try {
-      const { driveId, itemId, emails, role, message, requireSignIn } = req.body || {};
-      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
-      const recipients = (Array.isArray(emails) ? emails : [emails])
-        .filter((e: any) => typeof e === "string" && e.includes("@"))
-        .map((email: string) => ({ email }));
-      if (!recipients.length) return res.status(400).json({ message: "At least one valid email is required" });
-      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/invite`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          recipients,
-          roles: [role === "write" ? "write" : "read"],
-          requireSignIn: requireSignIn !== false,
-          sendInvitation: true,
-          message: message || "Sharing a document with you from Bruce Gillingham Pollard.",
-        }),
-      });
-      if (!r.ok) {
-        const detail = await r.text().catch(() => "");
-        return res.status(r.status).json({ error: `Graph invite failed (${r.status})`, detail });
-      }
-      const data = await r.json();
-      res.json({ invited: recipients.map(x => x.email), value: data?.value || [] });
-    } catch (err: any) {
-      console.error("Share invite error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/microsoft/sharepoint/debug", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const results: any = {};
-
-      const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`;
-      const siteRes = await fetch(siteUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      results.siteUrl = siteUrl;
-      results.siteStatus = siteRes.status;
-      results.siteData = await siteRes.json();
-
-      if (siteRes.ok) {
-        const drivesUrl = `https://graph.microsoft.com/v1.0/sites/${results.siteData.id}/drives`;
-        const drivesRes = await fetch(drivesUrl, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        results.drivesStatus = drivesRes.status;
-        results.drivesData = await drivesRes.json();
-      }
-
-      const searchUrl = `https://graph.microsoft.com/v1.0/sites?search=BGP`;
-      const searchRes = await fetch(searchUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      results.searchStatus = searchRes.status;
-      results.searchData = await searchRes.json();
-
-      res.json(results);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/microsoft/sharepoint/sites", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const search = req.query.search as string || "";
-      let url = "https://graph.microsoft.com/v1.0/sites?search=*";
-      if (search) {
-        url = `https://graph.microsoft.com/v1.0/sites?search=${encodeURIComponent(search)}`;
-      }
-
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
-        }
-        const errorText = await response.text();
-        console.error("SharePoint sites error:", errorText);
-        return res.json([]);
-      }
-
-      const data = await response.json();
-      res.json(data.value || []);
-    } catch (err: any) {
-      console.error("SharePoint sites error:", err);
-      res.json([]);
     }
   });
 
@@ -2147,72 +1920,11 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  app.post("/api/microsoft/folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const { name, parentId, driveId: reqDriveId } = req.body;
-      if (!name) {
-        return res.status(400).json({ message: "Folder name is required" });
-      }
-
-      let driveId = reqDriveId;
-      if (!driveId) {
-        const spInfo = await getSharePointDriveId(token);
-        if (!spInfo) {
-          return res.status(404).json({ message: "Could not find SharePoint drive" });
-        }
-        driveId = spInfo.driveId;
-      }
-
-      const parentPath = parentId
-        ? `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children`
-        : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
-
-      const response = await fetch(parentPath, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name,
-          folder: {},
-          "@microsoft.graph.conflictBehavior": "fail",
-        }),
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          delete req.session.msTokens;
-          return res.status(401).json({ message: "Microsoft token expired. Please reconnect." });
-        }
-        if (response.status === 409) {
-          return res.status(409).json({ message: `Folder "${name}" already exists` });
-        }
-        const errText = await response.text();
-        console.error("Create folder error:", response.status, errText);
-        throw new Error(`Failed to create folder: ${response.status}`);
-      }
-
-      const folder = await response.json();
-      res.json(folder);
-    } catch (err: any) {
-      console.error("Create folder error:", err);
-      res.status(500).json({ message: err.message || "Failed to create folder" });
-    }
-  });
-
   // Rename and/or move a file or folder. Graph does both in one PATCH:
   // a `name` renames, a `parentReference.id` moves. Pass either or both.
   app.patch("/api/microsoft/files/item", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const { driveId, itemId, name, parentId } = req.body || {};
       if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
@@ -2240,10 +1952,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // Create a folder in the current location (drive root when parentId is
   // omitted). Conflict on name returns 409 rather than silently renaming.
   app.post("/api/microsoft/files/folder", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const { driveId, parentId, name } = req.body || {};
       const trimmed = typeof name === "string" ? name.trim() : "";
@@ -2269,10 +1979,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // Delete a file or folder. Graph sends it to the SharePoint recycle bin
   // (recoverable), so this is a soft delete from the user's perspective.
   app.delete("/api/microsoft/files/item", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
     try {
       const driveId = (req.body?.driveId || req.query.driveId) as string;
       const itemId = (req.body?.itemId || req.query.itemId) as string;
@@ -2289,356 +1997,6 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     } catch (err: any) {
       console.error("Delete item error:", err.message);
       res.status(500).json({ error: err.message });
-    }
-  });
-
-  const TEAM_FOLDERS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
-
-  const TEAM_FOLDER_TREES: Record<string, string[]> = {
-    "Investment": [
-      "Financial Analysis",
-      "Financial Analysis/Cashflow Models",
-      "Financial Analysis/Valuations",
-      "Financial Analysis/Comparable Evidence",
-      "Due Diligence",
-      "Due Diligence/Title",
-      "Due Diligence/Surveys",
-      "Due Diligence/Environmental",
-      "Due Diligence/Planning",
-      "Legal",
-      "Legal/Heads of Terms",
-      "Legal/Contracts",
-      "Legal/Searches",
-      "Marketing",
-      "Marketing/Brochure",
-      "Marketing/Photography",
-      "Marketing/Floorplans",
-      "Correspondence",
-      "Client Reporting",
-    ],
-    "London F&B": [
-      "Marketing",
-      "Marketing/Brochure",
-      "Marketing/Photography",
-      "Marketing/Floorplans",
-      "Marketing/Window Cards",
-      "Marketing/Social Media",
-      "Heads of Terms",
-      "Legal",
-      "Legal/Lease Drafts",
-      "Legal/Licence for Works",
-      "Inspections",
-      "Inspections/Measured Survey",
-      "Inspections/Schedule of Condition",
-      "Tenant Information",
-      "Tenant Information/References",
-      "Tenant Information/Accounts",
-      "Comparable Evidence",
-      "Correspondence",
-      "Rent Review",
-    ],
-    "London Retail": [
-      "Marketing",
-      "Marketing/Brochure",
-      "Marketing/Photography",
-      "Marketing/Floorplans",
-      "Marketing/Window Cards",
-      "Marketing/Social Media",
-      "Heads of Terms",
-      "Legal",
-      "Legal/Lease Drafts",
-      "Legal/Licence for Works",
-      "Inspections",
-      "Inspections/Measured Survey",
-      "Inspections/Schedule of Condition",
-      "Tenant Information",
-      "Tenant Information/References",
-      "Tenant Information/Accounts",
-      "Comparable Evidence",
-      "Correspondence",
-      "Rent Review",
-    ],
-    "Lease Advisory": [
-      "Lease Documents",
-      "Lease Documents/Current Lease",
-      "Lease Documents/Supplements",
-      "Lease Documents/Licences",
-      "Rent Review",
-      "Rent Review/Comparable Evidence",
-      "Rent Review/Valuation",
-      "Rent Review/Representations",
-      "Rent Review/Determination",
-      "Lease Renewal",
-      "Lease Renewal/Section 25 Notice",
-      "Lease Renewal/Counter Notice",
-      "Lease Renewal/Heads of Terms",
-      "Dilapidations",
-      "Dilapidations/Schedule",
-      "Dilapidations/Costings",
-      "Dilapidations/Scott Schedule",
-      "Service Charge",
-      "Correspondence",
-      "Legal",
-    ],
-    "National Leasing": [
-      "Unit Plans",
-      "Heads of Terms",
-      "Target Lists",
-      "Photos",
-      "Supporting Documents",
-    ],
-    "Tenant Rep": [
-      "Brief",
-      "Brief/Requirements Schedule",
-      "Brief/Budget Analysis",
-      "Search",
-      "Search/Long List",
-      "Search/Short List",
-      "Search/Viewing Notes",
-      "Heads of Terms",
-      "Legal",
-      "Legal/Agreement for Lease",
-      "Legal/Lease",
-      "Fit-Out",
-      "Fit-Out/Specifications",
-      "Fit-Out/Tenders",
-      "Fit-Out/Programme",
-      "Comparable Evidence",
-      "Correspondence",
-      "Client Reporting",
-    ],
-    "Development": [
-      "Project Folder",
-      "Project Folder/Correspondence",
-      "Project Folder/Clients",
-      "Project Folder/Fees",
-      "Project Folder/Original Pitch",
-      "Project Folder/Reports",
-      "Marketing Overview",
-      "Marketing Overview/Brochure",
-      "Marketing Overview/Plans (CADs & Specification)",
-      "Marketing Overview/Service Charge",
-      "Marketing Overview/Rent",
-      "Marketing Overview/Goads",
-      "Marketing Overview/Photos & CGIs",
-      "Marketing Overview/Rateable Values & Rates",
-      "Tenants & Leasing Schedules",
-      "Tenants & Leasing Schedules/Target Tenants",
-      "Tenants & Leasing Schedules/Client Update Schedules",
-      "Heads of Terms",
-      "Heads of Terms/Standard Draft HOTs",
-      "Heads of Terms/Per Unit",
-    ],
-    "Office / Corporate": [
-      "Legal",
-      "Financials",
-      "Marketing",
-      "Correspondence",
-      "Reports",
-    ],
-  };
-
-  const COMPANY_FOLDER_TREES: Record<string, string[]> = {
-    "Leasing": [
-      "Crib Sheets",
-      "Brochures",
-      "Leasing Plans",
-      "Fee Agreement",
-      "General Landsec Documents",
-      "Monthly Trading Updates",
-    ],
-    "Investment": [
-      "Investment Memos",
-      "Financial Analysis",
-      "Due Diligence",
-      "Correspondence",
-      "Client Reporting",
-    ],
-    "Tenant Rep": [
-      "Brief",
-      "Search Reports",
-      "Heads of Terms",
-      "Legal",
-      "Correspondence",
-    ],
-    "Development": [
-      "Project Folder",
-      "Project Folder/Correspondence",
-      "Project Folder/Clients",
-      "Project Folder/Fees",
-      "Project Folder/Original Pitch",
-      "Project Folder/Reports",
-      "Marketing Overview",
-      "Marketing Overview/Brochure",
-      "Marketing Overview/Plans (CADs & Specification)",
-      "Marketing Overview/Service Charge",
-      "Marketing Overview/Rent",
-      "Marketing Overview/Goads",
-      "Marketing Overview/Photos & CGIs",
-      "Marketing Overview/Rateable Values & Rates",
-      "Tenants & Leasing Schedules",
-      "Tenants & Leasing Schedules/Target Tenants",
-      "Tenants & Leasing Schedules/Client Update Schedules",
-      "Heads of Terms",
-      "Heads of Terms/Standard Draft HOTs",
-      "Heads of Terms/Per Unit",
-    ],
-  };
-
-  app.post("/api/microsoft/property-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const { propertyName, team } = req.body;
-      if (!propertyName || !team) {
-        return res.status(400).json({ message: "propertyName and team are required" });
-      }
-
-      let folderTree = TEAM_FOLDER_TREES[team];
-      if (!folderTree) {
-        // Client teams (e.g. "Landsec") aren't in the discipline tree map —
-        // file their properties with the same retail/leasing template the
-        // bulk client-folders setup uses, under the client's own top-level
-        // folder, so one-off and bulk setups produce the same structure.
-        const { getCompanyIdForClientTeam } = await import("./company-scope");
-        const clientCompanyId = await getCompanyIdForClientTeam(team);
-        if (clientCompanyId) folderTree = TEAM_FOLDER_TREES["London Retail"];
-      }
-      if (!folderTree) {
-        return res.status(400).json({ message: `Unknown team: ${team}. Valid teams: ${Object.keys(TEAM_FOLDER_TREES).join(", ")}` });
-      }
-
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      const teamFolder = `${SHAREPOINT_ROOT_FOLDER}/${team}`;
-      const propertyRoot = `${teamFolder}/${propertyName}`;
-
-      const rootResult = await createFolderByPath(token, spInfo.driveId, teamFolder, propertyName);
-      if (!rootResult.success) {
-        return res.status(500).json({ message: `Failed to create property folder: ${rootResult.error}` });
-      }
-
-      const results: { path: string; success: boolean; error?: string }[] = [
-        { path: propertyRoot, success: true },
-        ...await createTreeBatched(token, spInfo.driveId, propertyRoot, folderTree),
-      ];
-
-      const successCount = results.filter(r => r.success).length;
-      const errorCount = results.filter(r => !r.success).length;
-
-      res.json({
-        propertyName,
-        team,
-        rootPath: propertyRoot,
-        totalFolders: results.length,
-        created: successCount,
-        errors: errorCount,
-        details: results,
-      });
-    } catch (err: any) {
-      console.error("Property folders error:", err);
-      res.status(500).json({ message: "Failed to create property folder structure" });
-    }
-  });
-
-  app.get("/api/microsoft/folder-templates", requireAuth, async (_req: Request, res: Response) => {
-    const templates = Object.entries(TEAM_FOLDER_TREES).map(([team, paths]) => ({
-      team,
-      folderCount: paths.length + 1,
-      structure: paths,
-    }));
-    res.json(templates);
-  });
-
-  app.get("/api/microsoft/company-folder-templates", requireAuth, async (_req: Request, res: Response) => {
-    const templates = Object.entries(COMPANY_FOLDER_TREES).map(([template, paths]) => ({
-      template,
-      folderCount: paths.length + 1,
-      structure: paths,
-    }));
-    res.json(templates);
-  });
-
-  app.post("/api/microsoft/company-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      let { companyName, template } = req.body;
-      if (!companyName || !template) {
-        return res.status(400).json({ message: "companyName and template are required" });
-      }
-      companyName = String(companyName).trim().replace(/[\/\\<>:"|?*]/g, "_");
-      if (!companyName) {
-        return res.status(400).json({ message: "Invalid company name" });
-      }
-
-      const folderTree = COMPANY_FOLDER_TREES[template];
-      if (!folderTree) {
-        return res.status(400).json({ message: `Unknown template: ${template}. Valid templates: ${Object.keys(COMPANY_FOLDER_TREES).join(", ")}` });
-      }
-
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      const companiesFolder = `${SHAREPOINT_ROOT_FOLDER}/Companies`;
-      const companyRoot = `${companiesFolder}/${companyName}`;
-
-      const parentResult = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, "Companies");
-      if (!parentResult.success) {
-        return res.status(500).json({ message: `Failed to create Companies folder: ${parentResult.error}` });
-      }
-
-      const rootResult = await createFolderByPath(token, spInfo.driveId, companiesFolder, companyName);
-      if (!rootResult.success) {
-        return res.status(500).json({ message: `Failed to create company folder: ${rootResult.error}` });
-      }
-
-      const results: { path: string; success: boolean; error?: string }[] = [
-        { path: companyRoot, success: true },
-      ];
-
-      for (const subPath of folderTree) {
-        const parts = subPath.split("/");
-        const folderName = parts[parts.length - 1];
-        const parentParts = parts.slice(0, -1);
-        const parentPath = parentParts.length > 0
-          ? `${companyRoot}/${parentParts.join("/")}`
-          : companyRoot;
-
-        const result = await createFolderByPath(token, spInfo.driveId, parentPath, folderName);
-        results.push({
-          path: `${companyRoot}/${subPath}`,
-          success: result.success,
-          error: result.error,
-        });
-      }
-
-      const successCount = results.filter(r => r.success).length;
-      const errorCount = results.filter(r => !r.success).length;
-
-      res.json({
-        companyName,
-        template,
-        rootPath: companyRoot,
-        totalFolders: results.length,
-        created: successCount,
-        errors: errorCount,
-        details: results,
-      });
-    } catch (err: any) {
-      console.error("Company folders error:", err);
-      res.status(500).json({ message: "Failed to create company folder structure" });
     }
   });
 
@@ -2664,10 +2022,13 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   });
 
   app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    // As the person, on their own Microsoft 365, never a colleague's (decision 7 of docs/folders-review-2026-11-20.md).
+    const ownerId = req.session?.userId || (req as any).tokenUserId;
+    const own = ownerId ? await getOwnMsAccess(String(ownerId)).catch(() => null) : null;
+    if (!own) {
+      return res.status(428).json({ message: "Connect your own Microsoft 365 first, on the SharePoint page: folders are made as you, never as a colleague.", connect: true });
     }
+    const token = own.token;
     try {
       const { companyId } = req.body || {};
       if (!companyId) return res.status(400).json({ message: "companyId is required" });
@@ -2677,12 +2038,10 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const companyName = String(companyQ.rows[0].name).trim().replace(/[\/\\<>:"|?*]/g, "_");
 
       const {
-        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore,
+        runClientFolderJob, readClientFolderJobState, clientFolderJobWire, pgClientFolderJobStore, engineClientFolderGraph,
       } = await import("./client-folder-jobs");
       const { resolveAccountView } = await import("./account-resolver");
       const { buildExpectedFolderTree } = await import("@shared/client-folder-tree");
-      const { createChildrenLister, resolveClientRoot } = await import("./account-folder-inventory");
-      const { resolveItemByPath, createFolderInItem } = await import("./sharepoint-graph");
 
       // A live run wins — double-clicks and concurrent POSTs are no-ops.
       const existing = await readClientFolderJobState(companyId, { pool }).catch(() => null);
@@ -2703,34 +2062,12 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         properties: view.properties.map(p => ({ propertyId: p.propertyId, name: p.name })),
       }).length;
 
-      const graph = {
-        resolveRoot: () => resolveClientRoot(companyId, companyName, token, { pool }),
-        ensureRoot: async (clientName: string) => {
-          const spInfo = await getSharePointDriveId(token);
-          if (!spInfo) throw new Error("Could not find BGP SharePoint site");
-          const created = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, clientName);
-          if (!created.success) throw new Error(`Failed to create ${clientName} folder: ${created.error}`);
-          const ref = await resolveItemByPath(token, spInfo.driveId, `${SHAREPOINT_ROOT_FOLDER}/${clientName}`);
-          if (!ref) throw new Error(`Created ${clientName} but could not resolve its item id`);
-          return ref;
-        },
-        listChildren: createChildrenLister(
-          async (url) => {
-            const pageRes = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-            if (!pageRes.ok) throw new Error(`Graph listing failed: ${pageRes.status}`);
-            return pageRes.json();
-          },
-          (driveId, itemId) =>
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,folder,file,size,webUrl`,
-        ),
-        createFolder: (driveId: string, parentItemId: string, name: string) =>
-          createFolderInItem(token, driveId, parentItemId, name),
-      };
-
       // Fire-and-forget, but durable: the runner persists per-node state as
       // it goes, so a process restart loses nothing — the next POST resumes.
-      // The token is this request's delegated token, never persisted.
+      // The token is this request's delegated token, never persisted; every
+      // Graph call goes through the folder engine (engineClientFolderGraph).
       const userId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+      const graph = engineClientFolderGraph(token, { companyId, companyName, userId, pool });
       void runClientFolderJob(
         { companyId, companyName, userId },
         { store: pgClientFolderJobStore(pool as any, companyId), pool, graph },
@@ -2751,307 +2088,14 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  app.post("/api/microsoft/team-folders/setup", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site. Make sure you have access." });
-      }
-
-      const results: { name: string; status: string; id?: string; webUrl?: string }[] = [];
-
-      for (const teamName of TEAM_FOLDERS) {
-        try {
-          const cleanParent = SHAREPOINT_ROOT_FOLDER.replace(/^\/+|\/+$/g, "");
-          const createUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(cleanParent).replace(/%2F/g, "/")}:/children`;
-          const createRes = await fetch(
-            createUrl,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                name: teamName,
-                folder: {},
-                "@microsoft.graph.conflictBehavior": "fail",
-              }),
-            }
-          );
-
-          if (createRes.ok) {
-            const folder = await createRes.json();
-            results.push({ name: teamName, status: "created", id: folder.id, webUrl: folder.webUrl });
-          } else if (createRes.status === 409) {
-            const teamPath = `${SHAREPOINT_ROOT_FOLDER}/${teamName}`;
-            const existingRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(teamPath).replace(/%2F/g, "/")}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (existingRes.ok) {
-              const existing = await existingRes.json();
-              results.push({ name: teamName, status: "exists", id: existing.id, webUrl: existing.webUrl });
-            } else {
-              results.push({ name: teamName, status: "exists" });
-            }
-          } else {
-            const errText = await createRes.text();
-            console.error(`Failed to create ${teamName} folder:`, createRes.status, errText);
-            results.push({ name: teamName, status: "error" });
-          }
-        } catch (folderErr: any) {
-          console.error(`Error creating ${teamName} folder:`, folderErr);
-          results.push({ name: teamName, status: "error" });
-        }
-      }
-
-      res.json({ folders: results, driveId: spInfo.driveId });
-    } catch (err: any) {
-      console.error("Team folders setup error:", err);
-      res.status(500).json({ message: "Failed to set up team folders" });
-    }
-  });
-
-  app.get("/api/microsoft/property-folders/:team/:propertyName", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const { team, propertyName } = req.params;
-      const subPath = req.query.path as string || "";
-      const folderUrl = (req.query.folderUrl as string || "").trim();
-
-      // If the caller has a stored SharePoint folder URL on the CRM property
-      // (crm_properties.sharepoint_folder_url) prefer that — it always
-      // resolves to the real folder regardless of whether the CRM record's
-      // `name` matches the on-disk folder name. Falls back to path
-      // synthesis (BGP share drive/{team}/{propertyName}) if no URL.
-      if (folderUrl) {
-        const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-        const driveItemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!driveItemRes.ok) {
-          if (driveItemRes.status === 404) return res.json({ exists: false, folders: [] });
-          throw new Error(`Failed to resolve folder URL: ${driveItemRes.status}`);
-        }
-        const driveItem = await driveItemRes.json();
-        const driveId = driveItem.parentReference?.driveId;
-        let itemId = driveItem.id;
-        // Walk into subPath if requested.
-        if (subPath && driveId) {
-          const encodedSub = subPath.split("/").map(s => encodeURIComponent(s)).join("/");
-          const subRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/${encodedSub}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!subRes.ok) {
-            if (subRes.status === 404) return res.json({ exists: false, folders: [] });
-            throw new Error(`Failed to walk into subPath: ${subRes.status}`);
-          }
-          const subItem = await subRes.json();
-          itemId = subItem.id;
-        }
-        // Paginate: large folders span multiple Graph pages (@odata.nextLink).
-        const childItems = await listAllChildren(async (pageUrl) => {
-          const childrenRes = await fetch(pageUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
-          return childrenRes.json();
-        }, `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`);
-        const items = childItems.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          isFolder: !!item.folder,
-          childCount: item.folder?.childCount || 0,
-          size: item.size || 0,
-          webUrl: item.webUrl,
-          lastModified: item.lastModifiedDateTime,
-        }));
-        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url", driveId, currentItemId: itemId });
-      }
-
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      let folderPath = `${SHAREPOINT_ROOT_FOLDER}/${team}/${propertyName}`;
-      if (subPath) folderPath = `${folderPath}/${subPath}`;
-      const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-
-      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
-      // A 404 on the first page means the folder doesn't exist.
-      let childItems: any[];
-      try {
-        childItems = await listAllChildren(async (pageUrl) => {
-          const pageRes = await fetch(pageUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!pageRes.ok) {
-            const err: any = new Error(`Failed to list folders: ${pageRes.status}`);
-            err.status = pageRes.status;
-            throw err;
-          }
-          return pageRes.json();
-        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=100`);
-      } catch (err: any) {
-        if (err?.status === 404) {
-          return res.json({ exists: false, folders: [] });
-        }
-        throw err;
-      }
-
-      const items = childItems.map((item: any) => ({
-        id: item.id,
-        name: item.name,
-        isFolder: !!item.folder,
-        childCount: item.folder?.childCount || 0,
-        size: item.size || 0,
-        webUrl: item.webUrl,
-        lastModified: item.lastModifiedDateTime,
-      }));
-
-      // Resolve the current folder's own item id so the UI can create
-      // subfolders / act on this folder by id (the children call above
-      // doesn't return the parent's id).
-      let currentItemId: string | null = null;
-      try {
-        const selfRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}`, { headers: { Authorization: `Bearer ${token}` } });
-        if (selfRes.ok) currentItemId = (await selfRes.json())?.id || null;
-      } catch {}
-
-      res.json({ exists: true, folders: items, path: folderPath, source: "path", driveId: spInfo.driveId, currentItemId });
-    } catch (err: any) {
-      console.error("Property folders list error:", err);
-      res.status(500).json({ message: "Failed to list property folders" });
-    }
-  });
-
-  app.get("/api/microsoft/team-folders", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      const folders: { name: string; id: string; webUrl: string; childCount: number }[] = [];
-
-      for (const teamName of TEAM_FOLDERS) {
-        try {
-          const res = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(teamName)}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (res.ok) {
-            const item = await res.json();
-            if (item.folder) {
-              folders.push({
-                name: item.name,
-                id: item.id,
-                webUrl: item.webUrl,
-                childCount: item.folder.childCount || 0,
-              });
-            }
-          }
-        } catch {}
-      }
-
-      res.json({ folders, driveId: spInfo.driveId });
-    } catch (err: any) {
-      console.error("Team folders error:", err);
-      res.status(500).json({ message: "Failed to fetch team folders" });
-    }
-  });
-
-  app.get("/api/microsoft/company-folders/browse", async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
-
-    try {
-      const companyName = req.query.company as string;
-      const subPath = req.query.path as string || "";
-      if (!companyName) {
-        return res.status(400).json({ message: "company query param is required" });
-      }
-
-      const spInfo = await getSharePointDriveId(token);
-      if (!spInfo) {
-        return res.status(404).json({ message: "Could not find BGP SharePoint site" });
-      }
-
-      let folderPath = `${SHAREPOINT_ROOT_FOLDER}/Companies/${companyName}`;
-      if (subPath) {
-        folderPath = `${folderPath}/${subPath}`;
-      }
-
-      const encodedPath = folderPath.split("/").map(s => encodeURIComponent(s)).join("/");
-
-      // Paginate: large folders span multiple Graph pages (@odata.nextLink).
-      // A 404 on the first page means the folder doesn't exist.
-      let childItems: any[];
-      try {
-        childItems = await listAllChildren(async (pageUrl) => {
-          const pageRes = await fetch(pageUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!pageRes.ok) {
-            const err: any = new Error(`Failed to browse: ${pageRes.status}`);
-            err.status = pageRes.status;
-            throw err;
-          }
-          return pageRes.json();
-        }, `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}:/children?$top=200&$orderby=name`);
-      } catch (err: any) {
-        if (err?.status === 404) {
-          return res.json({ exists: false, items: [], path: folderPath });
-        }
-        throw err;
-      }
-
-      const items = childItems.map((item: any) => ({
-        id: item.id,
-        name: item.name,
-        isFolder: !!item.folder,
-        childCount: item.folder?.childCount || 0,
-        size: item.size || 0,
-        webUrl: item.webUrl,
-        lastModified: item.lastModifiedDateTime,
-        mimeType: item.file?.mimeType,
-      }));
-
-      res.json({ exists: true, items, path: folderPath });
-    } catch (err: any) {
-      console.error("Company folder browse error:", err);
-      res.status(500).json({ message: "Failed to browse company folders" });
-    }
-  });
-
   const fileUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 50 * 1024 * 1024 },
   });
 
   app.post("/api/microsoft/files/upload", fileUpload.single("file"), async (req: Request, res: Response) => {
-    const token = await getValidMsToken(req);
-    if (!token) {
-      return res.status(401).json({ message: "Not connected to Microsoft 365" });
-    }
+    const token = await ownFileToken(req, res);
+    if (!token) return;
 
     try {
       const file = req.file;
@@ -3063,7 +2107,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       // Where does this upload land? A selected folder with missing IDs is a
       // 4xx — never a silent upload to the SharePoint root. No selection at
-      // all keeps the existing BGP-share-drive-root default.
+      // all is refused: nothing new goes in the old "BGP share drive".
       const dest = resolveUploadDestination({ driveId, folderId, folderPath });
       if (dest.kind === "error") {
         return res.status(dest.status).json({ message: dest.message });
@@ -3081,9 +2125,9 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       } else if (dest.kind === "drive-root") {
         uploadUrl = `https://graph.microsoft.com/v1.0/drives/${dest.driveId}/root:/${encodeURIComponent(file.originalname)}:/content`;
       } else {
-        const spInfo = await getSharePointDriveId(token);
-        if (!spInfo) return res.status(404).json({ message: "Could not find SharePoint site" });
-        uploadUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodeURIComponent(SHAREPOINT_ROOT_FOLDER)}/${encodeURIComponent(file.originalname)}:/content`;
+        // Nothing new goes in the old "BGP share drive" folder (folders
+        // review, 24 November 2026): a file goes into the folder open.
+        return res.status(400).json({ message: "Open the folder to put it in first: nothing new goes in the old BGP share drive folder." });
       }
 
       const uploadRes = await fetch(uploadUrl, {
