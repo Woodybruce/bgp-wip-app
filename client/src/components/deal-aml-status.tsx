@@ -857,6 +857,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         <div className="px-4 pb-2" data-testid={`aml-steps-${cp.role}`}>
           <AmlStep id={sid("signs")} testId={tid("signs")} n={1} label={!isCompany && !company ? AML_STEP_LABEL.person : company?.kind === "individual" ? AML_STEP_LABEL.person : AML_STEP_LABEL.company}
             state={signs.state} summary={signs.words} open={open.has("signs")} onToggle={() => toggle("signs")}>
+            {/* Change the company, run BGP's checks again, or open it in the CRM, from the step itself (Woody, 25 November 2026). */}
+            <CompanyStepActions dealId={dealId} companyId={cp.id} role={cp.role} canRun={!!pre && pre.state !== "off"} onChange={() => setEditing(true)} />
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
@@ -973,6 +975,35 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         </div>
       )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+// The company step's own actions: change who signs, run the checks again, open the record.
+function CompanyStepActions({ dealId, companyId, role, canRun, onChange }: { dealId: string; companyId: string; role: string; canRun: boolean; onChange: () => void }) {
+  const { toast } = useToast();
+  const again = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc/deal/${dealId}/prechecks`, { companyId })).json(),
+    onSuccess: (r: any) => {
+      const state = r?.started?.[companyId];
+      if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the company that signs for this party first." });
+      else toast({ title: "Running BGP's checks", description: "Companies House, the sanctions lists and the web search: a minute or two." });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+    },
+    onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-company-actions-${role}`}>
+      <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={onChange} data-testid={`aml-company-change-${role}`}>Change the company</Button>
+      {canRun && (
+        <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={again.isPending} onClick={() => again.mutate()} data-testid={`aml-company-run-${role}`}>
+          {again.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Run the checks again
+        </Button>
+      )}
+      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" asChild>
+        <Link href={`/companies/${companyId}`} data-testid={`aml-company-crm-${role}`}>Open in the CRM</Link>
+      </Button>
     </div>
   );
 }
