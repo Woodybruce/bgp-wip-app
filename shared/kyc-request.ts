@@ -165,6 +165,8 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
 // the specific documents we need"). The trust's people then each get a link
 // of their own for their identity check and proof of address.
 export const TRUST_REQUEST_DOCS: KycDocKey[] = ["trust_deed", "trust_people", "trs_excerpt", "trust_wealth", "trust_authority"];
+/** The optional certified copies card where nobody asked owes a proof of address (25 November 2026). */
+export const CERTIFIED_IDS_A_ONLY = "Upload each person's certified List A document here. Name each file after the person if you can.";
 
 /**
  * Who sends a proof of address: what HMRC asks, and no more (Woody,

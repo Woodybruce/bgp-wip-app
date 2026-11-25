@@ -43,7 +43,7 @@ import { clientFileName, clientFileRole, clientSubjectEntity, recordIsOwnSubject
 import { ADDRESS_PROOF_ACCEPT_NOTE_MIN } from "@shared/kyc-address-proof";
 import { officerWords } from "@shared/aml-policy";
 import type { KycRedFlag } from "@shared/kyc-red-flags";
-import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, certifiedWords, requestOwesProofOfAddress, docsStillAsked, kycCopyList, kycChecksRunningWords, KYC_CHECKS_UPDATED_WORDS, listMadeBeforeChecks } from "@shared/kyc-request";
+import { jointAgentAsks, jointAgentFinishedEmail, TRUST_OPTIONAL_DOCS, CERTIFIED_IDS_A_ONLY, certifiedWords, requestOwesProofOfAddress, docsStillAsked, kycCopyList, kycChecksRunningWords, KYC_CHECKS_UPDATED_WORDS, listMadeBeforeChecks } from "@shared/kyc-request";
 import { agentWords, jointRelianceInput, jointRelianceTerms, type JointAgentRequestDetails } from "@shared/joint-agent-checks";
 
 // AML emails come from BGP's own KYC mailbox (Woody, 2026-11-23: "the email
@@ -614,7 +614,8 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
       certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose, work: request.work || null }),
       certifiedListB: requestOwesProofOfAddress({ kind: request.kind, person: request.person, purpose: request.purpose }),
       optionalDocs: TRUST_OPTIONAL_DOCS.filter(k => !request.docs.includes(k)).map(key => ({
-        key, title: KYC_DOCS[key].title, detail: KYC_DOCS[key].detail,
+        key, title: KYC_DOCS[key].title,
+        detail: key === "certified_ids" && !requestOwesProofOfAddress({ kind: request.kind, person: request.person, purpose: request.purpose }) ? CERTIFIED_IDS_A_ONLY : KYC_DOCS[key].detail,
         files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
       })),
     }),
