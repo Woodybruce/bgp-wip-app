@@ -256,7 +256,12 @@ export async function registerExtractFact(companyId: string, entityId: string | 
   if (!needed) return { needed: false, held: false, company: subject.name, reasons: [] };
   const held = await partyRegisterExtract(companyId, entityId, db);
   // Where it is registered: Companies House's record of it, else the country typed for it.
-  return { needed: true, held: held.held, company: subject.name, reasons: held.reasons,
+  // Where to get it: the register GLEIF names for the company itself (25 November 2026).
+  const own = pre?.abroad?.party ? pre.abroad.traced[0]?.gleif.entity || null : pre?.gleif?.trace.entity || null;
+  const reg = !held.held && own?.registeredAt ? await import("./gleif").then(m => m.gleifRegisterOf(own.registeredAt!)).catch(() => null) : null;
+  const search = reg ? { register: reg.jurisdiction ? `${reg.name} (${reg.jurisdiction})` : reg.name, number: own?.registeredAs || null, website: reg.website } : null;
+  const listing = pre?.companiesHouse?.listing || pre?.abroad?.listing || null;
+  return { needed: true, held: held.held, company: subject.name, reasons: held.reasons, search, listedVia: listing?.viaParent ? listing.company : null,
     home: home ? { country: home.country, register: home.register, registrationNumber: home.registrationNumber }
       : entity?.country ? { country: String(entity.country), register: null, registrationNumber: entity.registration_number || null } : null };
 }

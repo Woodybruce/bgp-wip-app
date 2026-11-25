@@ -38,7 +38,7 @@ import { abroadTraceLines,
   type KycPrecheckResult, type ListEntry, type PrecheckAskInput, type PrecheckCardLine, type PrecheckCompany, type PrecheckDocument, type PrecheckListing,
   type OwnerAbroad, type PrecheckOverseasEntity, type ProviderLine, type RegisterOwner, type SanctionsLine, type WebSearchLine,
 } from "@shared/kyc-prechecks";
-import { COMPANIES_HOUSE_AUTHORITIES, gleifUkRegister, type PrecheckAbroad, type PrecheckGleif } from "@shared/foreign-owners";
+import { COMPANIES_HOUSE_AUTHORITIES, gleifUkRegister, listedAbroadFrom, type PrecheckAbroad, type PrecheckGleif } from "@shared/foreign-owners";
 import {
   charityFacts, charityKindWords, chTypeMayBeCharity, readsLikeCharity, trusteePersonName, trusteesInOrder,
   type CharityFacts, type PrecheckCharity,
@@ -900,6 +900,29 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
       const trace = partyGleif?.trace || { status: "skipped" as const, entity: null, parents: [], top: null, candidates: 0, error: "GLEIF was not read" };
       const country = crmCountry || trace.entity?.jurisdiction || trace.entity?.country || "country not known";
       abroad = { accounts: null, traced: [{ name: partyGleif?.name || name, country, registrationNumber: abroadNumber, via: "party", foundAt: null, gleif: trace }], checkedAt: new Date().toISOString(), party: true };
+    }
+  }
+  // A listed group above it (Woody, 25 November 2026, on Google LLC, owned by
+  // Alphabet Inc. on Nasdaq): the chains GLEIF gave, checked against the SEC's
+  // own list of US-listed companies. Owned through a listed company, there are
+  // no people behind it to find; its own register's extract is still asked for.
+  if (subjectKind === "company" && !companiesHouse?.listing) {
+    const chains = [
+      ...(abroad?.traced || []).map(t => ({ self: t.via === "party", names: [t.gleif.entity?.name || t.name, ...t.gleif.parents.map(g => g.name)] })),
+      ...(partyGleif?.trace.status === "found" && partyGleif.trace.entity && !abroad?.party
+        ? [{ self: true, names: [partyGleif.trace.entity.name, ...partyGleif.trace.parents.map(g => g.name)] }] : []),
+    ].filter(c => c.names.length);
+    if (chains.length) {
+      try {
+        const lookup = await import("./sec-listed").then(m => m.secListedLookup());
+        const listing = lookup ? listedAbroadFrom(chains, lookup) : null;
+        if (listing) {
+          if (abroad) abroad.listing = listing;
+          if (companiesHouse) companiesHouse.listing = { ...listing, viaParent: true };
+        }
+      } catch (e: any) {
+        errors.push(`The SEC's list of US-listed companies: ${words(e)}`);
+      }
     }
   }
 

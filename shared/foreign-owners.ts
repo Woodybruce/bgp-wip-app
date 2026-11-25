@@ -339,6 +339,27 @@ export interface PrecheckAbroad {
   checkedAt: string;
   // The party is a company with no UK record: it was itself looked up in GLEIF.
   party?: boolean;
+  // A listed company at the top of a chain traced here (25 November 2026).
+  listing?: import("./kyc-prechecks").PrecheckListing | null;
+}
+
+export interface ListedHit { name: string; cik: number; ticker: string; exchange: string }
+
+/**
+ * The first listed company along chains traced in GLEIF: each chain is a
+ * company and its parents, direct parent first. `self` marks the party's own
+ * chain, whose first name is the party itself (listed in its own right).
+ * Google LLC > XXVI Holdings Inc. > Alphabet Inc. (Nasdaq): owned through a
+ * listed company (Woody, 25 November 2026).
+ */
+export function listedAbroadFrom(chains: Array<{ self: boolean; names: string[] }>, lookup: (name: string) => ListedHit | null): import("./kyc-prechecks").PrecheckListing | null {
+  for (const c of chains) {
+    for (let i = 0; i < c.names.length; i++) {
+      const hit = c.names[i] ? lookup(c.names[i]) : null;
+      if (hit) return { market: "us_exchange", since: null, company: hit.name, companyNumber: `SEC CIK ${hit.cik}, ${hit.exchange}: ${hit.ticker}`, viaParent: !(c.self && i === 0) };
+    }
+  }
+  return null;
 }
 
 /** The fields the GLEIF API gives a record, as the app keeps them. */
@@ -506,6 +527,7 @@ export function abroadStatus(input: {
 }): AbroadStatus[] {
   const traced = input.abroad?.traced || [];
   const parents = input.abroad?.accounts?.lines || [];
+  const listing = input.abroad?.listing || null;
   return input.owners.map(o => {
     const t = traced.find(x => sameCompany(x.name, o.name)) || null;
     const recs = recordsFor(o.name, input.records);
@@ -517,8 +539,9 @@ export function abroadStatus(input: {
     const named = parents.find(p => !p.none && sameCompany(p.name, o.name));
     if (named && o.via !== "accounts") found.push(`The accounts name it as the ${parentRolesWords(named.roles)}`);
     if (t) found.push(gleifTraceWords(t).replace(/^[^:]+:\s*/, "GLEIF: "));
+    if (listing) found.push(`Owned by ${listing.company}, listed (${listing.companyNumber}): no people behind it to find`);
     const evidence = recs.filter(r => r.kind === "register_page" || r.kind === "document" || r.kind === "chart").length;
-    const needs = people.length ? null
+    const needs = people.length || listing ? null
       : input.chartReceived ? "the people behind it, from the client's structure chart"
       : t?.gleif.top?.kind === "company" ? `the people behind ${t.gleif.top.words.replace(/^its ultimate parent in GLEIF is /, "")}: from its own register or the client's structure chart`
       : "the people behind it: from its own register or the client's structure chart";

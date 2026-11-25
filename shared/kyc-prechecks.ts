@@ -42,7 +42,7 @@ export const KYC_PRECHECK_MAX_WEB_PEOPLE = 10;
 // rules are equivalent, which KYC4U confirms. AIM is not a regulated market:
 // an AIM company keeps a PSC register and is asked like any other.
 
-export type ListingMarket = "uk_regulated" | "dtr5" | "eu_regulated" | "other_regulated" | "listed_market" | "roe_disclosure";
+export type ListingMarket = "uk_regulated" | "dtr5" | "eu_regulated" | "other_regulated" | "listed_market" | "roe_disclosure" | "us_exchange";
 
 const EXEMPTION_MARKETS: Array<[string, ListingMarket]> = [
   ["psc_exempt_as_trading_on_uk_regulated_market", "uk_regulated"],
@@ -58,11 +58,19 @@ export const LISTING_WORDS: Record<ListingMarket, string> = {
   eu_regulated: "listed on an EU regulated market",
   other_regulated: "listed on a regulated market outside the UK",
   listed_market: "listed on a market outside the UK named in the PSC Regulations",
+  us_exchange: "listed on a US stock exchange (Nasdaq, NYSE or Cboe) and reporting to the SEC, found through GLEIF and the SEC's own list",
   roe_disclosure: "on the Register of Overseas Entities as a company with its own disclosure duties, which for a company abroad means listed on a UK, EEA or named overseas market such as Nasdaq or NYSE",
 };
 
 // The markets that need no one to weigh them.
-export const listingSettled = (market: ListingMarket): boolean => market === "uk_regulated" || market === "dtr5" || market === "eu_regulated";
+// A US exchange's SEC disclosure counts as equivalent (Woody, 25 November 2026,
+// on Google LLC: "jack only cares what HMRC say"; HMRC names no markets).
+export const listingSettled = (market: ListingMarket): boolean => market === "uk_regulated" || market === "dtr5" || market === "eu_regulated" || market === "us_exchange";
+
+/** The listing a check found: on the Companies House record, else up a chain abroad (25 November 2026). */
+export function precheckListing(result: Pick<KycPrecheckResult, "companiesHouse" | "abroad"> | null | undefined): PrecheckListing | null {
+  return result?.companiesHouse?.listing || result?.abroad?.listing || null;
+}
 
 export interface PrecheckListing {
   market: ListingMarket;
@@ -1169,7 +1177,7 @@ export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput
     // establishment of an overseas company, is still registered abroad: its
     // home register's extract is asked for.
     ukRegistered: !!ch && !foreignOnCompaniesHouse(ch.number) && !ch.home,
-    listing: ch?.listing || null,
+    listing: ch?.listing || result.abroad?.listing || null,
     owners: ch?.owners || [],
     peopleUpChain: ch?.peopleUpChain || [],
     directors: (ch?.officers || []).filter(o => /director|member/i.test(o.role)).map(o => o.name),
@@ -1691,6 +1699,7 @@ export function abroadTraceLines(result: Pick<KycPrecheckResult, "abroad"> | nul
   const a = result?.abroad;
   if (!a) return [];
   const lines: string[] = [];
+  if (a.listing) lines.push(`${a.listing.viaParent ? `Owned through a listed company: ${a.listing.company}` : "Listed itself"}, ${LISTING_WORDS[a.listing.market]} (${a.listing.companyNumber}). No people behind it to find.`);
   const note = a.accounts;
   if (note) {
     const when = note.madeUpTo ? ` to ${precheckDay(note.madeUpTo)}` : "";
@@ -2073,6 +2082,14 @@ export function precheckCardLines(result: KycPrecheckResult, opts: { publicBody?
       state: c ? (charityConcerns(c).length ? "attention" : "ok") : pc.status === "error" ? "not_run" : "info",
       detail: charityLines(pc).join(" "),
       links: c ? [{ label: "Register of charities", url: charityRegisterUrl(c.organisationNumber) }] : [],
+    });
+  }
+  // A company abroad owned through a US-listed group (25 November 2026).
+  const al = !result.companiesHouse ? result.abroad?.listing || null : null;
+  if (al) {
+    out.push({
+      key: "listing", label: al.viaParent ? `Owned by ${al.company}, ${LISTING_WORDS[al.market]}` : `Listed: ${LISTING_WORDS[al.market]}`, state: "info",
+      detail: [`No beneficial owners to ask for (${al.companyNumber}).`, al.viaParent ? `Owned through: ${(result.abroad?.traced[0]?.gleif.parents.map(g => g.name) || []).join(" > ") || al.company}, from GLEIF.` : "", "Its own register's extract is still asked for (HMRC)."].filter(Boolean).join(" "), links: [],
     });
   }
   const g = result.gleif;

@@ -80,6 +80,12 @@ function SignOffDialog({ dealId, role, partyName, needsNote, levelWords, edd, fu
           ) : needsNote && (
             <p className="text-[11px] text-muted-foreground">{fileNote ? "The client checks aren't finished: say why you're signing off before they are." : "The client checks aren't finished: say what you relied on."}</p>
           )}
+          {short && (() => {
+            // Say why Sign off is greyed (25 November 2026: "cant sign off?").
+            const min = edd ? IN_HOUSE_EDD_NOTE_MIN : SIGN_OFF_NOTE_MIN;
+            const left = min - note.trim().length;
+            return <p className="text-[11px] text-amber-700 dark:text-amber-300" data-testid={`aml-sign-off-short-${role}`}>{note.trim() ? `${left} more character${left === 1 ? "" : "s"} to sign off` : `At least ${min} characters to sign off`}.</p>;
+          })()}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

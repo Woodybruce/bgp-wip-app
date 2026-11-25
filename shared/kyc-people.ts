@@ -630,7 +630,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   const above = (name: string): string[] => [name, ...((input.precheck?.abroad?.traced || []).filter(t => sameCompany(t.name, name)).flatMap(t => t.gleif.parents.map(g => g.name)))];
   const unanswered = abroad.filter(a => !(input.abroadPeople || []).some(p => above(a.name).some(n => sameCompany(n, p.ownerName))));
   const basis: PartyPeopleBasis = input.kind === "individual" ? "individual"
-    : !ch ? (input.precheck?.abroad?.party ? "abroad_company" : pc ? "charity" : "not_read")
+    : !ch ? (input.precheck?.abroad?.party ? (input.precheck.abroad.listing ? "listed" : "abroad_company") : pc ? "charity" : "not_read")
     : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : pc ? "charity" : "no_owners";
   // A trust is on no register: its basis is its structure, recorded or not.
   const trustBasis: PartyPeopleBasis | null = input.trust !== undefined && input.kind === "company" && !ch?.owners.length

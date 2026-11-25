@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody", "Jack"], topic: "Who we check and when", title: "A company abroad owned by a US-listed group",
+    text: "When GLEIF shows a company abroad is owned by a company on Nasdaq, NYSE or Cboe (checked against the SEC's own list), it reads as owned through a listed company: no owners to find, and the US exchange counts as an equivalent market. HMRC still asks for the company's own register entry; the app says which register and number to search." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "Checks started for a company count on all its transactions",
     text: "When the same company signs on more than one transaction (the same Companies House number, whatever CRM record it is filed under), a client checks request sent on one counts on the others: the person asked becomes who to ask, the request and its documents show with the transaction it was sent on, and finishing it counts for every one. Nothing is sent twice." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A new company's parent accounts stand in for its own",

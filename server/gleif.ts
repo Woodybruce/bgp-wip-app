@@ -122,3 +122,23 @@ export async function traceGleif(q: { name: string; country: string | null; regi
     return empty("error", message);
   }
 }
+
+// The register a company is on, from GLEIF's list of registration
+// authorities (25 November 2026: where to get a company's own register
+// extract, e.g. RA000602, Delaware's Division of Corporations). Kept in memory.
+const registers = new Map<string, { name: string; website: string | null; jurisdiction: string | null } | null>();
+export async function gleifRegisterOf(code: string, fetcher: typeof fetch = fetch): Promise<{ name: string; website: string | null; jurisdiction: string | null } | null> {
+  const key = String(code || "").trim().toUpperCase();
+  if (!/^RA\d{6}$/.test(key)) return null;
+  if (registers.has(key)) return registers.get(key) || null;
+  const a = (await gleifGet(`/registration-authorities/${key}`, {}, fetcher).catch(() => null))?.data?.attributes || null;
+  const j = Array.isArray(a?.jurisdictions) ? a.jurisdictions[0] : null;
+  const name = String(a?.internationalOrganizationName || a?.localOrganizationName || "").trim();
+  const out = name ? {
+    name: name.slice(0, 160),
+    website: /^https:\/\//i.test(String(a?.website || "")) ? String(a.website).slice(0, 300) : null,
+    jurisdiction: [j?.jurisdiction, j?.country].filter(Boolean).join(", ").slice(0, 120) || null,
+  } : null;
+  if (a) registers.set(key, out);
+  return out;
+}

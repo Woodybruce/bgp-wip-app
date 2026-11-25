@@ -236,6 +236,11 @@ export interface RegisterExtractFact {
   // Its home register, where Companies House holds it (an overseas entity or a
   // UK establishment of an overseas company; 23 November 2026).
   home?: { country: string | null; register: string | null; registrationNumber: string | null } | null;
+  // Where to get it, from the company's GLEIF record (25 November 2026): its
+  // register, the number it is filed under there, and the register's website.
+  search?: { register: string; number: string | null; website: string | null } | null;
+  // Owned through a listed group (Google LLC under Alphabet Inc.): said in the words.
+  listedVia?: string | null;
 }
 
 /** Why a company registered abroad cannot be signed off yet for want of its register extract, or null. */
@@ -245,7 +250,10 @@ export function registerExtractDenial(f: RegisterExtractFact | null | undefined)
   const h = f.home || null;
   const where = h?.country ? `registered in ${countryInSentence(h.country)}` : "registered outside the UK";
   const what = h?.register ? `an extract from ${h.register}${h.registrationNumber ? ` (number ${h.registrationNumber})` : ""}` : "its own register's extract";
-  return `${f.company} is ${where}, so ${what} is needed first. Ask the client for it, or upload it on Documents: the app reads it in any language.`;
+  const sr = f.search || null;
+  const fetchIt = sr ? ` It is on ${sr.register}${sr.number ? ` as number ${sr.number}` : ""}${sr.website ? ` (${sr.website})` : ""}: search it there, save the entry as a PDF and upload it on Documents.` : "";
+  const listed = f.listedVia ? ` Owned through ${f.listedVia}, a listed company, so no owners are asked for: HMRC still asks for the company's own register entry.` : "";
+  return `${f.company} is ${where}, so ${what} is needed first.${listed}${fetchIt || " Ask the client for it, or upload it on Documents: the app reads it in any language."}`;
 }
 
 /** Enhanced due diligence applies: a red flag or factor (the party's or the deal's), a higher-risk file, or owners abroad. */
