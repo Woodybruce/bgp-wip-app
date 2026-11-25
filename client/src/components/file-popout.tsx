@@ -132,6 +132,7 @@ function FileThumb({ file, onOpen, testId }: { file: PreviewFile; onOpen: () => 
     <button
       ref={ref}
       type="button"
+      data-view-ok
       onClick={onOpen}
       title={file.name}
       className="group min-w-0 text-left"
@@ -166,7 +167,7 @@ export function FileThumbGrid({ files, testId, limit = 12, className }: { files:
         {shown.map((f, i) => <FileThumb key={f.key} file={f} onOpen={() => setOpenAt(i)} testId={`${testId}-file-${i}`} />)}
       </div>
       {files.length > shown.length && (
-        <button type="button" className="mt-1 text-xs text-primary hover:underline" onClick={() => setAll(true)} data-testid={`${testId}-all`}>
+        <button type="button" data-view-ok className="mt-1 text-xs text-primary hover:underline" onClick={() => setAll(true)} data-testid={`${testId}-all`}>
           Show all {files.length}
         </button>
       )}

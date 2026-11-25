@@ -254,11 +254,32 @@ export function bucketCounts(rows: Pick<AmlDashboardRow, "bucket">[]): Record<Am
 }
 
 /** Search on the party, its company, the deal, the property and the agents. */
+// The search reads words, not one run of letters (Woody, 25 November 2026: "the
+// search box in the AML dash board page needs to have a slightly wider search
+// function as its not picking up"): case, accents and punctuation aside ("St
+// George's" finds "st georges", "Marks & Spencer" finds "Marks and Spencer"), every word typed somewhere on
+// the transaction, across all its parties, in any order.
+export function amlSearchKey(value: string | null | undefined): string {
+  return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/['’`]/g, "").replace(/&/g, " and ").replace(/[^a-z0-9#]+/g, " ").replace(/\s+/g, " ").trim();
+}
+const searchWords = (query: string): string[] =>
+  amlSearchKey(query).split(" ").filter(Boolean).filter(w => w !== "and").map(w => w.replace(/^#/, ""));
+function rowText(row: AmlDashboardRow): string {
+  return amlSearchKey([
+    row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealType, row.role,
+    row.dealRef != null ? `#${row.dealRef} ${row.dealRef}` : null, amlDealStatusWords(row).words,
+    row.waitingOn, row.approvedBy, ...(row.ownersAbroad || []), ...row.agents,
+  ].filter(Boolean).join(" | "));
+}
+function textMatches(text: string, query: string): boolean {
+  const words = searchWords(query);
+  return words.every(w => text.includes(w));
+}
+
 export function rowMatches(row: AmlDashboardRow, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [row.brandName, row.signsAs, row.dealName, row.propertyName, row.dealRef != null ? `#${row.dealRef}` : null, amlDealStatusWords(row).words, ...row.agents]
-    .some(v => (v || "").toLowerCase().includes(q));
+  if (!searchWords(query).length) return true;
+  return textMatches(rowText(row), query);
 }
 
 /** The transaction's own status in the Transactions board's words (Woody,
@@ -389,8 +410,9 @@ export function transactionBucketCounts(rows: Pick<AmlTransactionRow, "buckets">
 }
 
 /** The search finds a transaction when any of its parties' lines match. */
-export function transactionMatches(row: Pick<AmlTransactionRow, "parties">, query: string): boolean {
-  return row.parties.some(p => rowMatches(p, query));
+export function transactionMatches(row: Pick<AmlTransactionRow, "parties"> & { lead?: string | null }, query: string): boolean {
+  if (!searchWords(query).length) return true;
+  return textMatches([amlSearchKey(row.lead), ...row.parties.map(rowText)].join(" | "), query);
 }
 
 /** The party a transaction opens on from a pill: the first one on it, else the first. */

@@ -135,3 +135,21 @@ test("the company step has Change the company, Run the checks again and Open in 
   assert.match(box, /<CompanyStepActions dealId=\{dealId\} companyId=\{cp\.id\} role=\{cp\.role\}/);
   for (const id of ["aml-company-change-", "aml-company-run-", "aml-company-crm-"]) assert.ok(box.includes(id), id);
 });
+
+// Woody, 25 November 2026: "PROBLEM HERE SEEING THE DROP DOWN INFO ON THE CHECKS PUT
+// THAT BACK ... remove the ability to add a contact ... this is view only in transactions".
+test('the transaction page reads the steps in place, with no actions and no adding people', () => {
+  const box = read('client/src/components/deal-aml-status.tsx');
+  const css = read('client/src/index.css');
+  const people = read('client/src/components/deal-people.tsx');
+  const deal = read('client/src/components/deal-detail.tsx');
+  const board = read('client/src/components/deal-aml-board.tsx');
+  assert.match(box, /const open = sections\.open;\n  const toggle = \(k: StepKey\) => sections\.toggle\(k\);/);
+  assert.match(box, /mirror \? " aml-view-only" : ""/);
+  assert.match(css, /\.aml-view-only button:not\(\[data-view-ok\]\):not\(\[aria-expanded\]\)/);
+  assert.match(css, /\.aml-view-only button\[aria-haspopup\]:not\(\[data-view-ok\]\)/);
+  assert.match(read('client/src/components/aml-frame.tsx'), /data-view-ok onClick=\{onToggle\} aria-expanded=\{open\}/);
+  assert.match(deal, /<DealPeopleCard dealId=\{dealId\} bgpTeam=\{dealBgpTeam\} onChangeTeam=\{onChangeTeam\} readOnly \/>/);
+  assert.match(people, /\{!readOnly && \(\s*<Button[\s\S]{0,200}?data-testid="deal-people-add"/);
+  assert.match(board, /if \(mirror\) return card;[\s\S]*<DealPeopleCard dealId=\{dealId\} \/>/);
+});

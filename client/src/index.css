@@ -430,6 +430,19 @@ thead th.sticky {
  * Even without handling focused or not, this is six possible combinations that
  * need to be distinguished from eachother visually.
  */
+/* The transaction page's read-only AML board (Woody, 25 November 2026: "this
+   is view only in transactions"): its steps open to read; every action button,
+   box and menu is left to the AML board. A button that only shows more carries
+   data-view-ok, or opens a section (aria-expanded, not a menu). */
+.aml-view-only button:not([data-view-ok]):not([aria-expanded]),
+.aml-view-only button[aria-haspopup]:not([data-view-ok]),
+.aml-view-only input,
+.aml-view-only textarea,
+.aml-view-only select,
+.aml-view-only [role="combobox"] {
+  display: none !important;
+}
+
 @layer utilities {
 
   /* Hide ugly search cancel button in Chrome until we can style it properly */

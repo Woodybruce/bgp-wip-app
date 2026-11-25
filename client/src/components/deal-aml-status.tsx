@@ -197,7 +197,7 @@ function PartyRiskAssessment({ dealId, role }: { dealId: string; role: string })
   return (
     <div className="space-y-2" data-testid={`aml-risk-assessment-${role}`}>
       <AmlCommentaryView dealId={dealId} role={role} />
-      <button type="button" className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setShowRecord(v => !v)} data-testid={`aml-risk-record-toggle-${role}`}>
+      <button type="button" data-view-ok className="text-xs text-muted-foreground underline-offset-2 hover:underline" onClick={() => setShowRecord(v => !v)} data-testid={`aml-risk-record-toggle-${role}`}>
         {showRecord ? "Hide the full record" : "Show the full record"}
       </button>
       {showRecord && <PartyRiskRecord dealId={dealId} role={role} />}
@@ -435,7 +435,7 @@ function Folded({ label, children, testId }: { label: string; children: ReactNod
   const [open, setOpen] = useState(false);
   return (
     <div data-testid={testId}>
-      <button type="button" data-no-min-touch className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+      <button type="button" data-no-min-touch data-view-ok className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" aria-expanded={open} onClick={() => setOpen(o => !o)}>
         <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} />{label}
       </button>
       {open && <div className="mt-1.5 space-y-2 pl-4">{children}</div>}
@@ -506,7 +506,9 @@ export interface PartySlot {
 function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen, slot, mirror }: {
   dealId: string; data: DealAmlStatus; cp: Counterparty; row: AmlDashboardRow | null; party: DealPartyView | null;
   checks: ClientChecks | undefined; openAll: OpenAll; startOpen?: boolean; slot?: PartySlot | null;
-  // The transaction page's read-only copy (Woody, 25 November 2026): every press opens the AML board on this party.
+  // The transaction page's read-only copy (Woody, 25 November 2026): the steps open in
+  // place to read ("PROBLEM HERE SEEING THE DROP DOWN INFO ON THE CHECKS PUT THAT BACK"),
+  // every action is left to the AML board ("this is view only in transactions").
   mirror?: (role: string) => void;
 }) {
   const staff = !!data.prechecks;
@@ -514,8 +516,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const kyc4uQ = useQuery<{ requests: Array<{ listId: string; itemId: string; entityName: string | null; createdAt: string | null; modifiedAt: string | null }> }>({
     queryKey: ["/api/kyc4u/company", cp.id], enabled: staff, staleTime: 5 * 60_000,
   });
-  const open = mirror ? new Set<StepKey>() : sections.open;
-  const toggle = (k: StepKey) => (mirror ? mirror(cp.role) : sections.toggle(k));
+  const open = sections.open;
+  const toggle = (k: StepKey) => sections.toggle(k);
   const show = sections.show;
   // A party still being checked opens on its four steps; a cleared one is one line until opened.
   // Opened by name from the address (?full=<role>, Group entities' Start full KYC): unfolded.
@@ -550,7 +552,6 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   } : null);
 
   const reveal = (k: StepKey) => {
-    if (mirror) { mirror(cp.role); return; }
     setFolded(false);
     show(k);
     window.setTimeout(() => document.getElementById(`aml-${cp.id}-${k}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 60);
@@ -865,7 +866,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       </div>
 
       {staff && !folded && (
-        <div className="px-4 pb-2" data-testid={`aml-steps-${cp.role}`}>
+        <div className={`px-4 pb-2${mirror ? " aml-view-only" : ""}`} data-testid={`aml-steps-${cp.role}`} data-view-only={mirror ? "true" : undefined}>
           <AmlStep id={sid("signs")} testId={tid("signs")} n={1} label={!isCompany && !company ? AML_STEP_LABEL.person : company?.kind === "individual" ? AML_STEP_LABEL.person : AML_STEP_LABEL.company}
             state={signs.state} summary={signs.words} open={open.has("signs")} onToggle={() => toggle("signs")}>
             {/* Change the company, run BGP's checks again, or open it in the CRM, from the step itself (Woody, 25 November 2026). */}
@@ -978,7 +979,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
           )}
           {smallLetting && !isTrust && (
             <div className="border-t border-border py-1.5 text-[11px]">
-              <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setFullView(v => !v)} data-testid={`aml-full-view-${cp.role}`}>
+              <button type="button" data-view-ok className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setFullView(v => !v)} data-testid={`aml-full-view-${cp.role}`}>
                 {fullView ? "Show the simple view" : "Show the full checks"}
               </button>
             </div>
@@ -1171,23 +1172,23 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
 
         {staffView && data.counterparties.length > 0 && (
           // The transaction's own lines, in the parties' card and step look (24 November 2026).
-          <div className="rounded-lg border border-border bg-card px-4 py-1" data-testid="aml-deal-sections">
+          <div className={`rounded-lg border border-border bg-card px-4 py-1${mirror ? " aml-view-only" : ""}`} data-testid="aml-deal-sections" data-view-only={mirror ? "true" : undefined}>
             {(dealFlags.length > 0 || dealAside.length > 0) && (
               <AmlStep id={`aml-${dealId}-deal`} testId="aml-section-deal" label="The transaction" state={dealFlags.some(f => !f.factor) ? "flag" : dealFlags.length ? "todo" : "done"}
                 summary={dealFlags.length ? `${plural(dealFlags.length, "red flag")}: ${shortReason(dealFlags[0].label, 60)}` : `${dealAside.length} set aside`}
-                open={!mirror && deal.open.has("deal")} onToggle={() => (mirror ? mirror() : deal.toggle("deal"))}>
+                open={deal.open.has("deal")} onToggle={() => deal.toggle("deal")}>
                 <DealRedFlags dealId={dealId} data={data} />
               </AmlStep>
             )}
             {agentList.length > 0 && (
               <AmlStep id={`aml-${dealId}-agents`} testId="aml-section-agents" label="Agents" state={agentState} summary={agentSummary}
-                open={!mirror && deal.open.has("agents")} onToggle={() => (mirror ? mirror() : deal.toggle("agents"))}>
+                open={deal.open.has("agents")} onToggle={() => deal.toggle("agents")}>
                 <DealAgentsAml dealId={dealId} bare />
               </AmlStep>
             )}
             {/* The other side's solicitors (21 November 2026, "do 7"). */}
             <AmlStep id={`aml-${dealId}-solicitors`} testId="aml-section-solicitors" label="Solicitors" state={solState} summary={sol.words}
-              open={!mirror && deal.open.has("solicitors")} onToggle={() => (mirror ? mirror() : deal.toggle("solicitors"))}>
+              open={deal.open.has("solicitors")} onToggle={() => deal.toggle("solicitors")}>
               <DealSolicitorsAmlPanel dealId={dealId} />
             </AmlStep>
           </div>

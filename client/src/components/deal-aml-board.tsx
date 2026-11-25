@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Pill } from "@/components/ui/pill";
 import { InlineLinkSelect } from "@/components/inline-edit";
 import { DealAmlStatusCard, type PartySlot } from "@/components/deal-aml-status";
+import { DealPeopleCard } from "@/components/deal-people";
 
 export type PartyField = "landlordId" | "tenantId" | "vendorId" | "purchaserId";
 type Side = "landlord" | "tenant" | "vendor" | "purchaser";
@@ -163,11 +164,20 @@ export function DealAmlBoard({ dealId, focusCompanyId, mirror }: {
     </p>
   ) : null;
 
-  return (
+  const card = (
     <DealAmlStatusCard
       dealId={dealId} dealStatus={deal.status} focusCompanyId={focusCompanyId}
       slots={slots} actingFor={actingFor} footer={footer}
       mirror={mirror ? (role) => navigate(amlBoardHref(dealId, role)) : undefined}
     />
+  );
+  if (mirror) return card;
+  // Everyone on the transaction is added and changed here, on the AML board (Woody,
+  // 25 November 2026); the transaction page shows the same people read only.
+  return (
+    <div className="space-y-3">
+      <DealPeopleCard dealId={dealId} />
+      {card}
+    </div>
   );
 }

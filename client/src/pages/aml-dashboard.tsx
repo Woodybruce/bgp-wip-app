@@ -423,6 +423,8 @@ export default function AmlDashboard() {
   // One line per transaction, its parties inside it; a pill, Late, Mine and the
   // search pick transactions, and each line shows every party.
   const transactions = useMemo(() => groupAmlByTransaction(data?.rows || []), [data]);
+  // A search looks past the letter picked (25 November 2026): typing clears it.
+  useEffect(() => { if (query.trim()) setLetter(null); }, [query]);
   const inLetter = (t: AmlTransactionRow) => !letter || indexLetter(t.lead) === letter;
   const searchedTx = useMemo(() => transactions.filter(t => (!mine || t.mine) && (!lateOnly || t.late) && transactionMatches(t, query)), [transactions, mine, lateOnly, query]);
   const scoped = useMemo(() => searchedTx.filter(inLetter), [searchedTx, letter]);
@@ -540,7 +542,18 @@ export default function AmlDashboard() {
       ) : (
       <WithLetterRail testId="aml-list" rail={<LetterRail counts={letters} active={letter} onPick={setLetter} testId="aml-letters" />}>
       {!shown.length ? (
-        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{letter ? ` under ${letter}` : ""}{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
+        <div className="space-y-2" data-testid="aml-empty">
+          <p className="text-sm text-muted-foreground">Nothing here{letter ? ` under ${letter}` : ""}{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
+          {/* A search finds transactions on every pill: say where the others are. */}
+          {query.trim() && AML_BUCKETS.some(b => b.key !== bucket && counts[b.key] > 0) && (
+            <p className="flex flex-wrap items-center gap-1.5 text-sm" data-testid="aml-search-elsewhere">
+              <span className="text-muted-foreground">Found under</span>
+              {AML_BUCKETS.filter(b => b.key !== bucket && counts[b.key] > 0).map(b => (
+                <Pill key={b.key} onClick={() => setBucket(b.key)} data-testid={`aml-search-elsewhere-${b.key}`}>{b.label} {counts[b.key]}</Pill>
+              ))}
+            </p>
+          )}
+        </div>
       ) : isMobile || view === "card" ? (
         <AmlCardGrid key={letter || "all"} items={shown} testId="aml-cards" render={t => <AmlTransactionCard key={t.key} t={t} bucket={bucket} onOpen={setOpen} />} />
       ) : (
