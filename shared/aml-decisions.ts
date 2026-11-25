@@ -42,6 +42,8 @@ export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
   { date: "2026-11-25", who: ["Woody"], topic: "Trusts and charities", title: "A trust in the ownership is recorded and asked for",
     text: "When BGP's checks find a trust holding the party, or a company above it, the transaction's AML asks to record that trust. Its information (kind, settlor, trustees, beneficiaries) is kept as for a trust that is the party, asked of its trustees or added by BGP, and the officers' sign-off waits for it. Not on a sanctions-only letting." },
+  { date: "2026-11-25", who: ["Woody"], topic: "Policy", title: "Policy Issue 6 agreed and in the app",
+    text: "Issue 6 of the AML policy is agreed and replaces Issue 5 on the Policy pill: a proof of address comes only from an individual who is a customer, a photocard licence showing the address covers both, and our signed terms of engagement show authority to act. Everyone confirms Issue 6 in AML training. The trust checklist is Issue 2 to match." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Proof of address only where HMRC asks for it",
     text: "A proof of address comes only from a customer who is a person: a private individual, someone buying or renting alongside them, or a person who signs or guarantees in their own name. A photocard driving licence showing their current address covers both. A company's owners, a trust's people and the person acting do an identity check only. Requests already sent stop asking them for one." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Signed terms of engagement show the authority to act",

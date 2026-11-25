@@ -7513,14 +7513,18 @@ the identity", with no proof of address.
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in
   `npm test`); guards `qa/regression/kyc-people.test.mjs`,
   `kyc-address-proof-guards.test.mjs`, `kyc-documents-guards.test.mjs`.
-- **BGP's policy**: Issue 5 still says every individual gives a proof of
-  address and lists a driving licence for identity only. Issue 6 of the
-  policy (proof of address as HMRC, terms of engagement as authority) and
-  Issue 2 of the trust checklist (the trust's people give identity only;
-  signed terms as authority; its section numbers corrected to the policy's)
-  were drafted for Jack on 25 November 2026, marked as drafts. They go on the
-  Policy pill (`AML_POLICY_DOCUMENTS`, new files beside the old) only once he
-  signs.
+- **BGP's policy: Issue 6 is agreed and in the app** (Woody, 25 November
+  2026: "push aml policy 6 is agreed"). Issue 6 of the policy (proof of
+  address as HMRC asks, a licence for both, terms of engagement as
+  authority) and Issue 2 of the trust checklist (the trust's people give
+  identity only; signed terms as authority; its section numbers put right to
+  the policy's) are on the Policy pill: `policy-issue-6` and
+  `checklist-trusts-issue-2` in `AML_POLICY_DOCUMENTS`, with Issue 5 and
+  checklist Issue 1 kept on the quiet line. `POLICY_SOURCE`, the rules in
+  short, ChatBGP's prompt and app map name Issue 6; everyone confirms Issue 6
+  afresh on My BGP → AML training; `TRUST_CHECKLIST` carries the corrected
+  section numbers. The footer names Jack Barratt, Nominated Officer, as
+  approver, as on every issue.
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 
