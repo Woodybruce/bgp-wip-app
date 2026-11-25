@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import type { PartyReliance } from "@shared/aml-reliance";
-import { partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PublicFigureCheck } from "@shared/kyc-people";
+import { ID_CHECK_REUSE_YEARS, partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PriorAddressProof, type PriorIdCheck, type PublicFigureCheck } from "@shared/kyc-people";
 import { verifiedPersonName } from "@shared/kyc-prechecks";
 import { isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
 
@@ -22,10 +22,10 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
   if (!dealId && !client) return [];
   const rows = (await db.query(
     dealId
-      ? `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
+      ? `SELECT token, company_id, contact_name, contact_email, request, revoked_at, expires_at, completed_at
            FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE
             AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`
-      : `SELECT token, company_id, contact_name, request, revoked_at, expires_at, completed_at
+      : `SELECT token, company_id, contact_name, contact_email, request, revoked_at, expires_at, completed_at
            FROM kyc_upload_tokens WHERE deal_id IS NULL AND company_id = $1 AND ($2::boolean OR trading_entity_id IS NOT DISTINCT FROM $3::varchar)
             AND request IS NOT NULL AND is_test IS NOT TRUE
             AND COALESCE(request->>'audience', 'client') <> 'joint_agent' ORDER BY created_at`,
@@ -48,6 +48,7 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
       ref: String(request.ref || ""),
       companyId: r.company_id || null,
       recipientName: r.contact_name || null,
+      email: r.contact_email || null,
       person: person ? { key: String(person.key || ""), name: person.name, roles: Array.isArray(person.roles) ? person.roles : [] } : null,
       ...(request.purpose === "trust_structure" ? { trustDocs: true } : {}),
       cancelled: !!r.revoked_at,
@@ -60,7 +61,7 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
       idChecks: (Array.isArray(request.veriffSessionIds) ? request.veriffSessionIds : [])
         .map((id: string) => sessions.find((s: any) => s.session_id === id))
         .filter(Boolean)
-        .map((s: any) => ({ state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person) })),
+        .map((s: any) => ({ sessionId: s.session_id, state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person) })),
       files: files.filter((f: any) => f.token === r.token).map((f: any) => {
         // A proof of address's reading and an officer's acceptance, kept on the request (server/kyc-address-proof.ts).
         const documentId = f.document_id != null ? String(f.document_id) : null;
@@ -114,8 +115,10 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
   const signers = party.dealId
     ? await import("./deal-guarantors").then(m => m.signersForParty(String(party.dealId), party.companyId)).catch(() => [])
     : [];
+  const prior = await priorEvidence(requests.map(r => r.token)).catch(() => ({ idChecks: [], proofs: [] }));
   return partyPeople({
-    companyId: party.companyId, kind: party.kind, precheck, requests, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
+    companyId: party.companyId, kind: party.kind, precheck, requests,
+    priorIdChecks: prior.idChecks, priorAddressProofs: prior.proofs, publicFigures: await publicFiguresFor(party.companyId, party.entityId), abroadPeople,
     // Documents BGP uploaded on the party, read and checked (23 November 2026).
     uploads: await import("./kyc-documents").then(m => m.uploadsFor(party.companyId, party.entityId)).catch(() => []),
     ...(trust !== undefined ? { trust } : {}),
@@ -124,6 +127,62 @@ export async function partyPeopleFor(party: { companyId: string; entityId: strin
     ...(publicBody ? { publicBody: true } : {}),
     reliance: party.dealId ? await relianceFor(party.dealId, party.companyId, party.entityId) : null,
   });
+}
+
+/**
+ * Identity checks passed, and proofs of address sent, on other transactions
+ * and client files (Woody, 25 November 2026: a person already verified is not
+ * asked again). Test requests are left out, and the requests in hand (their
+ * evidence is read already). The rules for who they count for are in
+ * shared/kyc-people.ts (priorIdCheckFor, priorAddressProofFor).
+ */
+export async function priorEvidence(excludeTokens: string[], db: Db = pool): Promise<{ idChecks: PriorIdCheck[]; proofs: PriorAddressProof[] }> {
+  const where = (deal: string | null, company: string | null) =>
+    deal ? `another transaction, ${deal}` : company ? `the client file for ${company}` : "another transaction";
+  const ids = (await db.query(
+    `SELECT s.session_id, s.verdict_person, COALESCE(s.received_at, s.created_at) AS at, t.token, t.contact_email,
+            t.request->>'ref' AS ref, d.name AS deal_name, c.name AS company_name
+       FROM veriff_sessions s
+       JOIN kyc_upload_tokens t ON t.request->'veriffSessionIds' ? s.session_id
+       LEFT JOIN crm_deals d ON d.id = t.deal_id
+       LEFT JOIN crm_companies c ON c.id = t.company_id
+      WHERE lower(COALESCE(s.status, '')) = 'approved' AND s.verdict_person IS NOT NULL
+        AND t.is_test IS NOT TRUE AND NOT (t.token = ANY($1::varchar[]))
+        AND COALESCE(s.received_at, s.created_at) > now() - interval '${ID_CHECK_REUSE_YEARS} years'
+      ORDER BY at DESC LIMIT 5000`, [excludeTokens])).rows;
+  const idChecks: Array<PriorIdCheck & { token: string }> = ids.flatMap((r: any) => {
+    const name = verifiedPersonName(r.verdict_person);
+    if (!name) return [];
+    return [{
+      sessionId: String(r.session_id), verifiedName: name, verifiedDob: verifiedPersonDob(r.verdict_person),
+      email: r.contact_email || null, at: new Date(r.at).toISOString(), where: where(r.deal_name, r.company_name),
+      ref: r.ref || null, token: String(r.token),
+    }];
+  });
+  const files = (await db.query(
+    `SELECT f.token, f.original_filename, f.uploaded_at, d.file_url, d.id AS document_id, t.contact_email, t.request,
+            td.name AS deal_name, c.name AS company_name
+       FROM kyc_upload_files f
+       JOIN kyc_upload_tokens t ON t.token = f.token
+       LEFT JOIN kyc_documents d ON d.id::text = f.kyc_document_id
+       LEFT JOIN crm_deals td ON td.id = t.deal_id
+       LEFT JOIN crm_companies c ON c.id = t.company_id
+      WHERE f.doc_type = 'proof_of_address' AND t.is_test IS NOT TRUE AND NOT (f.token = ANY($1::varchar[]))
+        AND f.uploaded_at > now() - interval '400 days'
+      ORDER BY f.uploaded_at DESC LIMIT 5000`, [excludeTokens])).rows;
+  const proofs: PriorAddressProof[] = files.flatMap((f: any) => {
+    const documentId = f.document_id != null ? String(f.document_id) : null;
+    const reading = documentId ? f.request?.addressProofs?.[documentId] || null : null;
+    if (!reading) return [];
+    return [{
+      token: String(f.token), ref: f.request?.ref || null, where: where(f.deal_name, f.company_name),
+      email: f.contact_email || null, documentId, fileName: String(f.original_filename || "Proof of address"), url: f.file_url || null,
+      uploadedAt: new Date(f.uploaded_at).toISOString(), reading,
+      forKey: documentId ? f.request?.addressProofFor?.[documentId] || null : null,
+      idChecks: idChecks.filter(c => c.token === String(f.token)),
+    }];
+  });
+  return { idChecks, proofs };
 }
 
 /**

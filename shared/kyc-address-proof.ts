@@ -135,6 +135,19 @@ export function checkAddressProof(reading: AddressProofReading | null, person: s
   return { ok: reasons.length === 0, reasons, summary };
 }
 
+/**
+ * The day a proof of address stops being in date (yyyy-mm-dd): three months
+ * from the date on it, a year for a council tax bill (Woody, 25 November
+ * 2026: "proof of address should have an expiry flag so can't be used but
+ * should be if possible"). Null when the reading has no date.
+ */
+export function addressProofExpiry(reading: AddressProofReading | null): string | null {
+  const dated = isoDay(reading?.date);
+  if (dated == null) return null;
+  const max = reading?.kind === "council_tax_bill" ? COUNCIL_TAX_MAX_AGE_DAYS : ADDRESS_PROOF_MAX_AGE_DAYS;
+  return new Date(dated + max * DAY).toISOString().slice(0, 10);
+}
+
 /** A reader's answer made safe: only the fields named, each the right type. */
 export function cleanAddressProofReading(raw: unknown, readAt: string): AddressProofReading {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;

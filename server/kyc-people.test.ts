@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bornWords, dobAgrees, partyPeople, personDisplayName, personKey, personRequestAsks, verifiedPersonDob,
+  bornWords, dobAgrees, partyPeople, personDisplayName, personKey, personRequestAsks, priorAddressProofFor, priorIdCheckFor, verifiedPersonDob,
   type PartyPeopleInput, type PeopleRequest,
 } from "../shared/kyc-people";
 
@@ -395,4 +395,58 @@ test("a person verified from public sources owes nothing more (KYC4U's Public fi
   assert.ok(!after.outstanding.some(o => o.startsWith("Huseyn Mirhadiyev")), "the party no longer owes anything for him");
   assert.ok(after.outstanding.some(o => o.startsWith("Woody Bruce")), "the others still do");
   assert.deepEqual(personRequestAsks(huseyn, true), { needsIdCheck: false, docs: [] });
+});
+
+// Woody, 25 November 2026: "if I send someone an email from the app that has
+// had their identity already confirmed for something else it wont ask them to
+// do it again?", then "proof of address should have an expiry flag so cant be
+// used but should be if possible".
+test("an identity check passed on another transaction counts when the date of birth agrees", () => {
+  const prior = [{ sessionId: "s1", verifiedName: "HUSEYN MIRHADIYEV", verifiedDob: "1982-02-11", email: null, at: "2026-06-01T10:00:00Z", where: "another transaction, Bill's", ref: "ABC123" }];
+  const out = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [], priorIdChecks: prior, today: new Date("2026-11-25") });
+  const huseyn = out.people.find(p => p.name.includes("Mirhadiyev"))!;
+  assert.equal(huseyn.id.state, "passed");
+  assert.match(huseyn.id.elsewhere || "", /checked on another transaction, Bill's \(ABC123\), 1 Jun 2026/);
+  assert.ok(!huseyn.outstanding.includes("identity check"));
+  // A different month of birth is someone else.
+  const other = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [],
+    priorIdChecks: [{ ...prior[0], verifiedDob: "1982-07-11" }], today: new Date("2026-11-25") });
+  assert.equal(other.people.find(p => p.name.includes("Mirhadiyev"))!.id.state, "not_started");
+});
+
+test("with no register date of birth an earlier check needs the same email; over three years it no longer counts", () => {
+  const p = { name: "Jack Barratt", emails: ["jack@example.com"] };
+  const check = { sessionId: "s1", verifiedName: "JACK BARRATT", verifiedDob: "1990-03-01", email: "Jack@Example.com", at: "2026-01-01T00:00:00Z", where: "x", ref: null };
+  assert.ok(priorIdCheckFor(p, [check], new Date("2026-11-25")));
+  assert.equal(priorIdCheckFor({ ...p, emails: ["other@example.com"] }, [check], new Date("2026-11-25")), null);
+  assert.equal(priorIdCheckFor(p, [check], new Date("2029-02-01")), null);
+  assert.equal(priorIdCheckFor({ name: "Jack Smith", emails: p.emails }, [check], new Date("2026-11-25")), null);
+});
+
+test("a proof of address from another transaction counts while in date, and is flagged once out of date", () => {
+  const proof = {
+    token: "t-old", ref: "OLD123", where: "another transaction, Bill's", email: "h@example.com", documentId: "9", fileName: "bill.pdf", url: "/f",
+    uploadedAt: "2026-11-01T00:00:00Z", reading: thamesWater, forKey: null, idChecks: [],
+  };
+  const person = { name: "Huseyn Mirhadiyev", emails: ["h@example.com"] };
+  const inDate = priorAddressProofFor(person, [proof], new Date("2026-11-25"));
+  assert.ok(inDate && !inDate.expired);
+  // Dated 30 October: in date for three months (92 days), to 30 January.
+  const late = priorAddressProofFor(person, [proof], new Date("2027-02-15"));
+  assert.equal(late?.expired, "2027-01-30");
+  // Not tied to the person (another email, no identity check on that request): not used.
+  assert.equal(priorAddressProofFor({ ...person, emails: ["x@example.com"] }, [proof], new Date("2026-11-25")), null);
+
+  const req = request({ token: "t-h", ref: "NEW1", recipientName: "Huseyn Mirhadiyev", email: "h@example.com", person: { key: personKey("Huseyn Mirhadiyev"), name: "Huseyn Mirhadiyev", roles: ["owner"] } });
+  const now = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [req], priorAddressProofs: [proof], today: new Date("2026-11-25") });
+  const h = now.people.find(p => p.name.includes("Mirhadiyev"))!;
+  assert.equal(h.address.done, true);
+  assert.equal(h.address.proof?.earlier, true);
+  assert.ok(!h.outstanding.includes("proof of address"));
+  const later = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [req], priorAddressProofs: [proof], today: new Date("2027-02-15") });
+  const h2 = later.people.find(p => p.name.includes("Mirhadiyev"))!;
+  assert.equal(h2.address.done, false);
+  assert.equal(h2.address.proof?.expired, "2027-01-30");
+  assert.match(h2.address.proof!.reasons[0], /Out of date since 30 Jan 2027: ask for a new one/);
+  assert.ok(h2.outstanding.includes("proof of address"));
 });

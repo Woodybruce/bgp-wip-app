@@ -36,7 +36,7 @@ import {
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
 import { kycAsksOwners, kycDocWords } from "@shared/kyc-request";
-import { personKey, personRequestAsks, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
+import { personKey, personRequestAsks, priorIdCheckFor, priorIdCheckWords, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
 import { clientFileName, clientFileRole, clientSubjectEntity, recordIsOwnSubject } from "@shared/client-kyc";
@@ -809,12 +809,28 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
   let docs = [...new Set(input.docs.filter(isKycDocKey))];
   let needsIdCheck = input.needsIdCheck;
   let idCheckNote: string | null = null;
+  // Someone whose identity BGP already checked on another transaction is not
+  // asked again (Woody, 25 November 2026): the same name, by the same email
+  // address, passed with Veriff in the last three years.
+  let idCheckedBefore = false;
+  if (needsIdCheck && !via && contactName && isEmail(email)) {
+    const { dealPeopleRequests, priorEvidence } = await import("./kyc-people");
+    const here = (await dealPeopleRequests(dealId, pool, dealId ? undefined : { companyId: party.companyId, entityId: party.entityId }).catch(() => [])).map(r => r.token);
+    const prior = await priorEvidence(here).catch(() => null);
+    const earlier = priorIdCheckFor({ name: contactName, emails: [email] }, prior?.idChecks);
+    if (earlier) {
+      needsIdCheck = false;
+      idCheckedBefore = true;
+      idCheckNote = `${contactName}'s identity was ${priorIdCheckWords(earlier)}, so it is not asked again.`;
+      docs = docs.filter(d => d !== "photo_id");
+    }
+  }
   if (needsIdCheck && !veriffConfigured()) {
     needsIdCheck = false;
     idCheckNote = "The online identity check is not set up, so photo ID is asked for as a document instead.";
   }
-  if (!needsIdCheck && !docs.includes("photo_id") && input.needsIdCheck) docs = ["photo_id", ...docs];
-  if (!needsIdCheck && !docs.length) throw Object.assign(new Error("Ask for at least one thing: the identity check or a document."), { status: 400 });
+  if (!needsIdCheck && !idCheckedBefore && !docs.includes("photo_id") && input.needsIdCheck) docs = ["photo_id", ...docs];
+  if (!needsIdCheck && !docs.length && !idCheckedBefore) throw Object.assign(new Error("Ask for at least one thing: the identity check or a document."), { status: 400 });
 
   // What to ask follows from what BGP's checks read on the register, so a
   // list is never sent while they are still reading it, nor one made before

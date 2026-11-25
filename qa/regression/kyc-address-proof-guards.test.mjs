@@ -39,7 +39,9 @@ test('a proof counts only on its verdict or an officer accepting it', () => {
   assert.match(people, /const check = checkAddressProof\(f\.reading \|\| null, d\.name, f\.uploadedAt\);/);
   assert.match(people, /counts: check\.ok \|\| !!f\.accepted/);
   // Or a proof of address BGP uploaded on the party that passes (23 November 2026, shared/kyc-documents.ts).
-  assert.match(people, /done: !!counting \|\| uploads\.includes\("address"\),/);
+  // Or one sent on another transaction, while in date (Woody, 25 November 2026), which passes the same check.
+  assert.match(people, /done: !!counting \|\| uploads\.includes\("address"\) \|\| earlierCounts,/);
+  assert.match(people, /const check = checkAddressProof\(p\.reading, person\.name, p\.uploadedAt\);\s*if \(!check\.ok\) return \[\];/);
   assert.match(loader, /reading: documentId \? request\.addressProofs\?\.\[documentId\] \|\| null : null,/);
   assert.match(loader, /accepted: documentId \? request\.addressAccepted\?\.\[documentId\] \|\| null : null,/);
 });

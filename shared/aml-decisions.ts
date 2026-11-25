@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A person checked before is not asked again",
+    text: "An identity check a person passed with Veriff on another transaction counts for three years when their name and date of birth match, or with no register date, their name and email. A proof of address from elsewhere counts while in date (three months, a council tax bill a year). Out of date, it is flagged and asked for again." },
   { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Company that signs is now contracting entity",
     text: "Every screen, email and message says contracting entity where it said company that signs: the company or person that signs for a party and is checked." },
   { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Who to ask says who they are; emails name the officers",
