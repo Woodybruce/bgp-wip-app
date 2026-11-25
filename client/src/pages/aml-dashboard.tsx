@@ -73,6 +73,12 @@ const roleWords = (role: string) => (isDealPartyRole(role) ? DEAL_PARTY_LABEL[ro
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "");
 const moved = (n: number | null) => (n === null ? "—" : n === 0 ? "Today" : n === 1 ? "1 day" : `${n} days`);
 const isBucket = (v: string | null): v is AmlBucket => !!v && AML_BUCKETS.some(b => b.key === v);
+// The pills, with All beside To do so a search can cover every transaction
+// (Woody, 25 November 2026: "on the to do tab can you put all next to it so
+// can search for all").
+type BoardPill = AmlBucket | "all";
+const isBoardPill = (v: string | null): v is BoardPill => v === "all" || isBucket(v);
+const pillParty = (pill: BoardPill): AmlBucket | null => (pill === "all" ? null : pill);
 
 // The page's sections (19 November 2026): the checks for everyone; the AML
 // register and the five-year deletion for the Nominated Officer and the
@@ -217,10 +223,10 @@ function DealStatusChip({ row }: { row: AmlDashboardRow }) {
 // 24 November 2026: "combine the 2 (normally) AML checks into just one
 // transaction board or line"). A party's line opens that party; the
 // transaction's own cells open the party on the pill shown.
-function TransactionRows({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: AmlBucket; onOpen: (row: AmlDashboardRow) => void }) {
+function TransactionRows({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: BoardPill; onOpen: (row: AmlDashboardRow) => void }) {
   const n = t.parties.length;
   const first = t.parties[0];
-  const openLead = (e: React.MouseEvent) => { e.stopPropagation(); onOpen(leadParty(t, bucket)); };
+  const openLead = (e: React.MouseEvent) => { e.stopPropagation(); onOpen(leadParty(t, pillParty(bucket))); };
   const block = "px-3 py-2 align-top group-hover/txn:bg-muted/30";
   const cell = (i: number) => `px-3 py-2 align-top group-hover/txn:bg-muted/30 [tr:hover>&]:bg-muted/60${i ? " border-t border-dashed border-border" : ""}`;
   return (
@@ -273,10 +279,10 @@ function PartyLine({ row, onOpen }: { row: AmlDashboardRow; onOpen: (row: AmlDas
 // One transaction as a card, its parties inside it, on a phone and in the Cards
 // view (Woody, 24 November 2026: "can we have a cards view of the AML checks?
 // like we do with CRM", then one line per transaction the same day).
-function AmlTransactionCard({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: AmlBucket; onOpen: (row: AmlDashboardRow) => void }) {
+function AmlTransactionCard({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: BoardPill; onOpen: (row: AmlDashboardRow) => void }) {
   const first = t.parties[0];
   return (
-    <AmlCard testId={`aml-transaction-${t.dealId}`} onOpen={() => onOpen(leadParty(t, bucket))}
+    <AmlCard testId={`aml-transaction-${t.dealId}`} onOpen={() => onOpen(leadParty(t, pillParty(bucket)))}
       title={t.lead}
       sub={<TransactionSub t={t} />}
       chips={<DealStatusChip row={first} />}
@@ -356,7 +362,7 @@ export default function AmlDashboard() {
   const search = useSearch();
   const [location, setLocation] = useLocation();
   const params = new URLSearchParams(search);
-  const [bucket, setBucket] = useState<AmlBucket>(() => (isBucket(params.get("view")) ? (params.get("view") as AmlBucket) : "todo"));
+  const [bucket, setBucket] = useState<BoardPill>(() => (isBoardPill(params.get("view")) ? (params.get("view") as BoardPill) : "todo"));
   const [section, setSection] = useState<Section>(() => (isSection(params.get("section")) ? (params.get("section") as Section) : "checks"));
   const [mine, setMine] = useState(params.get("who") === "mine");
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
@@ -431,11 +437,12 @@ export default function AmlDashboard() {
   const counts = useMemo(() => transactionBucketCounts(scoped), [scoped]);
   const lateCount = useMemo(() => transactions.filter(t => t.late && (!mine || t.mine) && transactionMatches(t, query) && inLetter(t)).length, [transactions, mine, query, letter]);
   // The letters with something under them on this pill, before a letter is picked.
-  const letters = useMemo(() => letterCounts(searchedTx.filter(t => t.buckets.includes(bucket)).map(t => t.lead)), [searchedTx, bucket]);
+  const onPill = (t: AmlTransactionRow) => bucket === "all" || t.buckets.includes(bucket);
+  const letters = useMemo(() => letterCounts(searchedTx.filter(onPill).map(t => t.lead)), [searchedTx, bucket]);
   // Late first: past the point the policy needs the checks by; then the most red flags, then the longest still.
   // Under a letter, A to Z by what the transaction is known by.
   const stalest = (t: AmlTransactionRow) => Math.max(-1, ...t.parties.map(p => p.movedDays ?? -1));
-  const shown = useMemo(() => scoped.filter(t => t.buckets.includes(bucket))
+  const shown = useMemo(() => scoped.filter(onPill)
     .sort((a, b) => letter ? byName(a.lead, b.lead) : (Number(b.late) - Number(a.late)) || (b.redFlags - a.redFlags) || (stalest(b) - stalest(a))), [scoped, bucket, letter]);
 
   // The top folds once the table is scrolled, so the rows get the screen and
@@ -510,6 +517,9 @@ export default function AmlDashboard() {
       {shownSection === "checks" && <>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where the checks stand">
+          <Pill active={bucket === "all"} onClick={() => setBucket("all")} data-testid="aml-pill-all">
+            All<PillCount n={scoped.length} active={bucket === "all"} />
+          </Pill>
           {AML_BUCKETS.map(b => (
             <Pill key={b.key} active={bucket === b.key} onClick={() => setBucket(b.key)} data-testid={`aml-pill-${b.key}`}>
               {b.label}<PillCount n={counts[b.key]} active={bucket === b.key} />
@@ -517,7 +527,7 @@ export default function AmlDashboard() {
           ))}
         </div>
         <div className="flex w-full flex-wrap items-center gap-1.5 md:ml-auto md:w-auto">
-          <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">All</Pill>
+          <Pill active={!mine} onClick={() => setMine(false)} data-testid="aml-who-all">Everyone</Pill>
           <Pill active={mine} onClick={() => setMine(true)} data-testid="aml-who-mine">Mine</Pill>
           <Pill active={lateOnly} onClick={() => setLateOnly(v => !v)} data-testid="aml-late-only">Late<PillCount n={lateCount} active={lateOnly} /></Pill>
           <div className="hidden md:block" data-testid="aml-view-toggle"><ViewToggle view={view} onToggle={chooseView} /></div>

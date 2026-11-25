@@ -123,7 +123,9 @@ test('the top folds once the table scrolls, keeping the title and pills (Woody, 
 test('the board is one line per transaction, each party on a line of its own inside it', () => {
   const page = read('client/src/pages/aml-dashboard.tsx');
   assert.match(page, /const transactions = useMemo\(\(\) => groupAmlByTransaction\(data\?\.rows \|\| \[\]\), \[data\]\);/);
-  assert.match(page, /scoped\.filter\(t => t\.buckets\.includes\(bucket\)\)/);
+  // A pill picks transactions (All, since 25 November 2026, every one of them).
+  assert.match(page, /const onPill = \(t: AmlTransactionRow\) => bucket === "all" \|\| t\.buckets\.includes\(bucket\);/);
+  assert.match(page, /scoped\.filter\(onPill\)/);
   assert.match(page, /const counts = useMemo\(\(\) => transactionBucketCounts\(scoped\), \[scoped\]\);/);
   // The table: a group per transaction; its own cells once (rowSpan), a line per party.
   assert.match(page, /\{shown\.map\(t => <TransactionRows key=\{t\.key\} t=\{t\} bucket=\{bucket\} onOpen=\{setOpen\} \/>\)\}/);
@@ -169,4 +171,16 @@ test('the AML page starts a new transaction from words or heads of terms, and ad
   assert.doesNotMatch(companies, /data-testid="kyc-companies-add"/);
   const controls = companies.indexOf('data-testid="kyc-companies-select"');
   assert.ok(controls > 0 && controls < companies.indexOf('data-testid="kyc-companies-view-toggle"') && companies.indexOf('data-testid="kyc-companies-view-toggle"') < companies.indexOf('data-testid="kyc-companies-search"'));
+});
+
+// All beside To do (Woody, 25 November 2026: "on the to do tab can you put all
+// next to it so can search for all"): every transaction whatever its state, so
+// a search covers them all; the page still opens on To do.
+test('the Transactions view has an All pill first, beside To do, and the who pair reads Everyone / Mine', () => {
+  const page = read('client/src/pages/aml-dashboard.tsx');
+  const pills = page.slice(page.indexOf('aria-label="Where the checks stand"'));
+  assert.ok(pills.indexOf('data-testid="aml-pill-all"') > 0 && pills.indexOf('data-testid="aml-pill-all"') < pills.indexOf('AML_BUCKETS.map(b =>'), 'All comes before the state pills');
+  assert.match(page, /const onPill = \(t: AmlTransactionRow\) => bucket === "all" \|\| t\.buckets\.includes\(bucket\);/);
+  assert.match(page, /isBoardPill\(params\.get\("view"\)\) \? \(params\.get\("view"\) as BoardPill\) : "todo"/);
+  assert.match(page, /data-testid="aml-who-all">Everyone<\/Pill>/);
 });

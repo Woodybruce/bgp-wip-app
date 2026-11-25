@@ -4957,7 +4957,11 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   (`amlDealClosed`: a completed or invoiced deal whose party was never
   approved or rejected; a party approved at the time stays Done). Closed
   deals were 271 of the 769 parties To do on live on 18 November 2026: a past
-  gap for the MLRO, not work on the To do list. **Waiting on** (`amlWaitingOn`) and the
+  gap for the MLRO, not work on the To do list. **All**, first beside To do
+  (Woody, 25 November 2026: "on the to do tab can you put all next to it so
+  can search for all"; `?view=all`), lists every transaction whatever its
+  state, so a search covers them all; the page still opens on To do, and the
+  who pair on the right reads **Everyone** / **Mine**. **Waiting on** (`amlWaitingOn`) and the
   days since anything moved (`daysSince`: the checks, the requests, KYC4U
   drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
 - **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a
