@@ -8,12 +8,13 @@
 // 24 November 2026: "combine the 2 (normally) AML checks into just one
 // transaction board or line ... That way doesnt get too crowded").
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
-import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search } from "lucide-react";
+import { AlertCircle, ChevronDown, ExternalLink, Flag, Loader2, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { DealAmlBoard } from "@/components/deal-aml-board";
@@ -209,7 +210,51 @@ function DealCell({ t }: { t: AmlTransactionRow }) {
     <div className="min-w-0" title={t.dealName} data-testid={`aml-transaction-lead-${t.dealId}`}>
       <div className="font-medium line-clamp-2 break-words">{t.lead}</div>
       <div className="text-[11px] text-muted-foreground line-clamp-2 break-words"><TransactionSub t={t} /></div>
+      <DeleteTransaction t={t} />
     </div>
+  );
+}
+
+// Delete a transaction from the board (Woody, 25 November 2026: "need to be
+// able to delete a transaction on the dash board"), through the transaction's
+// own delete: its Xero drafts go with it, and the server refuses one with a
+// live invoice or one stopped for AML reasons, saying why.
+function DeleteTransaction({ t }: { t: AmlTransactionRow }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const del = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/crm/deals/${t.dealId}`),
+    onSuccess: () => {
+      toast({ title: "Transaction deleted", description: t.dealName });
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+    },
+    onError: (e: any) => toast({ title: "Not deleted", description: String(e?.message || e).replace(/^\d+:\s*/, "").replace(/^\{.*"(?:error|message)":"([^"]+)".*\}$/, "$1"), variant: "destructive" }),
+  });
+  return (
+    <>
+      <button type="button" className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"
+        onClick={e => { e.stopPropagation(); setOpen(true); }} data-testid={`aml-delete-transaction-${t.dealId}`}>
+        <Trash2 className="w-3 h-3" />Delete
+      </button>
+      {open && (
+        <Dialog open onOpenChange={o => { if (!o && !del.isPending) setOpen(false); }}>
+          <DialogContent className="max-w-md" onClick={e => e.stopPropagation()} data-testid={`aml-delete-transaction-dialog-${t.dealId}`}>
+            <DialogHeader>
+              <DialogTitle>Delete this transaction?</DialogTitle>
+              <DialogDescription>{t.dealName}{t.dealRef ? ` (#${t.dealRef})` : ""} is deleted for good, with its AML lines on this board. The companies and their checks stay on their records.</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={del.isPending} onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="button" variant="destructive" disabled={del.isPending} onClick={() => del.mutate()} data-testid={`aml-delete-transaction-confirm-${t.dealId}`}>
+                {del.isPending && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -341,7 +386,7 @@ function AmlTransactionCard({ t, bucket, onOpen }: { t: AmlTransactionRow; bucke
       sub={<TransactionSub t={t} />}
       chips={<DealStatusChip row={first} />}
       rows={t.parties.map((r): [string, React.ReactNode] => [roleWords(r.role), <PartyLine row={r} onOpen={onOpen} />])}
-      footer={t.agents.length ? <>Agents: {t.agents.join(", ")}</> : null}
+      footer={<div className="flex items-start justify-between gap-2"><span>{t.agents.length ? <>Agents: {t.agents.join(", ")}</> : null}</span><DeleteTransaction t={t} /></div>}
     />
   );
 }
