@@ -17,6 +17,7 @@
 // already held by the app; the Companies House register is read live only
 // when nothing is saved for that entity yet.
 
+import { amlBoardHref } from "@/components/deal-aml-board";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -91,7 +92,7 @@ function EntityTransactions({ e, max = 2 }: { e: GroupEntity; max?: number }) {
       {list.length > max && ` and ${list.length - max} more`}
       {/* Approved for the sanctions checks only: the full checks start on its transaction (23 November 2026). */}
       {e.kyc?.status === "approved" && e.kyc.scope === "sanctions_only" && (
-        <> · <Link href={`/deals/${list[0].id}?section=parties&full=${encodeURIComponent(list[0].role)}`} className="text-primary hover:underline" data-testid={`entity-start-full-kyc-${e.entityId}`}>Start full KYC</Link></>
+        <> · <Link href={`${amlBoardHref(list[0].id, list[0].role)}&full=${encodeURIComponent(list[0].role)}`} className="text-primary hover:underline" data-testid={`entity-start-full-kyc-${e.entityId}`}>Start full KYC</Link></>
       )}
     </span>
   );
@@ -877,7 +878,7 @@ function EntityReview({
               <span className="flex shrink-0 items-center gap-3">
                 {/* The full checks on the small letting itself: its AML box opens on them. */}
                 {bucket === "current" && kyc?.scope === "sanctions_only" && (
-                  <Link href={`/deals/${t.id}?section=parties&full=${encodeURIComponent(t.role)}`} className="text-xs text-primary hover:underline" data-testid={`entity-review-full-kyc-${t.id}`}>Start full KYC</Link>
+                  <Link href={`${amlBoardHref(t.id, t.role)}&full=${encodeURIComponent(t.role)}`} className="text-xs text-primary hover:underline" data-testid={`entity-review-full-kyc-${t.id}`}>Start full KYC</Link>
                 )}
                 <Link href={`/deals/${t.id}?section=parties`} className="text-xs text-primary hover:underline" data-testid={`entity-review-aml-${t.id}`}>Open its AML</Link>
               </span>

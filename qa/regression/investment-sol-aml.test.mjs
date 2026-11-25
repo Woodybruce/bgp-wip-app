@@ -8,7 +8,7 @@ const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8")
 
 test("the AML window is the deal page's own AML card", () => {
   const dialog = read("client/src/components/deal-aml-dialog.tsx");
-  assert.match(dialog, /<DealAmlStatusCard dealId=\{deal\.id\}/);
+  assert.match(dialog, /<DealAmlBoard dealId=\{deal\.id\}/);
   assert.match(dialog, /\/deals\/\$\{deal\.id\}\?section=parties/);
 });
 

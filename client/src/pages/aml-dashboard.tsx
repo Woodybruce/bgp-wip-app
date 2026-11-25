@@ -16,7 +16,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
+import { DealAmlBoard } from "@/components/deal-aml-board";
+import { DealAmlDialog } from "@/components/deal-aml-dialog";
 import { AmlCard, AmlCardGrid, AmlChip, AmlLateChip, AmlLevelChip, AmlStageChip, DealStatusChip as AmlDealStatusChip, KYC_CHIP_TONE, RedFlagChip, storeAmlView, storedAmlView, type AmlListView } from "@/components/aml-frame";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { AmlFileButton } from "@/components/aml-file-button";
@@ -301,7 +302,7 @@ function PartyTrail({ row, onClose, officer }: { row: AmlDashboardRow; onClose: 
             </div>
           )}
         </DialogHeader>
-        <DealAmlStatusCard dealId={row.dealId} dealStatus={row.dealStatus} focusCompanyId={row.brandId} />
+        <DealAmlBoard dealId={row.dealId} focusCompanyId={row.brandId} />
         <section className="space-y-1.5">
           <button type="button" className="flex w-full items-center gap-2 text-left" aria-expanded={docsOpen} onClick={() => setDocsOpen(o => !o)} data-testid="aml-trail-documents-toggle">
             <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground">Documents on its KYC record</h3>
@@ -350,6 +351,12 @@ export default function AmlDashboard() {
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
+  // Opened from a transaction page (Woody, 25 November 2026: the AML is worked
+  // here; the transaction page mirrors it): ?deal=<id>&role=<role> opens that
+  // party's window, or the transaction's when it has no line on the board yet.
+  const [linked, setLinked] = useState<{ deal: string; role: string | null; full: string | null } | null>(() =>
+    params.get("deal") ? { deal: params.get("deal")!, role: params.get("role"), full: params.get("full") } : null);
+  const [linkedDeal, setLinkedDeal] = useState<string | null>(null);
   // Started from the top of the page (Woody, 24 November 2026): a new
   // transaction typed out or from its heads of terms, or a company to add.
   const [startTx, setStartTx] = useState<AmlStart | null>(null);
@@ -381,9 +388,24 @@ export default function AmlDashboard() {
     if (shownSection === "checks" && bucket !== "todo") next.set("view", bucket);
     if (shownSection === "checks" && mine) next.set("who", "mine");
     if (shownSection === "checks" && lateOnly) next.set("late", "1");
+    if (linked) {
+      next.set("deal", linked.deal);
+      if (linked.role) next.set("role", linked.role);
+      if (linked.full) next.set("full", linked.full);
+    }
     const target = `${location}${next.toString() ? `?${next}` : ""}`;
     if (`${location}${search ? `?${search}` : ""}` !== target) setLocation(target, { replace: true });
-  }, [bucket, mine, lateOnly, shownSection]);
+  }, [bucket, mine, lateOnly, shownSection, linked]);
+  // The linked transaction's window, once the board has loaded.
+  const linkedOpened = useRef(false);
+  useEffect(() => {
+    if (!linked || linkedOpened.current || !data) return;
+    linkedOpened.current = true;
+    const rows = data.rows.filter(r => r.dealId === linked.deal);
+    const row = rows.find(r => r.role === linked.role) || rows[0] || null;
+    if (row) setOpen(row); else setLinkedDeal(linked.deal);
+  }, [linked, data]);
+  const closeLinked = () => { setLinked(null); linkedOpened.current = false; };
 
   // One line per transaction, its parties inside it; a pill, Late, Mine and the
   // search pick transactions, and each line shows every party.
@@ -529,7 +551,8 @@ export default function AmlDashboard() {
 
       </>}
 
-      {open && <PartyTrail row={open} onClose={() => setOpen(null)} officer={!!roles?.isOfficer} />}
+      {open && <PartyTrail row={open} onClose={() => { setOpen(null); closeLinked(); }} officer={!!roles?.isOfficer} />}
+      {linkedDeal && <DealAmlDialog deal={{ id: linkedDeal }} onClose={() => { setLinkedDeal(null); closeLinked(); }} />}
       {startTx && (
         <Suspense fallback={null}>
           <NewTransactionDialog

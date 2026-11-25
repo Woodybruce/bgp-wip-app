@@ -50,6 +50,6 @@ test('the button is drawn only for the officers', () => {
   assert.match(box, /const officer = !!data\.decisions\?\.canDecide;/);
   assert.match(box, /\{canDecide && \(\s*<div[^>]*data-testid=\{`aml-file-line-\$\{cp\.role\}`\}>\s*<AmlFileButton dealId=\{dealId\} role=\{cp\.role\} partyName=\{partyName\} \/>/);
   const page = read('client/src/pages/aml-dashboard.tsx');
-  assert.match(page, /<PartyTrail row=\{open\} onClose=\{\(\) => setOpen\(null\)\} officer=\{!!roles\?\.isOfficer\} \/>/);
+  assert.match(page, /<PartyTrail row=\{open\} onClose=\{\(\) => \{ setOpen\(null\); closeLinked\(\); \}\} officer=\{!!roles\?\.isOfficer\} \/>/);
   assert.match(page, /\{officer && \(\s*<div className="pt-1" data-testid="aml-trail-file">/);
 });

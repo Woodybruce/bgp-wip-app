@@ -942,3 +942,27 @@ test("the random red flags of 24 November: a longer company name, a web result t
   assert.deepEqual(precheckRedFlags(fortis, { sanctionsCurrent: true }).map(f => f.label), []);
   assert.match(precheckNamesakes(fortis)[0].what, /only a year, one either side of theirs/);
 });
+
+test("a registered society up the chain is screened in full, and the file says nobody is behind it", async () => {
+  const { chooseScreened, noOwnersBehindNote } = await import("../shared/kyc-prechecks");
+  const chain = [
+    { name: "Peabody Developments Limited", number: "IP26804R", individuals: 0, companies: 0 },
+    { name: "Mount Anvil Sjh Limited", number: "13334830", individuals: 0, companies: 1 },
+  ];
+  assert.equal(noOwnersBehindNote(chain), "Peabody Developments Limited (IP26804R) is a registered society, which keeps no register of who owns or controls it: nobody behind it to check, so it is screened in full as a company.");
+  assert.equal(noOwnersBehindNote([chain[1]]), null);
+  const picked = chooseScreened([
+    { name: "ST JOHN'S HILL PH03 LLP", role: "the company", person: false },
+    { name: "Peabody Developments Limited", role: "company up the ownership chain", person: false, noOwners: true },
+    { name: "Mount Anvil Sjh Limited", role: "company up the ownership chain", person: false },
+    { name: "Cornelius Killian Hurley", role: "owner of Mount Anvil Group Limited", person: true, owner: true },
+  ], { individual: false, listed: false, maxPeople: 10 });
+  assert.deepEqual(picked.full.map(c => c.name), ["ST JOHN'S HILL PH03 LLP", "Peabody Developments Limited", "Cornelius Killian Hurley"]);
+});
+
+test("an owner whose register could not be read is said, never passed over", async () => {
+  const { noOwnersBehindNote, chooseScreened } = await import("../shared/kyc-prechecks");
+  assert.equal(noOwnersBehindNote([{ name: "Acme Holdings Limited", number: "01234567", individuals: 0, companies: 0, unread: true }]),
+    "Who owns Acme Holdings Limited (01234567) could not be read at Companies House: press Run again, or find its owners by hand.");
+  assert.equal(chooseScreened([{ name: "Acme Holdings Limited", role: "company up the ownership chain", person: false, noOwners: true }], { individual: false, listed: false, maxPeople: 5 }).full.length, 1);
+});
