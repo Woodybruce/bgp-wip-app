@@ -70,7 +70,7 @@ function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: st
   const verdictTone = draft?.verdict === "set_aside" ? "text-foreground" : draft?.verdict === "keep" ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400";
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-lg" data-testid="kyc-flag-set-aside-dialog">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="kyc-flag-set-aside-dialog">
         <DialogHeader><DialogTitle>Set this red flag aside</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm">
           <div>
