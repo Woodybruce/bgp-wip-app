@@ -1124,12 +1124,16 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       if (!c) return res.status(404).json({ message: "Company not found" });
       const on = validDate(req.body?.date) || new Date().toISOString();
       const note = String(req.body?.note || "").trim().slice(0, 500);
+      // Standard or simplified due diligence lasts 3 years, enhanced 1 (policy H.a).
+      // Until 25 November 2026 none was recorded, so the approval read as 1 year
+      // (Woody, on Sheet Anchor Evolve: signed off 24 Feb 2025, "expired" 24 Feb 2026).
+      const years = Number(req.body?.recheckYears) === 1 ? 1 : 3;
       const u = (await pool.query(`SELECT name FROM users WHERE id = $1`, [req.session.userId || (req as any).tokenUserId || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
       const by = u?.name || "an admin";
       await pool.query(
         `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, company_id_manual, fields, created_at_source, modified_at_source, synced_at)
          VALUES ('manual', $1, 'Recorded in the app', $2, 'Approved', $2, $3, $3, $4::jsonb, $5, $5, NOW())`,
-        [`${companyId}:${Date.now()}`, c.name, companyId, JSON.stringify({ "Recorded by": by, Note: note || null }), on]);
+        [`${companyId}:${Date.now()}`, c.name, companyId, JSON.stringify({ "Recorded by": by, Note: note || null, "Due diligence": years === 1 ? "Enhanced due diligence" : "Standard due diligence", "Re-check years": years }), on]);
       const r = await mirrorKyc4uStatuses();
       res.json({ ok: true, ...r });
     } catch (e: any) { res.status(500).json({ message: e.message }); }

@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Officers and sign-off", title: "A past KYC4U sign-off records its due diligence",
+    text: "Recording a past KYC4U sign-off now asks whether it was standard (lasts 3 years) or enhanced (1 year), standard by default, and shows the date it lasts until. Before, none was recorded, so every one lasted a year." },
   { date: "2026-11-25", who: ["Woody"], topic: "Records and reports", title: "KYC4U's past checks show on each party",
     text: "When KYC4U checked a party before 23 November 2026, its AML card says so, with the request and date, and whether KYC4U's result is recorded. KYC4U's folders carry no verdict: an admin records their result from their report or email. The company view keeps this prompt while BGP's own checks run." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "AML is worked on the AML page; the transaction page shows it",
