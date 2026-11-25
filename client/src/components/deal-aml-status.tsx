@@ -46,7 +46,7 @@ import { AmlFileButton } from "@/components/aml-file-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 import { JointRelianceButton, RelianceCard } from "@/components/aml-reliance";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { AskJointAgentButton, JointAgentPanel, JointChaseButton, askAgentLabel, currentJointRequest, jointApplies, jointAskable, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
+import { AskJointAgentButton, AskJointAgentDialog, JointAgentPanel, JointChaseButton, askAgentLabel, currentJointRequest, jointApplies, jointAskable, jointBoxFacts, useJointChecks } from "@/components/joint-agent-checks";
 import { AmlStopDialog, useAmlStop } from "@/components/aml-stop";
 
 export interface DealAmlStatus {
@@ -527,6 +527,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   });
   useEffect(() => { if (openAll.at) setFolded(!openAll.all); }, [openAll.at]);
   const [editing, setEditing] = useState(false);
+  // The joint agent asked for the party's documents, from Send client checks or step 1 (25 November 2026).
+  const [askingJoint, setAskingJoint] = useState(false);
   const drafts = useQuery<any[]>({
     enabled: staff,
     queryKey: ["/api/kyc4u/drafts", dealId, cp.id],
@@ -550,6 +552,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     firm: askParty.agent?.name || "", companyId: askParty.agent?.companyId || null, contactId: askParty.agent?.contactId || null,
     contacts: askParty.agent?.contacts || [], words: askParty.agentWords,
   } : null);
+
+  // The joint agent can be asked for this party's documents while nothing is out to them yet.
+  const jointAsk = jointQ.data && askParty && !currentJointRequest(askParty) ? () => setAskingJoint(true) : undefined;
 
   const reveal = (k: StepKey) => {
     setFolded(false);
@@ -662,7 +667,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       case "person_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-dob-${cp.role}`}>Add it</Button>;
       case "fill_in": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-fill-${cp.role}`}>Fill in</Button>;
       case "add_details": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => setEditing(true)} data-testid={`aml-next-details-${cp.role}`}>Add details</Button>;
-      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} />;
+      case "send_client_checks": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} agent={theirAgent} viaAgent={!!request?.viaAgent} onJointAgent={jointAsk} />;
       case "send_via_agent": return <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className={quiet} label="Send" agent={theirAgent} viaAgent />;
       case "people": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-people-${cp.role}`}>Open</Button>;
       case "sign_off": return <PartyDecisionButton dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} kind="sign_off" full={fullOnSmall} />;
@@ -874,6 +879,13 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
+            {/* The joint agent beside who to ask (Woody, 25 November 2026: "we need to send to joint agent ... the joint agent should upload the details"). */}
+            {jointAsk && !settled && !sanctionsOnly && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-joint-ask-line-${cp.role}`}>
+                <span>Or the joint agent uploads their documents:</span>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={jointAsk} data-testid={`aml-joint-ask-${cp.role}`}>Ask the joint agent</Button>
+              </div>
+            )}
             {decision?.person && (
               <PersonDetailsLine view={decision.person} url={`/api/deals/${dealId}/parties/${cp.role}/person-details`} testKey={cp.role}
                 onSaved={() => {
@@ -942,7 +954,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                     {data.clientChecks && clientRoute && !people?.reliance && (
                       <div className="space-y-1.5" data-testid={`aml-client-route-${cp.role}`}>
                         {(request || (people && people.people.length > 0)) && (current || draft) && <SubHead>Client checks</SubHead>}
-                        {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" agent={theirAgent} />}
+                        {!request && !cp.notRequired && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} className="h-7 text-xs" agent={theirAgent} onJointAgent={jointAsk} />}
                         <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="people" />
                         <ClientChecksForParty dealId={dealId} companyId={cp.id} sanctionsOnly={sanctionsOnly} notRequired={!!cp.notRequired} canDecide={canDecide} part="requests" />
                         {request && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Send them again" className="h-7 text-xs" agent={theirAgent} viaAgent={!!request.viaAgent} />}
@@ -953,7 +965,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                     {!settled && (
                       <div className="flex flex-wrap items-center gap-1 border-t border-border/60 pt-2 text-xs text-muted-foreground" data-testid={`aml-other-ways-${cp.role}`}>
                         <span className="mr-1">Other ways:</span>
-                        {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} />}
+                        {!clientRoute && data.clientChecks && !sanctionsOnly && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label="Client checks" className="h-7 px-2 text-xs" quiet agent={theirAgent} onJointAgent={jointAsk} />}
                         {!request && data.clientChecks && !sanctionsOnly && !cp.notRequired && theirAgent && askParty && <SendClientChecksButton dealId={dealId} companyId={cp.id} partyName={partyName} label={askAgentLabel(askParty)} className="h-7 px-2 text-xs" quiet agent={theirAgent} viaAgent />}
                         {!current && jointQ.data && askParty && <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Joint agent" quiet />}
                         {/* The report so far, with what is still needed, for a supplier if the officers ever use one (Woody, 23 November 2026). */}
@@ -985,6 +997,11 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </div>
           )}
         </div>
+      )}
+      {askingJoint && jointQ.data && askParty && (
+        <AskJointAgentDialog dealId={dealId} view={jointQ.data} party={askParty}
+          person={party?.person && (askRelation === "joint_agent") ? { id: party.person.id, name: party.person.name, email: party.person.email || null, firm: party.person.firm || null } : null}
+          onClose={() => setAskingJoint(false)} />
       )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}
     </div>

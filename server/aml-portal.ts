@@ -35,7 +35,7 @@ import {
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
-import { kycAsksOwners, kycDocWords } from "@shared/kyc-request";
+import { dealOrClientFileTokensSql, kycAsksOwners, kycDocWords } from "@shared/kyc-request";
 import { personKey, personRequestAsks, priorIdCheckFor, priorIdCheckWords, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
@@ -1130,7 +1130,7 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
   // The joint agent's requests are listed apart (server/joint-agent-checks.ts).
   const rows = (dealId
     ? await pool.query(
-      `SELECT * FROM kyc_upload_tokens WHERE deal_id = $1 AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [dealId])
+      `SELECT * FROM kyc_upload_tokens WHERE ${dealOrClientFileTokensSql("$1")} AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [dealId])
     : client ? await pool.query(
       `SELECT * FROM kyc_upload_tokens WHERE deal_id IS NULL AND company_id = $1 AND trading_entity_id IS NOT DISTINCT FROM $2::varchar
           AND request IS NOT NULL AND is_test IS NOT TRUE AND ${NOT_JOINT_SQL()} ORDER BY created_at DESC`, [client.companyId, client.entityId])
@@ -1701,7 +1701,7 @@ kycRequestRouter.post(["/api/aml/deal/:id/client-checks/people/rename", "/api/cl
     if (name.split(" ").length < 2 || !personKey(name)) return res.status(400).json({ message: "Enter their full name, first and last." });
     const row = await tokenRow(String(req.body?.token || ""));
     const scope = scopeOf(req);
-    if (!row || !row.request || row.is_test || !rowInScope(row, scope)) return res.status(404).json({ message: scope.dealId ? "That request is not on this transaction." : "That request is not on this company's checks." });
+    if (!row || !row.request || row.is_test || !(await rowInScope(row, scope))) return res.status(404).json({ message: scope.dealId ? "That request is not on this transaction." : "That request is not on this company's checks." });
     const person = (row.request as any).person as KycRequestPerson | undefined;
     const typedByBgp = person ? (person.roles || []).every(r => r === "joint") : row.request.kind === "individual";
     if (!typedByBgp) return res.status(409).json({ message: "This name comes from Companies House and is kept as the register gives it." });
@@ -1726,8 +1726,13 @@ kycRequestRouter.post(["/api/aml/deal/:id/client-checks/people/rename", "/api/cl
 // 20 November 2026: "is the app checking its actually for that person and
 // acceptable?"). Both keep what they did on the request the file came in on.
 // A request belongs to the route's transaction, or to its client file (no transaction, that company and sub company).
-function rowInScope(row: Pick<TokenRow, "deal_id" | "company_id" | "trading_entity_id">, scope: CheckScope): boolean {
-  if (scope.dealId) return String(row.deal_id || "") === scope.dealId;
+async function rowInScope(row: Pick<TokenRow, "token" | "deal_id" | "company_id" | "trading_entity_id">, scope: CheckScope): Promise<boolean> {
+  if (scope.dealId) {
+    if (String(row.deal_id || "") === scope.dealId) return true;
+    // The client file's request for one of the transaction's contracting entities (25 November 2026).
+    if (row.deal_id) return false;
+    return (await pool.query(`SELECT 1 FROM kyc_upload_tokens WHERE token = $2 AND ${dealOrClientFileTokensSql("$1")}`, [scope.dealId, row.token]).catch(() => ({ rows: [] as any[] }))).rows.length > 0;
+  }
   return !row.deal_id && String(row.company_id || "") === scope.client!.companyId && (row.trading_entity_id || null) === scope.client!.entityId;
 }
 
@@ -1738,7 +1743,7 @@ async function addressProofRow(scope: CheckScope, token: unknown, documentId: un
     `SELECT u.token, u.company_id, u.trading_entity_id, u.deal_id, u.request FROM kyc_upload_tokens u
        JOIN kyc_upload_files f ON f.token = u.token AND f.kyc_document_id = $2 AND f.doc_type = 'proof_of_address'
       WHERE u.token = $1 AND u.is_test IS NOT TRUE`, [t, d])).rows[0];
-  if (!row || !rowInScope(row, scope)) return null;
+  if (!row || !(await rowInScope(row, scope))) return null;
   return { token: t, documentId: d, companyId: row.company_id as string | null, ref: String(row.request?.ref || "") };
 }
 

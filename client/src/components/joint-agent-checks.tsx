@@ -11,6 +11,7 @@
 // Issue 4: the counterparty on a joint instruction is always checked); a
 // reliance agreed before 23 November 2026 can still be recorded. The server is
 // server/joint-agent-checks.ts; the rules shared/joint-agent-checks.ts.
+import { CrmFirmInput } from "@/components/crm-firm-input";
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Copy, FileText, Loader2, Mail, RefreshCw, Send, Upload, X } from "lucide-react";
@@ -339,6 +340,10 @@ export function AskJointAgentButton({ dealId, view, party, label, quiet, person 
   );
 }
 
+export function AskJointAgentDialog(props: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; person: { id: string; name: string; email: string | null; firm: string | null } | null; onClose: () => void }) {
+  return <AskDialog {...props} />;
+}
+
 function AskDialog({ dealId, view, party, person, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; person: { id: string; name: string; email: string | null; firm: string | null } | null; onClose: () => void }) {
   const { toast } = useToast();
   // The joint agent only (23 November 2026): the party's own agent is sent
@@ -350,6 +355,8 @@ function AskDialog({ dealId, view, party, person, onClose }: { dealId: string; v
   const withEmail = (recorded?.contacts || []).filter(c => c.email);
   const listed = person ? withEmail.find(c => c.id === person.id) || null : null;
   const [firm, setFirm] = useState(recorded?.name || person?.firm || "");
+  // The firm picked from the CRM, or added to it from the box (25 November 2026).
+  const [firmId, setFirmId] = useState<string | null>(recorded?.companyId || null);
   const [contactId, setContactId] = useState<string>(listed ? listed.id : person ? "other" : recorded?.contactId || (withEmail[0]?.id ?? "other"));
   const [name, setName] = useState(person && !listed ? person.name : "");
   const [email, setEmail] = useState(person && !listed ? person.email || "" : "");
@@ -361,7 +368,7 @@ function AskDialog({ dealId, view, party, person, onClose }: { dealId: string; v
   const send = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/joint-agent-checks`, {
       companyId: party.companyId, contactId: picked ? picked.id : null, name: toName, email: toEmail, note: note.trim() || null,
-      firm: firm.trim(), firmCompanyId: recorded && firm.trim() === recorded.name ? recorded.companyId : null, relation,
+      firm: firm.trim(), firmCompanyId: firmId || (recorded && firm.trim() === recorded.name ? recorded.companyId : null), relation,
     })).json(),
     onSuccess: (r: any) => {
       refreshJointChecks(dealId);
@@ -383,7 +390,7 @@ function AskDialog({ dealId, view, party, person, onClose }: { dealId: string; v
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label htmlFor="joint-firm">The {who}'s firm</Label>
-            <Input id="joint-firm" value={firm} onChange={e => setFirm(e.target.value)} maxLength={160} placeholder="Savills" data-testid="joint-firm" />
+            <CrmFirmInput value={firm} companyId={firmId} onChange={(n, id) => { setFirm(n); setFirmId(id); }} placeholder="Savills" testId="joint-firm" />
           </div>
           {withEmail.length > 0 && firm.trim() === recorded?.name && (
             <div className="space-y-1.5">

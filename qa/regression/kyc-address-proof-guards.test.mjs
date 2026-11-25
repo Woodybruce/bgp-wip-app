@@ -53,8 +53,10 @@ test('Read again is BGP staff, Accept is the Nominated Officer or a Deputy, both
   assert.match(accept, /if \(!actor\.isMlro\) return res\.status\(403\)/);
   assert.match(accept, /note\.length < ADDRESS_PROOF_ACCEPT_NOTE_MIN/);
   // The file must be this deal's (or this client file's), a proof of address, on a request that is not a test.
-  assert.match(portal, /JOIN kyc_upload_files f ON f\.token = u\.token AND f\.kyc_document_id = \$2 AND f\.doc_type = 'proof_of_address'\s*WHERE u\.token = \$1 AND u\.is_test IS NOT TRUE`, \[t, d\]\)\)\.rows\[0\];\s*if \(!row \|\| !rowInScope\(row, scope\)\) return null;/);
-  assert.match(portal, /if \(scope\.dealId\) return String\(row\.deal_id \|\| ""\) === scope\.dealId;\s*return !row\.deal_id && String\(row\.company_id \|\| ""\) === scope\.client!\.companyId && \(row\.trading_entity_id \|\| null\) === scope\.client!\.entityId;/);
+  assert.match(portal, /JOIN kyc_upload_files f ON f\.token = u\.token AND f\.kyc_document_id = \$2 AND f\.doc_type = 'proof_of_address'\s*WHERE u\.token = \$1 AND u\.is_test IS NOT TRUE`, \[t, d\]\)\)\.rows\[0\];\s*if \(!row \|\| !\(await rowInScope\(row, scope\)\)\) return null;/);
+  // A transaction also takes its contracting entities' client file requests (25 November 2026).
+  assert.match(portal, /if \(String\(row\.deal_id \|\| ""\) === scope\.dealId\) return true;[\s\S]{0,500}dealOrClientFileTokensSql\("\$1"\)/);
+  assert.match(portal, /return !row\.deal_id && String\(row\.company_id \|\| ""\) === scope\.client!\.companyId && \(row\.trading_entity_id \|\| null\) === scope\.client!\.entityId;/);
   assert.match(routes, /client-checks\\\/address-proof\\\/\(\?:read\|accept\)\$/);
   // The card offers Accept only to those who may decide.
   assert.match(card, /\{canDecide && !accepting && \(/);

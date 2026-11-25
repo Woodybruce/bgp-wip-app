@@ -110,8 +110,14 @@ export function DealAmlBoard({ dealId, focusCompanyId, mirror }: {
       toast({ title: "Create failed", description: e?.message || "Try again from the Companies page", variant: "destructive" });
     }
   };
+  // Every CRM company can be picked (Woody, 25 November 2026: "for agents we need the
+  // filter function so can bring up company and we can add agent company to our CRM",
+  // "same for brands", "and landlords"): those of the slot's kind first, then the
+  // rest, so a brand or landlord recorded under another type is still found. A name
+  // the CRM does not hold is added from the box (Create).
   const companyOptions = (keep: (c: CrmCompany) => boolean, current: string | null | undefined) => {
-    const list = companies.filter(c => keep(c) || c.id === current).map(c => ({ id: c.id, name: c.name }));
+    const live = companies.filter(c => !(c as any).mergedIntoId);
+    const list = [...live.filter(c => keep(c) || c.id === current), ...live.filter(c => !(keep(c) || c.id === current))].map(c => ({ id: c.id, name: c.name }));
     if (current && !list.some(c => c.id === current)) {
       const known = (["landlord", "tenant", "vendor", "purchaser"] as const).map(r => page?.names?.parties?.[r]).find((p: any) => p?.id === current);
       if (known) list.push({ id: current, name: known.name });

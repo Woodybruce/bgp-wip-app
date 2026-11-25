@@ -184,7 +184,7 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
   // A person's own request finishing is not the party's checks finishing.
   const mainFinished = (await db.query(
     `SELECT 1 FROM kyc_upload_tokens
-      WHERE deal_id IS NOT DISTINCT FROM $1::varchar AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
+      WHERE (deal_id IS NOT DISTINCT FROM $1::varchar OR deal_id IS NULL) AND company_id = $2 AND trading_entity_id IS NOT DISTINCT FROM $3
         AND completed_at IS NOT NULL AND COALESCE(is_test, false) = false
         AND COALESCE(jsonb_typeof(request->'person'), 'null') <> 'object'
         AND COALESCE(request->>'audience', 'client') <> 'joint_agent' LIMIT 1`,

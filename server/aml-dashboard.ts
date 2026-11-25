@@ -162,11 +162,12 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
         ORDER BY crm_company_id, trading_entity_id, conducted_at DESC NULLS LAST, id DESC`, [brandIds])).rows
       .map((r: any) => (isPrecheckResult(r.result) ? { ...r, result: normaliseStoredPrecheck(r.result) } : r)), none),
     read("client checks", async () => (await pool.query(
-      `SELECT u.deal_id, u.company_id, u.request, u.created_at, u.completed_at, u.last_used_at, u.revoked_at, u.expires_at,
+      `SELECT u.deal_id, u.company_id, u.trading_entity_id, u.request, u.created_at, u.completed_at, u.last_used_at, u.revoked_at, u.expires_at,
               (SELECT count(*)::int FROM kyc_upload_files f WHERE f.token = u.token) AS files
          FROM kyc_upload_tokens u
-        WHERE u.deal_id = ANY($1::varchar[]) AND u.is_test IS NOT TRUE AND u.request IS NOT NULL
-        ORDER BY u.created_at DESC`, [dealIds])).rows, none),
+        WHERE (u.deal_id = ANY($1::varchar[]) OR (u.deal_id IS NULL AND u.company_id = ANY($2::varchar[])))
+          AND u.is_test IS NOT TRUE AND u.request IS NOT NULL
+        ORDER BY u.created_at DESC`, [dealIds, brandIds])).rows, none),
     read("identity checks", async () => (await pool.query(
       `SELECT company_id, status, decision_reason, received_at, first_name, last_name FROM veriff_sessions
         WHERE company_id = ANY($1::varchar[]) AND lower(COALESCE(status, '')) = 'declined'
@@ -229,7 +230,9 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     const isTrust = String(companyRow?.aml_subject_type || "").toLowerCase() === "trust";
     const partyInHouse = inHouse || isTrust;
     const pre = needsCompany ? null : prechecks.find((r: any) => own(r) && isPrecheckResult(r.result)) || null;
-    const allTokens = tokens.filter((t: any) => String(t.deal_id) === String(p.deal.id) && t.company_id === p.brandId);
+    // A transaction's own requests, and the client file's for the same contracting entity (25 November 2026).
+    const allTokens = tokens.filter((t: any) => t.company_id === p.brandId
+      && (t.deal_id ? String(t.deal_id) === String(p.deal.id) : (t.trading_entity_id || null) === (p.entityId || null)));
     // The joint agent's request (22 November 2026) is not the party's own client checks.
     const isJoint = (t: any) => t.request?.audience === "joint_agent";
     const partyTokens = allTokens.filter((t: any) => !isJoint(t));

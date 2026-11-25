@@ -777,8 +777,10 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
-  const filtered = filterText
-    ? options.filter(o => o.name.toLowerCase().includes(filterText.toLowerCase()))
+  // Every word typed, in any order ("lewisham ls" finds "LS Lewisham Limited").
+  const filterWords = filterText.toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = filterWords.length
+    ? options.filter(o => { const n = o.name.toLowerCase(); return filterWords.every(w => n.includes(w)); })
     : options;
 
   const listedName = value ? options.find(o => o.id === value)?.name : null;
