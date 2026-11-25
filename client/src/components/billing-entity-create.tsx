@@ -31,6 +31,13 @@ export type SavedCompany = { id: string; name: string; companiesHouseNumber: str
   abroad?: { country: string; registrationNumber: string | null; registerUrl: string | null } };
 
 // Countries offered as the box is typed in; any other can be typed.
+interface GleifHit { lei: string; name: string; country: string | null; jurisdiction: string | null; registeredAs: string | null; status: string | null }
+// A GLEIF country code in words ("US" is "United States").
+function countryWords(code: string | null | undefined): string {
+  const c = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(c)) return c;
+  try { return new Intl.DisplayNames(["en-GB"], { type: "region" }).of(c) || c; } catch { return c; }
+}
 const COUNTRIES = ["Australia", "Austria", "Belgium", "Bermuda", "British Virgin Islands", "Canada", "Cayman Islands", "China", "Cyprus", "Czech Republic",
   "Denmark", "Finland", "France", "Germany", "Gibraltar", "Greece", "Guernsey", "Hong Kong", "India", "Ireland", "Isle of Man", "Israel", "Italy", "Japan",
   "Jersey", "Liechtenstein", "Luxembourg", "Malta", "Monaco", "Netherlands", "New Zealand", "Norway", "Poland", "Portugal", "Qatar", "Saudi Arabia",
@@ -76,6 +83,32 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
   useEffect(() => { if (open) { setTerm(initialQuery); setQ(initialQuery.trim()); setProblem(null); } }, [open, initialQuery]);
   useEffect(() => { const t = setTimeout(() => setQ(term.trim()), 300); return () => clearTimeout(t); }, [term]);
 
+  // GLEIF, searched as the name is typed in the Registered abroad box (Woody,
+  // 25 November 2026: "same as companies house can we search up GLEIF that
+  // way?"). Picking a record fills the country, number and register link.
+  const [gleifPicked, setGleifPicked] = useState<string | null>(null);
+  const [gleifTerm, setGleifTerm] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setGleifTerm(abroad.name.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [abroad.name]);
+  const gleif = useQuery<GleifHit[], Error>({
+    queryKey: ["/api/billing-entities/gleif-search", gleifTerm],
+    enabled: open && mode === "abroad" && gleifTerm.length >= 3 && gleifPicked !== gleifTerm,
+    staleTime: 10 * 60_000,
+    retry: false,
+    queryFn: async () => {
+      const r = await fetch(`/api/billing-entities/gleif-search?q=${encodeURIComponent(gleifTerm)}`, { credentials: "include", headers: getAuthHeaders() });
+      const body = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(body?.message || "GLEIF could not be searched. Try again.");
+      return Array.isArray(body?.results) ? body.results : [];
+    },
+  });
+  const pickGleif = (h: GleifHit) => {
+    const name = h.name;
+    setGleifPicked(name.trim());
+    setAbroad({ name, country: countryWords(h.country), registrationNumber: h.registeredAs || "", registerUrl: `https://search.gleif.org/#/record/${h.lei}` });
+  };
   const ch = useQuery<ChHit[], Error>({
     queryKey: ["/api/companies-house/search", q, "billing-entity"],
     enabled: open && q.length >= 2,
@@ -227,7 +260,27 @@ export function CreateBillingEntityDialog({ open, onOpenChange, brand, initialQu
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); if (abroadReady) void saveAbroad(); } }}>
             <div className="space-y-1">
               <Label htmlFor={`${testIdPrefix}-abroad-name`} className="text-xs">Company name, as its register shows it</Label>
-              <Input id={`${testIdPrefix}-abroad-name`} autoFocus value={abroad.name} onChange={e => setAbroad(a => ({ ...a, name: e.target.value }))} placeholder="e.g. Acme Immobilien GmbH" data-testid={`${testIdPrefix}-abroad-name`} />
+              <Input id={`${testIdPrefix}-abroad-name`} autoFocus value={abroad.name} onChange={e => { setAbroad(a => ({ ...a, name: e.target.value })); setGleifPicked(null); }} placeholder="Type the name to search GLEIF, e.g. Google LLC" data-testid={`${testIdPrefix}-abroad-name`} />
+              {gleifPicked === null && gleifTerm.length >= 3 && (
+                gleif.isFetching ? <p className="text-[11px] text-muted-foreground"><Loader2 className="mr-1 inline h-3 w-3 animate-spin" />Searching GLEIF…</p>
+                : gleif.isError ? <p className="text-[11px] text-muted-foreground">{gleif.error.message} Fill in the boxes yourself.</p>
+                : (gleif.data || []).length === 0 ? <p className="text-[11px] text-muted-foreground">Not on GLEIF under that name: fill in the boxes yourself.</p>
+                : (
+                  <ul className="max-h-48 divide-y overflow-y-auto rounded-md border" data-testid={`${testIdPrefix}-gleif-hits`}>
+                    {gleif.data!.map(h => (
+                      <li key={h.lei}>
+                        <button type="button" className="flex w-full flex-col items-start px-2.5 py-1.5 text-left text-xs hover:bg-muted" onClick={() => pickGleif(h)} data-testid={`${testIdPrefix}-gleif-${h.lei}`}>
+                          <span className="font-medium">{h.name}</span>
+                          <span className="text-muted-foreground">{[h.jurisdiction || countryWords(h.country), h.registeredAs ? `no. ${h.registeredAs}` : null, String(h.status || "").toUpperCase() === "ACTIVE" ? null : (h.status || "").toLowerCase(), `LEI ${h.lei}`].filter(Boolean).join(" · ")}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              )}
+              {gleifPicked !== null && abroad.registerUrl.includes("search.gleif.org") && (
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-400" data-testid={`${testIdPrefix}-gleif-picked`}>From GLEIF: check the boxes below, then save. BGP's checks follow its owners from there.</p>
+              )}
             </div>
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
               <div className="space-y-1">

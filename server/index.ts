@@ -3138,6 +3138,20 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       read_at timestamptz NOT NULL DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_kyc_trust_deed_readings_company ON kyc_trust_deed_readings (company_id, read_at DESC)`,
+    // A trust in the ownership (Woody, 25 November 2026): the CRM trust record
+    // made for the trust that holds a party (or a company above it), so Jack's
+    // trust structure is kept on it. server/trust-structure.ts.
+    `CREATE TABLE IF NOT EXISTS kyc_ownership_trusts (
+      id serial PRIMARY KEY,
+      party_company_id varchar NOT NULL,
+      entity_id varchar,
+      trust_company_id varchar NOT NULL,
+      held_at text,
+      created_by varchar,
+      created_by_name text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_kyc_ownership_trusts_party ON kyc_ownership_trusts (party_company_id, COALESCE(entity_id, ''))`,
     // On a sale, the record HMRC asks for when the joint agent found the
     // other side (Woody, 22 November 2026: "We have to do what HMRC say";
     // AMLG2200 section 21): when, how and whom BGP asked for the joint

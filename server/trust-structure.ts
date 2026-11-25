@@ -66,6 +66,49 @@ export async function trustAskFor(companyId: string, db: Db = pool): Promise<{ d
   };
 }
 
+// ── A trust in the ownership (Woody, 25 November 2026) ──────────────────────
+// The trust that holds a party, or a company above it, read from BGP's checks
+// before asking, and the CRM trust record made for it so Jack's structure is
+// kept there. Its request goes as a client file on that record (no transaction
+// party), and the party's sign-off waits for its information.
+
+export interface OwnershipTrustView {
+  held: import("@shared/ownership-trust").OwnershipTrustHeld;
+  trust: { id: string; name: string } | null;
+  gaps: string[];
+}
+
+export async function ownershipTrustFor(partyId: string, entityId: string | null, db: Db = pool): Promise<OwnershipTrustView | null> {
+  if (await isTrustRecord(partyId, db)) return null;
+  const { latestPrecheck } = await import("./kyc-prechecks");
+  const { ownershipTrustFrom, ownershipTrustGapWords } = await import("@shared/ownership-trust");
+  const stored = await latestPrecheck(partyId, entityId).catch(() => null);
+  const held = ownershipTrustFrom(stored?.result);
+  if (!held) return null;
+  const link = (await db.query(
+    `SELECT t.trust_company_id, c.name FROM kyc_ownership_trusts t JOIN crm_companies c ON c.id = t.trust_company_id
+      WHERE t.party_company_id = $1 AND COALESCE(t.entity_id, '') = COALESCE($2::varchar, '') AND c.merged_into_id IS NULL LIMIT 1`,
+    [partyId, entityId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  const trust = link ? { id: String(link.trust_company_id), name: String(link.name) } : null;
+  const gaps = trust ? (await trustGapsFor(trust.id, db)).map(g => g.words) : [];
+  return { held, trust, gaps: ownershipTrustGapWords(held, !!trust, gaps) };
+}
+
+/** The ownership trust's gaps for the sign-off: none when there is no trust in the ownership. A failed read holds it. */
+export async function ownershipTrustGapsFor(partyId: string, entityId: string | null, db: Db = pool): Promise<string[]> {
+  try {
+    return (await ownershipTrustFor(partyId, entityId, db))?.gaps || [];
+  } catch {
+    return ["the trust in the ownership could not be read"];
+  }
+}
+
+async function dealPartyIds(dealId: string, role: string): Promise<{ partyId: string; entityId: string | null } | null> {
+  if (!["landlord", "tenant", "vendor", "purchaser"].includes(role)) return null;
+  const d = (await pool.query(`SELECT ${role}_id AS party, ${role}_trading_entity_id AS entity FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+  return d?.party ? { partyId: String(d.party), entityId: d.entity ? String(d.entity) : null } : null;
+}
+
 async function staffMe(req: Request): Promise<{ id: string; name: string | null } | null> {
   const userId = (req as any).session?.userId || (req as any).tokenUserId;
   if (!userId) return null;
@@ -362,13 +405,15 @@ router.post("/api/trust-structure/:companyId/request", async (req: Request, res:
     if (!(await isTrustRecord(companyId))) return res.status(409).json({ message: "Record it as a trust first." });
     const dealId = text(req.body?.dealId);
     if (!dealId) return res.status(400).json({ message: "Open it from the transaction." });
+    // A trust in the ownership is no party to the transaction: its request goes on its own record.
+    const ownership = (await pool.query(`SELECT 1 FROM kyc_ownership_trusts WHERE trust_company_id = $1 LIMIT 1`, [companyId])).rows.length > 0;
     const name = text(req.body?.name).slice(0, 120);
     if (!name) return res.status(400).json({ message: "Enter the name of the person to ask." });
     const { TRUST_REQUEST_DOCS, isKycDocKey } = await import("@shared/kyc-request");
     const asked = Array.isArray(req.body?.docs) ? (req.body.docs as unknown[]).filter(isKycDocKey).filter(k => TRUST_REQUEST_DOCS.includes(k)) : TRUST_REQUEST_DOCS;
     if (!asked.length) return res.status(400).json({ message: "Ask for at least one document." });
     const u = (await pool.query(`SELECT email FROM users WHERE id = $1`, [me.id])).rows[0];
-    const out = await createClientCheck(dealId, {
+    const out = await createClientCheck(ownership ? null : dealId, {
       companyId, contactId: text(req.body?.contactId) || null, name, email: text(req.body?.email), mobile: text(req.body?.mobile) || null,
       kind: "company", needsIdCheck: false, docs: asked, note: text(req.body?.note).slice(0, 2000) || null,
     }, { id: me.id, name: me.name, email: u?.email || null }, { purpose: "trust_structure" });
@@ -402,6 +447,55 @@ router.put("/api/trust-structure/:companyId", async (req: Request, res: Response
     res.json({ ok: true, record, documents: docs, gaps: trustStructureGaps(record?.structure || null, docs) });
   } catch (e: any) {
     res.status(500).json({ message: e?.message || "Could not save the trust's structure." });
+  }
+});
+
+// A trust in the ownership: what was found, and the trust record made for it.
+router.get("/api/deals/:id/parties/:role/ownership-trust", async (req: Request, res: Response) => {
+  try {
+    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const ids = await dealPartyIds(String(req.params.id), String(req.params.role));
+    if (!ids) return res.json({ view: null });
+    res.json({ view: await ownershipTrustFor(ids.partyId, ids.entityId) });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || "Could not read the trust in the ownership." });
+  }
+});
+
+router.post("/api/deals/:id/parties/:role/ownership-trust", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: STAFF_ONLY });
+    const ids = await dealPartyIds(String(req.params.id), String(req.params.role));
+    if (!ids) return res.status(404).json({ message: "Set the party on the transaction first." });
+    const view = await ownershipTrustFor(ids.partyId, ids.entityId);
+    if (!view) return res.status(409).json({ message: "BGP's checks found no trust in this party's ownership. Run them again first." });
+    if (view.trust) return res.json({ view });
+    const { ownershipTrustDefaultName } = await import("@shared/ownership-trust");
+    const name = (text(req.body?.name) || ownershipTrustDefaultName(view.held.heldAt)).slice(0, 160);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const made = (await client.query(
+        `INSERT INTO crm_companies (id, name, company_type, aml_subject_type, description)
+         VALUES (gen_random_uuid()::text, $1, 'Trust', 'trust', $2) RETURNING id`,
+        [name, `Added by ${me.name || "BGP"} for the AML checks: the trust that holds ${view.held.heldAt}.`])).rows[0];
+      await client.query(
+        `INSERT INTO kyc_ownership_trusts (party_company_id, entity_id, trust_company_id, held_at, created_by, created_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+        [ids.partyId, ids.entityId, made.id, view.held.heldAt, me.id, me.name]);
+      await client.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'ownership_trust', $2, $3)`,
+        [ids.partyId, me.name || me.id, `Recorded the trust that holds ${view.held.heldAt} as ${name}, to keep its information.`]);
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    res.json({ view: await ownershipTrustFor(ids.partyId, ids.entityId) });
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || "Could not record the trust." });
   }
 });
 

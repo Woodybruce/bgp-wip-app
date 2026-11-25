@@ -232,6 +232,8 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     inHouseEdd: (await (await import("./aml-authority")).readInHouseEdd()).on,
     trust,
     trustGaps: trust ? (await import("./trust-structure").then(m => m.trustGapsFor(party.brandId, db)).catch(() => [{ words: "the trust's structure could not be read" }])).map(g => g.words) : [],
+    // A trust in the ownership (Woody, 25 November 2026): its record and information first.
+    ownershipTrustGaps: trust || !party.dealId || party.regime === "sanctions_only" ? [] : await import("./trust-structure").then(m => m.ownershipTrustGapsFor(party.brandId, party.entityId, db)).catch(() => ["the trust in the ownership could not be read"]),
     sanctionsFlags: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => isSanctionsFlag(f)).length,
     // A company registered abroad: its own register's extract (23 November 2026).
     registerExtract: party.regime === "sanctions_only" || kind !== "company" || trust ? null

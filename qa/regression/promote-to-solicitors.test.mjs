@@ -198,7 +198,7 @@ async function runBilling(o = {}) {
     },
   });
   let handler;
-  mod.setupBillingEntityRoutes({ post(url, ...handlers) { if (url === '/api/billing-entities') handler = handlers.at(-1); } });
+  mod.setupBillingEntityRoutes({ get() {}, post(url, ...handlers) { if (url === '/api/billing-entities') handler = handlers.at(-1); } });
   const res = response();
   await handler({ body: o.body || { brandId: 'b1', companyNumber: '12345678' }, session: { userId: 'u1' } }, res);
   return { res, body: plain(res.body ?? null), writes, reads, xeroCalls: plain(xeroCalls), remembered: plain(remembered), chCalls: plain(chCalls), mod };

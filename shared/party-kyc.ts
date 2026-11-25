@@ -195,6 +195,8 @@ export interface SignOffFacts {
   // 23 November 2026). trustGaps: what its file still needs.
   trust?: boolean;
   trustGaps?: string[];
+  // A trust in the ownership (25 November 2026): what its record still needs.
+  ownershipTrustGaps?: string[];
   // The guarantors of the party (23 November 2026; HMRC AMLG2300 s18: a
   // guarantor is a party to the tenancy): the party is not signed off until
   // BGP's checks on each have run (shared/deal-guarantor.ts).
@@ -297,6 +299,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
     const guarantorEdd = guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);
     if (guarantorEdd) return guarantorEdd;
     if (f.trust && f.trustGaps?.length) return `The trust's file is not complete: ${f.trustGaps.map(g => g.replace(/\.$/, "")).join("; ")}.`;
+    if (f.ownershipTrustGaps?.length) return `The trust in the ownership is not complete: ${f.ownershipTrustGaps.join("; ")}.`;
     if (f.trust && f.clientChecksOutstanding?.length) return `The trust's people still owe their checks: ${f.clientChecksOutstanding.join("; ")}.`;
     if (text(f.note).length < IN_HOUSE_EDD_NOTE_MIN) return "Enhanced due diligence by BGP: say what was checked and why the risk is acceptable (each red flag or factor, the source of funds and of wealth where it matters, who is behind any company abroad or trust): at least a couple of sentences.";
     return null;

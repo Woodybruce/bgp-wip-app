@@ -319,6 +319,22 @@ export function setupBillingEntityRoutes(app: Express) {
     }
   });
 
+  // GLEIF, searched by name for the Registered abroad box (Woody, 25 November
+  // 2026: "can this all not just be automatically when i type in Google LLC?").
+  // Reads only. BGP staff signed in as themselves.
+  app.get("/api/billing-entities/gleif-search", signedIn, async (req: Request, res: Response) => {
+    try {
+      const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+      if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) return res.status(403).json({ message: BILLING_ENTITY_STAFF_ONLY });
+      const { gleifOn, searchGleifByName } = await import("./gleif");
+      if (!gleifOn()) return res.json({ results: [], off: true });
+      const results = await searchGleifByName(String(req.query.q || ""));
+      res.json({ results: results.map(e => ({ lei: e.lei, name: e.name, country: e.country, jurisdiction: e.jurisdiction, registeredAs: e.registeredAs, status: e.status })) });
+    } catch (err: any) {
+      res.status(502).json({ message: err?.message || "GLEIF could not be searched. Try again in a moment.", results: [] });
+    }
+  });
+
   app.post("/api/billing-entities", signedIn, async (req: Request, res: Response) => {
     try {
       // Xero and the CRM's companies are BGP's: a client login, or BGP staff

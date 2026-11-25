@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Trusts and charities", title: "A trust in the ownership is recorded and asked for",
+    text: "When BGP's checks find a trust holding the party, or a company above it, the transaction's AML asks to record that trust. Its information (kind, settlor, trustees, beneficiaries) is kept as for a trust that is the party, asked of its trustees or added by BGP, and the officers' sign-off waits for it. Not on a sanctions-only letting." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A person checked before is not asked again",
     text: "An identity check a person passed with Veriff on another transaction counts for three years when their name and date of birth match, or with no register date, their name and email. A proof of address from elsewhere counts while in date (three months, a council tax bill a year). Out of date, it is flagged and asked for again." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "The City of London Corporation is a public body, with no Companies House number",

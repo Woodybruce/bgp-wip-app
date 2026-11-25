@@ -95,6 +95,8 @@ export interface AmlBoxFacts {
   // structuring"). trustGaps: what BGP still has to record on its structure.
   trust?: boolean;
   trustGaps?: string[];
+  // A trust in the ownership (25 November 2026): what its record still needs.
+  ownershipTrustGaps?: string[];
   // The name reads like a UK public body and nobody has said what it is
   // (shared/aml-sdd.ts): confirming it comes before looking for a company.
   publicBodyHint?: boolean;
@@ -239,6 +241,9 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   // A trust's structure comes first: its people are the ones to check.
   if (f.trust && f.trustGaps?.length) {
     return step("act", "bgp", "To do", f.trustGaps[0], "trust");
+  }
+  if (f.ownershipTrustGaps?.length) {
+    return step("act", "bgp", "To do", f.ownershipTrustGaps[0], "trust");
   }
   // Enhanced due diligence by BGP is the officers' to sign off, not an agent's.
   const canSign = edd ? f.canDecide : f.canSignOff;

@@ -9,7 +9,7 @@ import { PartyDocumentsBox } from "@/components/kyc-documents";
 import { PartyFiles } from "@/components/aml-files";
 import { SecondReadPanel } from "@/components/aml-second-read";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
-import { TrustStructurePanel, trustSummary, useTrustStructure } from "@/components/trust-structure";
+import { OwnershipTrustPanel, TrustStructurePanel, useOwnershipTrust, trustSummary, useTrustStructure } from "@/components/trust-structure";
 import { DealPartyEditor, DealPartyLines, PublicBodyLine, TrustLine, partyAmlFacts, useDealParties, useWorkOutSigningCompanies } from "@/components/deal-parties";
 import { SddBox } from "@/components/aml-sdd";
 import { RedFlagList, RedFlagLists } from "@/components/aml-red-flags";
@@ -603,6 +603,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // A trust's structure, recorded by BGP (23 November 2026): checked by the officers, never KYC4U.
   const trustQ = useTrustStructure(cp.id, staff && isTrust);
   const trustRecordedGaps = isTrust ? (trustQ.data?.gaps || []).filter(g => g.from === "recorded").map(g => g.words) : [];
+  // A trust in the ownership (25 November 2026): Jack's trust record, kept on a record of its own.
+  const ownershipTrust = useOwnershipTrust(dealId, cp.role, staff && !isTrust && !sanctionsOnly);
   // Owned through a company registered abroad: the officers find the people behind it.
   const ownedAbroad = pre?.company?.ownersAbroad || [];
   // What the app traced past Companies House and what BGP recorded (21 November 2026).
@@ -645,6 +647,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     billingDiffers: !!party?.client && party.billing?.state === "different",
     trust: isTrust,
     trustGaps: trustRecordedGaps,
+    ownershipTrustGaps: !isTrust && !sanctionsOnly ? ownershipTrust.data?.view?.gaps || [] : [],
     publicBodyHint: !!party?.brand.publicBodyHint && !party?.brand.recordPublicBody,
     ownersAbroad: ownedAbroad.length ? ownedAbroad.map(a => `${a.name}, ${a.country}`).join("; ") : null,
     reliance: people?.reliance?.words || null,
@@ -896,6 +899,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {party && !settled && <PublicBodyLine dealId={dealId} party={party} compact />}
             {party && !settled && <TrustLine dealId={dealId} party={party} compact />}
             {isTrust && <TrustStructurePanel companyId={cp.id} dealId={dealId} partyName={partyName} onPeople={() => reveal("documents")} />}
+            {!isTrust && !sanctionsOnly && <OwnershipTrustPanel dealId={dealId} role={cp.role} />}
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
                 {/* The party itself registered abroad, with no UK record (23 November 2026): not a parent. */}

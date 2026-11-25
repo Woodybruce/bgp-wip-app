@@ -68,6 +68,25 @@ export async function searchGleif(q: { name: string; country: string | null; reg
 }
 
 /**
+ * Companies on GLEIF as a person types a name (Woody, 25 November 2026: "same
+ * as companies house can we search up GLEIF that way?", in the Registered
+ * abroad box). The exact legal name first (GLEIF's full-text search ranks
+ * "GOOGLE LLC" seventh for "Google LLC"), then its full-text matches; active
+ * entities first. Up to ten.
+ */
+export async function searchGleifByName(q: string, fetcher: typeof fetch = fetch): Promise<GleifEntity[]> {
+  const name = String(q || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (name.length < 2) return [];
+  const out: GleifEntity[] = [];
+  const keep = (list: GleifEntity[]) => { for (const e of list) if (!out.some(x => x.lei === e.lei)) out.push(e); };
+  keep(recordsOf(await gleifGet("/lei-records", { "filter[entity.legalName]": name, "page[size]": "10" }, fetcher)));
+  keep(recordsOf(await gleifGet("/lei-records", { "filter[fulltext]": name, "page[size]": "15" }, fetcher)));
+  const key = name.toLowerCase();
+  const rank = (e: GleifEntity) => (e.name.toLowerCase() === key ? 0 : 1) * 2 + (String(e.status || "").toUpperCase() === "ACTIVE" ? 0 : 1);
+  return out.map((e, i) => ({ e, i })).sort((a, b) => rank(a.e) - rank(b.e) || a.i - b.i).map(x => x.e).slice(0, 10);
+}
+
+/**
  * A company followed up GLEIF: the record that is it, each direct parent in
  * turn (at most six), and what GLEIF says is above the last one. A company
  * abroad since 21 November 2026, and a UK party since the same evening.

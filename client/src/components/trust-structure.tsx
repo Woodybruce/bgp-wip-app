@@ -564,3 +564,67 @@ function DeedReadBack({ reading }: { reading: TrustDeedReading }) {
     </div>
   );
 }
+
+// ── A trust in the ownership (Woody, 25 November 2026) ──────────────────────
+// BGP's checks found the party, or a company above it, held through a trust
+// (Beauty Pie Limited, by trustees at The R&H Trust Co. in Cayman). Record the
+// trust once, then Jack's trust panel runs on that record: Ask for trust
+// information emails its trustees or their firm, and the sign-off waits for it.
+interface OwnershipTrustView {
+  held: { heldAt: string; people: Array<{ name: string; role: "trustee" | "controller" }> };
+  trust: { id: string; name: string } | null;
+  gaps: string[];
+}
+
+export function useOwnershipTrust(dealId: string, role: string, enabled = true) {
+  return useQuery<{ view: OwnershipTrustView | null }>({
+    queryKey: ["/api/deals", dealId, "parties", role, "ownership-trust"],
+    enabled,
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/parties/${role}/ownership-trust`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { view: null };
+      return r.json();
+    },
+  });
+}
+
+export function OwnershipTrustPanel({ dealId, role }: { dealId: string; role: string }) {
+  const { toast } = useToast();
+  const key = ["/api/deals", dealId, "parties", role, "ownership-trust"];
+  const q = useOwnershipTrust(dealId, role);
+  const [name, setName] = useState("");
+  const record = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/ownership-trust`, { name: name.trim() || undefined })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: key });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+      toast({ title: "Trust recorded", description: "Ask for its information, or add it yourself." });
+    },
+    onError: (e: any) => toast({ title: "Not recorded", description: String(e?.message || e).replace(/^\d+:\s*/, ""), variant: "destructive" }),
+  });
+  const view = q.data?.view;
+  if (!view) return null;
+  const trustees = view.held.people.filter(p => p.role === "trustee").map(p => p.name);
+  const controllers = view.held.people.filter(p => p.role === "controller").map(p => p.name);
+  return (
+    <div className="space-y-1.5 rounded-md border px-2.5 py-2 text-xs" data-testid={`aml-ownership-trust-${role}`}>
+      <div className="font-semibold">A trust holds {view.held.heldAt}</div>
+      <p className="text-muted-foreground">
+        {trustees.length ? <>Trustees: {trustees.join(", ")}. </> : null}
+        {controllers.length ? <>Control over the trustees: {controllers.join(", ")}. </> : null}
+        Record the trust to keep its information: what kind of trust, who set it up and who benefits.
+      </p>
+      {view.trust ? (
+        <TrustStructurePanel companyId={view.trust.id} dealId={dealId} partyName={view.trust.name} />
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder={`The trust's name, if known (else "Trust that holds ${view.held.heldAt}")`}
+            className="h-7 min-w-0 flex-1 text-xs" maxLength={160} data-testid={`aml-ownership-trust-name-${role}`} />
+          <Button type="button" size="sm" className="h-7 text-xs" disabled={record.isPending} onClick={() => record.mutate()} data-testid={`aml-ownership-trust-record-${role}`}>
+            {record.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Plus className="mr-1 h-3.5 w-3.5" />}Record the trust
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
