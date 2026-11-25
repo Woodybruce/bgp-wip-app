@@ -7519,9 +7519,14 @@ the identity", with no proof of address.
   and page list List B again and say each person's link asks for an identity
   check and a proof of address. The person acting for a trust who is not one
   of its people still sends none. `TRUST_PERSON_EVIDENCE` and the rules in
-  short say so. **Issue 6 of the policy and Issue 2 of the trust checklist
-  still say identity only for a trust's people: a new issue is Jack's to
-  approve.**
+  short say so. **Issue 7 of the policy and Issue 3 of the trust checklist**
+  (Jack, the same day: "Ok on issue 6 and 2 of checklist. Please update")
+  say the same and are on the Policy pill (`policy-issue-7`,
+  `checklist-trusts-issue-3`; Issue 6 and checklist Issue 2 kept on the
+  quiet line): the Individuals section's proof of address paragraph, a
+  change record row for Issue 7, and the checklist's "For each individual"
+  line. `POLICY_SOURCE`, the rules in short, ChatBGP's prompt and the app
+  map name Issue 7; everyone confirms Issue 7 afresh in AML training.
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in

@@ -51,6 +51,7 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-7", title: "Anti-Money Laundering Policy", issue: 7, date: "November 2026", file: "bgp-aml-policy-issue-7.docx" },
   { key: "policy-issue-6", title: "Anti-Money Laundering Policy", issue: 6, date: "November 2026", file: "bgp-aml-policy-issue-6.docx" },
   { key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5, date: "November 2026", file: "bgp-aml-policy-issue-5.docx" },
   { key: "policy-issue-4", title: "Anti-Money Laundering Policy", issue: 4, date: "November 2026", file: "bgp-aml-policy-issue-4.docx" },
@@ -59,13 +60,16 @@ export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
   { key: "risk-assessment-issue-4", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 4, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-4.docx" },
   { key: "risk-assessment-issue-3", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 3, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-3.docx" },
   { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
+  { key: "checklist-trusts-issue-3", title: "AML checklist: trusts", issue: 3, date: "November 2026", file: "bgp-aml-checklist-trusts-issue-3.docx" },
   { key: "checklist-trusts-issue-2", title: "AML checklist: trusts", issue: 2, date: "November 2026", file: "bgp-aml-checklist-trusts-issue-2.docx" },
   { key: "checklist-trusts", title: "AML checklist: trusts", issue: 1, date: "November 2026", file: "bgp-aml-checklist-trusts.docx" },
 ];
 
 // ── Checklists for enhanced due diligence ───────────────────────────────────
 // BGP's AML checklist for trusts (Jack, 20 November 2026; Issue 2 with policy
-// Issue 6, 25 November 2026, its section numbers put right), item for item:
+// Issue 6, 25 November 2026, its section numbers put right; Issue 3 with
+// policy Issue 7 the same day: a trust's people also send a proof of address
+// (Jack)), item for item:
 // what the officers' second read looks for on a trust.
 export interface AmlChecklistItem { n: number; title: string; detail: string }
 export const TRUST_CHECKLIST: readonly AmlChecklistItem[] = [
@@ -424,7 +428,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy (Issue 6) and risk assessment (Issue 4)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 7) and risk assessment (Issue 4)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);

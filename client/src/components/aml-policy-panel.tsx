@@ -74,7 +74,7 @@ function OfficersDialog({ feed, onClose }: { feed: PolicyFeed; onClose: () => vo
       <DialogContent className="max-w-md" data-testid="aml-officers-dialog">
         <DialogHeader>
           <DialogTitle>AML officers</DialogTitle>
-          <DialogDescription>The policy (Issue 6) names {feed.policyNames.nominated} as Nominated Officer and {andList(feed.policyNames.deputies)} as Deputies. The Nominated Officer and each Deputy decide: enhanced parties, red flags set aside and parties marked Not required.</DialogDescription>
+          <DialogDescription>The policy (Issue 7) names {feed.policyNames.nominated} as Nominated Officer and {andList(feed.policyNames.deputies)} as Deputies. The Nominated Officer and each Deputy decide: enhanced parties, red flags set aside and parties marked Not required.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">

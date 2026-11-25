@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Jack"], topic: "Policy", title: "Policy Issue 7 and trust checklist Issue 3",
+    text: "Issue 7 of the AML policy and Issue 3 of the trust checklist replace Issue 6 and Issue 2 on the Policy pill. They add that each individual on a trust who is verified also gives a proof of address. Everything else in Issue 6 stands. Everyone confirms Issue 7 in AML training." },
   { date: "2026-11-25", who: ["Jack"], topic: "Trusts and charities", title: "A trust's people send a proof of address",
     text: "Every individual on a trust who is verified (the settlor, each trustee, a protector, a verified beneficiary, anyone else with control) sends a proof of address as well as their identity check. The trustees are in practice the customer, and trusts are enhanced due diligence. The trust's request email lists List B for both routes, the online check and certified copies. Everyone else follows the rule of the same day." },
   { date: "2026-11-25", who: ["Woody", "Jack"], topic: "Who we check and when", title: "A company abroad owned by a US-listed group",

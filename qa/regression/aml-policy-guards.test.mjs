@@ -10,7 +10,7 @@ const read = (p) => readFileSync(p, 'utf8');
 
 test('the documents are kept with the app and served to BGP staff, outside the retired /api/aml/', () => {
   // Issue 6 of the policy (25 November 2026) and Issue 4 of the risk assessment, the source of truth; earlier issues kept (policy M).
-  for (const f of ['bgp-aml-policy-issue-6.docx', 'bgp-aml-checklist-trusts-issue-2.docx', 'bgp-aml-checklist-trusts.docx', 'bgp-aml-policy-issue-5.docx', 'bgp-firm-wide-aml-risk-assessment-issue-4.docx', 'bgp-aml-policy-issue-4.docx', 'bgp-firm-wide-aml-risk-assessment-issue-3.docx', 'bgp-aml-policy-issue-3.docx', 'bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
+  for (const f of ['bgp-aml-policy-issue-7.docx', 'bgp-aml-checklist-trusts-issue-3.docx', 'bgp-aml-policy-issue-6.docx', 'bgp-aml-checklist-trusts-issue-2.docx', 'bgp-aml-checklist-trusts.docx', 'bgp-aml-policy-issue-5.docx', 'bgp-firm-wide-aml-risk-assessment-issue-4.docx', 'bgp-aml-policy-issue-4.docx', 'bgp-firm-wide-aml-risk-assessment-issue-3.docx', 'bgp-aml-policy-issue-3.docx', 'bgp-aml-policy-issue-2.docx', 'bgp-firm-wide-aml-risk-assessment-issue-2.docx']) {
     assert.ok(existsSync(`server/assets/aml-policy/${f}`), f);
   }
   const routes = read('server/aml-policy.ts');
