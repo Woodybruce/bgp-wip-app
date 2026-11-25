@@ -168,6 +168,16 @@ test("a tenant company's recent accounts on file stand for where the money comes
   assert.ok(precheckAsks(input({ accounts: { madeUpTo: "2023-03-31", dormant: false } }), { kind: "company", role: "tenant", idCheck: true, contactName: null, today: TODAY }).docs.includes("source_of_funds"));
 });
 
+test("a new tenant company with no accounts: its parent's accounts stand for where the money comes from", () => {
+  const ctx = { kind: "company" as const, role: "tenant", idCheck: true, contactName: null, today: TODAY };
+  const withParent = precheckAsks(input({ accounts: null, parentAccounts: { name: "BEAUTY PIE LIMITED", madeUpTo: "2025-12-31" } }), ctx);
+  assert.ok(!withParent.docs.includes("source_of_funds"));
+  assert.match(withParent.notAsked.find(n => n.key === "source_of_funds")!.reason, /BEAUTY PIE LIMITED.*2025-12-31/);
+  // Old parent accounts, or a buyer, are still asked.
+  assert.ok(precheckAsks(input({ accounts: null, parentAccounts: { name: "X LIMITED", madeUpTo: "2022-12-31" } }), ctx).docs.includes("source_of_funds"));
+  assert.ok(precheckAsks(input({ accounts: null, parentAccounts: { name: "X LIMITED", madeUpTo: "2025-12-31" } }), { ...ctx, role: "purchaser" }).docs.includes("source_of_funds"));
+});
+
 test("with nothing found, or for a private individual, the usual list is asked", () => {
   // The person acting gives a proof of address only as an owner (23 November 2026).
   const nothing = precheckAsks(null, { kind: "company", role: "tenant", idCheck: true, contactName: null });

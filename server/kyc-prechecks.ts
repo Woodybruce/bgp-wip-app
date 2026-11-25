@@ -249,7 +249,7 @@ async function fileChDocument(input: {
   const data = input.bytes ? await input.bytes() : await downloadChDocument(input.docId);
   const { saveFile } = await import("./file-storage");
   await saveFile(`chat-media/${fileName}`, data, "application/pdf", `${input.title}.pdf`);
-  const docType = input.kind === "incorporation" ? "company_cert" : input.kind === "accounts" ? "company_accounts" : "confirmation_statement";
+  const docType = input.kind === "incorporation" ? "company_cert" : input.kind === "accounts" || input.kind === "parent_accounts" ? "company_accounts" : "confirmation_statement";
   const row = (await pool.query(
     `INSERT INTO kyc_documents (company_id, trading_entity_id, deal_id, doc_type, file_url, file_name, file_size, mime_type, notes, uploaded_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, 'application/pdf', $8, NULL) RETURNING id`,
@@ -263,7 +263,7 @@ const shortDate = (iso: string | null | undefined): string => {
   return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }) : "";
 };
 
-async function documentsFor(n: string, companyId: string, entityId: string | null, dealId: string | null, companyName: string, profile: any, errors: string[]): Promise<{ documents: PrecheckDocument[]; accountsType: string | null }> {
+async function documentsFor(n: string, companyId: string, entityId: string | null, dealId: string | null, companyName: string, profile: any, errors: string[], parent: { name: string; number: string } | null = null): Promise<{ documents: PrecheckDocument[]; accountsType: string | null }> {
   const documents: PrecheckDocument[] = [];
   let accountsType: string | null = null;
 
@@ -317,6 +317,29 @@ async function documentsFor(n: string, companyId: string, entityId: string | nul
     } catch (e: any) {
       documents.push({ kind: "accounts", title: "Latest accounts", filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e) });
       errors.push(`Latest accounts: ${words(e)}`);
+    }
+  }
+
+  // A company with no accounts of its own to download (new, or filed on
+  // paper): its parent's latest accounts, so the client is not asked where
+  // the money comes from (BGP's AML policy 4.4; Woody, 25 November 2026).
+  if (parent && !documents.some(d => d.kind === "accounts" && d.kycDocumentId)) {
+    try {
+      const history = await ch(`/company/${parent.number}/filing-history?category=accounts&items_per_page=25`);
+      const { pickLatestAccountsFiling } = await import("./ch-accounts");
+      const item = pickLatestAccountsFiling(history?.items || [], null);
+      const docId = item ? docIdOf(item) : null;
+      if (!item || !docId) {
+        documents.push({ kind: "parent_accounts", title: `${parent.name} accounts`, filedOn: item?.date || null, madeUpTo: null, kycDocumentId: null, error: item ? "Companies House holds no copy to download (filed on paper)" : "the parent has filed no accounts", parent });
+      } else {
+        const madeUpTo = item.description_values?.made_up_date || null;
+        const title = `${parent.name} accounts made up to ${shortDate(madeUpTo) || madeUpTo || "the latest date"} (parent of ${companyName})`.slice(0, 200);
+        const kycDocumentId = await fileChDocument({ companyId, entityId, dealId, docId, kind: "parent_accounts", title });
+        documents.push({ kind: "parent_accounts", title, filedOn: item.date || null, madeUpTo, kycDocumentId, error: null, parent });
+      }
+    } catch (e: any) {
+      documents.push({ kind: "parent_accounts", title: `${parent.name} accounts`, filedOn: null, madeUpTo: null, kycDocumentId: null, error: words(e), parent });
+      errors.push(`The parent's accounts: ${words(e)}`);
     }
   }
 
@@ -493,7 +516,14 @@ async function readCompaniesHouse(number: string, companyId: string, entityId: s
   }
 
   const companyName = clean(profile.company_name, 160);
-  const { documents, accountsType } = await documentsFor(n, companyId, entityId, dealId, companyName, profile, errors);
+  // The parent: the one UK company on the register that owns it, else the
+  // first company up the chain.
+  const ukCorporate = owners.filter(o => (o.kind === "company" || o.kind === "legal_person") && o.registrationNumber && ownerRegister(o.country) !== "abroad");
+  const firstUp = chain.find(c => c.number && !c.unread);
+  const parent = ukCorporate.length === 1
+    ? { name: ukCorporate[0].name, number: padNumber(ukCorporate[0].registrationNumber!) }
+    : !ukCorporate.length && firstUp ? { name: firstUp.name, number: firstUp.number } : null;
+  const { documents, accountsType } = await documentsFor(n, companyId, entityId, dealId, companyName, profile, errors, parent && parent.number !== n ? parent : null);
 
   const office = profile.registered_office_address || {};
   // An overseas entity owned by a company abroad on its register: listed (shared/kyc-prechecks.ts, withRoeListing).

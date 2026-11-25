@@ -489,8 +489,11 @@ export function checkWebAnswer(raw: unknown, citations: Array<{ url: string }>):
 // ── The stored result ───────────────────────────────────────────────────────
 
 export interface PrecheckDocument {
-  kind: "accounts" | "confirmation_statement" | "incorporation";
+  kind: "accounts" | "confirmation_statement" | "incorporation" | "parent_accounts";
   title: string;
+  // For parent_accounts: the parent whose accounts these are (Woody, 25
+  // November 2026: a new company with no accounts of its own).
+  parent?: { name: string; number: string } | null;
   filedOn: string | null;
   madeUpTo: string | null;
   kycDocumentId: string | null;
@@ -1139,6 +1142,8 @@ export interface PrecheckAskInput {
   peopleUpChain: Array<{ name: string; foundAt: string; controls: string[] }>;
   directors: string[];
   accounts: { madeUpTo: string | null; dormant: boolean } | null;
+  // A new company with none of its own: its parent's latest accounts, downloaded by BGP's checks.
+  parentAccounts?: { name: string; madeUpTo: string | null } | null;
   // Corporate owners registered abroad (20 November 2026).
   ownersAbroad?: Array<{ name: string; country: string }>;
 }
@@ -1172,6 +1177,11 @@ export function askInputFrom(result: KycPrecheckResult | null): PrecheckAskInput
     accounts: ch?.documents.some(d => d.kind === "accounts" && d.kycDocumentId)
       ? { madeUpTo: ch.lastAccountsMadeUpTo, dormant: /dormant/i.test(String(ch.lastAccountsType || "")) }
       : null,
+    parentAccounts: (() => {
+      if (ch?.documents.some(d => d.kind === "accounts" && d.kycDocumentId)) return null;
+      const d = ch?.documents.find(x => x.kind === "parent_accounts" && x.kycDocumentId && x.parent);
+      return d ? { name: d.parent!.name, madeUpTo: d.madeUpTo } : null;
+    })(),
   };
 }
 
@@ -1276,6 +1286,13 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const age = monthsSince(input.accounts.madeUpTo, today);
     if (age !== null && age <= 24) {
       drop("source_of_funds", `Its latest accounts, made up to ${input.accounts.madeUpTo}, were downloaded from Companies House and are on file.`);
+    }
+  } else if (String(ctx.role || "").toLowerCase() === "tenant" && !input.accounts && input.parentAccounts) {
+    // A new company with no accounts of its own: its parent's latest accounts
+    // stand in (BGP's AML policy 4.4; Woody, 25 November 2026).
+    const age = monthsSince(input.parentAccounts.madeUpTo, today);
+    if (age !== null && age <= 24) {
+      drop("source_of_funds", `It has no accounts of its own yet. Its parent ${input.parentAccounts.name}'s latest accounts, made up to ${input.parentAccounts.madeUpTo}, were downloaded from Companies House and are on file (BGP's AML policy 4.4).`);
     }
   }
   noAddress();
@@ -1880,6 +1897,7 @@ const DOC_WORDS: Record<PrecheckDocument["kind"], string> = {
   accounts: "latest accounts",
   confirmation_statement: "latest confirmation statement",
   incorporation: "certificate of incorporation",
+  parent_accounts: "parent's latest accounts",
 };
 
 // One line per check, for KYC4U's note: what BGP already did, so KYC4U does

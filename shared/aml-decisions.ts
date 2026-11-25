@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A new company's parent accounts stand in for its own",
+    text: "When a company that signs has no accounts of its own to download, BGP's checks download its parent's latest accounts from Companies House and file them on the party. For a tenant, accounts made up in the last 24 months mean the client is not asked where the money comes from (BGP's AML policy 4.4). A buyer is still asked." },
   { date: "2026-11-25", who: ["Woody"], topic: "Officers and sign-off", title: "One company, one sign-off",
     text: "A company signed off on one CRM record counts on every transaction where the same company signs, whatever record it is filed under: the same Companies House number is the same company. A company's own decision on its record still comes first." },
   { date: "2026-11-25", who: ["Woody"], topic: "Trusts and charities", title: "A trust in the ownership is recorded and asked for",
