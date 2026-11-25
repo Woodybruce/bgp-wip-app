@@ -81,6 +81,20 @@ export interface KycRedFlag {
   // a sector, a super-prime sale), not a finding about the party. It counts
   // as a red flag does (enhanced due diligence); the screens list it apart.
   factor?: boolean;
+  // A ComplyAdvantage match an officer has confirmed is the person (25 November 2026).
+  confirmed?: boolean;
+}
+
+/**
+ * A ComplyAdvantage match (other than a sanctions list) is a possible match
+ * to check, not a finding (Woody, 25 November 2026: "everything is enhanced
+ * because of all the red flags from comply"). HMRC asks for enhanced due
+ * diligence for a politically exposed person, not a namesake: the match makes
+ * a party enhanced only once an officer confirms it is the person. It still
+ * waits for a decision before sign-off: confirm it, or set it aside.
+ */
+export function flagToConfirm(f: Pick<KycRedFlag, "kind" | "evidence" | "confirmed"> & { factor?: boolean }): boolean {
+  return f.kind === "provider_screen" && !f.factor && !f.confirmed && !(f.evidence || []).some(e => /^type:sanction/.test(e));
 }
 
 // ── Setting a flag aside ────────────────────────────────────────────────────
@@ -102,6 +116,8 @@ export interface KycFlagReview {
   comment: string;
   by: string | null;
   at: string | null;
+  // An officer confirmed the match is the person: the flag stays and counts.
+  confirmed?: boolean;
 }
 
 export interface SetAsideFlag { flag: KycRedFlag; review: KycFlagReview }
@@ -112,7 +128,8 @@ export function applyFlagReviews(flags: KycRedFlag[], reviews: KycFlagReview[]):
   const setAside: SetAsideFlag[] = [];
   for (const flag of flags) {
     const review = reviews.find(r => r.flagKey === flag.key && flag.evidence.every(e => r.evidence.includes(e)));
-    if (review) setAside.push({ flag, review });
+    if (review?.confirmed) live.push({ ...flag, confirmed: true });
+    else if (review) setAside.push({ flag, review });
     else live.push(flag);
   }
   return { live, setAside };

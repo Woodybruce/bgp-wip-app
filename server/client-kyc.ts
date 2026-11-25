@@ -176,6 +176,8 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
   const view = signOffView(facts);
   const requests = await clientChecksForDeal(null, { companyId: subject.brandId, entityId: subject.entityId }).catch(() => []);
   const main = requests.find((r: any) => !r.person) || null;
+  // Links sent to each person directly (not cancelled): counted when nobody acting was asked (25 November 2026).
+  const ownLinks = requests.filter((r: any) => r.person && r.status !== "cancelled");
   const officer = await canDecide(req);
   const me = await staffMe(req);
   const canSignOff = officer || (!!me && subject.agents.ids.includes(me.id));
@@ -198,7 +200,8 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     canDecide: officer,
     whoToAsk: main?.recipientName || contact?.name || null,
     request: main ? main.status : "none",
-    waitingOn: view.outstanding.length && main?.status === "finished" ? requests.filter((r: any) => r.person && r.status !== "finished").map((r: any) => r.person.name) : [],
+    waitingOn: view.outstanding.length && (main?.status === "finished" || !main) ? ownLinks.filter((r: any) => r.status !== "finished").map((r: any) => r.person.name) : [],
+    ownLinks: ownLinks.length,
     signOffBlocked: view.blocked,
     dobNeeded: !!view.person?.needed && !view.person.details,
   };
@@ -229,7 +232,8 @@ export async function clientFileView(req: Request, subject: ClientSubject) {
     signOff: { ...view, canSignOff, canDecide: officer },
     // The documents are in once the client checks came back and nobody still owes theirs (or the company is cleared).
     documents: {
-      done: bucket === "cleared" || bucket === "expiring" || (main?.status === "finished" && view.outstanding.length === 0),
+      done: bucket === "cleared" || bucket === "expiring" || ((main?.status === "finished" || (!main && ownLinks.length > 0)) && view.outstanding.length === 0),
+      links: ownLinks.length ? { total: ownLinks.length, owing: ownLinks.filter((r: any) => r.status !== "finished").length, sentAt: ownLinks.map((r: any) => r.sentAt).filter(Boolean).sort()[0] || null } : null,
       // For the Documents step's line, worked out by the rule every AML screen uses (shared/aml-steps.ts).
       request: main ? { status: main.status, who: main.recipientName || main.recipientEmail || "the client", sentAt: main.sentAt || null } : null,
       owing: view.outstanding.length,
@@ -458,7 +462,9 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/sign-off", asy
   }
 });
 
-clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/set-aside", async (req: Request, res: Response) => {
+clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/confirm", (req: Request, res: Response) => clientFlagDecision(req, res, true));
+clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/set-aside", (req: Request, res: Response) => clientFlagDecision(req, res, false));
+async function clientFlagDecision(req: Request, res: Response, confirm: boolean) {
   try {
     const { decider } = await import("./deal-party-aml");
     const me = await decider(req);
@@ -471,14 +477,14 @@ clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/set-
     const key = text(req.body?.key).slice(0, 300);
     if (!key) return res.status(400).json({ message: "Which red flag?" });
     const { setFlagAside } = await import("./kyc-red-flags");
-    const done = await setFlagAside({ dealId: null, brandId: subject.brandId, entityId: subject.entityId, key, comment: said.comment, me });
+    const done = await setFlagAside({ dealId: null, brandId: subject.brandId, entityId: subject.entityId, key, comment: said.comment, me, confirm });
     res.json({ ok: true, review: done.review });
   } catch (err: any) {
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
-    console.error("[client-kyc] set aside failed:", err?.message);
-    res.status(500).json({ message: "The red flag could not be set aside." });
+    console.error("[client-kyc] flag decision failed:", err?.message);
+    res.status(500).json({ message: confirm ? "The match could not be confirmed." : "The red flag could not be set aside." });
   }
-});
+}
 
 // The app's draft of the reason for setting a flag aside (server/flag-set-aside.ts). Saves nothing.
 clientKycRouter.post("/api/client-kyc/:companyId/subjects/:entity/red-flags/suggest", async (req: Request, res: Response) => {

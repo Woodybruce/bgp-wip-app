@@ -334,8 +334,10 @@ export function NotRequiredDialog({ dealId, role, jointRule, partyName, onClose 
 // `approved`: the party is approved and in date, so the reason it cannot be
 // signed off again is not shown. `notRequired`: marked so; the officers can
 // take the marker off.
-export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact, notRequired, pastKyc4u, full }: {
+export function PartyDecisions({ dealId, data, companyId, role, partyName, approved, compact, notRequired, notRequiredByRule, pastKyc4u, full }: {
   dealId: string; data: DealAmlStatus | undefined; companyId: string; role: string; partyName: string; approved?: boolean; compact?: boolean; notRequired?: boolean;
+  // Not required by the app's own rule (advisory work's other side): nothing to take off.
+  notRequiredByRule?: boolean;
   // The full checks on a letting under £10,000 a month (its full view; 23 November 2026).
   full?: boolean;
   // KYC4U is no longer used (23 November 2026): its result is offered only
@@ -353,7 +355,7 @@ export function PartyDecisions({ dealId, data, companyId, role, partyName, appro
   const canSignOff = !!(decisions?.canSignOff ?? decisions?.canDecide);
   if (!decisions || (!decisions.canDecide && !canSignOff)) return null;
   if (notRequired) {
-    return decisions.canDecide ? (
+    return decisions.canDecide && !notRequiredByRule ? (
       <div className="flex flex-wrap gap-1.5" data-testid={`aml-decisions-${role}`}>
         <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={undo.isPending} onClick={() => undo.mutate()} data-testid={`aml-not-required-undo-${role}`}>
           <Undo2 className="w-3.5 h-3.5 mr-1" />Take off Not required

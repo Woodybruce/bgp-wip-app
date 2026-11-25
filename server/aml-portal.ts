@@ -230,18 +230,24 @@ export interface KycSendResult { ok: boolean; from: string | null; fellBack: boo
 // 'Questions?' please as the AML officer"). The transaction's agents are
 // still copied on the emails. With no Nominated Officer set, or when they
 // cannot be read, the people the request holds are used.
-let contactCache: { at: number; agent: KycAgent | null } | null = null;
+let contactCache: { at: number; agent: KycAgent | null; agents?: KycAgent[] } | null = null;
 export async function primeAmlContact(): Promise<void> {
   if (contactCache && Date.now() - contactCache.at < 5 * 60_000) return;
   try {
     const { amlOfficers } = await import("./aml-authority");
-    const o = (await amlOfficers()).nominated;
-    if (!o) { contactCache = { at: Date.now(), agent: null }; return; }
-    const u = (await pool.query(
-      `SELECT name, email, phone FROM users WHERE is_active IS NOT FALSE AND (id = $1 OR lower(email) = lower($2)) ORDER BY (id = $1) DESC LIMIT 1`,
-      [o.id || "", o.email || ""])).rows[0];
-    const name = u?.name || o.name, email = u?.email || o.email;
-    contactCache = { at: Date.now(), agent: name && email ? { name, email, phone: u?.phone || null } : null };
+    // The Nominated Officer and the first Deputy (Woody, 25 November 2026: the
+    // emails should say to ask Layla or Jack, not "reply to this email").
+    const all = await amlOfficers();
+    const officers = [all.nominated, all.deputies[0]].filter((x): x is NonNullable<typeof x> => !!x);
+    const agents: KycAgent[] = [];
+    for (const o of officers) {
+      const u = (await pool.query(
+        `SELECT name, email, phone FROM users WHERE is_active IS NOT FALSE AND (id = $1 OR lower(email) = lower($2)) ORDER BY (id = $1) DESC LIMIT 1`,
+        [o.id || "", o.email || ""])).rows[0];
+      const name = u?.name || o.name, email = u?.email || o.email;
+      if (name && email) agents.push({ name, email, phone: u?.phone || null });
+    }
+    contactCache = { at: Date.now(), agent: agents[0] || null, agents };
   } catch (e: any) {
     console.warn("[kyc] AML contact not read:", e?.message);
     if (!contactCache) contactCache = { at: Date.now() - 4 * 60_000, agent: null };
@@ -249,9 +255,9 @@ export async function primeAmlContact(): Promise<void> {
 }
 /** The contact as last read: call primeAmlContact first (sendKycEmail does). */
 export function amlContact(fallback: KycAgent[] | null | undefined): KycAgent[] {
-  return contactCache?.agent ? [contactCache.agent] : (fallback || []);
+  return contactCache?.agents?.length ? contactCache.agents : contactCache?.agent ? [contactCache.agent] : (fallback || []);
 }
-export function resetAmlContactForTests(agent?: KycAgent | null) { contactCache = agent === undefined ? null : { at: Date.now(), agent }; }
+export function resetAmlContactForTests(agent?: KycAgent | null) { contactCache = agent === undefined ? null : { at: Date.now(), agent, agents: agent ? [agent] : [] }; }
 
 export async function sendKycEmail(opts: {
   to: string[];
@@ -979,7 +985,7 @@ export async function createPersonCheck(dealId: string | null, input: z.infer<ty
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this transaction."), { status: 400 });
   if (party.kind === "company" && !party.entityId && !party.trust && !party.publicBody) {
-    throw Object.assign(new Error("Set the company that signs on the transaction first: the people to check are read from its register."), { status: 409 });
+    throw Object.assign(new Error("Set the contracting entity on the transaction first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");
   const people = await partyPeopleFor({ companyId: party.companyId, entityId: party.entityId, kind: party.kind, dealId },
@@ -1602,7 +1608,8 @@ const adminOnly = (req: Request, res: Response, next: NextFunction) => {
 // A client file's own (24 November 2026): the same answer, about its one party.
 kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:companyId/subjects/:entity/client-checks"], signedIn, async (req: Request, res: Response) => {
   try {
-    if (!(await staffMe(req))) return res.status(403).json({ message: STAFF_ONLY });
+    const sender = await staffMe(req);
+    if (!sender) return res.status(403).json({ message: STAFF_ONLY });
     const scope = scopeOf(req);
     const dealId = scope.dealId;
     const found = await partiesFor(scope);
@@ -1625,6 +1632,11 @@ kycRequestRouter.get(["/api/aml/deal/:id/client-checks", "/api/client-kyc/:compa
       mailbox: KYC_MAILBOX,
       veriff,
       agents: agents.map(a => ({ name: a.name, email: a.email })),
+      // Who the email's Questions? names (the Nominated Officer), so the
+      // dialog's preview shows what is sent (Jack, 25 November 2026: the
+      // preview read the transaction's agents and showed nobody).
+      senderName: sender.name || null,
+      contact: (await primeAmlContact(), amlContact(agents.map(a => ({ name: a.name, email: a.email, phone: a.phone })))),
       parties: await Promise.all(found.parties.map(async ({ personField: _column, ...p }) => {
         const pre = await import("./kyc-prechecks").then(m => m.partyAskInput(p.companyId, p.entityId)).catch(() => null);
         const contact = p.contacts.find(c => c.id === p.contactId) || p.contacts[0] || null;

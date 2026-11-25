@@ -109,7 +109,7 @@ export async function loadPartyKyc(q: Querier, parties: Array<{ role: string; br
     const k = e ? checks.find((r: any) => r.entity_id === e.id) : null;
     const line = approvalLines.find((r: any) => r.company_id === b.id);
     const open = !p.dealId ? null
-      : signers === null ? ["the other companies that sign (could not be read)"]
+      : signers === null ? ["the other contracting entities (could not be read)"]
       : signersNotCleared((signers?.get(p.signerKey || `${p.dealId}:${p.role}`) || []).filter(x => x.companyId === p.brandId), !!p.fullChecks);
     out[p.role] = applySigners(applyCheckScope(partyKycState({
       brand: { id: b.id, name: b.name, companiesHouseNumber: b.companies_house_number || null, legalName: b.uk_entity_name || b.ch_name || null,

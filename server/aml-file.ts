@@ -608,7 +608,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   }
   w.kv("Brand on the transaction", p.brand.name);
   const signsItself = !p.company && (p.publicBody || p.trust);
-  w.kv(p.individual ? "Who signs" : signsItself ? "Signs as" : "Company that signs", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual")
+  w.kv(p.individual ? "Who signs" : signsItself ? "Signs as" : "Contracting entity", p.individual ? (p.company ? `${p.company.name}, a private individual` : "A private individual")
     : p.company ? `${p.company.name}${p.company.number ? ` (Companies House ${p.company.number})` : ""}`
     : p.publicBody ? "Itself, a UK public body" : p.trust ? "The trust, through its trustees" : "Not set on the transaction", p.individual || p.company || signsItself ? INK : AMBER);
   w.kv("Person dealing with BGP", p.person ? `${p.person.name}${p.person.email ? `, ${p.person.email}` : ""}` : null);
@@ -654,7 +654,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   // BGP's checks before asking.
   w.sub("BGP's checks before asking anyone");
   if (!p.precheck || p.precheck.state === "off") w.para("Not run.", MUTED);
-  else if (p.precheck.state === "needs_company") w.para("Not run: the transaction does not name the company that signs, and the checks are about that company.", AMBER);
+  else if (p.precheck.state === "needs_company") w.para("Not run: the transaction does not name the contracting entity, and the checks are about that company.", AMBER);
   else {
     if (p.precheck.ranAt) w.para(`Run ${when(p.precheck.ranAt)}: Companies House, the UK, US and EU sanctions lists, ComplyAdvantage where it answered, and a web search for public roles and adverse media.`, MUTED);
     for (const l of p.precheck.lines) {
@@ -747,7 +747,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
   else if (!docNames.size) w.para("The documents themselves are in the ZIP version of this file (Report and every document).", MUTED);
   for (const d of p.documents) {
     const inFile = docNames.get(`${p.role}:${d.id}`);
-    w.item("•", `${d.name} (${amlFileDocWords(d.type)}${d.at ? `, ${day(d.at)}` : ""}${d.onCompany ? ", the company that signs" : ""})`, INK,
+    w.item("•", `${d.name} (${amlFileDocWords(d.type)}${d.at ? `, ${day(d.at)}` : ""}${d.onCompany ? ", the contracting entity" : ""})`, INK,
       [inFile ? (inFile.startsWith("(") ? `Not included: ${inFile.replace(/^\(not included: |\)$/g, "")}` : `In this file as ${inFile}`) : null, d.note].filter(Boolean).join("\n"));
   }
   void doc;

@@ -4057,7 +4057,7 @@ export function DealFormDialog({
                         Red flag: {flags.map(f => f.label).join("; ")}. Enhanced checks: an officer signs it off.
                       </p>
                     )}
-                    {/* The company that signs and the person to ask, and
+                    {/* The contracting entity and the person to ask, and
                         anything missing before the checks can start
                         (2026-11-18), filled in place. */}
                     <PartyReadyToStart dealId={amlStep.dealId} companyId={p.id} aml={partyAmlFacts(amlStepStatus, p.id)} />
@@ -6001,7 +6001,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
               <span className="font-medium" data-testid="xero-invoice-billed-name">{billing.name}</span>
               <span className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-source">
                 {billing.source === "party" ? `the ${roleWord}'s billing entity, from Parties`
-                  : billing.source === "signing" ? `the ${roleWord}'s company that signs${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
+                  : billing.source === "signing" ? `the ${roleWord}'s contracting entity${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
                   : billing.source === "payer" ? `the third party that pays for the ${roleWord}${billing.contactId ? "" : ": its Xero contact is found or made when the invoice is drafted"}`
                   : "the invoice contact set on this transaction"}
                 {billing.source === "deal" && xeroAccountNumber ? ` · A/C ${xeroAccountNumber}` : ""}
@@ -6009,7 +6009,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             </div>
           ) : billing.partyLinked ? (
             <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="xero-invoice-billed-missing">
-              No company that signs for the {roleWord} yet: set it under Parties. BGP bills it, so the invoice goes to the company the AML checks are on.
+              No contracting entity for the {roleWord} yet: set it under Parties. BGP bills it, so the invoice goes to the company the AML checks are on.
             </p>
           ) : (
             <p className="text-xs text-muted-foreground" data-testid="xero-invoice-billed-missing">

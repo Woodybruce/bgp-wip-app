@@ -173,7 +173,7 @@ function TransactionsAml({ propertyId, onOpenAml }: { propertyId: string; onOpen
       <div className={sectionHead}>AML on transactions here</div>
       {isLoading ? <div className="text-xs text-muted-foreground">Reading…</div>
         : isError ? <div className="text-xs text-muted-foreground">The transactions' AML could not be read.</div>
-        : transactions.length === 0 ? <div className="text-xs text-muted-foreground">No open transactions. When an instruction comes in, its AML starts on the transaction, with the owner set up here offered as the company that signs.</div>
+        : transactions.length === 0 ? <div className="text-xs text-muted-foreground">No open transactions. When an instruction comes in, its AML starts on the transaction, with the owner set up here offered as the contracting entity.</div>
         : transactions.map(({ parties: rows }) => {
           const first = rows[0];
           return (

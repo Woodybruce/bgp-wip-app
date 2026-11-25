@@ -105,7 +105,7 @@ export function amlFileStateWords(
     return { tone: "done", words: `Not required: ${notRequired.reasonWords}${notRequired.by ? ` (${notRequired.by}${notRequired.at ? `, ${day(notRequired.at)}` : ""})` : ""}` };
   }
   const status = String(state?.status || "").toLowerCase();
-  const on = state?.source === "company" || state?.source === "same_company" ? ` (on ${state?.name || "the company that signs"})` : "";
+  const on = state?.source === "company" || state?.source === "same_company" ? ` (on ${state?.name || "the contracting entity"})` : "";
   if (status === "approved") {
     const until = state?.expiresAt ? new Date(state.expiresAt as any) : null;
     const by = `${state?.approvedBy ? ` by ${state.approvedBy}` : ""}${state?.approvedAt ? ` on ${day(state.approvedAt)}` : ""}`;
@@ -163,7 +163,7 @@ export function amlStillNeeded(f: StillNeededInput): string[] {
   if (f.settled === "rejected") return ["Nothing more: rejected. BGP does not go ahead with this party unless the Nominated Officer says otherwise."];
   const out: string[] = [];
   if (f.deadline) out.push(f.deadline.passed ? `Late: the checks were needed ${f.deadline.words}.` : `Needed ${f.deadline.words}.`);
-  if (f.needsCompany && !f.companySet) out.push("Set the company that signs: the checks are about that company.");
+  if (f.needsCompany && !f.companySet) out.push("Set the contracting entity: the checks are about that company.");
   if (f.precheck === "not_run" || f.precheck === "off") out.push("Run BGP's checks before asking (Companies House, sanctions, public roles and adverse media).");
   else if (f.precheck === "old") out.push("Run BGP's checks again: the last run is more than 30 days old.");
   else if (f.precheck === "running") out.push("Wait for BGP's checks before asking to finish.");

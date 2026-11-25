@@ -17,11 +17,11 @@ const box = read('client/src/components/deal-parties.tsx');
 const route = (start) => parties.slice(parties.indexOf(start), parties.indexOf('\nrouter.', parties.indexOf(start) + 10) > 0
   ? parties.indexOf('\nrouter.', parties.indexOf(start) + 10) : parties.indexOf('export default router'));
 
-test('adding another company that signs: BGP staff, filed under the party, beside a company that signs, never a guarantor', () => {
+test('adding another contracting entity: BGP staff, filed under the party, beside a contracting entity, never a guarantor', () => {
   const add = route('router.post("/api/deals/:id/signers"');
   assert.match(add, /const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
   assert.match(add, /if \(!isSignerRole\(role\)\) return res\.status\(400\)/);
-  assert.match(add, /if \(!text\(deal\[col\.company\]\)\) return res\.status\(400\)/, 'only beside a company that signs');
+  assert.match(add, /if \(!text\(deal\[col\.company\]\)\) return res\.status\(400\)/, 'only beside a contracting entity');
   assert.match(add, /entity\.parent_company_id !== brandId\) return res\.status\(400\)/);
   assert.match(add, /if \(entityId === text\(deal\[col\.company\]\)\) return res\.status\(400\)/);
   assert.match(add, /if \(held\?\.kind === "guarantor"\) return res\.status\(409\)/);
@@ -39,9 +39,9 @@ test('adding another company that signs: BGP staff, filed under the party, besid
   assert.match(read('server/index.ts'), /ALTER TABLE deal_guarantors ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'guarantor'/);
 });
 
-test('the party reads cleared only once each other company that signs is, and the sign-off approves each one', () => {
+test('the party reads cleared only once each other contracting entity is, and the sign-off approves each one', () => {
   assert.match(gates, /m\.signerApprovals\(dealIds, q as any\)\)\.catch\(\(\) => null\)/);
-  assert.match(gates, /signers === null \? \["the other companies that sign \(could not be read\)"\]/, 'a failed read is never read as approved');
+  assert.match(gates, /signers === null \? \["the other contracting entities \(could not be read\)"\]/, 'a failed read is never read as approved');
   assert.match(gates, /out\[p\.role\] = applySigners\(applyCheckScope\(partyKycState\(/);
   assert.match(gates, /checkCounterpartyAml[\s\S]{0,900}dealId: deal\.dealId \|\| null/);
   assert.match(gates, /OR id IN \(SELECT deal_id FROM deal_guarantors WHERE entity_id = \$1 AND removed_at IS NULL AND COALESCE\(kind, 'guarantor'\) = 'signer'\)/);
@@ -59,7 +59,7 @@ test('its red flags join the party on the transaction and the AML board', () => 
   assert.match(read('server/kyc-people.ts'), /m\.signersForParty\(String\(party\.dealId\), party\.companyId\)/);
 });
 
-test('a filed company that signs or guarantees a transaction is not deleted (the guard read the wrong column until 24 November 2026)', () => {
+test('a filed contracting entity or guarantees a transaction is not deleted (the guard read the wrong column until 24 November 2026)', () => {
   const crm = read('server/crm.ts');
   assert.match(crm, /FROM deal_guarantors WHERE entity_id = \$1 AND removed_at IS NULL AND COALESCE\(kind, 'guarantor'\) = 'guarantor'/);
   assert.match(crm, /FROM deal_guarantors WHERE entity_id = \$1 AND removed_at IS NULL AND kind = 'signer'/);

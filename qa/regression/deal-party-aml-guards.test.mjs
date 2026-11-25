@@ -17,7 +17,7 @@ const compliance = read('server/aml-compliance.ts');
 const crm = read('server/crm.ts');
 const routes = read('server/routes.ts');
 
-test('the gate reads the company that signs, and never the shadow table', () => {
+test('the gate reads the contracting entity, and never the shadow table', () => {
   assert.match(gates, /FROM crm_entity_kyc/);
   assert.match(gates, /_trading_entity_id/);
   assert.doesNotMatch(gates, /crm_deal_entities/);

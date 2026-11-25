@@ -46,7 +46,7 @@ export interface ClientFileView {
     // A listed company's sign-off note, written from the file (24 November 2026).
     fileNote?: string | null };
   next: ClientKycNext;
-  documents?: { done: boolean; request?: { status: ClientRequestStatus; who: string; sentAt: string | null } | null; owing?: number };
+  documents?: { done: boolean; request?: { status: ClientRequestStatus; who: string; sentAt: string | null } | null; owing?: number; links?: { total: number; owing: number; sentAt: string | null } | null };
   // The company's sanctions-only switch (24 November 2026): the sanctions steps alone, nothing asked of the client.
   sanctionsOnly?: boolean;
   xero: { id: string; name: string } | null;
@@ -195,7 +195,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
         unread: view.flags.unchecked.length > 0, flagsRead: true,
       })) : null;
   const documents = view ? documentsStepLine({
-    sanctionsOnly, cleared, request, people: { total: 0, owing: view.documents?.owing || 0 }, clientChecks: true,
+    sanctionsOnly, cleared, request, people: { total: 0, owing: view.documents?.owing || 0 }, clientChecks: true, links: view.documents?.links || null,
   }) : null;
   const signOffLine = view ? signOffStepLine({
     rejected: view.state.status === "rejected", notRequired: null,

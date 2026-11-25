@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import {
-  applyFlagReviews, dealRedFlags, oldScreeningMarks, partyRedFlags, redFlagAlertKey,
+  applyFlagReviews, dealRedFlags, flagToConfirm, oldScreeningMarks, partyRedFlags, redFlagAlertKey,
   type KycFlagReview, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts, type SetAsideFlag,
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
@@ -44,7 +44,7 @@ export interface FlagReviewRow extends KycFlagReview { companyId: string | null;
 export async function loadFlagReviews(db: Db, brandIds: string[], dealIds: string[]): Promise<FlagReviewRow[]> {
   if (!brandIds.length && !dealIds.length) return [];
   const { rows } = await db.query(
-    `SELECT id, company_id, trading_entity_id, deal_id, flag_key, evidence, comment, set_aside_by_name, set_aside_at
+    `SELECT id, company_id, trading_entity_id, deal_id, flag_key, evidence, comment, set_aside_by_name, set_aside_at, COALESCE(confirmed, false) AS confirmed
        FROM kyc_flag_reviews
       WHERE restored_at IS NULL AND (company_id = ANY($1::varchar[]) OR (company_id IS NULL AND deal_id = ANY($2::varchar[])))
       ORDER BY set_aside_at DESC`, [brandIds, dealIds]);
@@ -52,6 +52,7 @@ export async function loadFlagReviews(db: Db, brandIds: string[], dealIds: strin
     id: Number(r.id), flagKey: String(r.flag_key), evidence: Array.isArray(r.evidence) ? r.evidence.map(String) : [],
     comment: String(r.comment || ""), by: r.set_aside_by_name || null, at: r.set_aside_at ? new Date(r.set_aside_at).toISOString() : null,
     companyId: r.company_id || null, entityId: r.trading_entity_id || null, dealId: r.deal_id || null,
+    ...(r.confirmed ? { confirmed: true } : {}),
   }));
 }
 
@@ -167,7 +168,7 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
     : [];
   // The other companies that sign for a party (24 November 2026): their flags join it the same way.
   const signers = ids.length && dealId
-    ? await read("the other companies that sign", async () => (await import("./deal-guarantors")).signerRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
+    ? await read("the other contracting entities", async () => (await import("./deal-guarantors")).signerRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
     : [];
 
   const parties: Record<string, KycRedFlag[]> = {};
@@ -236,6 +237,8 @@ export class FlagReviewRefusal extends Error {
 export async function setFlagAside(input: {
   // null: a client file (no transaction), always about a party.
   dealId: string | null; brandId: string | null; entityId: string | null; key: string; comment: string; me: { id: string; name: string };
+  // An officer confirming a ComplyAdvantage match is the person: kept, and it counts (25 November 2026).
+  confirm?: boolean;
 }): Promise<{ review: KycFlagReview; flag: KycRedFlag }> {
   if (!input.dealId && !input.brandId) throw new FlagReviewRefusal("Which company?", 400);
   const flags = await loadDealRedFlags(input.dealId, input.brandId ? [input.brandId] : [], input.brandId && input.entityId ? { [input.brandId]: input.entityId } : {});
@@ -243,21 +246,24 @@ export async function setFlagAside(input: {
   const live = input.brandId ? flags.parties[input.brandId] || [] : flags.deal;
   const flag = live.find(f => f.key === input.key);
   if (!flag) throw new FlagReviewRefusal("That red flag is not there any more (it may have been set aside already). Reload the box.");
+  if (input.confirm && !flagToConfirm(flag)) throw new FlagReviewRefusal("Only a ComplyAdvantage match still to check can be confirmed.");
   // A flag read from the brand's own KYC record holds for the brand, whoever
   // signs; any other holds for the company that signs now.
   const entityId = input.brandId && !flag.key.startsWith("record:") ? input.entityId : null;
   const row = (await pool.query(
-    `INSERT INTO kyc_flag_reviews (company_id, trading_entity_id, deal_id, flag_key, flag_label, flag_source, evidence, comment, set_aside_by, set_aside_by_name)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10) RETURNING id, set_aside_at`,
-    [input.brandId, entityId, input.dealId, flag.key, flag.label.slice(0, 500), flag.source.slice(0, 500), JSON.stringify(flag.evidence), input.comment, input.me.id, input.me.name])).rows[0];
+    `INSERT INTO kyc_flag_reviews (company_id, trading_entity_id, deal_id, flag_key, flag_label, flag_source, evidence, comment, set_aside_by, set_aside_by_name, confirmed)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11) RETURNING id, set_aside_at`,
+    [input.brandId, entityId, input.dealId, flag.key, flag.label.slice(0, 500), flag.source.slice(0, 500), JSON.stringify(flag.evidence), input.comment, input.me.id, input.me.name, !!input.confirm])).rows[0];
   if (input.brandId) {
     await pool.query(
-      `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, 'red_flag_set_aside', $2, $3, $4, $5)`,
-      [input.brandId, input.me.name, `Red flag set aside by ${input.me.name}: ${flag.label}. Why: ${input.comment}`, entityId ? "trading_entity" : null, entityId]).catch(() => {});
+      `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [input.brandId, input.confirm ? "red_flag_confirmed" : "red_flag_set_aside", input.me.name,
+        input.confirm ? `Match confirmed as the person by ${input.me.name}: ${flag.label}. ${input.comment}` : `Red flag set aside by ${input.me.name}: ${flag.label}. Why: ${input.comment}`,
+        entityId ? "trading_entity" : null, entityId]).catch(() => {});
   }
   return {
     flag,
-    review: { id: Number(row.id), flagKey: flag.key, evidence: flag.evidence, comment: input.comment, by: input.me.name, at: new Date(row.set_aside_at).toISOString() },
+    review: { id: Number(row.id), flagKey: flag.key, evidence: flag.evidence, comment: input.comment, by: input.me.name, at: new Date(row.set_aside_at).toISOString(), ...(input.confirm ? { confirmed: true } : {}) },
   };
 }
 

@@ -56,7 +56,7 @@ async function extraRows(dealIds: string[], kind: ExtraPartyKind, db: Db): Promi
   })).rows;
   return rows.map((r: any) => ({
     id: String(r.id), dealId: String(r.deal_id), role: r.role as GuaranteedRole, companyId: String(r.company_id), entityId: String(r.entity_id),
-    name: String(r.name || (kind === "signer" ? "The other company that signs" : "The guarantor")), kind: signerKindOf(r.entity_kind),
+    name: String(r.name || (kind === "signer" ? "The other contracting entity" : "The guarantor")), kind: signerKindOf(r.entity_kind),
     companiesHouseNumber: r.companies_house_number ? String(r.companies_house_number).trim() || null : null,
     addedBy: r.added_by_name || null, addedAt: new Date(r.added_at).toISOString(),
   }));

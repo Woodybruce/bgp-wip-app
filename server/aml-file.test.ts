@@ -103,7 +103,7 @@ test("still needed: the deadline, the company, BGP's checks, the client checks, 
     deadline: { words: "before the property is marketed", passed: true }, companySet: false, precheck: "not_run", anyRequest: false,
   }));
   assert.equal(lines[0], "Late: the checks were needed before the property is marketed.");
-  assert.match(lines[1], /^Set the company that signs/);
+  assert.match(lines[1], /^Set the contracting entity/);
   assert.match(lines[2], /^Run BGP's checks before asking/);
   assert.equal(lines[3], "Send the client checks.");
   assert.match(lines[lines.length - 1], /^Sign-off: an agent on the transaction or an officer/);

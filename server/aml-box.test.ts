@@ -52,10 +52,10 @@ test("an approval running out asks for the checks again", () => {
   assert.equal(next({ stage: "expired", clientChecks: false }).action, null);
 });
 
-test("nothing starts until the company that signs is set", () => {
+test("nothing starts until the contracting entity is set", () => {
   const step = next({ companyMissing: true, redFlags: 2, request: { status: "sent", to: "Jack Barratt" } });
   assert.equal(step.action, "fill_in");
-  assert.equal(line(step), "To do · Set the company that signs");
+  assert.equal(line(step), "To do · Set the contracting entity");
   // A private individual has no company to set.
   assert.notEqual(next({ company: false, companyMissing: true }).action, "fill_in");
 });
@@ -219,4 +219,12 @@ test("a sanctions-only party: other red flags do not hold it, a possible sanctio
   assert.equal(match.who, "officers");
   // A trust keeps its own rules.
   assert.notEqual(next({ sanctionsOnly: true, trust: true, trustGaps: ["Add the trust's information"], signOffBlocked: null }).action, "sign_off");
+});
+
+test("who to ask chosen as the joint agent: asked for their documents; as their agent: the checks to pass on", () => {
+  const j = next({ askJointAgent: "Tom Lane", askName: null });
+  assert.equal(j.action, "joint_ask");
+  assert.match(j.words, /Ask Tom Lane, the joint agent, for their documents/);
+  const a = next({ askName: null, theirAgent: "Savills (UK) Limited" });
+  assert.equal(a.action, "send_via_agent");
 });

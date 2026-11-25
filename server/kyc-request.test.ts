@@ -234,7 +234,13 @@ test("a yes or not sure to the question tells the agents what enhanced due dilig
 test("the identity check email links straight to the check", () => {
   const { html } = kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "", link: "https://magic.veriff.me/v/abc", agents: [], sentFrom: "kyc@chatbgp.app" });
   assert.ok(html.includes('href="https://magic.veriff.me/v/abc"'));
-  assert.match(html, /reply to this email/);
+  // Questions go to named people, never "reply to this email" (Woody, 25 November 2026).
+  assert.doesNotMatch(html, /Speak to[^.]*reply to this email/);
+  assert.match(html, /your contact at Bruce Gillingham Pollard/);
+  const named = kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "", link: "https://magic.veriff.me/v/abc",
+    agents: [{ name: "Jack Barratt", email: "jack@example.com", phone: null }, { name: "Layla O'Driscoll", email: "layla@example.com", phone: null }], sentFrom: "kyc@chatbgp.app" }).html;
+  assert.match(named, /Jack Barratt/);
+  assert.match(named, /Layla O&#39;Driscoll|Layla O'Driscoll/);
 });
 
 test("Veriff's statuses read as the page's states", () => {
@@ -393,4 +399,14 @@ test("a list made before BGP's checks last read the register is out of date (24 
   assert.equal(listMadeBeforeChecks("2026-11-24T17:47:26.846Z", "2026-11-24T17:47:26.846Z"), false, "made from the latest run");
   assert.equal(listMadeBeforeChecks("2026-11-20T09:00:00.000Z", "2026-11-24T17:47:26.846Z"), true, "made from an older run");
   assert.equal(listMadeBeforeChecks("not a date", "2026-11-24T17:47:26.846Z"), true);
+});
+
+test("the dialog's preview names the same contact as the email sent, and nobody named reads plainly", () => {
+  // Never "reply to this email" (Woody, 25 November 2026): nobody named reads "your contact at Bruce Gillingham Pollard".
+  assert.match(kycRequestEmail(ctx({ agents: [] })).html, />Speak to your contact at Bruce Gillingham Pollard\.</);
+  assert.doesNotMatch(kycRequestEmail(ctx({ agents: [] })).html, /Speak to reply/);
+  const portal = readFileSync("server/aml-portal.ts", "utf8");
+  assert.match(portal, /contact: \(await primeAmlContact\(\), amlContact\(/);
+  const dialog = readFileSync("client/src/components/kyc-client-checks.tsx", "utf8");
+  assert.equal((dialog.match(/agents: data\??\.contact\?\.length \? data\??\.contact :/g) || []).length, 2);
 });

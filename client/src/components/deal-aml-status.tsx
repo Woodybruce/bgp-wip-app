@@ -37,6 +37,7 @@ import { RaiseReportButton, RaiseReportDialog } from "@/components/aml-register"
 import { DealAgentsAml, useDealAgentsAml } from "@/components/agent-aml";
 import { DealSolicitorsAmlPanel, solicitorsSummary, useDealSolicitorsAml } from "@/components/solicitor-aml";
 import { AmlCommentaryView } from "@/components/aml-commentary";
+import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import type { RiskAssessment } from "@shared/aml-risk-assessment";
 import type { PersonDetailsView } from "@shared/kyc-person-details";
 import { PersonDetailsLine } from "@/components/aml-person-details";
@@ -276,7 +277,7 @@ function PartyPrechecks({ dealId, data, companyId, only, level }: { dealId: stri
       const state = r?.started?.[companyId];
       if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
       else if (state === "off") toast({ title: "Not run", description: "These checks are switched off." });
-      else if (state === "needs_company") toast({ title: "Not run", description: "Set the company that signs for this party first: the checks are about it, not the brand." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the contracting entity for this party first: the checks are about it, not the brand." });
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
     },
     onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
@@ -486,7 +487,7 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
+const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party", advisory_other_side: "advisory work: only BGP's client is checked" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
 export interface PartySlot {
@@ -510,6 +511,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
 }) {
   const staff = !!data.prechecks;
   const sections = useOpenSections(STEP_KEYS, openAll);
+  const kyc4uQ = useQuery<{ requests: Array<{ listId: string; itemId: string; entityName: string | null; createdAt: string | null; modifiedAt: string | null }> }>({
+    queryKey: ["/api/kyc4u/company", cp.id], enabled: staff, staleTime: 5 * 60_000,
+  });
   const open = mirror ? new Set<StepKey>() : sections.open;
   const toggle = (k: StepKey) => (mirror ? mirror(cp.role) : sections.toggle(k));
   const show = sections.show;
@@ -534,10 +538,16 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The party's own agent passes the standard checks on to their client (Woody,
   // 23 November 2026: "with the agent acting for the tenant or against us we
   // need them to pass on the standard KYC requests for their clients").
-  const theirAgent: ClientChecksAgent | null = askParty ? {
+  // Who to ask chosen as their agent or the joint agent (25 November 2026): that decides the email.
+  const askRelation = party?.person?.from === "party" ? party.person.relation || "party" : "party";
+  const askedAgent: ClientChecksAgent | null = askRelation === "own_agent" && party?.person ? {
+    firm: party.person.firm || party.person.name, companyId: null, contactId: party.person.id,
+    contacts: [{ id: party.person.id, name: party.person.name, email: party.person.email }], words: "their agent",
+  } : null;
+  const theirAgent: ClientChecksAgent | null = askedAgent || (askParty ? {
     firm: askParty.agent?.name || "", companyId: askParty.agent?.companyId || null, contactId: askParty.agent?.contactId || null,
     contacts: askParty.agent?.contacts || [], words: askParty.agentWords,
-  } : null;
+  } : null);
 
   const reveal = (k: StepKey) => {
     if (mirror) { mirror(cp.role); return; }
@@ -604,7 +614,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // never submitted for 30 days is stale and offered to cancel (20 November 2026).
   const draftState = kyc4uDraftState(draft);
   // Through the party's own agent nobody at the party is needed (23 November 2026).
-  const agentRoute = !!request?.viaAgent || (!request && !!theirAgent?.firm && !party?.person);
+  const agentRoute = !!request?.viaAgent || (!request && !!theirAgent?.firm && (!party?.person || askRelation === "own_agent" || askRelation === "joint_agent"));
   const gaps = agentRoute ? [] : (party?.gaps || []).filter(g => g.key !== "company")
     .map(g => (g.key === "person" ? "Set who to ask" : `Add an email for ${party?.person?.name || "the person to ask"}`));
   const current = jointParty ? currentJointRequest(jointParty) : null;
@@ -613,7 +623,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     role: cp.role, stage, due: row ? row.due : null,
     approvedBy: cp.kyc_approved_by, expiresAt: cp.kyc_expires_at, notRequiredWords: cp.notRequired?.reasonWords || null,
     notRequiredReason: cp.notRequired?.reason || null,
-    company: isCompany, companyMissing, gaps, askName: party?.person?.name || null, theirAgent: theirAgent?.firm || null,
+    company: isCompany, companyMissing, gaps, askName: askRelation === "own_agent" || askRelation === "joint_agent" ? null : party?.person?.name || null, theirAgent: theirAgent?.firm || null,
+    askJointAgent: askRelation === "joint_agent" ? party?.person?.name || null : null,
     precheckRunning: pre?.state === "running",
     redFlags: flags.length, factors: factors.length + dealFactors.length,
     sanctionsOnly, clientChecks: !!data.clientChecks,
@@ -657,6 +668,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       case "red_flags": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("screening")}>See flags</Button>;
       case "billing": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
       case "joint": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-${cp.role}`}>Open</Button>;
+      case "joint_ask": return jointQ.data && askParty
+        ? <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Ask them" quiet
+            person={party?.person ? { id: party.person.id, name: party.person.name, email: party.person.email, firm: party.person.firm || null } : null} />
+        : <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-ask-${cp.role}`}>Open</Button>;
       case "joint_remind": return jointParty && current
         ? <JointChaseButton dealId={dealId} party={jointParty} request={current} label={facts.joint?.chasing ? "Remind now" : "Ask for them"} onNoEmail={() => reveal("documents")} />
         : null;
@@ -689,7 +704,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       trustRecordedGaps.length ? "trust information to add" : null,
       facts.dobNeeded ? "date of birth to add" : null,
       guarantorOpen ? "guarantor checks to run" : null,
-      signerOpen ? "checks to run on the other company that signs" : null,
+      signerOpen ? "checks to run on the other contracting entity" : null,
     ].filter((g): g is string => !!g),
     notes: [
       decision?.person?.details && decision.person.words ? decision.person.words.replace(/^Born /, "born ") : null,
@@ -778,6 +793,18 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       Signed off{cp.sanctionsOnlyApproval.at ? ` ${amlBoxDay(cp.sanctionsOnlyApproval.at)}` : ""}{cp.sanctionsOnlyApproval.by ? ` by ${cp.sanctionsOnlyApproval.by}` : ""} for sanctions checks only, on a smaller letting. This transaction needs the full checks.
     </p>
   ) : null;
+  // KYC4U's past checks on this party, by the brand or a company it names (Woody,
+  // 25 November 2026, on Karve: "we at least need to match KYC4U historic data
+  // base so we know if its been considered"). KYC4U's folders carry no verdict:
+  // their result is recorded by an admin, under Documents.
+  const kyc4uPast = (kyc4uQ.data?.requests || []).filter(r => r.listId !== "manual");
+  const kyc4uRecorded = (kyc4uQ.data?.requests || []).some(r => r.listId === "manual");
+  const kyc4uLine = staff && kyc4uPast.length > 0 && !settled ? (
+    <button type="button" className="block text-left text-xs text-amber-800 hover:underline dark:text-amber-300" onClick={() => reveal("documents")} data-testid={`aml-kyc4u-considered-${cp.role}`}>
+      KYC4U considered it: {kyc4uPast.slice(0, 2).map(r => `${r.itemId}${r.entityName ? ` ${r.entityName}` : ""}${r.createdAt || r.modifiedAt ? `, ${amlBoxDay(String(r.createdAt || r.modifiedAt))}` : ""}`).join("; ")}
+      {kyc4uPast.length > 2 ? ` and ${kyc4uPast.length - 2} more` : ""}. {kyc4uRecorded ? "A KYC4U result is recorded." : "Their result isn't recorded in the app yet."}
+    </button>
+  ) : null;
   const deadline = row && !settled && !cp.notRequired && row.deadline ? (
     <p className={`text-xs ${row.late ? "font-medium text-red-700 dark:text-red-300" : "text-muted-foreground"}`} data-testid={`aml-deadline-${cp.role}`}>
       {row.late ? "Late: needed " : "Needed "}{row.deadline}
@@ -798,7 +825,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     partyName !== cp.name ? <Link key="brand" href={`/companies/${cp.id}`} className="hover:underline" data-testid={`aml-box-brand-${cp.role}`}>{cp.name}</Link> : null,
     isClient ? "BGP's client" : null,
     register,
-    companyMissing ? "the company that signs is not set yet" : null,
+    companyMissing ? "the contracting entity is not set yet" : null,
   ].filter(Boolean);
 
   return (
@@ -828,6 +855,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         </div>
         {nextLine}
         {sanctionsOnlyLine}
+        {kyc4uLine}
         {deadline}
         {/* Simplified due diligence, said out loud, with its note of reasons (Layla, 23 November 2026). */}
         {staff && !mirror && level?.level === "simplified" && level.sdd && !cp.notRequired && (
@@ -840,6 +868,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         <div className="px-4 pb-2" data-testid={`aml-steps-${cp.role}`}>
           <AmlStep id={sid("signs")} testId={tid("signs")} n={1} label={!isCompany && !company ? AML_STEP_LABEL.person : company?.kind === "individual" ? AML_STEP_LABEL.person : AML_STEP_LABEL.company}
             state={signs.state} summary={signs.words} open={open.has("signs")} onToggle={() => toggle("signs")}>
+            {/* Change the company, run BGP's checks again, or open it in the CRM, from the step itself (Woody, 25 November 2026). */}
+            <CompanyStepActions dealId={dealId} companyId={cp.id} role={cp.role} canRun={!!pre && pre.state !== "off"} onChange={() => setEditing(true)} />
             {settled && companyMissing
               ? <p className="text-xs text-muted-foreground">Not set on this transaction.</p>
               : <DealPartyLines dealId={dealId} role={cp.role as DealPartyRole} aml={aml} fullBilling />}
@@ -873,7 +903,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               </AmlStep>
               <AmlStep id={sid("decision")} testId={tid("decision")} n={3} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
                 <PartyNotRequiredBox cp={cp} />
-                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
+                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} notRequiredByRule={cp.notRequired?.reason === "advisory_other_side"} pastKyc4u={!!draft} full={fullOnSmall} />
                 {canDecide && (
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                     <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
@@ -895,8 +925,9 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             <AmlStep id={sid("documents")} testId={tid("documents")} n={3} label={AML_STEP_LABEL.documents} state={documents.state} summary={documents.words} open={open.has("documents")} onToggle={() => toggle("documents")}>
               {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
               <PartyFiles dealId={dealId} role={cp.role} />
+              {kyc4uPast.length > 0 && <Kyc4uStatusStrip companyId={cp.id} />}
               {companyMissing && !current
-                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
+                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the contracting entity is set.</p>
                 : <>
                     {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
                     {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
@@ -932,7 +963,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </AmlStep>
             <AmlStep id={sid("decision")} testId={tid("decision")} n={4} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
               <PartyNotRequiredBox cp={cp} />
-              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} notRequiredByRule={cp.notRequired?.reason === "advisory_other_side"} pastKyc4u={!!draft} full={fullOnSmall} />
               {canDecide && !cp.notRequired && (
                 <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
               )}
@@ -955,6 +986,35 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
         </div>
       )}
       {editing && <DealPartyEditor dealId={dealId} role={cp.role as DealPartyRole} aml={aml} onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+// The company step's own actions: change who signs, run the checks again, open the record.
+function CompanyStepActions({ dealId, companyId, role, canRun, onChange }: { dealId: string; companyId: string; role: string; canRun: boolean; onChange: () => void }) {
+  const { toast } = useToast();
+  const again = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc/deal/${dealId}/prechecks`, { companyId })).json(),
+    onSuccess: (r: any) => {
+      const state = r?.started?.[companyId];
+      if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the contracting entity for this party first." });
+      else toast({ title: "Running BGP's checks", description: "Companies House, the sanctions lists and the web search: a minute or two." });
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
+    },
+    onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid={`aml-company-actions-${role}`}>
+      <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={onChange} data-testid={`aml-company-change-${role}`}>Change the company</Button>
+      {canRun && (
+        <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={again.isPending} onClick={() => again.mutate()} data-testid={`aml-company-run-${role}`}>
+          {again.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Run the checks again
+        </Button>
+      )}
+      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" asChild>
+        <Link href={`/companies/${companyId}`} data-testid={`aml-company-crm-${role}`}>Open in the CRM</Link>
+      </Button>
     </div>
   );
 }

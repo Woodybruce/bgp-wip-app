@@ -67,7 +67,9 @@ test("the Next line names the first thing to do, in a few words", () => {
   assert.equal(kycCompanyNext({ entities: [entity()], sanctionsOnly: false, waiting: null, kyc4u: { folders: 1, last: "2026-03-30T00:00:00.000Z" } }, NOW, fmt).words, "record their result (1 folder, 2026-03-30)");
   // Cleared, or checks under way, says so whatever KYC4U holds.
   assert.equal(kycCompanyNext({ entities: [entity({ status: "approved", expiresAt: inDays(400) })], sanctionsOnly: false, waiting: null, kyc4u: k }, NOW, fmt).lead, "Cleared");
-  assert.equal(kycCompanyNext({ entities: [entity({ started: true })], sanctionsOnly: false, waiting: null, kyc4u: k }, NOW, fmt).lead, "In progress");
+  // KYC4U's past check stays on the line while BGP's own checks run (25 November 2026).
+  assert.equal(kycCompanyNext({ entities: [entity({ started: true })], sanctionsOnly: false, waiting: null, kyc4u: k }, NOW, fmt).lead, "KYC4U checked it");
+  assert.equal(kycCompanyNext({ entities: [entity({ started: true })], sanctionsOnly: false, waiting: null, kyc4u: null }, NOW, fmt).lead, "In progress");
   assert.equal(transactionWaiting("client_sent"), "the client");
   assert.equal(transactionWaiting("joint_asked"), "the joint agent");
   assert.equal(transactionWaiting("bgp_checked"), null);

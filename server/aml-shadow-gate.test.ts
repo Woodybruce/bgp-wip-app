@@ -178,11 +178,11 @@ describe("the live gate", () => {
   // the live gate reads the company that signs from crm_deals.<role>_
   // trading_entity_id and its approval from crm_entity_kyc. crm_deal_entities
   // is still a shadow table nothing writes: the gate never reads it.
-  it("reads the company that signs from the deal, never crm_deal_entities", () => {
+  it("reads the contracting entity from the deal, never crm_deal_entities", () => {
     const source = readFileSync(new URL("./deal-gates.ts", import.meta.url), "utf8");
     assert.equal(source.includes("crm_deal_entities"), false, "the live gate must not read crm_deal_entities");
-    assert.ok(source.includes("crm_entity_kyc"), "the live gate reads the company that signs's own check");
-    assert.ok(source.includes("_trading_entity_id"), "the live gate reads the company that signs from the deal");
+    assert.ok(source.includes("crm_entity_kyc"), "the live gate reads the contracting entity's own check");
+    assert.ok(source.includes("_trading_entity_id"), "the live gate reads the contracting entity from the deal");
   });
 });
 

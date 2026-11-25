@@ -33,7 +33,8 @@ export type AmlBoxAction =
   | "red_flags"          // open Red flags
   | "billing"            // open Who pays: BGP's invoice goes to another company
   | "joint"              // open the Documents step on the joint agent's checks
-  | "joint_remind";      // email the joint agent what is still missing
+  | "joint_remind"       // email the joint agent what is still missing
+  | "joint_ask";         // ask the joint agent for their documents (they are who to ask)
 
 export const AML_BOX_WHO_WORDS: Record<AmlBoxWho, string> = {
   nobody: "Nothing to do",
@@ -120,6 +121,8 @@ export interface AmlBoxFacts {
   // cover yet (server/joint-agent-checks.ts).
   // chasing: the app is emailing them what is missing every three days.
   joint?: { status: "not_sent" | "sent" | "opened" | "in" | "finished" | "expired"; firm: string; rule: "sale" | "letting" | "other"; reliance: boolean; missing: number; chasing?: boolean; unread?: number } | null;
+  // Who to ask is the joint agent (25 November 2026): they are asked for their documents, not the client checks.
+  askJointAgent?: string | null;
   // The Not required reason's key ("joint_agent", "no_deal"), for its short words.
   notRequiredReason?: string | null;
   // A private individual on a letting under £10,000 a month with no date of
@@ -211,7 +214,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
   if (f.company && f.companyMissing && !jointRunning) {
     if (f.publicBodyHint) return step("act", "bgp", "To do", "Confirm it is a public body (SDD), or set who signs", "fill_in");
-    return step("act", "bgp", "To do", "Set the company that signs", "fill_in");
+    return step("act", "bgp", "To do", "Set the contracting entity", "fill_in");
   }
   if (f.precheckRunning) {
     return step("wait", "bgp", "Screening", "running now");
@@ -287,6 +290,10 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   if (f.due === false && !f.request) {
     return step("wait", "nobody", "Not due yet", DUE_WORDS);
   }
+  // Who to ask is the joint agent: ask them for their documents (25 November 2026).
+  if (f.askJointAgent && !joint && !f.request) {
+    return step("act", "bgp", "To do", `Ask ${f.askJointAgent}, the joint agent, for their documents`, "joint_ask");
+  }
   if (!f.clientChecks) {
     return step("act", "officers", "For the officers", "sign it off with a note", f.canDecide ? "sign_off" : null);
   }
@@ -294,6 +301,11 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("act", "bgp", "To do", f.gaps[0].replace(/\.$/, ""), "fill_in");
   }
   const unreachable = f.people.filter(p => !p.reachable && !p.linked);
+  // Each person sent their own link, with no request to someone acting (Woody,
+  // 25 November 2026, on Tokoro Capital: "sent the a link but its not showing").
+  if (!f.request && f.people.length && f.people.every(p => p.linked)) {
+    return step("wait", "client", `Waiting on ${andList(f.people.map(p => p.name))}`, "for their own checks");
+  }
   if (!f.request || f.request.status === "not_sent" || f.request.status === "expired") {
     const viaAgent = !f.request && !f.askName && !!f.theirAgent;
     const words = viaAgent ? `Send the checks to ${firmShort(f.theirAgent)} to pass on`

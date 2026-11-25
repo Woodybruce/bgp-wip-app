@@ -245,7 +245,7 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     signerChecks: !party.dealId ? [] : await import("./deal-guarantors")
       .then(m => m.signerViews(party.dealId!, db))
       .then(list => list.filter(g => g.companyId === party.brandId && g.role === party.role).map(g => ({ name: g.name, state: g.checks.state })))
-      .catch(() => [{ name: "the other companies that sign (could not be read)", state: "not_run" as const }]),
+      .catch(() => [{ name: "the other contracting entities (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
     dobNeeded: dobNeeded && !personDetails,
     dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
@@ -496,7 +496,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
         reminderCompanyId: party.brandId, notes: line, recheckYears: years, evidence,
       });
-      if (r.status !== 200) return res.status(r.status).json({ message: "The company that signs was not found." });
+      if (r.status !== 200) return res.status(r.status).json({ message: "The contracting entity was not found." });
       // Each other company that signs for the party is a customer too: the
       // sign-off, which waited for BGP's checks on it, approves it as well (24 November 2026).
       const others = party.dealId ? await import("./deal-guarantors").then(m => m.signerRows([party.dealId!]))
@@ -504,7 +504,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       for (const g of others) {
         await approveEntityKyc("trading_entity", g.entityId, me.name, {
           reminderCompanyId: party.brandId, notes: `${line} (signing with ${partyName(party)})`, recheckYears: years, evidence,
-        }).catch((e: any) => console.warn("[deal-party-aml] other company that signs not approved:", e?.message));
+        }).catch((e: any) => console.warn("[deal-party-aml] other contracting entity not approved:", e?.message));
       }
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
       await recomputeDealsForTradingEntity(party.entityId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));
@@ -528,7 +528,10 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
 // sign-off is: it decides whether a finding matters.
 //   POST /api/deals/:id/red-flags/set-aside  { role?: party, key, comment } (no role: a flag on the deal record)
 //   POST /api/deals/:id/red-flags/put-back   { reviewId }
-router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Response) => {
+// It's them: an officer confirms a ComplyAdvantage match is the person (25 November 2026).
+router.post("/api/deals/:id/red-flags/confirm", (req: Request, res: Response) => flagDecision(req, res, true));
+router.post("/api/deals/:id/red-flags/set-aside", (req: Request, res: Response) => flagDecision(req, res, false));
+async function flagDecision(req: Request, res: Response, confirm: boolean) {
   try {
     const me = await decider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
@@ -553,15 +556,15 @@ router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Resp
       if (!deal) return res.status(404).json({ message: "Transaction not found." });
     }
     const { setFlagAside } = await import("./kyc-red-flags");
-    const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me });
-    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · why: ${said.comment}`, me);
+    const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me, confirm });
+    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, confirm ? `confirmed as the person by ${me.name}` : `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · ${confirm ? "" : "why: "}${said.comment}`, me);
     res.json({ ok: true, review: done.review });
   } catch (err: any) {
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
-    console.error("[deal-party-aml] set aside failed:", err?.message);
-    res.status(500).json({ message: "The red flag could not be set aside." });
+    console.error("[deal-party-aml] flag decision failed:", err?.message);
+    res.status(500).json({ message: confirm ? "The match could not be confirmed." : "The red flag could not be set aside." });
   }
-});
+}
 
 // The app's draft of the reason (Woody, 24 November 2026: "can you get the app to
 // review and put a suggestions of why can set aside these flags in this box?"). Reads

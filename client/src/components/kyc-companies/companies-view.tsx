@@ -341,7 +341,7 @@ function CompanyKycWindow({ row, onClose }: { row: KycCompanyRow; onClose: () =>
                     <span className="font-mono text-muted-foreground w-12 shrink-0">{t.ref != null ? `#${t.ref}` : ""}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block font-medium break-words">{t.name}</span>
-                      <span className="block text-muted-foreground">{roleWords(t.role)}{t.signsAs ? ` · signs as ${t.signsAs}` : " · no company that signs yet"}{t.waitingOn ? ` · waiting on ${t.waitingOn}` : ""}</span>
+                      <span className="block text-muted-foreground">{roleWords(t.role)}{t.signsAs ? ` · signs as ${t.signsAs}` : " · no contracting entity yet"}{t.waitingOn ? ` · waiting on ${t.waitingOn}` : ""}</span>
                     </span>
                     <StatusChip t={t} />
                     <StageChip t={t} />

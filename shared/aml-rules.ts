@@ -48,6 +48,8 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "BGP's policy (Issue 5): a buyer, a tenant and the other side are checked from agreed heads of terms. Nothing exchanges or completes until every party is checked.", refs: ["bgp_policy"] },
       { text: "A letting under £10,000 a month is outside HMRC's rules. We still run sanctions checks.", refs: ["amlg2300", "bgp_policy"] },
       { text: "Anyone acting for a party, such as an agent or a director: identify them and check they can act.", refs: ["amlg2200", "amlg2300"] },
+      { text: "Lease renewals and re-gears are lettings: full checks at £10,000 a month or more, sanctions checks below that. HMRC is silent on renewals; this is BGP's choice.", refs: ["amlg2300", "bgp_policy"] },
+      { text: "Rent reviews, dilapidations and service charge are advisory, not agency work. We check our own client, because we invoice them; the other side is not checked.", refs: ["bgp_policy"] },
       { text: "Someone else paying our invoice: find out why and check them. No link to the transaction is high risk.", refs: ["amlg3200"] },
     ],
   },
@@ -78,6 +80,7 @@ export const AML_RULES: AmlRuleGroup[] = [
     rules: [
       { text: "Public roles (PEPs), their family and close associates: enhanced checks, until at least 12 months after they leave the role.", refs: ["amlg11650"] },
       { text: "Red flags, high-risk countries, trusts and complex ownership: enhanced checks, signed off by the Nominated Officer or a Deputy.", refs: ["amlg11600", "amlg3200"] },
+      { text: "A screening match on a name is not a PEP until an officer confirms it is them. Only then is the party enhanced.", refs: ["amlg11650", "bgp_policy"] },
       { text: "Check again every 3 years, or every year if higher risk.", refs: ["bgp_policy"] },
     ],
   },

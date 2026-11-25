@@ -59,7 +59,7 @@ async function textOf(buffer: Buffer, name: string): Promise<string | null> {
 /** BGP's own record of the checks, as text the reader can cite as source R. */
 export function partyRecordText(p: AmlFileParty): string {
   const lines: string[] = [];
-  lines.push(`Party: ${p.brand.name}${p.company ? `; the company that signs: ${p.company.name}${p.company.number ? ` (${p.company.number})` : ""}` : ""}${p.individual ? " (a private individual)" : ""}`);
+  lines.push(`Party: ${p.brand.name}${p.company ? `; the contracting entity: ${p.company.name}${p.company.number ? ` (${p.company.number})` : ""}` : ""}${p.individual ? " (a private individual)" : ""}`);
   for (const t of p.trustStructure || []) lines.push(`Trust structure: ${t}`);
   if (p.level) lines.push(`Due diligence level: ${p.level.level}. ${p.level.why.join(" ")}`);
   for (const l of p.precheck?.lines || []) lines.push(`BGP check: ${l.label}${l.detail ? `: ${l.detail}` : ""}`);

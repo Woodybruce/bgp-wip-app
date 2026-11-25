@@ -326,19 +326,20 @@ function ChaseRow({ dealId, party, request }: { dealId: string; party: JointAgen
 }
 
 /** Ask the joint agent: an email from the KYC mailbox with a page of their own. */
-export function AskJointAgentButton({ dealId, view, party, label, quiet }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; label?: string; quiet?: boolean }) {
+// person: who to ask, set as the joint agent on the party (25 November 2026): the dialog starts on them.
+export function AskJointAgentButton({ dealId, view, party, label, quiet, person }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; label?: string; quiet?: boolean; person?: { id: string; name: string; email: string | null; firm: string | null } | null }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button type="button" size="sm" variant={quiet ? "ghost" : "default"} className={quiet ? "h-7 px-2 text-xs" : "h-7 text-xs"} onClick={() => setOpen(true)} data-testid={`joint-ask-${party.role}`}>
         <Send className="w-3.5 h-3.5 mr-1" />{label || `Ask ${party.agent?.name || view.firm?.name || `the ${party.agentWords}`} for their checks`}
       </Button>
-      {open && <AskDialog dealId={dealId} view={view} party={party} onClose={() => setOpen(false)} />}
+      {open && <AskDialog dealId={dealId} view={view} party={party} person={person || null} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; onClose: () => void }) {
+function AskDialog({ dealId, view, party, person, onClose }: { dealId: string; view: JointAgentChecksView; party: JointAgentPartyView; person: { id: string; name: string; email: string | null; firm: string | null } | null; onClose: () => void }) {
   const { toast } = useToast();
   // The joint agent only (23 November 2026): the party's own agent is sent
   // the standard client checks to pass on instead (Send client checks,
@@ -347,10 +348,11 @@ function AskDialog({ dealId, view, party, onClose }: { dealId: string; view: Joi
   const recorded = view.firm ? { companyId: view.firm.companyId, name: view.firm.name, contacts: view.contacts, contactId: view.defaultContactId } : null;
   const who = "joint agent";
   const withEmail = (recorded?.contacts || []).filter(c => c.email);
-  const [firm, setFirm] = useState(recorded?.name || "");
-  const [contactId, setContactId] = useState<string>(recorded?.contactId || (withEmail[0]?.id ?? "other"));
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const listed = person ? withEmail.find(c => c.id === person.id) || null : null;
+  const [firm, setFirm] = useState(recorded?.name || person?.firm || "");
+  const [contactId, setContactId] = useState<string>(listed ? listed.id : person ? "other" : recorded?.contactId || (withEmail[0]?.id ?? "other"));
+  const [name, setName] = useState(person && !listed ? person.name : "");
+  const [email, setEmail] = useState(person && !listed ? person.email || "" : "");
   const [note, setNote] = useState("");
   const picked = withEmail.find(c => c.id === contactId) || null;
   const toName = picked ? picked.name : name.trim();

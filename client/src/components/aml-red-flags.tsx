@@ -15,7 +15,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAmlUrls } from "@/lib/aml-scope";
 import { RaiseReportButton } from "@/components/aml-register";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
-import { FLAG_REVIEW_COMMENT_MIN, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
+import { FLAG_REVIEW_COMMENT_MIN, flagToConfirm, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { precheckDay } from "@shared/kyc-prechecks";
 import { SET_ASIDE_VERDICT_WORDS, type SetAsideSuggestion } from "@shared/flag-set-aside";
 
@@ -128,6 +128,12 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
     onSuccess: () => { refreshAml(dealId, onChanged); toast({ title: "Put back", description: "It counts as a red flag again." }); },
     onError: (e: any) => toast({ title: "Not put back", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
   });
+  // It's them: an officer confirms a ComplyAdvantage match is the person, and it then counts (25 November 2026).
+  const confirm = useMutation({
+    mutationFn: async (f: KycRedFlag) => (await apiRequest("POST", `${urls.redFlags(dealId)}/confirm`, { role, key: f.key, comment: `Confirmed it is the same person: ${f.label}` })).json(),
+    onSuccess: () => { refreshAml(dealId, onChanged); toast({ title: "Confirmed", description: "The match is the person: the party is now enhanced due diligence." }); },
+    onError: (e: any) => toast({ title: "Not confirmed", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
   if (!flags.length && !setAside.length) return null;
   return (
     <div className="space-y-1.5" data-testid={testId}>
@@ -143,7 +149,7 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
                   <div className="flex items-start gap-1.5">
                     <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors ? "bg-amber-600" : "bg-red-600"}`} />
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium">{f.label}</div>
+                      <div className="font-medium">{f.label}{flagToConfirm(f) && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-testid={`kyc-flag-to-check-${f.key}`}>possible match to check</span>}{f.confirmed && <span className="ml-1.5 text-[10px] font-medium" data-testid={`kyc-flag-confirmed-${f.key}`}>confirmed as the person</span>}</div>
                       {f.detail && <div className={`${factors ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
                       {f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label)) ? (
                         <div className="mt-0.5 font-medium" data-testid={`kyc-flag-ofsi-${f.key}`}>If it is a true match: tell the Nominated Officer now. It is reported to OFSI as soon as practicable, and legal advice is taken before BGP acts further (AML policy J and 3.10).</div>
@@ -152,8 +158,11 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
                         <button type="button" className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline" onClick={() => setOpenKey(open ? null : id)} data-testid={`kyc-flag-detail-${f.key}`}>
                           {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}{open ? "Hide detail" : "Detail"}
                         </button>
+                        {canDecide && flagToConfirm(f) && (
+                          <button type="button" className="font-medium underline-offset-2 hover:underline" disabled={confirm.isPending} onClick={() => confirm.mutate(f)} data-testid={`kyc-flag-confirm-${f.key}`}>It's them</button>
+                        )}
                         {canDecide && (
-                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>Set aside</button>
+                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>{flagToConfirm(f) ? "Not them" : "Set aside"}</button>
                         )}
                         {(f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label))) && (
                           <RaiseReportButton variant="text" className="underline-offset-2 hover:underline"

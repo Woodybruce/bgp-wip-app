@@ -5,6 +5,7 @@
 // Shown while the client checks are on (clientChecks on the deal's KYC
 // status: their own switch since 18 November 2026, not in-app AML's);
 // otherwise KYC4U does the checks.
+import { CrmEmailInput } from "@/components/crm-email-input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAmlUrls } from "@/lib/aml-scope";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -68,7 +69,7 @@ export interface ClientCheckRequest {
   remindersSent: number; link: string; whatsapp: string | null; canRemind: boolean;
 }
 export interface ClientChecks {
-  dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; parties: Party[]; requests: ClientCheckRequest[];
+  dealName: string; mailbox: string; veriff: boolean; agents: Array<{ name: string; email: string }>; contact?: Array<{ name: string; email: string; phone: string | null }>; senderName?: string | null; parties: Party[]; requests: ClientCheckRequest[];
   // BGP's client on the transaction (23 November 2026).
   clientRole?: string | null; clientName?: string | null;
   // The people to check per party (null when they could not be read).
@@ -275,7 +276,7 @@ const ROLE_WORDS: Record<KycPersonRole, string> = {
   owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them",
   settlor: "Settlor", trustee: "Trustee", protector: "Protector", beneficiary: "Beneficiary", controller: "Other control",
   guarantor: "Guarantor", guarantor_owner: "Owns the guarantor",
-  signer: "Signs too", signer_owner: "Owns a company that signs",
+  signer: "Signs too", signer_owner: "Owns a contracting entity",
 };
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {
@@ -396,6 +397,12 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
           {pf && <span className={`${pillMetrics} bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900`} data-testid={`person-public-figure-${testKey}`}>{pf.method === "certified" ? "Certified documents" : "Public figure"}</span>}
           {relied && <span className={`${pillMetrics} bg-violet-50 text-violet-800 border border-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:border-violet-900`} data-testid={`person-relied-${testKey}`}>Covered by reliance</span>}
           {person.sanctions === "possible" && <span className={SANCTIONS_WORDS.possible.cls}>{SANCTIONS_WORDS.possible.text}</span>}
+          {/* Their own link, on the line itself (Woody, 25 November 2026: "sent a link but its not showing"). */}
+          {ownRequest && (
+            <span className={`${pillMetrics} ${ownRequest.status === "finished" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-sky-50 text-sky-800 border border-sky-200"}`} data-testid={`person-link-chip-${testKey}`}>
+              {ownRequest.status === "finished" ? "Link finished" : ownRequest.sentAt ? `Link sent ${shortDate(ownRequest.sentAt)}` : "Link made, not emailed"}
+            </span>
+          )}
           <ChevronDown className={`ml-auto w-3.5 h-3.5 shrink-0 text-muted-foreground transition-transform ${details ? "rotate-180" : ""}`} />
         </button>
         {canDecide && !pf && person.outstanding.length > 0 && (
@@ -873,7 +880,7 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
     const { html } = kycRequestEmail({
       recipientName: person.name, partyName: party.name, kind: "individual", dealName: data.dealName, ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/their-link", expiresAt: new Date(Date.now() + 14 * 86400000),
-      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note, agents: data.agents.map(a => ({ name: a.name, email: a.email, phone: null })),
+      needsIdCheck: asks.needsIdCheck, docs: asks.docs, note, agents: data.contact?.length ? data.contact : data.agents.map(a => ({ name: a.name, email: a.email, phone: null })), noteFrom: data.senderName || null,
       sentFrom: data.mailbox, askPep: true, person: { roles: person.roles },
     });
     return html.split(`cid:${KYC_LOGO_CID}`).join("/bgp-logo.png");
@@ -914,7 +921,9 @@ function PersonLinkDialog({ dealId, data, party, person, onClose }: { dealId: st
             {person.ownerDetail && <p className="text-xs text-muted-foreground">{person.name}: {person.ownerDetail}.</p>}
             <div className="space-y-1.5">
               <Label>Their email</Label>
-              <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Their email, to send it to them" data-testid="person-link-email" />
+              {/* Looks the person up in the CRM as it is typed (Woody, 25 November 2026). */}
+              <CrmEmailInput value={email} onChange={setEmail} personName={person.name} savedUnder={party.brandName || party.name}
+                onPick={c => { if (!mobile.trim() && c.mobile) setMobile(c.mobile); }} placeholder="Their email, to send it to them" testId="person-link-email" />
               <Input value={mobile} onChange={e => setMobile(e.target.value)} placeholder="Their mobile (optional, for WhatsApp)" />
               <p className="text-[11px] text-muted-foreground">An email you type is saved to the CRM under {party.brandName || party.name}. No email? Make the link and pass it on yourself.</p>
             </div>
@@ -1065,7 +1074,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
       partyName: party.name, kind: chosenKind, dealName: data?.dealName || "this transaction", ref: "SAMPLE",
       link: "https://chatbgp.app/kyc-upload/your-link", expiresAt: new Date(Date.now() + 14 * 86400000),
       needsIdCheck: wantId, docs: chosenDocs,
-      note, agents: (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
+      note, agents: data?.contact?.length ? data.contact : (data?.agents || []).map(a => ({ name: a.name, email: a.email, phone: null })), noteFrom: data?.senderName || null, sentFrom: data?.mailbox || "kyc@brucegillinghampollard.com", askPep: true,
       confirmOwners, ownerNames: chosenDocs.includes("owner_ids") ? asks?.ownerNames || [] : [],
       // Our client or the other side, as the email will say it (25 November 2026).
       work: party.work || null,
@@ -1214,7 +1223,8 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
                 <>
                   <div className="grid sm:grid-cols-2 gap-2">
                     <Input placeholder="Their name" value={name} onChange={e => setName(e.target.value)} data-testid="input-client-check-name" />
-                    <Input type="email" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid="input-client-check-email" />
+                    <CrmEmailInput value={email} onChange={setEmail} personName={name} savedUnder={party.brandName || party.name}
+                      onPick={c => { if (!name.trim()) setName(c.name); if (c.mobile) setMobile(c.mobile); }} testId="input-client-check-email" />
                   </div>
                   <p className="text-[11px] text-muted-foreground" data-testid="client-checks-saved-to-crm">Saved to the CRM under {party.brandName || party.name}, and made the person to ask on this transaction if nobody is set.</p>
                 </>
@@ -1225,7 +1235,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
 
             <div className="space-y-1.5">
               <Label>{shownName} is</Label>
-              {party.entityId && <p className="text-[11px] text-muted-foreground">The company that signs for {party.brandName}{party.entityNumber ? ` (Companies House ${party.entityNumber})` : ""}.</p>}
+              {party.entityId && <p className="text-[11px] text-muted-foreground">The contracting entity for {party.brandName}{party.entityNumber ? ` (Companies House ${party.entityNumber})` : ""}.</p>}
               <div className="flex gap-2">
                 {(["company", "individual"] as const).map(k => (
                   <Button key={k} type="button" size="sm" variant={chosenKind === k ? "default" : "outline"} onClick={() => { setKind(k); setDocs(null); }}>

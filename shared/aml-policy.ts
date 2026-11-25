@@ -32,7 +32,7 @@
 // Pure rules: the server reads the records (server/aml-policy.ts,
 // server/kyc-red-flags.ts, server/deal-party-aml.ts).
 
-import type { KycRedFlag } from "./kyc-red-flags";
+import { flagToConfirm, type KycRedFlag } from "./kyc-red-flags";
 import { fundCase, isPublicBodyRecord, listedCase, publicBodyCase, publicBodyMarkInName, type SddCase } from "./aml-sdd";
 import { ownerRegister, tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
@@ -213,22 +213,26 @@ export interface PartyDueDiligence {
  * basis for it holds and nothing makes it enhanced, otherwise standard.
  */
 export function dueDiligenceLevel(input: {
-  partyFlags: Array<Pick<KycRedFlag, "label" | "factor">>;
-  dealFlags: Array<Pick<KycRedFlag, "label" | "factor">>;
+  partyFlags: Array<Pick<KycRedFlag, "label" | "factor"> & Partial<Pick<KycRedFlag, "kind" | "evidence" | "confirmed">>>;
+  dealFlags: Array<Pick<KycRedFlag, "label" | "factor"> & Partial<Pick<KycRedFlag, "kind" | "evidence" | "confirmed">>>;
   simplifiedBasis: string | null;
   toWeigh?: string[];
   // Why standard rather than simplified, when the records say (a company owned by a listed one).
   standardBasis?: string | null;
   sdd?: SddCase | null;
 }): PartyDueDiligence {
-  const all = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the transaction: ${f.label}` }))];
+  const flags = [...input.partyFlags, ...input.dealFlags.map(f => ({ ...f, label: `On the transaction: ${f.label}` }))];
+  // A ComplyAdvantage match not yet confirmed is a match to check, not enhanced (25 November 2026).
+  const toCheck = flags.filter(f => flagToConfirm({ kind: f.kind as any, evidence: f.evidence || [], confirmed: f.confirmed, factor: f.factor }));
+  const all = flags.filter(f => !toCheck.includes(f));
+  const toWeigh = [...(input.toWeigh || []), ...toCheck.map(f => `${f.label}: a possible match to check. It makes the party enhanced only if an officer confirms it is them`)];
   if (all.length) {
-    return { level: "enhanced", why: all.map(f => f.label), toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.enhanced };
+    return { level: "enhanced", why: all.map(f => f.label), toWeigh, recheckYears: RECHECK_YEARS.enhanced };
   }
   if (input.simplifiedBasis) {
-    return { level: "simplified", why: [input.simplifiedBasis], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.simplified, sdd: input.sdd || null };
+    return { level: "simplified", why: [input.simplifiedBasis], toWeigh, recheckYears: RECHECK_YEARS.simplified, sdd: input.sdd || null };
   }
-  return { level: "standard", why: [input.standardBasis || "No higher-risk factor found: identify and verify the beneficial owners."], toWeigh: input.toWeigh || [], recheckYears: RECHECK_YEARS.standard };
+  return { level: "standard", why: [input.standardBasis || "No higher-risk factor found: identify and verify the beneficial owners."], toWeigh, recheckYears: RECHECK_YEARS.standard };
 }
 
 // ── Which checks a deal needs (policy A) ────────────────────────────────────
@@ -247,7 +251,7 @@ export function amlRegime(deal: { dealType?: string | null; team?: string[] | st
   const type = String(deal.dealType || "").trim();
   if (isInvestmentDeal(type, deal.team ?? null)) return { regime: "full", why: "A sale or purchase: full checks on every party." };
   if (/^(rent review|dilapidations|service charge)$/i.test(type)) {
-    return { regime: "advisory", why: `${type} is advisory work, not estate or letting agency: the policy's checks are for sales, purchases and lettings.` };
+    return { regime: "advisory", why: `${type} is advisory work, not estate or letting agency. BGP's client is checked, because BGP invoices it; the other side is not.` };
   }
   const letting = ALL_LETTING_TYPES.includes(type) || (TENANT_REP_TYPES as readonly string[]).includes(type) || /^(lease renewal|regear)$/i.test(type);
   if (!letting) return { regime: "full", why: "Full checks on every party." };
@@ -666,6 +670,9 @@ export function jointAgentNotRequiredRefusal(_rule: JointAgentRule): string | nu
 export const NOT_REQUIRED_REASONS = {
   joint_agent: "The joint agent found and dealt with this party",
   no_deal: "No transaction was done with this party",
+  // Set by the app, never chosen (Woody, 25 November 2026): on a rent review,
+  // dilapidations or service charge only BGP's client is checked, for invoicing.
+  advisory_other_side: "Advisory work: only BGP's client is checked, for invoicing",
 } as const;
 export type NotRequiredReason = keyof typeof NOT_REQUIRED_REASONS;
 // The reasons a person can choose now: the joint agent reason is kept only to

@@ -1108,7 +1108,7 @@ function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTea
                     onCreate={(name) => onCreate(slot.field, slot.createType, name)}
                     placeholder={`Link ${slot.label.toLowerCase()}`}
                   />
-                  {/* The company that signs, who is billed and who to ask
+                  {/* The contracting entity, who is billed and who to ask
                       (BGP staff; this branch is never drawn for a client login). */}
                   {slot.value && <DealPartyLines dealId={id} role={slot.role} aml={partyAmlFacts(amlStatus, slot.value)} />}
                 </div>

@@ -35,11 +35,11 @@ test('a check Companies House was too busy for runs again, a few times a day at 
   assert.match(checks, /runsToday\(companyId, entityId\)\) >= PRECHECK_AUTO_RUNS_A_DAY\) return "waiting"/);
 });
 
-test('no check runs on a company party until the deal names the company that signs', () => {
+test('no check runs on a company party until the deal names the contracting entity', () => {
   const rules = read('shared/deal-parties.ts');
   // A trust needs no company that signs: its trustees sign (Jack, 20 November 2026).
   assert.match(rules, /if \(input\.kind === "company" && !input\.companySet && !input\.trust\) \{/);
-  assert.doesNotMatch(rules, /brandHasNumber/, 'the brand\'s own number never stands in for the company that signs');
+  assert.doesNotMatch(rules, /brandHasNumber/, 'the brand\'s own number never stands in for the contracting entity');
   const status = read('server/aml-compliance.ts');
   // A private individual, and since 21 November 2026 a trust or foundation, is checked on its own record.
   assert.match(status, /needsCompany: !signs\[c\.id\] && !signsItself\.has\(String\(c\.id\)\)/);
@@ -58,7 +58,7 @@ test('no check runs on a company party until the deal names the company that sig
   assert.match(kyc4u, /if \(deal && partyRole && !entity\) \{/, 'the KYC4U request refuses it');
   const card = read('client/src/components/deal-aml-status.tsx');
   // The Documents step waits for it (22 November 2026: four steps per party).
-  assert.match(card, /\{companyMissing && !current\s*\?\s*<p[^>]*>Starts once the company that signs is set\.<\/p>/);
+  assert.match(card, /\{companyMissing && !current\s*\?\s*<p[^>]*>Starts once the contracting entity is set\.<\/p>/);
 });
 
 test('the brand\'s own company is offered, saved without a Xero contact, never assumed', () => {
@@ -84,7 +84,7 @@ test('a flag is set aside only by the MLRO, with a comment, on the flag the app 
   const body = flags.slice(start, flags.indexOf('\n}\n', start));
   assert.match(body, /const flag = live\.find\(f => f\.key === input\.key\);/, 'the flag is read again, never taken from the request');
   assert.match(body, /flag\.label\.slice\(0, 500\), flag\.source\.slice\(0, 500\), JSON\.stringify\(flag\.evidence\)/);
-  assert.match(body, /'red_flag_set_aside'/, 'it is on the KYC audit trail');
+  assert.match(body, /["']red_flag_set_aside["']/, 'it is on the KYC audit trail');
   assert.match(routes, /dealAudit\(String\(req\.params\.id\), "aml_red_flag"/, 'and on the deal history');
   assert.match(flags, /AND \(company_id = ANY\(\$4::varchar\[\]\) OR \(company_id IS NULL AND deal_id = \$5\)\)/, 'only a decision about the deal\'s own parties is put back');
   const shared = read('shared/kyc-red-flags.ts');

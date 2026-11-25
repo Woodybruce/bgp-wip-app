@@ -109,7 +109,7 @@ export function signerChecksDenial(list: Array<{ name: string; state: GuarantorC
   if (!open.length) return null;
   const names = (gs: typeof open) => gs.map(g => g.name).join(", ");
   if (open.every(g => g.state === "running")) return `BGP's checks on ${names(open)}, which also sign${open.length === 1 ? "s" : ""}, are still running. Sign off once they finish.`;
-  return `Run BGP's checks on each company that signs first (${open.map(g => `${g.name}: ${GUARANTOR_CHECKS_WORDS[g.state].replace(/^BGP's checks /, "")}`).join("; ")}). Press Run checks on its line.`;
+  return `Run BGP's checks on each contracting entity first (${open.map(g => `${g.name}: ${GUARANTOR_CHECKS_WORDS[g.state].replace(/^BGP's checks /, "")}`).join("; ")}). Press Run checks on its line.`;
 }
 
 /** One line for another company that signs: "ST JOHN'S HILL PH03 LLP (OC443074) · BGP's checks have run · no red flags". */

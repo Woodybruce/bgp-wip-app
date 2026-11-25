@@ -56,7 +56,7 @@ test("a foundation in the ownership, on the register, abroad or above a company 
   assert.ok(jersey.some(x => x.kind === "policy_trust"), "a Jersey foundation is one");
 });
 
-test("a party recorded as a trust is enhanced, and needs no company that signs", () => {
+test("a party recorded as a trust is enhanced, and needs no contracting entity", () => {
   const flags = policyFactorFlags({ precheck: null, companyType: "Vendor", subjectType: "trust" });
   assert.ok(flags.some(f => f.kind === "policy_trust" && f.factor));
   assert.deepEqual(partyGaps({ role: "vendor", kind: "company", brandName: "A Trust", companySet: false, person: { name: "A", email: "a@x.com" }, trust: true }), []);

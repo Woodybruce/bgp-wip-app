@@ -21,7 +21,7 @@ const register = (over: Partial<Ch>): Ch => ({
 });
 const sanctions = (names: string[]) => ({ ran: true, lists: ["UK", "US"], error: null, lines: names.map(name => ({ name, role: "owner", outcome: "clear" as const, matches: [] })) });
 
-test("any party can have another company that signs", () => {
+test("any party can have another contracting entity", () => {
   assert.deepEqual([...SIGNER_ROLES], ["landlord", "tenant", "vendor", "purchaser"]);
   assert.ok(isSignerRole("landlord"));
   assert.ok(isSignerRole("vendor"));
@@ -45,7 +45,7 @@ test("its findings are the party's red flags, under keys of their own", () => {
   assert.deepEqual(signerRedFlags({ signer: { id: "x", name: "X" }, precheck: null }), []);
 });
 
-test("a person who signs too and the owners of a company that signs too are people to check", () => {
+test("a person who signs too and the owners of a contracting entity too are people to check", () => {
   const out = partyPeople({
     companyId: "brand-1", kind: "company",
     precheck: { companiesHouse: register({}), sanctions: sanctions([]) } as any,
@@ -89,19 +89,19 @@ const facts = (over: Partial<SignOffFacts> = {}): SignOffFacts => ({
   now: new Date("2026-11-24T12:00:00Z"), ...over,
 });
 
-test("the party is signed off only once BGP's checks on each company that signs have run", () => {
+test("the party is signed off only once BGP's checks on each contracting entity have run", () => {
   assert.equal(signOffDenial(facts({ signerChecks: [{ name: "BLUECAP TWO LIMITED", state: "done" }] })), null);
   assert.match(signOffDenial(facts({ signerChecks: [{ name: "BLUECAP TWO LIMITED", state: "not_run" }] }))!,
-    /Run BGP's checks on each company that signs first \(BLUECAP TWO LIMITED: have not run\)/);
+    /Run BGP's checks on each contracting entity first \(BLUECAP TWO LIMITED: have not run\)/);
   assert.match(signOffDenial(facts({ signerChecks: [{ name: "BLUECAP TWO LIMITED", state: "running" }] }))!, /which also signs, are still running/);
   // Enhanced (a red flag) and sanctions-only: the same wait.
-  assert.match(signOffDenial(facts({ redFlags: 1, signerChecks: [{ name: "A", state: "stale" }] }))!, /Run BGP's checks on each company that signs first/);
-  assert.match(signOffDenial(facts({ sanctionsOnly: true, signerChecks: [{ name: "A", state: "not_run" }] }))!, /Run BGP's checks on each company that signs first/);
+  assert.match(signOffDenial(facts({ redFlags: 1, signerChecks: [{ name: "A", state: "stale" }] }))!, /Run BGP's checks on each contracting entity first/);
+  assert.match(signOffDenial(facts({ sanctionsOnly: true, signerChecks: [{ name: "A", state: "not_run" }] }))!, /Run BGP's checks on each contracting entity first/);
   assert.equal(signerChecksDenial([]), null);
   assert.equal(signerChecksDenial(undefined), null);
 });
 
-test("the party reads cleared only once each other company that signs is signed off too", () => {
+test("the party reads cleared only once each other contracting entity is signed off too", () => {
   const now = new Date("2026-11-24T12:00:00Z");
   const approved = { name: "A", status: "approved", expiresAt: "2029-11-24T00:00:00Z", scope: null } as const;
   assert.deepEqual(signersNotCleared([approved], true, now), []);
@@ -122,7 +122,7 @@ test("the party reads cleared only once each other company that signs is signed 
   assert.equal(applySigners({ status: "rejected", expiresAt: null, approvedBy: null }, ["X"]).status, "rejected");
 });
 
-test("the AML file says what is still needed on each company that signs", () => {
+test("the AML file says what is still needed on each contracting entity", () => {
   const base: StillNeededInput = {
     deadline: null, settled: null, needsCompany: true, companySet: true, precheck: "done", flags: [], level: "standard",
     sanctionsOnly: false, peopleOutstanding: [], requests: [], anyRequest: true, jointGaps: [], trustGaps: [],

@@ -33,7 +33,7 @@ test("KYC4U's approvals read as KYC4U's, never the MLRO's (BGP's AML policy, Iss
   assert.equal(viaCompany.approvedBy, "KYC4U");
 });
 
-test("a party is judged on the company that signs when the deal names one", () => {
+test("a party is judged on the contracting entity when the deal names one", () => {
   // No company: the brand, as before.
   assert.deepEqual(partyKycState({ brand: brand(), company: null }).source, "brand");
   // A company with its own sign-off: that sign-off, approved or rejected.
@@ -150,7 +150,7 @@ test("the gate reads a company's own check only when it is filed under the party
   assert.equal(s2.tenant.status, null);
 });
 
-test("a KYC4U request is filed on the company that signs only on a single fit under its brand", () => {
+test("a KYC4U request is filed on the contracting entity only on a single fit under its brand", () => {
   const key = (n: string) => n.toLowerCase().replace(/\b(limited|ltd)\b/g, "ltd").replace(/[^a-z0-9]+/g, " ").trim();
   const entities = [
     { id: "e1", parentId: "b1", name: "The Test Bakery Operations Limited", companiesHouseNumber: "12345678" },
@@ -242,9 +242,9 @@ test("a sanctions-only party is signed off on the sanctions checks: other flags 
 
 // Woody, 24 November 2026, on Coq d'Argent: the sign-off said "Press Run again on the card first" when the
 // party had no company that signs, so there was nothing to run.
-test("with no company that signs, the sign-off says to set it first, not to run the checks again", () => {
-  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true }))!, /^Set the company that signs first \(step 1\)/);
-  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, redFlags: 1 }))!, /^Set the company that signs first/);
-  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, sanctionsOnly: true }))!, /^Set the company that signs first/);
+test("with no contracting entity, the sign-off says to set it first, not to run the checks again", () => {
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true }))!, /^Set the contracting entity first \(step 1\)/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, redFlags: 1 }))!, /^Set the contracting entity first/);
+  assert.match(signOffDenial(facts({ precheck: null, needsCompany: true, sanctionsOnly: true }))!, /^Set the contracting entity first/);
   assert.match(signOffDenial(facts({ precheck: null }))!, /have not run for this party\. Press Run again/);
 });

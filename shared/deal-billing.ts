@@ -112,7 +112,7 @@ export function billingWords(state: BillingState, names: {
   // The one who signs is a person, not a company (20 November 2026).
   signingPerson?: boolean;
 }): BillingView {
-  const who = names.signingPerson ? "who signs" : "the company that signs";
+  const who = names.signingPerson ? "who signs" : "the contracting entity";
   const signing = names.signing || who;
   switch (state) {
     case "same":
@@ -120,7 +120,7 @@ export function billingWords(state: BillingState, names: {
     case "signing":
       return { state, tone: "done", words: `Billed to ${signing}, ${who}. ${names.signingPerson ? "Their" : "Its"} Xero contact is found or made when the invoice is drafted.` };
     case "different":
-      return { state, tone: "flag", words: `Billed to ${names.billed || "another company"}, not ${names.signingPerson ? "the person who signs" : "the company that signs"} (${signing}): a third party paying BGP's invoice needs its own checks. Record who pays and how they are related, or confirm it is the same ${names.signingPerson ? "person" : "company"}.` };
+      return { state, tone: "flag", words: `Billed to ${names.billed || "another company"}, not ${names.signingPerson ? "the person who signs" : "the contracting entity"} (${signing}): a third party paying BGP's invoice needs its own checks. Record who pays and how they are related, or confirm it is the same ${names.signingPerson ? "person" : "company"}.` };
     case "payer": {
       const clear = PAYER_RELATIONSHIPS.find(r => r.key === names.relationship)?.clear;
       return clear
@@ -128,7 +128,7 @@ export function billingWords(state: BillingState, names: {
         : { state, tone: "flag", words: `${names.payer || "A third party"} pays BGP's invoice with no clear relationship to the client: HMRC treats that as high risk. A red flag: enhanced checks needed.` };
     }
     case "no_company":
-      return { state, tone: "act", words: "Set the company that signs: BGP bills it." };
+      return { state, tone: "act", words: "Set the contracting entity: BGP bills it." };
     case "individual":
       return { state, tone: "info", words: "Billed in the client's own name." };
   }

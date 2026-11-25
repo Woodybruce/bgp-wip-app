@@ -128,7 +128,9 @@ export function kycCompanyNext(f: {
   const rejected = f.entities.find((_e, i) => buckets[i] === "rejected");
   if (rejected) return { tone: "bad", lead: "Rejected", words: rejected.name };
   const openAt = buckets.map((b, i) => (b === "cleared" || b === "expiring" ? -1 : i)).filter(i => i >= 0);
-  if (openAt.length && kyc4u && !buckets.some(b => b === "in_progress")) return kyc4u;
+  // Shown while BGP's own checks run too (Woody, 25 November 2026, on Karve:
+  // the app said "In progress" and hid that KYC4U had considered it).
+  if (openAt.length && kyc4u) return kyc4u;
   if (!openAt.length) {
     const soonest = f.entities.map(e => e.expiresAt).filter((x): x is string => !!x).sort()[0] || null;
     return { tone: "ok", lead: "Cleared", words: [soonest ? `until ${fmt(soonest)}` : "", f.sanctionsOnly ? "lettings under £10k a month" : ""].filter(Boolean).join(" · ") };

@@ -294,8 +294,10 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState("");
+  const [years, setYears] = useState<1 | 3>(3);
+  const until = (() => { const d = new Date(date); if (Number.isNaN(d.getTime())) return null; d.setFullYear(d.getFullYear() + years); return d; })();
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/kyc4u/company/${companyId}/signoff`, { date, note })).json(),
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc4u/company/${companyId}/signoff`, { date, note, recheckYears: years })).json(),
     onSuccess: () => {
       setOpen(false); setNote("");
       queryClient.invalidateQueries();
@@ -315,6 +317,18 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
           <div className="space-y-3">
             <label className="block text-sm">Signed off on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="mt-1" /></label>
             <label className="block text-sm">Note<Input value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. KYC4U email from Parul, 6 Oct" className="mt-1" /></label>
+            <div className="space-y-1.5 text-sm">
+              <span className="block">Due diligence</span>
+              <div className="flex flex-wrap gap-1.5" data-testid="kyc4u-signoff-level">
+                <Pill active={years === 3} onClick={() => setYears(3)} data-testid="kyc4u-signoff-standard">Standard: 3 years</Pill>
+                <Pill active={years === 1} onClick={() => setYears(1)} data-testid="kyc4u-signoff-enhanced">Enhanced: 1 year</Pill>
+              </div>
+              {until && (
+                <p className={`text-xs ${until.getTime() < Date.now() ? "text-red-700 dark:text-red-400" : "text-muted-foreground"}`} data-testid="kyc4u-signoff-until">
+                  {until.getTime() < Date.now() ? "Already expired: " : "Lasts until "}{until.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" className="rounded-full" onClick={() => setOpen(false)}>Cancel</Button>

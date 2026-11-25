@@ -125,7 +125,7 @@ test("the Next line asks to confirm a public body before looking for a company",
   assert.match(hint.words, /public body \(SDD\)/);
   assert.equal(hint.action, "fill_in");
   assert.ok(`${hint.lead} ${hint.words}`.split(/\s+/).length <= 13);
-  assert.equal(amlNextStep(facts({})).words, "Set the company that signs");
+  assert.equal(amlNextStep(facts({})).words, "Set the contracting entity");
   // Recorded: no company is asked for, and the client checks go to the person instructing us.
   assert.match(amlNextStep(facts({ companyMissing: false, askName: "Sam Lee" })).words, /Send the client checks to Sam Lee/);
 });
