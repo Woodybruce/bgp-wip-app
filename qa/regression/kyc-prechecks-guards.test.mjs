@@ -113,10 +113,11 @@ test("KYC4U's request waits a little for the run and carries what it found", () 
 
 test('the client is asked only what is left, by the one rule, on the server and in the dialog', () => {
   // contactName: the person asked, or who at the party will complete it when the checks go through their agent; trust: the trust's own asks.
-  assert.match(portal, /const asks = precheckAsks\(pre\?\.input \|\| null, \{ kind: input\.kind, role: party\.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party\.publicBody && input\.kind === "company" \}\);/);
+  // termsOfEngagement: our signed terms on file answer the authority step (25 November 2026).
+  assert.match(portal, /const asks = precheckAsks\(pre\?\.input \|\| null, \{ kind: input\.kind, role: party\.role, idCheck: needsIdCheck, contactName, trust: trustAsk, publicBody: !!party\.publicBody && input\.kind === "company", termsOfEngagement: terms\?\.summary \|\| null \}\);/);
   assert.match(portal, /notAsked: trustDocs \? \[\] : asks\.notAsked\.filter\(n => !docs\.includes\(n\.key\)\)/);
   assert.match(portal, /defaultDocs: asks\.docs, askInput: pre\?\.input \|\| null/);
-  assert.match(dialog, /precheckAsks\(party\.askInput, \{ kind: chosenKind, role: party\.role, idCheck: wantId, contactName: toName \|\| null, trust: chosenKind === "company" \? party\.trustAsk \|\| null : null, publicBody: chosenKind === "company" && !!party\.publicBody \}\)/);
+  assert.match(dialog, /precheckAsks\(party\.askInput, \{ kind: chosenKind, role: party\.role, idCheck: wantId, contactName: toName \|\| null, trust: chosenKind === "company" \? party\.trustAsk \|\| null : null, publicBody: chosenKind === "company" && !!party\.publicBody, termsOfEngagement: party\.termsOfEngagement \|\| null \}\)/);
   assert.doesNotMatch(dialog, /defaultKycDocs\(/);
   assert.match(dialog, /data-testid="client-checks-not-asked"/);
 });

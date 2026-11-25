@@ -137,5 +137,6 @@ test("a certified copy a client sends is read and checked by the app, never take
   // An identity copy counts only with the certifier's name, profession or firm, and date.
   const rule = read("shared/kyc-documents.ts");
   assert.match(rule, /if \(!reading\.certified\) reasons\.push\("Not a certified copy, and no agent saw the original"\);/);
-  assert.match(rule, /return check\.ok \|\| upload\.accepted \? check\.use : null;/);
+  // Counts once it passes or an officer accepts it; a licence showing the address counts for both (25 November 2026).
+  assert.match(rule, /if \(!check\.ok && !upload\.accepted\) return \[\];/);
 });
