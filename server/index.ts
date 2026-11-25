@@ -3073,6 +3073,8 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       restored_by_name text
     )`,
     `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_company_idx ON kyc_flag_reviews (company_id) WHERE restored_at IS NULL`,
+    // An officer confirming a ComplyAdvantage match is the person (25 November 2026).
+    `ALTER TABLE kyc_flag_reviews ADD COLUMN IF NOT EXISTS confirmed boolean NOT NULL DEFAULT false`,
     `CREATE INDEX IF NOT EXISTS kyc_flag_reviews_deal_idx ON kyc_flag_reviews (deal_id) WHERE restored_at IS NULL`,
     // A deal party marked "Not required" by the Nominated Officer or the
     // Deputy (Woody, 19 November 2026: BGP's AML policy, the other side of a

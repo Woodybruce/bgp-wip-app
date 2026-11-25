@@ -130,6 +130,8 @@ export type ClientRequestStatus = "not_sent" | "sent" | "opened" | "in_progress"
 
 export interface DocumentsStepFacts {
   notRequired?: boolean;
+  // Links sent to each person directly: how many, how many still owe, the first sent.
+  links?: { total: number; owing: number; sentAt: string | null } | null;
   // A letting under £10,000 a month: nothing is asked of anyone.
   sanctionsOnly?: boolean;
   // Signed off already: nothing more is needed now.
@@ -175,6 +177,11 @@ export function documentsStepLine(f: DocumentsStepFacts): AmlStepLine {
     return line("done", join([from, "all in"]));
   }
   const req = f.request && f.request.status !== "cancelled" ? f.request : null;
+  // Own links sent straight to the people, with no request to someone acting (25 November 2026).
+  if (!req && f.links && f.links.total) {
+    if (!f.links.owing) return line("done", join(["Own links", "all in"]));
+    return line("todo", join([`Own links sent to ${plural(f.links.total, "person", "people")}${f.links.sentAt ? ` ${amlBoxDay(f.links.sentAt)}` : ""}`, `${f.links.total - f.links.owing} of ${f.links.total} done`]));
+  }
   if (req) {
     const total = f.people?.total || 0;
     const owing = f.people?.owing || 0;

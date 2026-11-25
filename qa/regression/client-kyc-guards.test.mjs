@@ -19,8 +19,11 @@ test("the client file's routes are BGP staff only, and outside the retired AML a
   assert.doesNotMatch(s, /"\/api\/(kyc|aml)\//);
   // Every route reads who is asking first: staff, or the officers.
   for (const block of s.split("clientKycRouter.").slice(1)) {
-    assert.match(block.slice(0, 600), /staffMe\(req\)|decider\(req\)|signOffActor\(req|clientSubjectFor\(req, res\);\s*if \(!subject\) return;\s*const me = await signOffActor/, block.slice(0, 120));
+    assert.match(block.slice(0, 600), /staffMe\(req\)|decider\(req\)|signOffActor\(req|clientSubjectFor\(req, res\);\s*if \(!subject\) return;\s*const me = await signOffActor|=> clientFlagDecision\(req, res, (true|false)\)\);/, block.slice(0, 120));
   }
+  // Confirm and set aside share one handler, which reads the officers first (25 November 2026).
+  const decision = s.slice(s.indexOf("async function clientFlagDecision"));
+  assert.match(decision.slice(0, 400), /const me = await decider\(req\);/);
   assert.match(index, /app\.use\(clientKycRouter\);/);
 });
 

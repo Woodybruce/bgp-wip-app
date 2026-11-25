@@ -84,7 +84,7 @@ test('a flag is set aside only by the MLRO, with a comment, on the flag the app 
   const body = flags.slice(start, flags.indexOf('\n}\n', start));
   assert.match(body, /const flag = live\.find\(f => f\.key === input\.key\);/, 'the flag is read again, never taken from the request');
   assert.match(body, /flag\.label\.slice\(0, 500\), flag\.source\.slice\(0, 500\), JSON\.stringify\(flag\.evidence\)/);
-  assert.match(body, /'red_flag_set_aside'/, 'it is on the KYC audit trail');
+  assert.match(body, /["']red_flag_set_aside["']/, 'it is on the KYC audit trail');
   assert.match(routes, /dealAudit\(String\(req\.params\.id\), "aml_red_flag"/, 'and on the deal history');
   assert.match(flags, /AND \(company_id = ANY\(\$4::varchar\[\]\) OR \(company_id IS NULL AND deal_id = \$5\)\)/, 'only a decision about the deal\'s own parties is put back');
   const shared = read('shared/kyc-red-flags.ts');

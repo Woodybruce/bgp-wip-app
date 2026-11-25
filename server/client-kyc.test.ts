@@ -126,3 +126,9 @@ test("many sub companies at once: only those filed under the account, no repeats
   assert.equal(plan.ids.length, CLIENT_KYC_BULK_MAX);
   assert.equal(plan.over, 5);
 });
+
+test("people sent their own links, with nobody acting asked: the file waits on them, not 'pick who to ask'", () => {
+  const base = { rejected: false, cleared: null, sanctionsOnly: false, precheck: "done" as const, redFlags: 0, canDecide: false, whoToAsk: null, request: "none" as const, signOffBlocked: null };
+  assert.equal(clientKycNextStep({ ...base, waitingOn: ["Maximilian Alexander Bassadone", "Sanjay Sethi"], ownLinks: 2 }).lead, "Waiting on Maximilian Alexander Bassadone and Sanjay Sethi");
+  assert.equal(clientKycNextStep({ ...base, waitingOn: [], ownLinks: 0 }).words, "pick who to ask");
+});

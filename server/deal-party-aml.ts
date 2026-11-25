@@ -528,7 +528,10 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
 // sign-off is: it decides whether a finding matters.
 //   POST /api/deals/:id/red-flags/set-aside  { role?: party, key, comment } (no role: a flag on the deal record)
 //   POST /api/deals/:id/red-flags/put-back   { reviewId }
-router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Response) => {
+// It's them: an officer confirms a ComplyAdvantage match is the person (25 November 2026).
+router.post("/api/deals/:id/red-flags/confirm", (req: Request, res: Response) => flagDecision(req, res, true));
+router.post("/api/deals/:id/red-flags/set-aside", (req: Request, res: Response) => flagDecision(req, res, false));
+async function flagDecision(req: Request, res: Response, confirm: boolean) {
   try {
     const me = await decider(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
@@ -553,15 +556,15 @@ router.post("/api/deals/:id/red-flags/set-aside", async (req: Request, res: Resp
       if (!deal) return res.status(404).json({ message: "Transaction not found." });
     }
     const { setFlagAside } = await import("./kyc-red-flags");
-    const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me });
-    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · why: ${said.comment}`, me);
+    const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me, confirm });
+    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, confirm ? `confirmed as the person by ${me.name}` : `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · ${confirm ? "" : "why: "}${said.comment}`, me);
     res.json({ ok: true, review: done.review });
   } catch (err: any) {
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });
-    console.error("[deal-party-aml] set aside failed:", err?.message);
-    res.status(500).json({ message: "The red flag could not be set aside." });
+    console.error("[deal-party-aml] flag decision failed:", err?.message);
+    res.status(500).json({ message: confirm ? "The match could not be confirmed." : "The red flag could not be set aside." });
   }
-});
+}
 
 // The app's draft of the reason (Woody, 24 November 2026: "can you get the app to
 // review and put a suggestions of why can set aside these flags in this box?"). Reads

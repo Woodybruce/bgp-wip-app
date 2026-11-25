@@ -294,6 +294,11 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
     return step("act", "bgp", "To do", f.gaps[0].replace(/\.$/, ""), "fill_in");
   }
   const unreachable = f.people.filter(p => !p.reachable && !p.linked);
+  // Each person sent their own link, with no request to someone acting (Woody,
+  // 25 November 2026, on Tokoro Capital: "sent the a link but its not showing").
+  if (!f.request && f.people.length && f.people.every(p => p.linked)) {
+    return step("wait", "client", `Waiting on ${andList(f.people.map(p => p.name))}`, "for their own checks");
+  }
   if (!f.request || f.request.status === "not_sent" || f.request.status === "expired") {
     const viaAgent = !f.request && !f.askName && !!f.theirAgent;
     const words = viaAgent ? `Send the checks to ${firmShort(f.theirAgent)} to pass on`

@@ -185,7 +185,8 @@ test("Not required: no transaction with the party, and a comment; the joint agen
   }
   assert.deepEqual([...NOT_REQUIRED_CHOOSABLE], ["no_deal"]);
   // Both reasons still read, so marks made before Issue 4 show what they were.
-  assert.equal(Object.keys(NOT_REQUIRED_REASONS).length, 2);
+  // The two a person can be shown, and the advisory rule the app sets itself (25 November 2026).
+  assert.equal(Object.keys(NOT_REQUIRED_REASONS).length, 3);
   assert.equal(amlStage({ role: "tenant", dealStatus: "SOL", kyc: { status: null, expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, notRequired: true }), "not_required");
   assert.equal(amlBucket("not_required", true), "done");
   assert.equal(amlStage({ role: "tenant", dealStatus: "SOL", kyc: { status: "rejected", expiresAt: null }, precheckAt: null, clientSentAt: null, clientFinishedAt: null, kyc4uOpen: false, kyc4uInReview: false, notRequired: true }), "rejected", "a rejection stays a rejection");
@@ -254,4 +255,23 @@ test("the documents are listed by issue, the trust checklist among them; earlier
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), true);
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
   assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 5) and risk assessment (Issue 4)");
+});
+
+test("an unconfirmed ComplyAdvantage match does not make a party enhanced; a confirmed one does", () => {
+  const match = { kind: "provider_screen" as const, label: "ComplyAdvantage match for Mr Max Ralph Percy", evidence: ["profile:x", "type:pep"] };
+  assert.equal(dueDiligenceLevel({ partyFlags: [match], dealFlags: [], simplifiedBasis: null }).level, "standard");
+  assert.match(dueDiligenceLevel({ partyFlags: [match], dealFlags: [], simplifiedBasis: null }).toWeigh.join(" "), /possible match to check/);
+  assert.equal(dueDiligenceLevel({ partyFlags: [{ ...match, confirmed: true }], dealFlags: [], simplifiedBasis: null }).level, "enhanced");
+  // A sanctions list match always counts.
+  assert.equal(dueDiligenceLevel({ partyFlags: [{ ...match, evidence: ["type:sanctions"] }], dealFlags: [], simplifiedBasis: null }).level, "enhanced");
+  // Other red flags count as before.
+  assert.equal(dueDiligenceLevel({ partyFlags: [{ kind: "client_pep" as any, label: "Said yes" }], dealFlags: [], simplifiedBasis: null }).level, "enhanced");
+});
+
+test("a rent review is advisory: our client is checked for invoicing, the other side is not", () => {
+  const r = amlRegime({ dealType: "Rent Review", rentPa: 500000 });
+  assert.equal(r.regime, "advisory");
+  assert.match(r.why, /BGP's client is checked/);
+  assert.equal(amlRegime({ dealType: "Lease Renewal", rentPa: 500000 }).regime, "full");
+  assert.equal(amlRegime({ dealType: "Lease Renewal", rentPa: 60000 }).regime, "sanctions_only");
 });

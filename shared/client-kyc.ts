@@ -200,6 +200,7 @@ export interface ClientKycNextFacts {
   whoToAsk: string | null;          // the person the checks go to
   request: "none" | "not_sent" | "sent" | "opened" | "in_progress" | "finished" | "expired" | "cancelled";
   waitingOn: string[];              // people still owing their checks
+  ownLinks?: number;                // people sent their own link (25 November 2026)
   signOffBlocked: string | null;
   // The company's sanctions-only switch is on: lettings under £10,000 a month, so nothing is asked of the client.
   sanctionsChecks?: boolean;
@@ -226,6 +227,12 @@ export function clientKycNextStep(f: ClientKycNextFacts, fmt: (iso: string) => s
   if (f.precheck === "not_run") return step("act", "To do", "run BGP's checks", "run_checks");
   if (f.redFlags) return step("act", "Red flag", `${f.redFlags} to review: for the officers`, f.canDecide && !f.signOffBlocked ? "sign_off" : null);
   if (f.sanctionsChecks) return f.signOffBlocked ? step("wait", "Not ready to sign off", f.signOffBlocked.replace(/\.$/, "")) : step("act", "Ready to sign off", "sanctions checks only", "sign_off");
+  // Each person sent their own link and no request to someone acting (Tokoro Capital, 25 November 2026).
+  if ((f.request === "none" || f.request === "cancelled") && f.ownLinks) {
+    if (f.waitingOn.length) return step("wait", `Waiting on ${f.waitingOn.slice(0, 2).join(" and ")}${f.waitingOn.length > 2 ? ` and ${f.waitingOn.length - 2} more` : ""}`, "for their own checks", "remind");
+    if (f.signOffBlocked) return step("wait", "Not ready to sign off", f.signOffBlocked.replace(/\.$/, ""));
+    return step("act", "Ready to sign off", "the checks are in", "sign_off");
+  }
   if (f.request === "none" || f.request === "cancelled" || f.request === "expired") {
     return f.whoToAsk ? step("act", "To do", `send the client checks to ${f.whoToAsk}`, "send_checks") : step("act", "To do", "pick who to ask", "pick_person");
   }

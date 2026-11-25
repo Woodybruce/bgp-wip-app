@@ -17,8 +17,9 @@ import path from "path";
 import { pool } from "./db";
 import {
   AML_POLICY_DOCUMENTS, FATF_LISTS_AS_OF, JOINT_ASKED_HOW, JOINT_OUTCOMES, LETTING_AML_MONTHLY_RENT, MAX_AML_DEPUTIES, NOT_REQUIRED_REASONS, POLICY_OFFICER_NAMES, RECHECK_YEARS,
-  amlPolicyDocument, amlPolicyDocumentReplaced, jointAgentRule, jointAskWords, notRequiredLapse, type JointAskRecord, type NotRequiredReason, type PartyNotRequired,
+  amlPolicyDocument, amlPolicyDocumentReplaced, amlRegime, jointAgentRule, jointAskWords, notRequiredLapse, type JointAskRecord, type NotRequiredReason, type PartyNotRequired,
 } from "@shared/aml-policy";
+import { dealClientRole } from "@shared/deal-parties";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 const text = (v: unknown): string => String(v ?? "").replace(/\s+/g, " ").trim();
@@ -57,7 +58,7 @@ export async function loadNotRequiredMarks(db: Db, dealIds: string[]): Promise<M
   for (const r of rows) {
     const key = `${r.deal_id}:${r.role}`;
     if (out.has(key)) continue;
-    const reason = (Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, r.reason) ? r.reason : "joint_agent") as NotRequiredReason;
+    const reason = (Object.prototype.hasOwnProperty.call(NOT_REQUIRED_REASONS, r.reason) && r.reason !== "advisory_other_side" ? r.reason : "joint_agent") as NotRequiredReason;
     const askedOn = r.asked_on ? (r.asked_on instanceof Date ? r.asked_on.toISOString().slice(0, 10) : String(r.asked_on).slice(0, 10)) : null;
     const asked: JointAskRecord | null = askedOn && r.asked_how && r.asked_outcome && Object.prototype.hasOwnProperty.call(JOINT_ASKED_HOW, r.asked_how) && Object.prototype.hasOwnProperty.call(JOINT_OUTCOMES, r.asked_outcome)
       ? {
@@ -72,6 +73,20 @@ export async function loadNotRequiredMarks(db: Db, dealIds: string[]): Promise<M
       by: r.set_by_name || null, at: r.set_at ? new Date(r.set_at).toISOString() : null, companyId: String(r.company_id),
     };
     out.set(key, { ...mark, lapsed: notRequiredLapse(mark, jointAgentRule({ dealType: r.deal_type, team: r.team, rentPa: r.rent_pa })) });
+  }
+  // A rent review, dilapidations or service charge: BGP's client is checked,
+  // for invoicing; the other side needs none (Woody, 25 November 2026).
+  const deals = await db.query(
+    `SELECT id, deal_type, team, rent_pa, bgp_acting_for, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = ANY($1::varchar[])`, [dealIds]);
+  for (const d of deals.rows) {
+    if (amlRegime({ dealType: d.deal_type, team: d.team, rentPa: d.rent_pa }).regime !== "advisory") continue;
+    const client = dealClientRole({ dealType: d.deal_type, bgpActingFor: d.bgp_acting_for, team: d.team });
+    for (const role of ["landlord", "tenant", "vendor", "purchaser"] as const) {
+      const companyId = d[`${role}_id`];
+      const key = `${d.id}:${role}`;
+      if (!companyId || role === client || out.has(key)) continue;
+      out.set(key, { id: 0, reason: "advisory_other_side", reasonWords: NOT_REQUIRED_REASONS.advisory_other_side, comment: "", asked: null, by: null, at: null, companyId: String(companyId), lapsed: null });
+    }
   }
   return out;
 }

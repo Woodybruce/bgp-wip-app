@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "A ComplyAdvantage match is enhanced only once confirmed",
+    text: "A ComplyAdvantage match on a name (other than sanctions) is a possible match to check. It makes the party enhanced, with its one-year re-check, only once an officer presses It's them. Not them sets it aside. Until one is pressed, the party cannot be signed off." },
+  { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "Rent reviews check our client; renewals are lettings",
+    text: "On a rent review, dilapidations or service charge instruction BGP's own client is checked, because BGP invoices them; the other side is marked not needed by the app. Lease renewals and re-gears are lettings: full checks at £10,000 a month or more, sanctions checks below." },
   { date: "2026-11-25", who: ["Woody"], topic: "Officers and sign-off", title: "A past KYC4U sign-off records its due diligence",
     text: "Recording a past KYC4U sign-off now asks whether it was standard (lasts 3 years) or enhanced (1 year), standard by default, and shows the date it lasts until. Before, none was recorded, so every one lasted a year." },
   { date: "2026-11-25", who: ["Woody"], topic: "Records and reports", title: "KYC4U's past checks show on each party",

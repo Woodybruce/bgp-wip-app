@@ -5,6 +5,7 @@
 // BGP staff only: the server (server/deal-parties.ts) refuses anyone else,
 // and the callers draw these only for staff. The rules are
 // shared/deal-parties.ts. Every change saves straight away.
+import { CrmEmailInput } from "@/components/crm-email-input";
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Building2, CheckCircle2, Globe2, Loader2, Plus, Receipt, ShieldCheck, UserRound, AlertTriangle } from "lucide-react";
@@ -404,7 +405,7 @@ function PersonToReach({ dealId, party, person, busy, quiet, onAsk, passOn }: { 
       ) : needs || (contact && !quiet) ? (
         <>
           <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-center">
-            <Input type="email" className="h-8 text-xs" placeholder="Their email" value={email} onChange={e => setEmail(e.target.value)} data-testid={`input-check-person-email-${person.key}`} />
+            <CrmEmailInput value={email} onChange={setEmail} personName={person.name} onPick={c => { if (!mobile.trim() && c.mobile) setMobile(c.mobile); }} testId={`input-check-person-email-${person.key}`} />
             <Input className="h-8 text-xs" placeholder="Mobile" value={mobile} onChange={e => setMobile(e.target.value)} data-testid={`input-check-person-mobile-${person.key}`} />
             <Button type="button" size="sm" className="h-8 text-xs" disabled={busy || save.isPending || (!email.trim() && !mobile.trim())} onClick={() => save.mutate()} data-testid={`button-check-person-save-${person.key}`}>
               {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}Save

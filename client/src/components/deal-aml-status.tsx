@@ -487,7 +487,7 @@ function fallbackStage(cp: Counterparty): AmlStage | null {
 
 const day = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" }) : "");
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party" };
+const NOT_REQUIRED_SHORT: Record<string, string> = { joint_agent: "the joint agent's party", no_deal: "no transaction with this party", advisory_other_side: "advisory work: only BGP's client is checked" };
 
 /** A party slot on the deal (the Parties card merged into the box, 22 November 2026). */
 export interface PartySlot {
@@ -892,7 +892,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               </AmlStep>
               <AmlStep id={sid("decision")} testId={tid("decision")} n={3} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
                 <PartyNotRequiredBox cp={cp} />
-                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
+                <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} notRequiredByRule={cp.notRequired?.reason === "advisory_other_side"} pastKyc4u={!!draft} full={fullOnSmall} />
                 {canDecide && (
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                     <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
@@ -952,7 +952,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             </AmlStep>
             <AmlStep id={sid("decision")} testId={tid("decision")} n={4} label={AML_STEP_LABEL.signOff} state={decisionStep.state} summary={decisionStep.words} open={open.has("decision")} onToggle={() => toggle("decision")}>
               <PartyNotRequiredBox cp={cp} />
-              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} pastKyc4u={!!draft} full={fullOnSmall} />
+              <PartyDecisions dealId={dealId} data={data} companyId={cp.id} role={cp.role} partyName={partyName} approved={approved} notRequired={!!cp.notRequired} notRequiredByRule={cp.notRequired?.reason === "advisory_other_side"} pastKyc4u={!!draft} full={fullOnSmall} />
               {canDecide && !cp.notRequired && (
                 <Folded label="Risk assessment" testId={`aml-assessment-${cp.role}`}><PartyRiskAssessment dealId={dealId} role={cp.role} /></Folded>
               )}
