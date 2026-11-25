@@ -34,6 +34,6 @@ test("the Investment Tracker opens it when a sale first goes on the market", () 
 test("the property page offers an AML pill per open deal, to BGP staff only", () => {
   const page = read("client/src/components/property-detail.tsx");
   assert.match(page, /enabled: !!id && !isClientViewer/);
-  assert.match(page, /!isClientViewer && amlDeals\.slice\(0, 4\)/);
+  assert.match(page, /!isClientViewer && !landsecView && amlDeals\.slice\(0, 4\)/);
   assert.match(page, /<DealAmlDialog deal=\{amlDeal\} reason="property"/);
 });

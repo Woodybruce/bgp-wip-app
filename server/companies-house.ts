@@ -104,6 +104,21 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
   const seenUboNames = new Set<string>();
   let currentNumber = companyNumber;
   let currentName = "(subject)";
+  // Every other UK corporate owner met on the way is walked too, after the
+  // main line (Woody, 25 November 2026, on ST JOHN'S HILL PH03 LLP: owned
+  // half and half by Mount Anvil SJH Limited and Peabody Developments
+  // Limited, the walk followed Peabody alone and never looked behind Mount
+  // Anvil). The ultimate parent is still the main line's top.
+  const branches: Array<{ number: string; name: string; depth: number }> = [];
+  const queueBranches = (items: any[], chosen: string | null, depth: number) => {
+    for (const p of items) {
+      if (p.kind !== "corporate-entity-person-with-significant-control") continue;
+      const num = p.identification?.registration_number;
+      if (!num || !p.name || ownerRegister(pscRegister(p)) === "abroad") continue;
+      if (chosen && String(num).padStart(8, "0") === chosen) continue;
+      branches.push({ number: String(num), name: String(p.name), depth: depth + 1 });
+    }
+  };
 
   // Walk one extra step beyond the corporate chain so we always inspect the
   // ultimate parent's PSCs even if no further corporate PSC exists above it.
@@ -163,6 +178,8 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
           return getWeight(b.natures_of_control) - getWeight(a.natures_of_control);
         })[0];
 
+      const mainNumber = majorityOwner?.identification?.registration_number;
+      queueBranches(items, mainNumber && ownerRegister(pscRegister(majorityOwner)) !== "abroad" ? String(mainNumber).padStart(8, "0") : null, depth);
       const parentNumber = majorityOwner?.identification?.registration_number;
       const parentName = majorityOwner?.name;
       if (!parentNumber || !parentName) break;
@@ -179,9 +196,42 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
     }
   }
 
+  const mainTop = chain.length > 0 ? { name: chain[chain.length - 1].name, number: chain[chain.length - 1].number } : null;
+  // The other owners, breadth first, at most 12 companies more.
+  let extra = 0;
+  while (branches.length && extra < 12) {
+    const b = branches.shift()!;
+    const padded = b.number.padStart(8, "0");
+    if (b.depth > maxDepth || visited.has(padded)) continue;
+    visited.add(padded);
+    extra++;
+    try {
+      const pscData = await chFetch(`/company/${padded}/persons-with-significant-control`);
+      const items = (pscData.items || []).filter((p: any) => !p.ceased_on && !p.ceased);
+      const individualPscs: ChainPsc[] = items
+        .filter((p: any) => p.kind === "individual-person-with-significant-control" || (p.kind && !p.kind.includes("corporate") && !p.kind.includes("legal-person")))
+        .map((p: any) => ({ name: p.name, nationality: p.nationality, controls: p.natures_of_control, kind: p.kind, dob: chainDob(p.date_of_birth) }));
+      const corporatePscs: ChainPsc[] = items
+        .filter((p: any) => p.kind === "corporate-entity-person-with-significant-control")
+        .map((p: any) => ({ name: p.name, controls: p.natures_of_control, kind: p.kind, country: pscRegister(p), registrationNumber: p.identification?.registration_number || null }));
+      for (const c of corporatePscs) {
+        if (ownerRegister(c.country) === "abroad") abroad.push({ name: c.name, country: String(c.country), registrationNumber: c.registrationNumber || null, controls: c.controls || [], foundAt: b.name, depth: b.depth });
+      }
+      chain.push({ name: b.name, number: b.number, individualPscs, corporatePscs });
+      for (const ip of individualPscs) {
+        if (!ip.name || seenUboNames.has(ip.name)) continue;
+        seenUboNames.add(ip.name);
+        ubos.push({ name: ip.name, nationality: ip.nationality, controls: ip.controls, dob: ip.dob ?? null, foundAt: b.name, foundAtNumber: b.number, depth: b.depth });
+      }
+      queueBranches(items, null, b.depth);
+    } catch {
+      // A registered society or charity number is not on Companies House's PSC register.
+    }
+  }
+
   return {
     chain,
-    ultimateParent: chain.length > 0 ? { name: chain[chain.length - 1].name, number: chain[chain.length - 1].number } : null,
+    ultimateParent: mainTop,
     abroad,
     ubos,
   };

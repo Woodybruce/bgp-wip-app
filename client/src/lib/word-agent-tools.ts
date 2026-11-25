@@ -45,6 +45,40 @@ export async function setTracking(on: boolean): Promise<boolean> {
   } catch { return false; }
 }
 
+const HEADER_KINDS = ["Primary", "FirstPage", "EvenPages"];
+
+// Every header and footer body in the document (each section's primary,
+// first-page and even-page ones).
+async function headerFooterBodies(ctx: any, want: { headers?: boolean; footers?: boolean } = { headers: true, footers: true }): Promise<any[]> {
+  const sections = ctx.document.sections;
+  sections.load("items");
+  await ctx.sync();
+  const out: any[] = [];
+  for (const s of sections.items) for (const k of HEADER_KINDS) {
+    if (want.headers) out.push(s.getHeader(k));
+    if (want.footers) out.push(s.getFooter(k));
+  }
+  return out;
+}
+
+async function logoBase64(variant: string): Promise<{ data: string; width: number; height: number }> {
+  const url = variant === "holder" ? "/brand-logos/bgp-black-holder.png" : "/brand-logos/bgp-black-wordmark.png";
+  const blob = await (await fetch(url)).blob();
+  const data = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] || "");
+    r.onerror = () => reject(new Error("Could not read BGP's logo"));
+    r.readAsDataURL(blob);
+  });
+  const size = await new Promise<{ width: number; height: number }>(resolve => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 1510, height: 596 });
+    img.src = url;
+  });
+  return { data, ...size };
+}
+
 const WRITES = new Set(["word_insert", "word_replace_text", "word_insert_table"]);
 
 export async function runWordTool(name: string, a: any, opts: { suggest: boolean }): Promise<any> {
@@ -118,6 +152,62 @@ export async function runWordTool(name: string, a: any, opts: { suggest: boolean
           range.insertComment(String(a.text || ""));
           await ctx.sync();
           return { done: "Added a comment." };
+        });
+      case "word_set_font_color":
+        return await Word.run(async (ctx: any) => {
+          const color = /^#[0-9a-f]{6}$/i.test(String(a.color || "")) ? String(a.color) : "#000000";
+          const where = String(a.where || "everything");
+          let n = 0;
+          if (where === "search") {
+            const hits = ctx.document.body.search(String(a.search || ""), { matchCase: false });
+            hits.load("items");
+            await ctx.sync();
+            for (const h of hits.items) h.font.color = color;
+            n = hits.items.length;
+            await ctx.sync();
+            return { done: `Coloured ${n} match${n === 1 ? "" : "es"} ${color}.` };
+          }
+          if (where === "everything" || where === "body") {
+            // The whole range takes in each paragraph mark, which list numbers follow.
+            ctx.document.body.getRange("Whole").font.color = color;
+            const paras = ctx.document.body.paragraphs;
+            paras.load("items");
+            await ctx.sync();
+            for (const p of paras.items) p.getRange("Whole").font.color = color;
+          }
+          if (where === "everything" || where === "headersFooters") {
+            const bodies = await headerFooterBodies(ctx);
+            for (const b of bodies) { b.getRange("Whole").font.color = color; n++; }
+          }
+          await ctx.sync();
+          return { done: `Set the text to ${color === "#000000" ? "black" : color}${where === "everything" ? " in the body, numbering, headers and footers" : where === "body" ? " in the body" : " in the headers and footers"}.` };
+        });
+      case "word_set_logo":
+        return await Word.run(async (ctx: any) => {
+          const logo = await logoBase64(String(a.variant || "wordmark"));
+          const headers = await headerFooterBodies(ctx, { headers: true });
+          const pics = headers.map(h => { const p = h.inlinePictures; p.load("items/height,items/width"); return p; });
+          await ctx.sync();
+          let replaced = 0, added = 0;
+          for (let i = 0; i < headers.length; i++) {
+            for (const pic of pics[i].items) {
+              const height = Number(pic.height) || 34;
+              const placed = pic.insertInlinePictureFromBase64(logo.data, "Replace");
+              placed.height = height;
+              placed.width = height * logo.width / logo.height;
+              replaced++;
+            }
+            // Added only to each section's main header (the first of its three).
+            if (!pics[i].items.length && a.insertIfNone && i % HEADER_KINDS.length === 0) {
+              const placed = headers[i].insertInlinePictureFromBase64(logo.data, "Start");
+              placed.height = 34;
+              placed.width = 34 * logo.width / logo.height;
+              added++;
+            }
+          }
+          await ctx.sync();
+          if (!replaced && !added) return { error: "No picture in the headers that an add-in can reach: the current logo is probably floating (in front of or behind the text). Ask again with insertIfNone to add BGP's logo to the header, then delete the old one by hand, or right-click the old logo › Change Picture › From a File." };
+          return { done: `${replaced ? `Replaced ${replaced} header picture${replaced === 1 ? "" : "s"}` : ""}${replaced && added ? " and " : ""}${added ? `added the logo to ${added} header${added === 1 ? "" : "s"}` : ""} with BGP's black ${a.variant === "holder" ? "logo" : "wordmark"}.` };
         });
       case "word_track_changes": {
         const ok = await setTracking(!!a.on);

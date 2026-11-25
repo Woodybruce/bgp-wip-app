@@ -332,7 +332,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     },
   });
 
-  const handleActingForSave = async (side: "landlord" | "tenant") => {
+  const handleActingForSave = async (side: "landlord" | "tenant" | "vendor" | "purchaser") => {
     if (((deal as any)?.bgpActingFor || "landlord") === side) return;
     try {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { bgpActingFor: side });
@@ -1008,7 +1008,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 function DealPartiesCard({ dealId, deal, names, isClientDeal, ddUser, dealBgpTeam, onPartySave, onActingFor, onCreate }: {
   dealId: string; deal: CrmDeal; names: DealPageNames | null; isClientDeal: boolean; ddUser: any; dealBgpTeam: BgpTeamPerson[];
   onPartySave: (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => Promise<void>;
-  onActingFor: (side: "landlord" | "tenant") => Promise<void>;
+  onActingFor: (side: "landlord" | "tenant" | "vendor" | "purchaser") => Promise<void>;
   onCreate: (field: "landlordId" | "tenantId" | "vendorId" | "purchaserId", companyType: string, name: string) => Promise<void>;
 }) {
   const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"], enabled: !isClientDeal });
@@ -1172,7 +1172,7 @@ function partySlotDefs(deal: CrmDeal) {
 function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onChangeTeam, onPartySave, onActingFor, onCreate }: {
   dealId: string; deal: CrmDeal; names: DealPageNames | null; dealBgpTeam: BgpTeamPerson[]; onChangeTeam: () => void;
   onPartySave: (field: PartyField, value: string | null) => Promise<void>;
-  onActingFor: (side: "landlord" | "tenant") => Promise<void>;
+  onActingFor: (side: "landlord" | "tenant" | "vendor" | "purchaser") => Promise<void>;
   onCreate: (field: PartyField, companyType: string, name: string) => Promise<void>;
 }) {
   const { data: companies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
@@ -1216,6 +1216,16 @@ function StaffPartiesAml({ dealId, deal, names, dealBgpTeam, onChangeTeam, onPar
       {(["landlord", "tenant"] as const).map(side => (
         <Pill key={side} active={actingFor === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
           {side === "landlord" ? "Landlord" : "Tenant"}
+        </Pill>
+      ))}
+    </span>
+  ) : (deal.dealType === "Sale" || deal.dealType === "Purchase" || deal.dealType === "Investment") ? (
+    // On a sale or purchase BGP may act for either side (Woody, 25 November 2026).
+    <span className="flex items-center gap-1.5" data-testid="deal-bgp-acting-for">
+      <span className="text-[11px] text-muted-foreground">BGP acts for</span>
+      {(["vendor", "purchaser"] as const).map(side => (
+        <Pill key={side} active={clientRole === side} onClick={() => onActingFor(side)} data-testid={`deal-acting-for-${side}`}>
+          {side === "vendor" ? "Seller" : "Buyer"}
         </Pill>
       ))}
     </span>

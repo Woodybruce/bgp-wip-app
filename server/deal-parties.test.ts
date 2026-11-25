@@ -305,3 +305,11 @@ test("a CRM name marked private suggests a private individual; nothing else does
   }
   assert.equal(OWN_NAME_WORDS.purchaser, "are buying in their own name");
 });
+
+test("on a sale or purchase, who BGP acts for can be chosen (Woody, 25 November 2026)", () => {
+  assert.equal(dealClientRole({ dealType: "Sale" }), "vendor");
+  assert.equal(dealClientRole({ dealType: "Sale", bgpActingFor: "landlord" }), "vendor");
+  assert.equal(dealClientRole({ dealType: "Sale", bgpActingFor: "purchaser" }), "purchaser");
+  assert.equal(dealClientRole({ dealType: "Purchase", bgp_acting_for: "vendor" }), "vendor");
+  assert.equal(dealClientRole({ dealType: "New Letting", bgpActingFor: "purchaser" }), "landlord");
+});

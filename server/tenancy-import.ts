@@ -1,4 +1,5 @@
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+import { withoutFloorSuffix } from "@shared/unit-floor-suffix";
 
 // Lettings cleanup (Phase 0b): a replacement import NULLs
 // crm_deals.tenancy_unit_id for the whole property, so it is refused until
@@ -33,7 +34,7 @@ export function normaliseTenancyImportRef(value: unknown): string {
 }
 
 const text = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-const identity = (row: ScheduleRow) => normaliseTenancyImportRef(row.unit_number || row.premises);
+const identity = (row: ScheduleRow) => normaliseTenancyImportRef(withoutFloorSuffix(row.unit_number, row.floor_level) || row.premises);
 // A grouping band (EXTERNAL / INTERNAL on the Royal Exchange master) makes
 // "Unit 1" two different shops (Woody, 2026-09-28: Omega and Boodles were
 // held back as duplicates of Searle and Tomoka).
@@ -90,7 +91,8 @@ export function classifyTenancyImportRow(incoming: ParsedTenancyImportRow, exist
   if (candidates.length === 0) return { action: "insert" };
   if (candidates.length !== 1) return review("ambiguous_identity", candidates);
   const saved = candidates[0];
-  const differingFields = Object.keys(row).filter(field => field !== "sort_order" && !equivalent(field, row[field], saved[field]));
+  const differingFields = Object.keys(row).filter(field => field !== "sort_order"
+    && !(field === "unit_number" ? identity(row) === identity(saved) : equivalent(field, row[field], saved[field])));
   if (differingFields.length) return review("different_facts", candidates, differingFields);
   return { action: "skip", existingId: String(saved.id) };
 }
@@ -105,6 +107,10 @@ export async function importTenancyRows(pool: any, propertyId: string, rows: Par
   if (new Set(explicitEdits.map(row => row.id)).size !== explicitEdits.length) throw new TenancyImportError(400, "Each existing tenancy row can only be edited once per request.");
   if (!options.afterTenantEdit && explicitEdits.some(row => "tenant_name" in row.values || "trading_name" in row.values)) {
     throw new TenancyImportError(400, "Tenant names on existing rows cannot be changed by this import.");
+  }
+  // The level is the floor column's, never part of the unit's name.
+  for (const { values } of [...rows, ...explicitEdits]) {
+    if (typeof values.unit_number === "string" && values.floor_level) values.unit_number = withoutFloorSuffix(values.unit_number, values.floor_level);
   }
   const allowed = new Set(options.allowedFields);
   for (const { values } of [...rows, ...explicitEdits]) {

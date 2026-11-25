@@ -47,6 +47,23 @@ export const WORD_TOOL_DEFS = fn([
     parameters: { type: "object", properties: { search: { type: "string" }, text: { type: "string" } }, required: ["text"] },
   },
   {
+    name: "word_set_font_color",
+    description: "Set the text colour. where: everything (the body, numbering, every header and footer), body, headersFooters, or search (only the matches of `search`). color: a hex colour, black by default. Use this when asked to make the text black or one colour.",
+    parameters: {
+      type: "object",
+      properties: { color: { type: "string" }, where: { type: "string", enum: ["everything", "body", "headersFooters", "search"] }, search: { type: "string" } },
+      required: ["where"],
+    },
+  },
+  {
+    name: "word_set_logo",
+    description: "Put BGP's real black-and-white logo in the document's header: replaces the picture already in each header (keeping its height), or, with insertIfNone, adds it at the top of a header that has none. variant: wordmark (the black wordmark on its own; the default and the one for letters) or holder (the black logo with its holder). A logo floating behind or beside the text may not be reachable: the reply says so.",
+    parameters: {
+      type: "object",
+      properties: { variant: { type: "string", enum: ["wordmark", "holder"] }, insertIfNone: { type: "boolean" } },
+    },
+  },
+  {
     name: "word_track_changes",
     description: "Turn Word's Track Changes on or off.",
     parameters: { type: "object", properties: { on: { type: "boolean" } }, required: ["on"] },
@@ -110,6 +127,7 @@ You are the full ChatBGP (CRM, deals, properties, comps, requirements, SharePoin
 - Fill facts from BGP's records (deal terms, rents, dates, tenant names, comps) and say where they came from. Never invent a figure — leave a [[TBC: …]] marker and tell the user.
 - BGP house style: confident, evidence-led, UK English and UK property language, no hype. Headings in sentence case.
 - Questions or judgement calls you shouldn't make yourself go in as comments (word_add_comment).
+- You can change formatting too: word_set_font_color (make the text black, or one colour, everywhere) and word_set_logo (BGP's real black logo in the header). Do it rather than telling the user how; only fall back to steps when the tool says it could not.
 - Keep the chat reply short: what you changed (by paragraph or heading), and anything to decide.
 `;
 
@@ -131,6 +149,8 @@ export function officeToolLabel(name: string, a: any): string {
     case "word_replace_text": return `Replacing "${String(a?.search || "").slice(0, 30)}"…`;
     case "word_insert_table": return "Adding a table…";
     case "word_add_comment": return "Adding a comment…";
+    case "word_set_font_color": return "Changing the text colour…";
+    case "word_set_logo": return "Putting BGP's logo in the header…";
     case "word_track_changes": return a?.on ? "Turning Track Changes on…" : "Turning Track Changes off…";
     case "ppt_read_presentation": return "Reading the deck…";
     case "ppt_add_slide": return "Adding a slide…";
