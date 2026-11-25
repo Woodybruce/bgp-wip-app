@@ -79,6 +79,24 @@ function useHotsReader(dealId: string, opts: { inEditor?: boolean; onOpenChange?
   return { busy, read, dialog };
 }
 
+/**
+ * The heads of terms New Transaction read, opened on the transaction it has
+ * just saved (Woody, 25 November 2026: New Transaction's reading "really
+ * doesn't work as well ... use this tool"). Read once on mount; closing it
+ * hands back to the Kick off AML step.
+ */
+export function DealHotsAfterSave({ dealId, file, onClose }: { dealId: string; file: File; onClose: () => void }) {
+  const { read, dialog } = useHotsReader(dealId, { onOpenChange: o => { if (!o) onClose(); } });
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    void read({ file }).then(ok => { if (!ok) onClose(); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return dialog;
+}
+
 export const HOTS_ACCEPT = ".pdf,.docx,.doc,.txt,.rtf";
 
 /** The button: choose the document, read it, show the dialog. */
@@ -380,7 +398,7 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
               <p className="text-xs text-muted-foreground">No landlord, tenant, vendor or purchaser could be read{fromNote ? ': write them as "Landlord is …", "Tenant is …"' : ""}. Or set them in the party box.</p>
             )}
             {dealParties.map(p => (
-              <PartyLine key={`${p.role}-${p.read.name}`} match={p} busy={busy} source={fromNote ? "Your note" : "The heads of terms"}
+              <PartyLine key={`${p.role}-${p.read.name}-${p.signing?.id || ""}`} match={p} busy={busy} source={fromNote ? "Your note" : "The heads of terms"}
                 onUse={useCompany} onAdd={addCompany} onSetParty={setParty} onAddParty={addParty}
                 onFind={(role, mode, name) => { if (p.brand) setFinding({ role, mode, name, brand: p.brand }); }}
                 chooseWords={inEditor ? "Back to the party box" : "Open the party box"}
@@ -474,6 +492,9 @@ function DealHotsDialog({ dealId, file, reply, onReply, onClose, inEditor }: {
               </ul>
             </details>
           )}
+          <div className="flex justify-end border-t pt-3">
+            <Button type="button" onClick={onClose} disabled={busy} data-testid="deal-hots-done">Done</Button>
+          </div>
         </DialogContent>
       </Dialog>
       {editing && (
@@ -571,8 +592,22 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
   const hit = match.register[0] || null;
   const closed = hit ? CLOSED.includes(String(hit.status || "").toLowerCase()) : false;
   const quiet = "h-7 text-xs";
+  // A company set from here (or the party box) that the document does not name
+  // by number or registered name ("A new company SPV"): shown as set, with the
+  // other ways behind Change (Woody, 25 November 2026: "when i added from
+  // companies house here it didnt add into the actual box").
+  const [changing, setChanging] = useState(false);
+  const setOnly = !!match.signing && (match.state === "not_found" || match.state === "no_company") && !changing;
 
   const body = (() => {
+    if (setOnly) {
+      return (
+        <div className="flex flex-wrap items-center gap-2" data-testid={`deal-hots-signs-now-${role}`}>
+          <span className="flex min-w-0 flex-1 items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5 shrink-0" />Signs for the {role}: <span className="font-medium">{companyWords(match.signing!)}</span></span>
+          <button type="button" className="text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setChanging(true)} data-testid={`deal-hots-change-${role}`}>Change</button>
+        </div>
+      );
+    }
     switch (match.state) {
       case "signs":
         return <p className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Already the contracting entity.</p>;
@@ -588,7 +623,7 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
         return (
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1">At Companies House: <span className="font-medium">{companyWords(hit!)}</span>{hit!.status ? <span className="text-muted-foreground"> · {hit!.status.replace(/-/g, " ")}</span> : null}</span>
+              <span className="min-w-0 flex-1">At Companies House: <span className="font-medium">{companyWords(hit!)}</span>{hit!.status ? <span className="text-muted-foreground"> · {hit!.status.replace(/-/g, " ")}</span> : null}{match.signing ? <span className="text-muted-foreground"> (signs now: {match.signing.name})</span> : null}</span>
               {!closed && (
                 <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onAdd(role, brand!.id, hit!.number, hit!.name)} data-testid={`deal-hots-add-${role}`}>
                   <Plus className="mr-1 h-3.5 w-3.5" />Add under {brand!.name} and use it
