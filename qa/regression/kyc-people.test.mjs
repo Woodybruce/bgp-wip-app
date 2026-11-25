@@ -50,12 +50,17 @@ test('the old owners step is never ticked by files on the deal card, and the req
   assert.match(portal, /if \(key !== "owner_ids" \|\| !names\.length\) return \{ key, title: KYC_DOCS\[key\]\.title, done: progress\.docsDone\.includes\(key\), note: null as string \| null \};/);
   assert.match(portal, /return \{ key, title: KYC_DOCS\[key\]\.title, done: false, note: count \?/);
   const asks = read('shared/kyc-prechecks.ts');
-  assert.match(asks, /drop\("owner_ids", `Each owner gets a link of their own for their identity check and proof of address: /);
-  // The person acting gives a proof of address only as an owner (23 November 2026).
+  assert.match(asks, /drop\("owner_ids", `Each owner gets a link of their own for their identity check: /);
+  // A proof of address only from a customer in person (25 November 2026: HMRC
+  // asks an owner and the person acting for their identity only).
   assert.match(read('shared/kyc-request.ts'), /else docs\.push\("ownership", "owner_ids", "authority"\);/);
-  assert.match(asks, /askAddressAsOwner\(ownerNames\);/);
-  assert.match(asks, /askAddressAsOwner\(\[\.\.\.input\.owners\.filter\(o => o\.kind === "individual"\)\.map\(o => o\.name\), \.\.\.input\.peopleUpChain\.map\(p => p\.name\)\]\);/);
-  assert.match(read('shared/kyc-people.ts'), /const actingOnly = input\.kind === "company" && input\.trust === undefined && \[\.\.\.d\.roles\]\.every\(r => r === "acting" \|\| r === "director"\);/);
+  assert.doesNotMatch(asks, /askAddressAsOwner/);
+  assert.match(read('shared/kyc-request.ts'), /if \(set\.has\("signer"\) \|\| set\.has\("guarantor"\)\) return true;\s*return kind === "individual" && \(set\.has\("acting"\) \|\| set\.has\("joint"\)\);/);
+  assert.match(read('shared/kyc-people.ts'), /const noAddress = !owesProofOfAddress\(input\.kind, d\.roles\);/);
+  // A request sent before then stops asking an owner for one, on the page, in reminders and for Finish.
+  const portalNow = read('server/aml-portal.ts');
+  assert.match(portalNow, /for \(const key of request\.docs\) if \(!docsStillAsked\(request\)\.includes\(key\) && !docsDone\.includes\(key\)\) docsDone\.push\(key\);/);
+  assert.match(portalNow, /docs: docsStillAsked\(request\)\.map\(key => \(\{/);
 });
 
 test("a party's checks are finished only when every person to check has sent what they owe", () => {

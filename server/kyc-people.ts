@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import type { PartyReliance } from "@shared/aml-reliance";
-import { ID_CHECK_REUSE_YEARS, partyPeople, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PriorAddressProof, type PriorIdCheck, type PublicFigureCheck } from "@shared/kyc-people";
+import { ID_CHECK_REUSE_YEARS, partyPeople, verifiedLicenceAddress, verifiedPersonDob, type PartyPeople, type PeopleRequest, type PriorAddressProof, type PriorIdCheck, type PublicFigureCheck } from "@shared/kyc-people";
 import { verifiedPersonName } from "@shared/kyc-prechecks";
 import { dealOrClientFileTokensSql, isKycDocKey, kycIdStateFor, type KycPartyKind, type KycRequestPerson } from "@shared/kyc-request";
 
@@ -38,7 +38,7 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
       WHERE f.token = ANY($1::varchar[]) ORDER BY f.uploaded_at`, [tokens])).rows;
   const sessionIds = [...new Set(rows.flatMap((r: any) => Array.isArray(r.request?.veriffSessionIds) ? r.request.veriffSessionIds : []))];
   const sessions = sessionIds.length ? (await db.query(
-    `SELECT session_id, status, verdict_person FROM veriff_sessions WHERE session_id = ANY($1::varchar[])`, [sessionIds])).rows : [];
+    `SELECT session_id, status, verdict_person, verdict_document FROM veriff_sessions WHERE session_id = ANY($1::varchar[])`, [sessionIds])).rows : [];
   const now = Date.now();
   return rows.map((r: any): PeopleRequest => {
     const request = r.request || {};
@@ -61,7 +61,8 @@ export async function dealPeopleRequests(dealId: string | null, db: Db = pool, c
       idChecks: (Array.isArray(request.veriffSessionIds) ? request.veriffSessionIds : [])
         .map((id: string) => sessions.find((s: any) => s.session_id === id))
         .filter(Boolean)
-        .map((s: any) => ({ sessionId: s.session_id, state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person) })),
+        .map((s: any) => ({ sessionId: s.session_id, state: kycIdStateFor(s.status), verifiedName: verifiedPersonName(s.verdict_person), verifiedDob: verifiedPersonDob(s.verdict_person),
+          licenceAddress: verifiedLicenceAddress(s.verdict_document, s.verdict_person) })),
       files: files.filter((f: any) => f.token === r.token).map((f: any) => {
         // A proof of address's reading and an officer's acceptance, kept on the request (server/kyc-address-proof.ts).
         const documentId = f.document_id != null ? String(f.document_id) : null;

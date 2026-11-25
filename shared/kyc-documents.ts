@@ -14,7 +14,7 @@ import { ADDRESS_PROOF_KINDS, addressNameMatches, addressProofDateWords, checkAd
 import { checkRegisterExtract, type ExtractSubject } from "./foreign-company";
 
 export const IDENTITY_DOC_KINDS = ["passport", "driving_licence", "national_id", "firearms_certificate", "residence_permit"] as const;
-export const COMPANY_DOC_KINDS = ["certificate_of_incorporation", "register_extract", "structure_chart", "accounts", "authority_letter", "source_of_funds"] as const;
+export const COMPANY_DOC_KINDS = ["certificate_of_incorporation", "register_extract", "structure_chart", "accounts", "authority_letter", "source_of_funds", "terms_of_engagement"] as const;
 export const KYC_DOCUMENT_KINDS = [...IDENTITY_DOC_KINDS, ...ADDRESS_PROOF_KINDS, ...COMPANY_DOC_KINDS, "other"] as const;
 export type KycDocumentKind = (typeof KYC_DOCUMENT_KINDS)[number];
 
@@ -35,6 +35,7 @@ export const KYC_DOCUMENT_KIND_WORDS: Record<KycDocumentKind, string> = {
   accounts: "Accounts",
   authority_letter: "Letter of authority to act",
   source_of_funds: "Source of funds",
+  terms_of_engagement: "Signed terms of engagement",
   other: "Another document",
 };
 
@@ -44,7 +45,8 @@ export const KYC_DOCUMENT_DOC_TYPE: Record<KycDocumentKind, string> = {
   utility_bill: "proof_of_address", bank_statement: "proof_of_address", building_society_statement: "proof_of_address",
   mortgage_statement: "proof_of_address", council_tax_bill: "proof_of_address",
   certificate_of_incorporation: "company_cert", register_extract: "register_extract", structure_chart: "structure_chart",
-  accounts: "company_accounts", authority_letter: "authority_to_act", source_of_funds: "source_of_funds", other: "other",
+  accounts: "company_accounts", authority_letter: "authority_to_act", source_of_funds: "source_of_funds",
+  terms_of_engagement: "terms_of_engagement", other: "other",
 };
 
 export const isIdentityKind = (k: string | null | undefined): boolean => (IDENTITY_DOC_KINDS as readonly string[]).includes(String(k));
@@ -93,6 +95,9 @@ export interface KycDocumentReading {
   // the shareholders or owners it lists.
   directors?: KycDocumentDirector[];
   owners?: KycDocumentOwner[];
+  // Terms of engagement: whether they carry the client's signature,
+  // handwritten or electronic (25 November 2026). Absent on older readings.
+  signed?: boolean | null;
 }
 
 export interface KycDocumentCompany {
@@ -151,6 +156,7 @@ export function cleanKycDocumentReading(raw: unknown, readAt: string): KycDocume
     company: company && (company.name || company.registrationNumber) ? company : null,
     directors: list(r.directors).map(d => ({ name: str(d.name, 120) || "", role: str(d.role, 80), born: born(d.born) })).filter(d => d.name).slice(0, 20),
     owners: list(r.owners).map(o => ({ name: str(o.name, 160) || "", person: o.person === true, share: str(o.share, 60), country: str(o.country, 60) })).filter(o => o.name).slice(0, 20),
+    signed: typeof r.signed === "boolean" ? r.signed : null,
   };
 }
 
@@ -164,14 +170,14 @@ export function asAddressProofReading(r: KycDocumentReading): AddressProofReadin
   return {
     readAt: r.readAt, read: r.read, unreadable: r.unreadable,
     kind: r.kind && isAddressKind(r.kind) ? r.kind as AddressProofReading["kind"] : r.kind === "driving_licence" ? "driving_licence" : r.read ? "other" : null,
-    kindWords: r.kindWords, issuer: r.issuer, names: r.names, date: r.date, address: r.address, certified: r.certified,
+    kindWords: r.kindWords, issuer: r.issuer, names: r.names, date: r.date, expires: r.expires, address: r.address, certified: r.certified,
   };
 }
 
 export interface KycDocumentPerson { name: string; dob?: { year?: number | null; month?: number | null } | null }
 
 export interface KycDocumentCheck {
-  use: "identity" | "address" | "company" | "other";
+  use: "identity" | "address" | "company" | "authority" | "other";
   // The person on the list it is about, when it names one.
   person: string | null;
   ok: boolean;
@@ -300,6 +306,15 @@ export function checkKycDocument(
     return { use: "identity", person: person ? person.name : null, ok: !reasons.length && !!person, reasons, summary };
   }
 
+  // Our terms of engagement, signed for the client: evidence of the authority
+  // to act (HMRC, AMLG11400 14.7: "Legal or contractual documentation"; Woody,
+  // 25 November 2026: "make them count"). Unsigned, an officer can accept them.
+  if (kind === "terms_of_engagement") {
+    const reasons = reading.signed === true ? [] : [reading.signed === false ? "Not signed" : "No signature found on it: check it is signed"];
+    const summary = [what, reading.company?.name || names[0] || null, dayWords(reading.date || reading.issued), reading.signed === true ? "signed" : null].filter(Boolean).join(", ");
+    return { use: "authority", person: null, ok: !reasons.length, reasons, summary };
+  }
+
   if (kind === "register_extract" && opts.company) {
     const check = checkRegisterExtract(reading, opts.company, { uploadedAt: opts.uploadedAt });
     return { use: "company", person: null, ok: check.ok, reasons: check.reasons, summary: check.summary };
@@ -324,9 +339,33 @@ export interface KycUploadEvidence {
   about?: ExtractSubject | null;
 }
 
-/** What an upload counts for, for one person: their identity, their address, or nothing. */
-export function uploadCountsFor(upload: KycUploadEvidence, person: KycDocumentPerson, today: Date): "identity" | "address" | null {
+/**
+ * What an upload counts for, for one person: their identity, their address,
+ * both, or nothing. A photocard driving licence that shows an address
+ * verifies both (HMRC, AMLG11400 14.2: the name, photo, date of birth and
+ * home address are verified by ID evidence, one document or more; Woody,
+ * 25 November 2026: mirror HMRC on proof of address).
+ */
+export function uploadCountsFor(upload: KycUploadEvidence, person: KycDocumentPerson, today: Date): Array<"identity" | "address"> {
   const check = checkKycDocument(upload.reading, [person], { uploadedAt: upload.uploadedAt, seenOriginal: upload.seenOriginal, today });
-  if (!check.person || (check.use !== "identity" && check.use !== "address")) return null;
-  return check.ok || upload.accepted ? check.use : null;
+  if (!check.person || (check.use !== "identity" && check.use !== "address")) return [];
+  if (!check.ok && !upload.accepted) return [];
+  if (check.use === "identity" && upload.reading?.kind === "driving_licence" && upload.reading.address) return ["identity", "address"];
+  return [check.use];
 }
+
+/**
+ * Our signed terms of engagement on the party's record, the latest that
+ * counts (read as signed, or accepted by an officer): the authority to act of
+ * whoever instructs us for the party (25 November 2026).
+ */
+export function authorityFromTerms(uploads: KycUploadEvidence[], today: Date): { documentId: string; fileName: string; summary: string } | null {
+  for (const u of [...uploads].reverse()) {
+    if (u.reading?.kind !== "terms_of_engagement") continue;
+    const check = checkKycDocument(u.reading, [], { uploadedAt: u.uploadedAt, seenOriginal: u.seenOriginal, today });
+    if (check.ok || u.accepted) return { documentId: u.documentId, fileName: u.fileName, summary: check.summary };
+  }
+  return null;
+}
+
+export { termsAuthorityWords } from "./kyc-request";

@@ -37,7 +37,7 @@ test("the reader is Anthropic, called directly with a forced tool, under a daily
 
 test("an upload counts for a person only through the one rule, and is kept, deleted and merged with the party's records", () => {
   const people = read("shared/kyc-people.ts");
-  assert.match(people, /const uploads = \(input\.uploads \|\| \[\]\)\.map\(u => uploadCountsFor\(u, \{ name: d\.name, dob: d\.dob \}, input\.today \|\| new Date\(\)\)\);/);
+  assert.match(people, /const uploads = \(input\.uploads \|\| \[\]\)\.flatMap\(u => uploadCountsFor\(u, \{ name: d\.name, dob: d\.dob \}, input\.today \|\| new Date\(\)\)\);/);
   assert.match(read("server/kyc-people.ts"), /uploads: await import\("\.\/kyc-documents"\)\.then\(m => m\.uploadsFor\(party\.companyId, party\.entityId\)\)/);
   assert.match(read("server/aml-records-retention.ts"), /\{ table: "kyc_document_readings", party: "company_id"/);
   assert.match(read("server/aml-records-retention.ts"), /DELETE FROM kyc_document_readings WHERE company_id = \$1/);

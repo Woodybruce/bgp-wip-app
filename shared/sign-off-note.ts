@@ -41,6 +41,8 @@ export interface SignOffNoteInput {
     idState: PersonIdState | null;
     // Their authority to act came with the client checks.
     authoritySent: boolean;
+    // Our signed terms of engagement are on the party's record (25 November 2026).
+    authorityTerms?: boolean;
   };
   // What the people to check still owe, once the client checks are back.
   outstanding: string[];
@@ -109,7 +111,7 @@ export function listedSignOffNote(input: SignOffNoteInput): string | null {
   } else {
     const who = text(a.name);
     const director = isRegisterDirector(who, (ch.officers || []).filter(o => /director|member/i.test(o.role)).map(o => o.name));
-    const authority = director ? "a director at Companies House" : a.authoritySent ? "authority to act sent with the client checks" : "authority to act not sent yet";
+    const authority = director ? "a director at Companies House" : a.authorityTerms ? "authority to act from our signed terms of engagement" : a.authoritySent ? "authority to act sent with the client checks" : "authority to act not sent yet";
     lines.push(`Instructed by ${who}: ${ID_WORDS[a.idState || "not_started"]}; ${authority}.`);
     if (!a.finished) lines.push(`The client checks sent${a.sentAt ? ` on ${day(a.sentAt)}` : ""} are not finished.`);
   }

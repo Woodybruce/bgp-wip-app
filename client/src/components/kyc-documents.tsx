@@ -103,7 +103,7 @@ export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { deal
         <div className="flex flex-wrap items-center gap-2">
           <Upload className="h-3.5 w-3.5 text-muted-foreground" />
           <span className="font-medium">Upload documents</span>
-          <span className="text-muted-foreground">{dragging ? `Drop them to file on ${partyName}` : "Drag them here: certified ID, proof of address, company documents. PDF, photos, Word or a zip."}</span>
+          <span className="text-muted-foreground">{dragging ? `Drop them to file on ${partyName}` : "Drag them here: certified ID, proof of address, company documents, our signed terms of engagement. PDF, photos, Word or a zip."}</span>
           <Button type="button" size="sm" variant="outline" className="ml-auto h-7 text-xs bg-background" disabled={send.isPending} onClick={() => input.current?.click()} data-testid={`aml-documents-choose-${role}`}>
             {send.isPending ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}Choose files
           </Button>
@@ -147,20 +147,26 @@ function DocumentLine({ dealId, role, doc, canDecide }: { dealId: string; role: 
   // A register extract is checked against its company (23 November 2026).
   const extract = !!doc.reading?.read && doc.reading.kind === "register_extract";
   const extractOk = extract && !!check && check.use === "company" && (check.ok || !!doc.accepted);
+  // Our signed terms of engagement show the authority to act (25 November 2026).
+  const authority = !!check && check.use === "authority";
+  const authorityOk = authority && (check!.ok || !!doc.accepted);
+  // A photocard driving licence that shows an address counts for both (HMRC AMLG11400 14.2).
+  const what = check?.use === "identity" ? (doc.reading?.kind === "driving_licence" && doc.reading.address ? "identity and proof of address" : "identity") : "proof of address";
   const verdict = !doc.read ? null
     : !doc.reading?.read ? null
-    : counts ? `Counts for ${who}'s ${check!.use === "identity" ? "identity" : "proof of address"}${doc.accepted && !check!.ok ? ` (accepted by ${doc.accepted.by})` : ""}`
+    : counts ? `Counts for ${who}'s ${what}${doc.accepted && !check!.ok ? ` (accepted by ${doc.accepted.by})` : ""}`
+    : authorityOk ? `Counts as the authority to act: our terms of engagement, signed${doc.accepted && !check!.ok ? ` (accepted by ${doc.accepted.by})` : ""}`
     : extractOk ? `Register extract checked${doc.about ? ` for ${doc.about.name}` : ""}: the same company, issued in the last three months${doc.accepted && !check!.ok ? ` (accepted by ${doc.accepted.by})` : ""}`
     : extract ? null
     : check?.use === "company" ? "Kept on the record"
     : check?.use === "other" ? "Kept on the record: not an identity or address document"
     : null;
-  const toLook = !!doc.reading?.read && !counts && !doc.accepted && ((check?.use === "identity" || check?.use === "address") || (extract && !!check && !check.ok));
+  const toLook = !!doc.reading?.read && !counts && !doc.accepted && ((check?.use === "identity" || check?.use === "address") || (extract && !!check && !check.ok) || (authority && !check!.ok));
   return (
     <li className="rounded-md border border-border/70 bg-background px-2.5 py-1.5 text-xs" data-testid={`aml-document-${doc.id}`}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         {!doc.read ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-          : counts || check?.use === "company" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+          : counts || authorityOk || check?.use === "company" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
           : toLook || !doc.reading?.read ? <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
           : <FileText className="h-3.5 w-3.5 text-muted-foreground" />}
         {/* The file opens in the pop-out viewer, not a download (Woody, 23 November 2026). */}

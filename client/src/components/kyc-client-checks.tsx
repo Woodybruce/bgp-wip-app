@@ -27,7 +27,7 @@ import {
 } from "@shared/kyc-request";
 import type { KycWork } from "@shared/kyc-work-words";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
-import { PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
+import { NO_ADDRESS_WORDS, PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
 import type { PublicRecordsResult, PublicRecordsSuggestion } from "@shared/public-records";
 import type { KycPersonRole } from "@shared/kyc-request";
 
@@ -43,6 +43,8 @@ interface Party {
   // A trust (23 November 2026): its documents held and its trustees recorded.
   publicBody?: boolean;
   trust?: boolean; trustAsk?: { deed: boolean; trs: boolean; trsNotRequired: boolean; trustees: string[] } | null;
+  // Our signed terms of engagement on the party's record, in words: they show the authority to act (25 November 2026).
+  termsOfEngagement?: string | null;
   // What the email says about the work: our client or the other side (25 November 2026).
   work?: KycWork | null;
 }
@@ -359,7 +361,9 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
             : <>Record them under Owners abroad, in The company (step 1), or from a structure chart the client sends; each person found gets their own link.</>}
         </p>
       )}
-      <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>
+      <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} {people.people.some(p => !p.address.notNeeded)
+        ? "Each gets a link of their own: an identity check (Veriff), and a proof of address from a private individual or a person who signs or guarantees in their own name."
+        : "Each gets a link of their own for an identity check (Veriff)."}</p>
     </div>
   );
 }
@@ -441,7 +445,8 @@ function PersonRow({ dealId, data, party, person, canDecide }: { dealId: string;
         {pf
           ? <li className="flex items-start gap-1" data-testid={`person-address-public-${testKey}`}><Tick ok /><span>Proof of address: covered by the {pf.method === "certified" ? "certified documents" : "verification from public sources"}</span></li>
           : relied ? <li className="flex items-start gap-1" data-testid={`person-address-relied-${testKey}`}><Tick ok /><span>Proof of address: covered by the reliance on the firm's checks</span></li>
-          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed from the person acting, who is not an owner</span></li>
+          : person.address.notNeeded && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-not-needed-${testKey}`}><Tick ok /><span>Proof of address: not needed. {NO_ADDRESS_WORDS}</span></li>
+          : person.address.fromLicence && !person.address.proof ? <li className="flex items-start gap-1" data-testid={`person-address-licence-${testKey}`}><Tick ok /><span>Proof of address: the driving licence their identity check read ({person.address.fromLicence})</span></li>
           : <AddressProofLine dealId={dealId} person={person} canDecide={canDecide} />}
         <li className={SANCTIONS_WORDS[person.sanctions].cls}>{SANCTIONS_WORDS[person.sanctions].text}</li>
       </ul>
@@ -1057,7 +1062,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   // What is still to ask once BGP's own checks are counted (Woody,
   // 2026-11-17: "we need to do everyhting we can before we ask questions on
   // someone"): the same rule the server records the request by.
-  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null, publicBody: chosenKind === "company" && !!party.publicBody }) : null;
+  const asks = party ? precheckAsks(party.askInput, { kind: chosenKind, role: party.role, idCheck: wantId, contactName: toName || null, trust: chosenKind === "company" ? party.trustAsk || null : null, publicBody: chosenKind === "company" && !!party.publicBody, termsOfEngagement: party.termsOfEngagement || null }) : null;
   const chosenDocs = docs || asks?.docs || [];
   const confirmOwners = chosenKind === "company" && !chosenDocs.includes("ownership") && asks?.confirmOwners?.length ? asks.confirmOwners : null;
   const notAsked = (asks?.notAsked || []).filter(n => !chosenDocs.includes(n.key));

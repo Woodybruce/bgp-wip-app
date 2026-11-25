@@ -74,14 +74,14 @@ export const TRUST_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 10, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the trust and on every individual named above (sections 3.13 and 4.12)." },
   { n: 11, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
 ];
-export const TRUST_PERSON_EVIDENCE = "For each individual: one valid photo ID (passport or photocard driving licence) and one proof of address no more than 3 months old (utility bill, bank statement or council tax demand). Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.12).";
+export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from the online identity check or one valid photo ID (passport or photocard driving licence). No proof of address: HMRC asks for one only from a customer who is a person. Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.12).";
 
 // Any other enhanced party: what the officers' second read looks for (BGP's
 // AML policy, Issue 2, sections 3.7 and F.a).
 export const ENHANCED_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 1, title: "Identity of the party", detail: "The company verified from its register (or the person's photo ID), and who is acting for it with their authority." },
   { n: 2, title: "Beneficial owners", detail: "Everyone owning or controlling more than 25%, through any chain of companies, identified and verified; a structure chart where there is a chain." },
-  { n: 3, title: "Each person's ID and address", detail: "One valid photo ID and one proof of address no more than 3 months old for each beneficial owner and the person acting." },
+  { n: 3, title: "Each person's identity", detail: "The online identity check or one valid photo ID for each beneficial owner and the person acting. A proof of address only from a private individual, or a person who signs or guarantees in their own name." },
   { n: 4, title: "Source of funds", detail: "Where the money for this transaction comes from, with evidence, and who provides it." },
   { n: 5, title: "Source of wealth", detail: "How the owners came by their wealth, where the risk calls for it (a PEP, a high-risk country, a large sum)." },
   { n: 6, title: "The higher-risk factor", detail: "What made it enhanced (the red flag or policy factor) and how it was resolved or why it is acceptable." },

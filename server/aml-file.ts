@@ -89,6 +89,8 @@ export interface AmlFileParty {
   commentary?: Awaited<ReturnType<typeof import("./aml-commentary").currentCommentary>>;
   // What BGP recorded against a company abroad that owns it (21 November 2026).
   abroadRecords?: Array<{ ownerName: string; kind: string; note: string | null; personName: string | null; detail: string | null; by: string; at: string }>;
+  // Our signed terms of engagement on the party's record, in words (25 November 2026).
+  authorityTerms?: string | null;
   // The joint agent asked for their checks on this party, and what came back (22 November 2026).
   joint?: JointAgentPartyView | null;
   // A trust's structure as BGP recorded it, as lines (23 November 2026); null when not a trust.
@@ -235,6 +237,8 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       return r ? trustStructureLines(r.structure, text(brand.name)) : ["No structure recorded yet."];
     }), null as string[] | null) : null;
     if (!flags) unread.push("the red flags");
+    const authorityTerms = kind === "company" ? await read("the signed terms of engagement",
+      import("./kyc-documents").then(m => m.termsOfEngagementFor(brandId, entityId)).then(t => t?.summary || null), null as string | null) : null;
     const registerExtract = kind === "company" && !trusts.has(brandId) && amlRegime({ dealType: deal.deal_type, team: deal.team, rentPa: deal.rent_pa }).regime !== "sanctions_only"
       ? await read("the register extract", import("./kyc-documents").then(m => m.registerExtractFact(brandId, entityId)), null) : null;
     parties.push({
@@ -269,6 +273,7 @@ export async function gatherAmlFile(dealId: string, roles: DealPartyRole[] | nul
       publicBody: publicBodies.has(brandId),
       riskAssessment: null,
       abroadRecords: abroadRecords.map(r => ({ ownerName: r.ownerName, kind: r.kind, note: r.note, personName: r.person?.name || null, detail: r.person?.detail || null, by: r.by, at: r.at })),
+      authorityTerms,
       joint: jointView?.parties.find(j => j.companyId === brandId && j.requests.length) || null,
       registerExtract,
       trustStructure,
@@ -335,6 +340,7 @@ export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAsses
       state: p.state ? { status: p.state.status, approvedBy: p.state.approvedBy, approvedAt: p.state.approvedAt ?? null, expiresAt: p.state.expiresAt } : null,
       notRequired: p.notRequired ? { reasonWords: p.notRequired.reasonWords } : null,
       documents: p.documents.map(d => ({ type: d.type, name: d.name })),
+      authorityTerms: p.authorityTerms || null,
       kyc4u: latestKyc4u(p.kyc4u.records),
       abroadRecords: p.abroadRecords || [],
     },
@@ -544,7 +550,7 @@ function writeJointAgent(w: Writer, j: JointAgentPartyView) {
   const c = j.coverage;
   if (!c) return;
   for (const person of c.people) {
-    w.item(person.missing.length ? "!" : "•", `${person.name}: ${person.missing.length ? `not covered: ${person.missing.join(" and ")}` : "identity and address covered"}`, person.missing.length ? AMBER : INK,
+    w.item(person.missing.length ? "!" : "•", `${person.name}: ${person.missing.length ? `not covered: ${person.missing.join(" and ")}` : person.address ? "identity and address covered" : "identity covered"}`, person.missing.length ? AMBER : INK,
       [person.id ? `identity: ${person.id}` : null, person.address ? `address: ${person.address}` : null].filter(Boolean).join("\n") || null);
   }
   if (c.company) w.kv("The company", [c.company.register ? `register: ${c.company.register}` : "register entry not sent", c.company.ownership ? `ownership: ${c.company.ownership}` : "ownership not sent"].join("; "), c.company.register && c.company.ownership ? INK : AMBER);
@@ -685,8 +691,9 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
         : person.id.state === "document" ? "photo ID sent, for the MLRO to check" : person.id.state === "not_started" ? "identity check not done" : `identity check: ${person.id.state.replace(/_/g, " ")}`;
       const proof = person.address.proof;
       const address = person.address.done
-        ? `proof of address: ${proof?.summary || "received"}${proof?.accepted ? ` (accepted by ${proof.accepted.by}: ${proof.accepted.note})` : ""}`
-        : proof ? `proof of address to check: ${proof.summary}${proof.reasons.length ? ` (${proof.reasons.join("; ")})` : ""}` : "proof of address not sent";
+        ? `proof of address: ${proof?.summary || (person.address.fromLicence ? `the driving licence their identity check read (${person.address.fromLicence})` : "received")}${proof?.accepted ? ` (accepted by ${proof.accepted.by}: ${proof.accepted.note})` : ""}`
+        : proof ? `proof of address to check: ${proof.summary}${proof.reasons.length ? ` (${proof.reasons.join("; ")})` : ""}`
+        : person.address.notNeeded ? "proof of address: not needed (HMRC asks for one only from a private individual, or a person who signs or guarantees in their own name)" : "proof of address not sent";
       w.item("•", `${person.name} (${person.roles.join(", ")})${person.born ? `, born ${person.born}` : ""}`, person.outstanding.length ? AMBER : INK,
         [person.ownerDetail, `${id}${person.id.elsewhere ? ` ${person.id.elsewhere}` : ""}${person.id.someoneElse ? ` (the check on their link was ${person.id.someoneElse}'s)` : ""}`, address,
           `sanctions: ${person.sanctions.replace(/_/g, " ")}`].filter(Boolean).join("\n"));

@@ -4957,7 +4957,11 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   (`amlDealClosed`: a completed or invoiced deal whose party was never
   approved or rejected; a party approved at the time stays Done). Closed
   deals were 271 of the 769 parties To do on live on 18 November 2026: a past
-  gap for the MLRO, not work on the To do list. **Waiting on** (`amlWaitingOn`) and the
+  gap for the MLRO, not work on the To do list. **All**, first beside To do
+  (Woody, 25 November 2026: "on the to do tab can you put all next to it so
+  can search for all"; `?view=all`), lists every transaction whatever its
+  state, so a search covers them all; the page still opens on To do, and the
+  who pair on the right reads **Everyone** / **Mine**. **Waiting on** (`amlWaitingOn`) and the
   days since anything moved (`daysSince`: the checks, the requests, KYC4U
   drafts, the approval). Mine = the deal's `internal_agent_ids` or names.
 - **The page**: the pills with counts, All / Mine, a search (`rowMatches`), a
@@ -7440,6 +7444,83 @@ on?". Do not re-litigate. Rules: `shared/deal-people.ts`; reads and routes:
 - Not built: two companies signing for one party (joint landlords on one
   title). A party has one company that signs, with guarantors and a third
   party that pays beside it.
+
+## Proof of address as HMRC asks, and signed terms of engagement (Woody, 2026-11-25)
+
+Woody asked whether HMRC needs the person instructing us for a plc confirmed
+and identified (yes: HMRC AMLG11400 14.7, "Where a person purports to act on
+behalf of the customer you must: Identify and verify the individual's
+identity; Obtain evidence that they have authority to act"; MLR 2017 reg
+28(5) lifts only the ownership, board and beneficial owner steps for a listed
+company, never reg 28(10)), then: "yes make them count and change policy so
+we mirror hmrc about proof of address we dont want to request more than we
+need". Do not re-litigate. Read on GOV.UK on 25 November 2026: AMLG11400
+(updated 10 July 2026) 14.1 and 14.2, a customer who is an individual has
+their full name, photo, date of birth and residential address verified "by
+ID evidence. This may require you to obtain more than one form of ID
+evidence"; 14.7, the beneficial owners need "reasonable measures to verify
+the identity", with no proof of address.
+
+- **Who sends a proof of address** is one rule, `owesProofOfAddress` in
+  `shared/kyc-request.ts` (re-exported by `shared/kyc-people.ts`): a private
+  individual party and anyone named alongside them, and a person who signs
+  or guarantees in their own name (another signer or a guarantor, never a
+  director signing for a company). A company's owners (on the register, up
+  the chain, behind a company abroad, of a company that signs or
+  guarantees), a trust's people and
+  the person acting for a company or a trust do an identity check only
+  (`address.notNeeded`, "No address needed"; `NO_ADDRESS_WORDS`). This
+  supersedes "the person acting gives one only as an owner" (23 November
+  2026) and every rule above that asks an owner or a trust's person for a
+  proof of address. `precheckAsks` no longer adds one for an owner who is the
+  person acting; `defaultKycDocs` asks none for a trust's representative; the
+  owners' IDs step, the joint agent's list (`jointAgentAsks`: a company's
+  people their identity only), the owners' link wording, the certified
+  copies (List B only where a proof of address is owed:
+  `requestOwesProofOfAddress`, `certifiedListB` on the client's page), the
+  trust and enhanced checklists, the rules in short, the AML file and the risk
+  assessment follow.
+- **A request already sent** keeps its stored steps, but a proof of address
+  asked of someone who no longer owes one is no longer asked, shown, chased or
+  waited on (`docsStillAsked`, and `progressOf` counts it done). The owner's
+  Upload their proof of address on the person acting's page goes with it.
+- **A photocard driving licence showing the address covers both** (HMRC: ID
+  evidence, one document or more): the proof of address reader reads a
+  licence's address and photocard expiry (`expires`), and `checkAddressProof`
+  takes one in date with the address on it (no three-month rule); a licence
+  BGP uploads counts for identity and address (`uploadCountsFor` now returns
+  every use); and a passed online check on a UK licence counts when Veriff's
+  decision carries the address (`verifiedLicenceAddress`: document type
+  DRIVERS_LICENSE from GB and `person.addresses`; Veriff may not send it, in
+  which case nothing changes). The proof of address step says so. A licence
+  holds good until its photocard expires (`addressProofExpiry`), also when it
+  is reused from another transaction; an earlier proof is looked for only for
+  someone who owes one.
+- **Signed terms of engagement are the authority to act** (HMRC: "Legal or
+  contractual documentation"). Uploaded on the party's **Upload documents**,
+  the reader records them as `terms_of_engagement` (filed under that type) and
+  whether they are signed (`signed`, handwritten or electronic); signed ones
+  count (`checkKycDocument` use `authority`, `authorityFromTerms`,
+  `termsOfEngagementFor` in `server/kyc-documents.ts`), unsigned ones wait for
+  an officer's Accept it. With them on file `precheckAsks` drops the
+  authority step (and a trust's or a public body's), `progressOf` counts it
+  done on a request already sent, and the sign-off note, the risk assessment
+  and the AML file say authority comes from our signed terms. The identity
+  check is still asked. The client's authority step also says our terms
+  signed for the company will do.
+- Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
+  `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
+  `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in
+  `npm test`); guards `qa/regression/kyc-people.test.mjs`,
+  `kyc-address-proof-guards.test.mjs`, `kyc-documents-guards.test.mjs`.
+- **BGP's policy**: Issue 5 still says every individual gives a proof of
+  address and lists a driving licence for identity only. Issue 6 of the
+  policy (proof of address as HMRC, terms of engagement as authority) and
+  Issue 2 of the trust checklist (the trust's people give identity only;
+  signed terms as authority; its section numbers corrected to the policy's)
+  were drafted for Jack on 25 November 2026, marked as drafts. They go on the
+  Policy pill (`AML_POLICY_DOCUMENTS`, new files beside the old) only once he
+  signs.
 
 ## The AML decisions log (Jack, 2026-11-23) — KEEP CURRENT
 

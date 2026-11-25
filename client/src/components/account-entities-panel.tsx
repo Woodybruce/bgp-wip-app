@@ -170,7 +170,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   passport: "Passport", certified_passport: "Certified passport", drivers_licence: "Driving licence",
   proof_of_address: "Proof of address", source_of_funds: "Source of funds", source_of_wealth: "Source of wealth",
   ubo_declaration: "UBO declaration", company_cert: "Company cert", bank_statement: "Bank statement",
-  onfido_report: "Onfido report", other: "Other",
+  onfido_report: "Onfido report", terms_of_engagement: "Signed terms of engagement", other: "Other",
 };
 
 // "28 Sep", with the year only when it isn't this year (DESIGN.md §15).

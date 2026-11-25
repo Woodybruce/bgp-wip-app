@@ -122,11 +122,11 @@ test("the email to the joint agent: finalising our KYC, every document asked for
   assert.doesNotMatch(letting.html, /rely on your checks|reliance/i);
   assert.doesNotMatch(letting.html, /AMLG|regulation \d|reg \d/);
   assert.ok(!jointAgentAsks({ kind: "company", letting: true }).some(a => /reliance/i.test(a.title)));
-  assert.deepEqual(jointAgentAsks({ kind: "company", letting: true }).map(a => a.title), ["Proof of identity", "Proof of address", "The company", "Any further AML you have done"]);
+  // No proof of address for a company's owners or the person acting (25 November
+  // 2026: HMRC asks them for their identity only); each private individual sends one.
+  assert.deepEqual(jointAgentAsks({ kind: "company", letting: true }).map(a => a.title), ["Proof of identity", "The company", "Any further AML you have done"]);
   assert.ok(!jointAgentAsks({ kind: "individual", letting: false }).some(a => a.title === "The company"));
-  // A proof of address from each owner, not the person acting (23 November 2026).
-  assert.match(jointAgentAsks({ kind: "company", letting: true })[1].detail, /^For each owner: /);
-  assert.match(jointAgentAsks({ kind: "individual", letting: false })[1].detail, /^For each of them: /);
+  assert.match(jointAgentAsks({ kind: "individual", letting: false })[1].detail, /^For each of them: .*photocard driving licence if it shows their current address/);
   const nudge = jointAgentMissingEmail({ ...base, letting: true, missing: [], nothingYet: true, chase: 1 });
   assert.match(nudge.subject, /^Reminder/);
   assert.match(nudge.html, /Upload the documents/);

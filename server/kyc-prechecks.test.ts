@@ -117,7 +117,7 @@ test("a listed company is not asked for an owners chart, owner IDs or the person
   assert.deepEqual(asks.docs, ["authority", "source_of_funds"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "proof_of_address"]);
   assert.match(asks.notAsked[0].reason, /UK regulated market.*since 2016-06-30.*no beneficial owners to identify/);
-  assert.match(asks.notAsked[2].reason, /HMRC asks for their identity check and their authority, not a proof of address/);
+  assert.match(asks.notAsked[2].reason, /HMRC asks for a proof of address only from a customer who is a person/);
   assert.equal(asks.confirmOwners, null);
   // Through a parent, and a market abroad: the officers confirm the chain and the market (KYC4U is no longer used).
   const viaParent = precheckAsks(input({ listing: { market: "listed_market", since: null, company: "BIG INC", companyNumber: "FC000001", viaParent: true } }),
@@ -142,11 +142,12 @@ test("owners on the register are confirmed, not drawn; a director is not asked f
     directors: ["DOE, Jane"],
   }), { kind: "company", role: "landlord", idCheck: true, contactName: "Jane Doe", today: TODAY });
   // Each owner has a link of their own (19 November 2026): the one asked is an
-  // owner, so only the other owner is named.
-  // Jane Doe is an owner, so she gives a proof of address as one (23 November 2026).
-  assert.deepEqual(asks.docs, ["proof_of_address"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "authority"]);
-  assert.match(asks.notAsked[1].reason, /^Each owner gets a link of their own for their identity check and proof of address: John Smith\./);
+  // owner, so only the other owner is named. Nobody here gives a proof of
+  // address, an owner included (25 November 2026: HMRC asks an owner for
+  // their identity only; until then Jane gave one as an owner).
+  assert.deepEqual(asks.docs, []);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["ownership", "owner_ids", "authority", "proof_of_address"]);
+  assert.match(asks.notAsked[1].reason, /^Each owner gets a link of their own for their identity check: John Smith\./);
   assert.deepEqual(asks.confirmOwners, [
     { name: "Jane DOE", detail: "more than 50% and up to 75% of the shares" },
     { name: "HOLDCO LIMITED", detail: "more than 25% and up to 50% of the shares" },
@@ -692,10 +693,11 @@ test("a company registered abroad that owns the party: asked for, not stood in f
   assert.ok(asks.docs.includes("ownership") && asks.docs.includes("owner_ids"), "not dropped: the register does not name the people");
   assert.deepEqual(asks.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco" }]);
   assert.match(kycDocDetail("ownership", [], asks.ownersAbroad), /Companies House shows Scp Aaa Invest \(Monaco\) owns the company.*register/);
-  // The person asked gives a proof of address only as one of the owners the register names (23 November 2026).
+  // The person asked gives no proof of address, an owner the register names
+  // included (25 November 2026: HMRC asks an owner for their identity only).
   assert.ok(!asks.docs.includes("proof_of_address"));
   const mixed = result({ companiesHouse: { ...tureddi.companiesHouse!, owners: [...tureddi.companiesHouse!.owners, { name: "Mr Marco ROSSI", kind: "individual", controls: ["ownership-of-shares-25-to-50-percent"], notifiedOn: null }] } });
-  assert.ok(precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Marco Rossi", today: TODAY }).docs.includes("proof_of_address"));
+  assert.ok(!precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Marco Rossi", today: TODAY }).docs.includes("proof_of_address"));
   assert.ok(!precheckAsks(askInputFrom(mixed), { kind: "company", role: "tenant", idCheck: true, contactName: "Sam Lee", today: TODAY }).docs.includes("proof_of_address"));
   // The card says so, and KYC4U's note.
   assert.equal(precheckCardLines(tureddi).find(l => l.key === "owners")?.state, "attention");

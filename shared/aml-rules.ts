@@ -68,8 +68,9 @@ export const AML_RULES: AmlRuleGroup[] = [
     title: "What we check",
     rules: [
       { text: "A company: its register entry, its directors, and anyone who owns more than 25% or controls it.", refs: ["mlr_reg5", "amlg11400"] },
-      { text: "A person: photo ID and proof of address from the last 3 months. The online ID check counts as photo ID.", refs: ["amlg11400", "bgp_policy"] },
-      { text: "The person acting for a company: their identity and their authority to act. No proof of address unless they are also an owner.", refs: ["amlg11400", "bgp_policy"] },
+      { text: "A private individual, or a person signing or guaranteeing in their own name: photo ID and proof of address under 3 months old. A licence showing their address covers both.", refs: ["amlg11400"] },
+      { text: "A company's owners: their identity. No proof of address.", refs: ["amlg11400"] },
+      { text: "The person acting for a company: their identity and their authority to act, such as our signed terms of engagement. No proof of address.", refs: ["amlg11400"] },
       { text: "A company registered abroad: an extract from its own register, from the last 3 months. A document we can't read is translated; HMRC can ask for a certified translation.", refs: ["amlg11400", "bgp_policy"] },
       { text: "Where the money comes from.", refs: ["amlg11630"] },
       { text: "Sanctions: everyone, on every transaction, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },

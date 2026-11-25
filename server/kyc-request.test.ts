@@ -58,8 +58,9 @@ test("what is asked for by default: photo ID only without the online check; owne
   assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
   assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
   assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
-  // A trust keeps its rule: the person acting for it gives one.
-  assert.ok(defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"));
+  // Nor the person acting for a trust (25 November 2026: HMRC asks the person
+  // acting for their identity and authority, and a trust's people their identity).
+  assert.ok(!defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"));
   assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
   assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
   assert.ok(isKycDocKey("owner_ids") && isKycDocKey("authority") && !isKycDocKey("passport"));
@@ -301,7 +302,7 @@ test("the client checks' own switch: on unless KYC_CLIENT_CHECKS is off, and the
 test("the person acting is asked to pass each owner their own link, by name", () => {
   const steps = kycSteps({ needsIdCheck: true, docs: ["proof_of_address", "authority"], askPep: true, kind: "company", ownLinksFor: ["Woody Bruce", "Huseyn Mirhadiyev"] });
   assert.deepEqual(steps.map(s => s.title), ["A quick identity check", "Pass each owner their own link", "Proof of address", "Confirmation you can act for the company", "One question about public roles"]);
-  assert.match(steps[1].detail, /^Woody Bruce and Huseyn Mirhadiyev each do their own identity check and send a proof of address/);
+  assert.match(steps[1].detail, /^Woody Bruce and Huseyn Mirhadiyev each do their own identity check, on a page of their own/);
   const reminder = kycReminderEmail({ ...ctx({ docs: ["proof_of_address"], ownLinksFor: ["Huseyn Mirhadiyev"] }), progress: { idDone: true, docsDone: [], ownersLinked: false } });
   const left = reminder.html.indexOf("Still needed");
   assert.ok(reminder.html.indexOf("Pass each owner their own link") > left);
@@ -409,4 +410,28 @@ test("the dialog's preview names the same contact as the email sent, and nobody 
   assert.match(portal, /contact: \(await primeAmlContact\(\), amlContact\(/);
   const dialog = readFileSync("client/src/components/kyc-client-checks.tsx", "utf8");
   assert.equal((dialog.match(/agents: data\??\.contact\?\.length \? data\??\.contact :/g) || []).length, 2);
+});
+
+// ── 25 November 2026: a proof of address only where HMRC asks for one ───────
+
+test("a request asks for a proof of address only from a customer in person, and an old step is no longer asked", async () => {
+  const { requestOwesProofOfAddress, docsStillAsked, certifiedWords } = await import("../shared/kyc-request");
+  assert.equal(requestOwesProofOfAddress({ kind: "individual" }), true, "the main request to a private individual");
+  assert.equal(requestOwesProofOfAddress({ kind: "company" }), false, "the person acting for a company");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["owner"] } }), false, "an owner's own link");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["guarantor"] } }), true, "a person who guarantees");
+  assert.equal(requestOwesProofOfAddress({ kind: "individual", person: { roles: ["joint"] } }), true, "someone named alongside a private individual");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", purpose: "trust_structure" }), false);
+  // An owner's link sent before today asked for one: it is no longer asked, shown or chased.
+  assert.deepEqual(docsStillAsked({ kind: "company", person: { roles: ["owner"] }, docs: ["proof_of_address"] }), []);
+  assert.deepEqual(docsStillAsked({ kind: "company", docs: ["proof_of_address", "authority"] }), ["authority"]);
+  assert.deepEqual(docsStillAsked({ kind: "individual", docs: ["proof_of_address", "source_of_funds"] }), ["proof_of_address", "source_of_funds"]);
+  // Certified copies: List B only where a proof of address is owed.
+  assert.match(certifiedWords({ kind: "individual" }), /one from List B/);
+  assert.doesNotMatch(certifiedWords({ kind: "company" }), /List B/);
+  assert.doesNotMatch(certifiedWords({ kind: "company", person: { roles: ["owner"] } }), /List B/);
+  assert.match(certifiedWords({ kind: "company", person: { roles: ["signer"] } }), /one from List B/);
+  // The step's words take a driving licence that shows the address.
+  assert.match(KYC_DOCS.proof_of_address.detail, /photocard driving licence, if it shows your current address/);
+  assert.doesNotMatch(KYC_DOCS.owner_ids.detail, /proof of address/);
 });

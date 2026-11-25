@@ -8,8 +8,9 @@
 // BGP. The people recorded are the trust's beneficial owners (MLR 2017 reg 6:
 // the settlor, the trustees, the beneficiaries or the class of them, and
 // anyone else with control, such as a protector); each person is screened,
-// and each one BGP's policy asks to verify does their own identity check and
-// proof of address (BGP's trust checklist, items 4 to 7). One structure per
+// and each one BGP's policy asks to verify does their own identity check
+// (BGP's trust checklist, items 4 to 7; no proof of address since 25 November
+// 2026: HMRC asks a trust's people for their identity). One structure per
 // trust record (crm_companies.id), shared by every deal the trust is on.
 //
 // Pure: the server stores it (server/trust-structure.ts), the AML box, People

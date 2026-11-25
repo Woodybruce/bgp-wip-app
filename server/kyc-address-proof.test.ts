@@ -7,7 +7,7 @@ import "./test-database-url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addressNameMatches, checkAddressProof, cleanAddressProofReading, unreadableAddressProof, type AddressProofReading,
+  addressNameMatches, addressProofExpiry, checkAddressProof, cleanAddressProofReading, unreadableAddressProof, type AddressProofReading,
 } from "../shared/kyc-address-proof";
 import { addressProofParts, readAddressProof } from "./kyc-address-proof";
 
@@ -49,8 +49,12 @@ test("the verdict: their name, dated in the last three months, a kind the policy
   assert.equal(checkAddressProof(bill({ kind: "council_tax_bill", kindWords: "Council Tax bill 2026/27", date: "2026-03-10" }), "MIRHADIYEV, Huseyn", SENT).ok, true);
   assert.equal(checkAddressProof(bill({ kind: "council_tax_bill", kindWords: null, date: "2025-03-10" }), "MIRHADIYEV, Huseyn", SENT).reasons[0],
     "Dated 10 Mar 2025, more than a year before it was sent");
-  // Identity only, or not on the list.
-  assert.deepEqual(checkAddressProof(bill({ kind: "driving_licence", kindWords: "DVLA licence" }), "MIRHADIYEV, Huseyn", SENT).reasons, ["A driving licence proves identity, not address (BGP's AML policy)"]);
+  // A photocard driving licence showing the address counts while in date
+  // (HMRC AMLG11400 14.2: ID evidence, one document or more; 25 November 2026).
+  assert.equal(checkAddressProof(bill({ kind: "driving_licence", kindWords: "DVLA licence", date: "2018-01-01", expires: "2028-01-01" }), "MIRHADIYEV, Huseyn", SENT).ok, true);
+  assert.deepEqual(checkAddressProof(bill({ kind: "driving_licence", kindWords: "DVLA licence" }), "MIRHADIYEV, Huseyn", SENT).reasons, ["No expiry date found: check it is in date"]);
+  assert.deepEqual(checkAddressProof(bill({ kind: "driving_licence", kindWords: "DVLA licence", expires: "2026-11-01" }), "MIRHADIYEV, Huseyn", SENT).reasons, ["It expired on 1 Nov 2026"]);
+  // Not on the list.
   assert.deepEqual(checkAddressProof(bill({ kind: "other", kindWords: "Tenancy agreement" }), "MIRHADIYEV, Huseyn", SENT).reasons, ["Not one of the documents the policy accepts (Tenancy agreement)"]);
   // Not read, or not readable.
   assert.deepEqual(checkAddressProof(null, "MIRHADIYEV, Huseyn", SENT), { ok: false, reasons: ["Not read yet"], summary: "Not read yet" });
@@ -100,4 +104,12 @@ test("the reader never throws, says why it could not read, and spends only on a 
   assert.equal(sent[0].type, "document");
   assert.equal((await readAddressProof(file, { hasKey: () => true, claim, now, ask: async () => { throw new Error("down"); } })).unreadable, "the reader failed; read it again later");
   assert.equal((await readAddressProof(file, { hasKey: () => true, claim, now, ask: async () => ({ input: null, model: "m" }) })).unreadable, "the reader gave no answer");
+});
+
+test("a proof of address goes out of date three months on (a council tax bill a year), a licence when its photocard expires", () => {
+  assert.equal(addressProofExpiry(bill({ date: "2026-10-30" })), "2027-01-30");
+  assert.equal(addressProofExpiry(bill({ kind: "council_tax_bill", date: "2026-04-01" })), "2027-05-02");
+  // A licence's issue date says nothing about the address: the card's own expiry does (25 November 2026).
+  assert.equal(addressProofExpiry(bill({ kind: "driving_licence", date: "2019-03-01", expires: "2029-03-01" })), "2029-03-01");
+  assert.equal(addressProofExpiry(bill({ kind: "driving_licence", date: "2019-03-01", expires: null })), null);
 });

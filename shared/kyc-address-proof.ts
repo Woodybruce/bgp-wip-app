@@ -7,9 +7,12 @@
 // (shared/kyc-people.ts), and the deal card shows it.
 import { personDisplayName, personNamesMatch, sameToken } from "./kyc-prechecks";
 
-// What BGP's AML policy (Issue 2, "Individuals") and the client checks page
-// accept as a proof of residential address. A photocard driving licence is
-// identity only.
+// What the client checks page accepts as a proof of residential address. A
+// photocard driving licence counts too when it shows the address and is in
+// date (HMRC, AMLG11400 14.2: the name, photo, date of birth and home address
+// are verified by ID evidence, one document or more; Woody, 25 November 2026:
+// "mirror hmrc about proof of address"). Until then BGP's policy took a
+// licence for identity only.
 export const ADDRESS_PROOF_KINDS = ["utility_bill", "bank_statement", "building_society_statement", "mortgage_statement", "council_tax_bill"] as const;
 export type AddressProofKind = (typeof ADDRESS_PROOF_KINDS)[number];
 export type AddressProofReadKind = AddressProofKind | "driving_licence" | "other";
@@ -44,6 +47,8 @@ export interface AddressProofReading {
   names: string[];
   // The date the document is dated (yyyy-mm-dd).
   date: string | null;
+  // A driving licence's photocard expiry date (yyyy-mm-dd). Absent on a reading made before 25 November 2026.
+  expires?: string | null;
   address: string | null;
   // A copy certified as a true copy (for someone living outside the UK).
   certified: boolean | null;
@@ -113,8 +118,8 @@ export function checkAddressProof(reading: AddressProofReading | null, person: s
   }
   const reasons: string[] = [];
   const kind = reading.kind || "other";
-  if (kind === "driving_licence") reasons.push("A driving licence proves identity, not address (BGP's AML policy)");
-  else if (!(ADDRESS_PROOF_KINDS as readonly string[]).includes(kind)) reasons.push(`Not one of the documents the policy accepts${reading.kindWords ? ` (${reading.kindWords})` : ""}`);
+  const licence = kind === "driving_licence";
+  if (!licence && !(ADDRESS_PROOF_KINDS as readonly string[]).includes(kind)) reasons.push(`Not one of the documents the policy accepts${reading.kindWords ? ` (${reading.kindWords})` : ""}`);
 
   const names = reading.names.map(n => n.trim()).filter(Boolean);
   const theirs = names.filter(n => addressNameMatches(n, person));
@@ -122,7 +127,13 @@ export function checkAddressProof(reading: AddressProofReading | null, person: s
   else if (!theirs.length) reasons.push(`In the name of ${names.join(" and ")}, not ${personDisplayName(person)}`);
 
   const dated = isoDay(reading.date), sent = isoDay(sentAt) ?? Date.parse(sentAt);
-  if (dated == null) reasons.push("No date found on it");
+  // A driving licence is not a dated bill: it must be in date and show the address.
+  if (licence) {
+    if (!reading.address) reasons.push("No address found on it");
+    const expires = isoDay(reading.expires || null);
+    if (expires == null) reasons.push("No expiry date found: check it is in date");
+    else if (Number.isFinite(sent) && expires < sent - DAY / 2) reasons.push(`It expired on ${addressProofDateWords(reading.expires || null)}`);
+  } else if (dated == null) reasons.push("No date found on it");
   else if (Number.isFinite(sent)) {
     const age = Math.floor((sent - dated) / DAY);
     const max = kind === "council_tax_bill" ? COUNCIL_TAX_MAX_AGE_DAYS : ADDRESS_PROOF_MAX_AGE_DAYS;
@@ -131,7 +142,7 @@ export function checkAddressProof(reading: AddressProofReading | null, person: s
   }
 
   const what = reading.kindWords || ADDRESS_PROOF_KIND_WORDS[kind];
-  const summary = [what, addressProofDateWords(reading.date), names.length ? `in the name of ${(theirs[0] || names[0])}` : null].filter(Boolean).join(", ");
+  const summary = [what, licence ? (reading.expires ? `expires ${addressProofDateWords(reading.expires)}` : null) : addressProofDateWords(reading.date), names.length ? `in the name of ${(theirs[0] || names[0])}` : null].filter(Boolean).join(", ");
   return { ok: reasons.length === 0, reasons, summary };
 }
 
@@ -139,9 +150,11 @@ export function checkAddressProof(reading: AddressProofReading | null, person: s
  * The day a proof of address stops being in date (yyyy-mm-dd): three months
  * from the date on it, a year for a council tax bill (Woody, 25 November
  * 2026: "proof of address should have an expiry flag so can't be used but
- * should be if possible"). Null when the reading has no date.
+ * should be if possible"); a photocard driving licence holds good until its
+ * photocard expires. Null when the reading has no such date.
  */
 export function addressProofExpiry(reading: AddressProofReading | null): string | null {
+  if (reading?.kind === "driving_licence") return reading.expires && isoDay(reading.expires) != null ? reading.expires : null;
   const dated = isoDay(reading?.date);
   if (dated == null) return null;
   const max = reading?.kind === "council_tax_bill" ? COUNCIL_TAX_MAX_AGE_DAYS : ADDRESS_PROOF_MAX_AGE_DAYS;
@@ -155,10 +168,11 @@ export function cleanAddressProofReading(raw: unknown, readAt: string): AddressP
   const kinds: readonly string[] = [...ADDRESS_PROOF_KINDS, "driving_licence", "other"];
   const kind = typeof r.kind === "string" && kinds.includes(r.kind) ? r.kind as AddressProofReadKind : null;
   const date = typeof r.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && isoDay(r.date) != null ? r.date : null;
+  const expires = typeof r.expires === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.expires) && isoDay(r.expires) != null ? r.expires : null;
   const names = Array.isArray(r.names) ? r.names.map(n => str(n, 120)).filter((n): n is string => !!n).slice(0, 4) : [];
   return {
     readAt, read: true, unreadable: null,
-    kind, kindWords: str(r.kindWords, 120), issuer: str(r.issuer, 120), names, date,
+    kind, kindWords: str(r.kindWords, 120), issuer: str(r.issuer, 120), names, date, expires,
     address: str(r.address, 300), certified: typeof r.certified === "boolean" ? r.certified : null,
   };
 }

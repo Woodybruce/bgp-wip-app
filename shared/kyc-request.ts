@@ -82,12 +82,14 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     detail: "Your passport, photocard driving licence, national identity card, or firearms or shotgun certificate, in date. As we have not met you to see the original, please send a copy certified by a practising solicitor or accountant who has met you, with the words \"I have met the person concerned and confirm the likeness to the photo ID provided\", their name and signature, the date, their professional body, and their firm's name and registered office. Or show the original to your agent.",
     docType: "passport",
   },
-  // BGP's AML policy (Issue 2, "Individuals"): a utility bill, bank statement
-  // or local authority tax demand, not more than three months old; certified
-  // when the person lives outside the UK.
+  // A utility bill, bank statement or council tax bill, not more than three
+  // months old (this year's for council tax); certified when the person lives
+  // outside the UK. Or their photocard driving licence when it shows their
+  // address (HMRC, AMLG11400 14.2: ID evidence, one document or more; Woody,
+  // 25 November 2026: "mirror hmrc about proof of address").
   proof_of_address: {
     title: "Proof of address",
-    detail: "A utility bill, bank or building society statement, council tax bill or mortgage statement dated in the last three months, showing your name and home address. If you live outside the UK, send a copy certified \"as a true copy of the original\" by a practising solicitor or accountant, with their name, signature, the date, their professional body and their firm.",
+    detail: "A utility bill, bank or building society statement, council tax bill or mortgage statement dated in the last three months, showing your name and home address. Or your photocard driving licence, if it shows your current address. If you live outside the UK, send a copy certified \"as a true copy of the original\" by a practising solicitor or accountant, with their name, signature, the date, their professional body and their firm.",
     docType: "proof_of_address",
   },
   source_of_funds: {
@@ -102,12 +104,12 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   },
   owner_ids: {
     title: "ID for each of those owners",
-    detail: "For each person on that list: a passport, photocard driving licence, national identity card or firearms certificate, and a proof of address (a utility bill, bank statement or council tax bill) dated in the last three months. Clear copies are fine to start with; owners who live outside the UK send certified copies, and we may ask for them from others.",
+    detail: "For each person on that list: a passport, photocard driving licence, national identity card or firearms certificate. Clear copies are fine to start with; owners who live outside the UK send certified copies, and we may ask for them from others.",
     docType: "passport",
   },
   authority: {
     title: "Confirmation you can act for the company",
-    detail: "If you are not one of its directors: an email or letter from a director confirming that you can deal with us for the company.",
+    detail: "If you are not one of its directors: an email or letter from a director confirming that you can deal with us for the company, or our terms of engagement signed for the company.",
     docType: "authority_to_act",
   },
   company_documents: {
@@ -135,7 +137,7 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   },
   trust_authority: {
     title: "Confirmation the trustees instruct us",
-    detail: "If you are not one of the trustees: an email or letter from the trustees confirming that you can deal with us for the trust.",
+    detail: "If you are not one of the trustees: an email or letter from the trustees confirming that you can deal with us for the trust, or our terms of engagement signed by them.",
     docType: "authority_to_act",
   },
   trust_wealth: {
@@ -147,8 +149,8 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
   // optional on a trust's documents request, never one of its required
   // documents; an officer accepts them against each person.
   certified_ids: {
-    title: "Certified ID and proof of address (optional)",
-    detail: "Upload each person's certified List A document and their List B document here. Name each file after the person if you can.",
+    title: "Certified ID (optional)",
+    detail: "Upload each person's certified List A document here, and a List B document for anyone we ask for a proof of address. Name each file after the person if you can.",
     docType: "certified_id",
   },
   other: {
@@ -163,18 +165,46 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
 // the specific documents we need"). The trust's people then each get a link
 // of their own for their identity check and proof of address.
 export const TRUST_REQUEST_DOCS: KycDocKey[] = ["trust_deed", "trust_people", "trs_excerpt", "trust_wealth", "trust_authority"];
+/** The optional certified copies card where nobody asked owes a proof of address (25 November 2026). */
+export const CERTIFIED_IDS_A_ONLY = "Upload each person's certified List A document here. Name each file after the person if you can.";
+
+/**
+ * Who sends a proof of address: what HMRC asks, and no more (Woody,
+ * 25 November 2026: "mirror hmrc about proof of address we dont want to
+ * request more than we need"). HMRC's guidance (AMLG11400, 14.1 and 14.2): a
+ * customer who is an individual has their name, photo, date of birth and home
+ * address verified by ID evidence, one document or more; 14.7: the beneficial
+ * owners of a customer need "reasonable measures to verify the identity", and
+ * the person acting for a customer their identity and their authority to act.
+ * So only a customer in person sends a proof of address: a private individual
+ * party and anyone named alongside them, and a person who signs or guarantees in their own name.
+ * Owners (up the chain, behind a company abroad, of a company that signs or
+ * guarantees), a trust's people and the person acting for a company or trust
+ * do an identity check only.
+ */
+export function owesProofOfAddress(kind: KycPartyKind, roles: Iterable<KycPersonRole>): boolean {
+  const set = new Set(roles);
+  if (set.has("signer") || set.has("guarantor")) return true;
+  return kind === "individual" && (set.has("acting") || set.has("joint"));
+}
+
+/** Why someone is not asked for a proof of address. */
+export const NO_ADDRESS_WORDS = "HMRC asks for a proof of address only from a private individual, or a person who signs or guarantees in their own name.";
+
+/** Why authority to act is not asked for: our signed terms of engagement are on file (25 November 2026). */
+export const termsAuthorityWords = (summary: string): string =>
+  `Our signed terms of engagement are on file (${summary}): HMRC accepts them as evidence of authority to act.`;
 
 export const isKycDocKey = (value: unknown): value is KycDocKey => typeof value === "string" && (KYC_DOC_KEYS as string[]).includes(value);
 
 // What a request asks for unless the agent changes it. Photo ID is asked
 // for as a document only when there is no online identity check. A company
 // is checked at Companies House by the app, so only what is not filed there
-// is asked for, with the dealing person's authority to act. The person
-// dealing with us for a company gives a proof of address only when the
-// register names them as an owner (precheckAsks adds it then): HMRC asks for
-// their identity and authority (Woody, 23 November 2026: "If they don't need
-// it then let's not require it"; from 19 November it was asked of them
-// always). Where the money
+// is asked for, with the dealing person's authority to act. Only a private
+// individual sends a proof of address: HMRC asks the person dealing with us
+// for a company or a trust for their identity and authority, and the owners
+// for their identity (Woody, 25 November 2026: "mirror hmrc about proof of
+// address we dont want to request more than we need"). Where the money
 // comes from is asked of whoever pays: a buyer, and a tenant (HMRC's letting
 // guidance, AMLG2300 section 21: "all customers making a payment").
 export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefined, idCheck: boolean, trust = false, publicBody = false): KycDocKey[] {
@@ -185,7 +215,7 @@ export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefin
   if (!idCheck) docs.push("photo_id");
   // A trust (23 November 2026): its deed, HMRC's registration, the trustees'
   // instruction and the settlor's wealth. Its people each get their own link.
-  if (kind === "company" && trust) docs.push("proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
+  if (kind === "company" && trust) docs.push("trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
   else if (kind === "individual") docs.push("proof_of_address");
   else docs.push("ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");
@@ -449,17 +479,18 @@ export function kycDocDetail(key: KycDocKey, ownerNames?: string[] | null, owner
 export function kycDocWords(key: KycDocKey, o: { ownerNames?: string[] | null; ownersAbroad?: Array<{ name: string; country: string }> | null; publicBody?: boolean; partyName?: string }): { title: string; detail: string } {
   if (key === "authority" && o.publicBody) {
     const noun = publicBodyNoun(o.partyName || "");
-    return { title: `Confirmation you can act for ${noun}`, detail: `An email or letter from someone authorised at ${noun} confirming that you can deal with us for it.` };
+    return { title: `Confirmation you can act for ${noun}`, detail: `An email or letter from someone authorised at ${noun} confirming that you can deal with us for it, or our terms of engagement signed for it.` };
   }
   return { title: KYC_DOCS[key].title, detail: kycDocDetail(key, o.ownerNames, o.ownersAbroad) };
 }
 
 // The owners' own links (19 November 2026): each owner does their own
-// identity check and sends their own proof of address, on a page of their own.
+// identity check, on a page of their own (no proof of address since
+// 25 November 2026: HMRC asks the owners for their identity only).
 export const KYC_OWNER_LINKS_TITLE = "Pass each owner their own link";
 export const kycOwnerLinksDetail = (names: string[]): string => {
   const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return `${who} ${names.length === 1 ? "does their" : "each do their"} own identity check and send${names.length === 1 ? "s" : ""} a proof of address, on a page of their own. Your page has a link for ${names.length === 1 ? "them" : "each of them"}, or give us ${names.length === 1 ? "their email address" : "their email addresses"} there and we'll send it.`;
+  return `${who} ${names.length === 1 ? "does their" : "each do their"} own identity check, on a page of their own. Your page has a link for ${names.length === 1 ? "them" : "each of them"}, or give us ${names.length === 1 ? "their email address" : "their email addresses"} there and we'll send it.`;
 };
 
 export function kycSteps(ctx: Pick<KycEmailContext, "needsIdCheck" | "docs" | "askPep" | "confirmOwners" | "ownerNames" | "ownLinksFor" | "ownersAbroad"> & { kind?: KycPartyKind; work?: KycWork | null; partyName?: string }): Array<{ title: string; detail: string }> {
@@ -601,7 +632,7 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
     p(`Your personal link works until <strong>${escHtml(kycLongDate(ctx.expiresAt))}</strong>, on your phone or computer.`, `font-size:13px;color:${MUTED}`),
     h2("Or send certified copies"),
     p(escHtml(certifiedWords(ctx)), `font-size:14px;color:${BODY}`),
-    certifiedLists(),
+    certifiedLists(requestOwesProofOfAddress(ctx)),
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
@@ -617,17 +648,39 @@ export function kycRequestEmail(ctx: KycEmailContext): { subject: string; html: 
 // What follows a trust's documents (Jack, 23 November 2026): each person's
 // own link, or certified copies sent now. The email and the page say both.
 export const TRUST_NEXT_WORDS = {
-  links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check and a proof of address from the last three months, and takes about ten minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
-  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified, and one from List B.",
+  links: "Once we have these, each trustee, the settlor and anyone else with control of the trust gets an email from us with their own secure link. It asks for a short online identity check, and takes about five minutes on a phone. Please include each person's email address in the \"Who is who\" list so we can reach them.",
+  certified: "Or, instead of the online check, you can upload certified copies for each of those people on the same page: one document from List A, certified.",
 };
 // Certified copies in place of the online check, on every request (Jack, 23
 // November 2026: "these need to be sent on all AML request emails"). Who
 // they are for depends on who is asked.
+/**
+ * Whether a request's recipient owes a proof of address (owesProofOfAddress;
+ * 25 November 2026): on a person's own link, by their roles; otherwise only
+ * the main request to a private individual. Its certified copies then take a
+ * List B (address) document too.
+ */
+export function requestOwesProofOfAddress(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): boolean {
+  if (ctx.purpose === "trust_structure") return false;
+  const roles = (ctx.person as { roles?: unknown } | null | undefined)?.roles;
+  if (Array.isArray(roles)) return owesProofOfAddress(ctx.kind, roles as KycPersonRole[]);
+  return ctx.kind === "individual";
+}
+/**
+ * A request's document steps as asked now: a proof of address asked before
+ * 25 November 2026 of someone HMRC asks only for their identity (an owner, a
+ * trust's people, the person acting for a company) is no longer asked, shown
+ * or chased, and nothing waits on it.
+ */
+export function docsStillAsked(request: { kind: KycPartyKind; person?: unknown; purpose?: string | null; docs: KycDocKey[] }): KycDocKey[] {
+  return requestOwesProofOfAddress(request) ? request.docs : request.docs.filter(k => k !== "proof_of_address");
+}
 export function certifiedWords(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null; work?: { publicBody?: boolean } | null }): string {
   if (ctx.purpose === "trust_structure") return TRUST_NEXT_WORDS.certified;
+  const listB = requestOwesProofOfAddress(ctx) ? ", and one from List B" : "";
   // A public body has no owners: the copies are for the person dealing with us (25 November 2026).
-  if (ctx.person || ctx.kind === "individual" || ctx.work?.publicBody) return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified, and one from List B.";
-  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified, and one from List B.";
+  if (ctx.person || ctx.kind === "individual" || ctx.work?.publicBody) return `Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified${listB}.`;
+  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified.";
 }
 // Who may certify and what the certification must carry (Jack, 23 November
 // 2026; the details are HMRC's, AMLG11400). The app checks each copy against
@@ -637,11 +690,10 @@ export const CERTIFIED_HOW = "They write \"Certified to be a true copy of the or
 const bullets = (items: string[]): string =>
   `<ul style="margin:0 0 6px 18px;padding:0;font-family:${FONT};font-size:14px;line-height:1.5;color:${BODY}">${items.map(i => `<li>${escHtml(i[0].toUpperCase() + i.slice(1))}</li>`).join("")}</ul>`;
 
-const certifiedLists = (): string => [
+const certifiedLists = (withB: boolean): string => [
   p(`<strong>List A</strong> (one, certified)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
   bullets(CERTIFIED_LIST_A),
-  p(`<strong>List B</strong> (one)`, `font-size:14px;color:${BODY};margin:10px 0 2px`),
-  bullets(CERTIFIED_LIST_B),
+  ...(withB ? [p(`<strong>List B</strong> (one)`, `font-size:14px;color:${BODY};margin:10px 0 2px`), bullets(CERTIFIED_LIST_B)] : []),
   p(escHtml(CERTIFIED_WHO), `font-size:14px;color:${BODY};margin:10px 0 2px`),
   p(escHtml(CERTIFIED_HOW), `font-size:14px;color:${BODY}`),
 ].join("\n");
@@ -659,7 +711,7 @@ function trustDocsRequestEmail(ctx: KycEmailContext): { subject: string; html: s
     h2("What happens next"),
     p(escHtml(TRUST_NEXT_WORDS.links), `font-size:14px;color:${BODY}`),
     p(escHtml(TRUST_NEXT_WORDS.certified), `font-size:14px;color:${BODY}`),
-    certifiedLists(),
+    certifiedLists(false),
     noteBlock(ctx.note, ctx.noteFrom),
     whyWeAsk(),
     h2("Questions?"),
@@ -813,8 +865,9 @@ export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letti
     { title: "Proof of identity", detail: ctx.kind === "company"
       ? "For each owner and the person acting for the company: their passport, photocard driving licence or national identity card, or your electronic identity check report."
       : "For each person: their passport, photocard driving licence or national identity card, or your electronic identity check report." },
-    // The person acting for a company gives one only as an owner (Woody, 23 November 2026).
-    { title: "Proof of address", detail: `For ${ctx.kind === "company" ? "each owner" : "each of them"}: a utility bill, bank or building society statement or council tax bill from the last three months, or your electronic check confirming it.` },
+    // Only from a private individual: HMRC asks a company's owners and the
+    // person acting for it for their identity only (Woody, 25 November 2026).
+    ...(ctx.kind === "company" ? [] : [{ title: "Proof of address", detail: "For each of them: a utility bill, bank or building society statement or council tax bill from the last three months, their photocard driving licence if it shows their current address, or your electronic check confirming it." }]),
     ...(ctx.kind === "company" ? [{ title: "The company", detail: "Its register entry and who owns it, with a structure chart if it is owned through other companies." }] : []),
     { title: "Any further AML you have done", detail: "Your sanctions, PEP and adverse media screening, your risk assessment or CDD summary, and anything you hold on where the money comes from." },
   ];
@@ -1298,6 +1351,8 @@ export interface KycPortalView {
   trustDocs?: boolean;
   // Optional documents the page also takes (certified copies), and the words that introduce them.
   certifiedWords?: string;
+  // Whether the certified copies take a List B (address) document too (25 November 2026).
+  certifiedListB?: boolean;
   optionalDocs?: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   // The joint agent's request (22 November 2026): its own page, with the
   // reliance terms to agree on a letting at £10,000 a month or more.

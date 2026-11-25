@@ -68,6 +68,9 @@ test("the person instructing us: their identity check and authority as the file 
   assert.match(notDirector, /Instructed by Tom Brown: identity check passed; authority to act sent with the client checks\./);
   const noAuthority = listedSignOffNote(base({ acting: { name: "Tom Brown", sentAt: null, finished: true, idState: "waiting", authoritySent: false } }))!;
   assert.match(noAuthority, /Instructed by Tom Brown: identity check done, result awaited; authority to act not sent yet\./);
+  // Our signed terms of engagement on file show it (25 November 2026).
+  const terms = listedSignOffNote(base({ acting: { name: "Tom Brown", sentAt: null, finished: true, idState: "passed", authoritySent: false, authorityTerms: true } }))!;
+  assert.match(terms, /Instructed by Tom Brown: identity check passed; authority to act from our signed terms of engagement\./);
   // Nobody asked yet: said plainly.
   assert.match(listedSignOffNote(base({ acting: null }))!, /The client checks have not been sent to anyone instructing us for it yet\./);
   // Sent, not finished, and what is still owed.
