@@ -406,7 +406,7 @@ function greeting(name: string | null | undefined): string {
 // need to be the only person referenced under 'Questions?'").
 function agentContactHtml(agents: KycAgent[]): string {
   const shown = agents.filter(a => a.name).slice(0, 2);
-  if (!shown.length) return "reply to this email";
+  if (!shown.length) return "your contact at Bruce Gillingham Pollard";
   const one = (a: KycAgent) => {
     const ways = [
       a.phone ? `<a href="tel:${escHtml(a.phone.replace(/[^0-9+]/g, ""))}" style="color:${ACCENT};text-decoration:none">${escHtml(a.phone)}</a>` : "",
@@ -414,7 +414,7 @@ function agentContactHtml(agents: KycAgent[]): string {
     ].filter(Boolean);
     return `<strong>${escHtml(a.name)}</strong>${ways.length ? ` on ${ways.join(" or ")}` : ""}`;
   };
-  return `${shown.map(one).join(", or ")}, or reply to this email`;
+  return shown.map(one).join(", or ");
 }
 
 function agentNamesText(agents: KycAgent[]): string {

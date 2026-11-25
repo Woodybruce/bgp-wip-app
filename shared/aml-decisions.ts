@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 25 November 2026
+  { date: "2026-11-25", who: ["Woody"], topic: "Emails and wording", title: "Who to ask says who they are; emails name the officers",
+    text: "Who to ask records who the person is to the party: someone at the party, their asset or managing agent, their agent, or the joint agent. Their agent is sent the checks to pass on; the joint agent is asked for their documents. Every AML email's Questions line names the Nominated Officer and the first Deputy, not reply to this email." },
   { date: "2026-11-25", who: ["Woody"], topic: "Screening", title: "A ComplyAdvantage match is enhanced only once confirmed",
     text: "A ComplyAdvantage match on a name (other than sanctions) is a possible match to check. It makes the party enhanced, with its one-year re-check, only once an officer presses It's them. Not them sets it aside. Until one is pressed, the party cannot be signed off." },
   { date: "2026-11-25", who: ["Woody"], topic: "Who we check and when", title: "Rent reviews check our client; renewals are lettings",

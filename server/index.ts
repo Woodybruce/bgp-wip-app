@@ -2410,6 +2410,8 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_entity_id VARCHAR`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_relationship TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoice_payer_note TEXT`,
+    // Who each party's person to ask is to it (25 November 2026): which email the checks go out as.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_ask_as JSONB`,
     // A person as the billing or contracting entity (Woody, 2026-11-20: "need
     // ability to create billing entity or contracting entity as a person we
     // will then KYC them"): entity_kind 'individual' marks a person filed under

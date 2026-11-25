@@ -538,10 +538,16 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // The party's own agent passes the standard checks on to their client (Woody,
   // 23 November 2026: "with the agent acting for the tenant or against us we
   // need them to pass on the standard KYC requests for their clients").
-  const theirAgent: ClientChecksAgent | null = askParty ? {
+  // Who to ask chosen as their agent or the joint agent (25 November 2026): that decides the email.
+  const askRelation = party?.person?.from === "party" ? party.person.relation || "party" : "party";
+  const askedAgent: ClientChecksAgent | null = askRelation === "own_agent" && party?.person ? {
+    firm: party.person.firm || party.person.name, companyId: null, contactId: party.person.id,
+    contacts: [{ id: party.person.id, name: party.person.name, email: party.person.email }], words: "their agent",
+  } : null;
+  const theirAgent: ClientChecksAgent | null = askedAgent || (askParty ? {
     firm: askParty.agent?.name || "", companyId: askParty.agent?.companyId || null, contactId: askParty.agent?.contactId || null,
     contacts: askParty.agent?.contacts || [], words: askParty.agentWords,
-  } : null;
+  } : null);
 
   const reveal = (k: StepKey) => {
     if (mirror) { mirror(cp.role); return; }
@@ -608,7 +614,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   // never submitted for 30 days is stale and offered to cancel (20 November 2026).
   const draftState = kyc4uDraftState(draft);
   // Through the party's own agent nobody at the party is needed (23 November 2026).
-  const agentRoute = !!request?.viaAgent || (!request && !!theirAgent?.firm && !party?.person);
+  const agentRoute = !!request?.viaAgent || (!request && !!theirAgent?.firm && (!party?.person || askRelation === "own_agent" || askRelation === "joint_agent"));
   const gaps = agentRoute ? [] : (party?.gaps || []).filter(g => g.key !== "company")
     .map(g => (g.key === "person" ? "Set who to ask" : `Add an email for ${party?.person?.name || "the person to ask"}`));
   const current = jointParty ? currentJointRequest(jointParty) : null;
@@ -617,7 +623,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     role: cp.role, stage, due: row ? row.due : null,
     approvedBy: cp.kyc_approved_by, expiresAt: cp.kyc_expires_at, notRequiredWords: cp.notRequired?.reasonWords || null,
     notRequiredReason: cp.notRequired?.reason || null,
-    company: isCompany, companyMissing, gaps, askName: party?.person?.name || null, theirAgent: theirAgent?.firm || null,
+    company: isCompany, companyMissing, gaps, askName: askRelation === "own_agent" || askRelation === "joint_agent" ? null : party?.person?.name || null, theirAgent: theirAgent?.firm || null,
+    askJointAgent: askRelation === "joint_agent" ? party?.person?.name || null : null,
     precheckRunning: pre?.state === "running",
     redFlags: flags.length, factors: factors.length + dealFactors.length,
     sanctionsOnly, clientChecks: !!data.clientChecks,
@@ -661,6 +668,10 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       case "red_flags": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("screening")}>See flags</Button>;
       case "billing": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("signs")} data-testid={`aml-next-billing-${cp.role}`}>Who pays</Button>;
       case "joint": return <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-${cp.role}`}>Open</Button>;
+      case "joint_ask": return jointQ.data && askParty
+        ? <AskJointAgentButton dealId={dealId} view={jointQ.data} party={askParty} label="Ask them" quiet
+            person={party?.person ? { id: party.person.id, name: party.person.name, email: party.person.email, firm: party.person.firm || null } : null} />
+        : <Button type="button" size="sm" variant="outline" className={quiet} onClick={() => reveal("documents")} data-testid={`aml-next-joint-ask-${cp.role}`}>Open</Button>;
       case "joint_remind": return jointParty && current
         ? <JointChaseButton dealId={dealId} party={jointParty} request={current} label={facts.joint?.chasing ? "Remind now" : "Ask for them"} onNoEmail={() => reveal("documents")} />
         : null;

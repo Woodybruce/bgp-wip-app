@@ -230,18 +230,24 @@ export interface KycSendResult { ok: boolean; from: string | null; fellBack: boo
 // 'Questions?' please as the AML officer"). The transaction's agents are
 // still copied on the emails. With no Nominated Officer set, or when they
 // cannot be read, the people the request holds are used.
-let contactCache: { at: number; agent: KycAgent | null } | null = null;
+let contactCache: { at: number; agent: KycAgent | null; agents?: KycAgent[] } | null = null;
 export async function primeAmlContact(): Promise<void> {
   if (contactCache && Date.now() - contactCache.at < 5 * 60_000) return;
   try {
     const { amlOfficers } = await import("./aml-authority");
-    const o = (await amlOfficers()).nominated;
-    if (!o) { contactCache = { at: Date.now(), agent: null }; return; }
-    const u = (await pool.query(
-      `SELECT name, email, phone FROM users WHERE is_active IS NOT FALSE AND (id = $1 OR lower(email) = lower($2)) ORDER BY (id = $1) DESC LIMIT 1`,
-      [o.id || "", o.email || ""])).rows[0];
-    const name = u?.name || o.name, email = u?.email || o.email;
-    contactCache = { at: Date.now(), agent: name && email ? { name, email, phone: u?.phone || null } : null };
+    // The Nominated Officer and the first Deputy (Woody, 25 November 2026: the
+    // emails should say to ask Layla or Jack, not "reply to this email").
+    const all = await amlOfficers();
+    const officers = [all.nominated, all.deputies[0]].filter((x): x is NonNullable<typeof x> => !!x);
+    const agents: KycAgent[] = [];
+    for (const o of officers) {
+      const u = (await pool.query(
+        `SELECT name, email, phone FROM users WHERE is_active IS NOT FALSE AND (id = $1 OR lower(email) = lower($2)) ORDER BY (id = $1) DESC LIMIT 1`,
+        [o.id || "", o.email || ""])).rows[0];
+      const name = u?.name || o.name, email = u?.email || o.email;
+      if (name && email) agents.push({ name, email, phone: u?.phone || null });
+    }
+    contactCache = { at: Date.now(), agent: agents[0] || null, agents };
   } catch (e: any) {
     console.warn("[kyc] AML contact not read:", e?.message);
     if (!contactCache) contactCache = { at: Date.now() - 4 * 60_000, agent: null };
@@ -249,9 +255,9 @@ export async function primeAmlContact(): Promise<void> {
 }
 /** The contact as last read: call primeAmlContact first (sendKycEmail does). */
 export function amlContact(fallback: KycAgent[] | null | undefined): KycAgent[] {
-  return contactCache?.agent ? [contactCache.agent] : (fallback || []);
+  return contactCache?.agents?.length ? contactCache.agents : contactCache?.agent ? [contactCache.agent] : (fallback || []);
 }
-export function resetAmlContactForTests(agent?: KycAgent | null) { contactCache = agent === undefined ? null : { at: Date.now(), agent }; }
+export function resetAmlContactForTests(agent?: KycAgent | null) { contactCache = agent === undefined ? null : { at: Date.now(), agent, agents: agent ? [agent] : [] }; }
 
 export async function sendKycEmail(opts: {
   to: string[];

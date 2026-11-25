@@ -32,9 +32,9 @@
 import { Router, type Request, type Response } from "express";
 import { PUBLIC_BODY_SUBJECT, isPublicBodyRecord, knownPublicBody, publicBodyMarkInName } from "@shared/aml-sdd";
 import {
-  DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
+  ASK_RELATION_WORDS, DEAL_PARTY_COLUMNS, DEAL_PARTY_FIELDS, DEAL_PARTY_LABEL, askIsAgent, isAskRelation, DEAL_PARTY_ROLES, companyOffer, dealClientRole, isDealPartyRole, newPartyPerson, ownerContactMatch, partyGaps, partySubjectKind, personFill,
   privateMarkInName, isTrustRecord, trustMarkInName, foundationMarkInName, registeredOwnerAmong, sameCompaniesHouseNumber, signerKindOf,
-  type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView, type LandRegistryOwner,
+  type AskRelation, type DealPartyBilling, type DealPartyCompany, type DealPartyPayer, type DealPartyPerson, type DealPartyRole, type DealPartyView, type LandRegistryOwner,
 } from "@shared/deal-parties";
 import { ownerRegister, personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
 import { readsLikeCharity } from "@shared/charity-register";
@@ -122,7 +122,7 @@ async function readDeal(db: Db, dealId: string): Promise<DealRow | null> {
   const cols = DEAL_PARTY_ROLES.flatMap(r => Object.values(DEAL_PARTY_COLUMNS[r]));
   return (await db.query(
     `SELECT id, name, deal_type, team, bgp_acting_for, client_contact_id, tenancy_unit_id, property_id, xero_contact_id, xero_contact_name,
-            invoice_payer_entity_id, invoice_payer_relationship, invoice_payer_note, ${cols.join(", ")}
+            invoice_payer_entity_id, invoice_payer_relationship, invoice_payer_note, aml_ask_as, ${cols.join(", ")}
        FROM crm_deals WHERE id = $1`, [dealId])).rows[0] || null;
 }
 
@@ -201,7 +201,7 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     && roles.some(r => text(deal[DEAL_PARTY_COLUMNS[r].company]) === String(c.id))).map((c: any) => text(c.contact_id));
   const namedIds = [...new Set([...roles.map(r => text(deal[DEAL_PARTY_COLUMNS[r].person])), text(deal.client_contact_id), ...signerContacts].filter(Boolean))];
   const named = namedIds.length
-    ? (await db.query(`SELECT id, company_id, name, email, phone_mobile, phone, role FROM crm_contacts WHERE id = ANY($1::varchar[])`, [namedIds])).rows
+    ? (await db.query(`SELECT k.id, k.company_id, k.name, k.email, k.phone_mobile, k.phone, k.role, c.name AS firm FROM crm_contacts k LEFT JOIN crm_companies c ON c.id = k.company_id WHERE k.id = ANY($1::varchar[])`, [namedIds])).rows
     : [];
   const lease = roles.includes("tenant") ? await leaseCompanyId(db, deal) : null;
   // The building's registered owner at Land Registry, set on the property from
@@ -234,7 +234,8 @@ export async function loadDealParties(db: Db, dealId: string): Promise<DealParti
     const clientPerson = named.find((p: any) => p.id === deal.client_contact_id && p.company_id === brandRow.id);
     // A person who signs is asked themselves when nobody else is named.
     const signerPerson = company?.kind === "individual" && company.contactId ? named.find((p: any) => p.id === company.contactId) : undefined;
-    const person = setPerson ? { ...personOf(setPerson), from: "party" as const }
+    const relation: AskRelation = isAskRelation(deal.aml_ask_as?.[role]) ? deal.aml_ask_as[role] : "party";
+    const person = setPerson ? { ...personOf(setPerson), from: "party" as const, relation, firm: text(setPerson.firm) || null }
       : clientPerson ? { ...personOf(clientPerson), from: "client" as const }
       : signerPerson ? { ...personOf(signerPerson), from: "signer" as const } : null;
     // A person who signs is checked as a private individual (20 November 2026).
@@ -390,7 +391,9 @@ router.put("/api/deals/:id/parties/:role", async (req: Request, res: Response) =
       const id = body.personId == null ? null : text(body.personId);
       if (id) {
         const row = (await pool.query(`SELECT id, name, company_id FROM crm_contacts WHERE id = $1`, [id])).rows[0];
-        if (!row || row.company_id !== brandId) return res.status(400).json({ message: `Pick someone filed under the ${role}, or add them.` });
+        // An agent is at another firm: any CRM contact will do (25 November 2026).
+        const relation = isAskRelation(body.askAs) ? body.askAs : (isAskRelation(deal.aml_ask_as?.[role]) ? deal.aml_ask_as[role] : "party");
+        if (!row || (row.company_id !== brandId && !askIsAgent(relation))) return res.status(400).json({ message: `Pick someone filed under the ${role}, or add them.` });
         lines.push([col.person, deal[col.person] || null, id, `Ask ${row.name} for the ${role}'s checks`]);
       } else {
         lines.push([col.person, deal[col.person] || null, null, `The ${role}'s person to ask cleared`]);
@@ -408,8 +411,20 @@ router.put("/api/deals/:id/parties/:role", async (req: Request, res: Response) =
       sets[col.xeroName] = name || null;
       lines.push([col.xeroId, deal[col.xeroId] || null, contactId || null, contactId ? `${DEAL_PARTY_LABEL[role]} billed to ${name} in Xero` : `${DEAL_PARTY_LABEL[role]}'s Xero billing contact cleared`]);
     }
+    // Who the person to ask is to the party: decides which email goes (25 November 2026).
+    if ("askAs" in body) {
+      if (!isAskRelation(body.askAs)) return res.status(400).json({ message: "Say who they are to the party." });
+      const was = isAskRelation(deal.aml_ask_as?.[role]) ? deal.aml_ask_as[role] : "party";
+      if (was !== body.askAs) {
+        await pool.query(`UPDATE crm_deals SET aml_ask_as = COALESCE(aml_ask_as, '{}'::jsonb) || jsonb_build_object($2::text, $3::text), updated_at = now() WHERE id = $1`, [deal.id, role, body.askAs]);
+        await audit(pool, deal.id, "aml_ask_as", `${role}: ${was}`, `${role}: ${body.askAs}`, `The ${role}'s person to ask is ${ASK_RELATION_WORDS[body.askAs as AskRelation].toLowerCase()}`, me);
+      }
+    }
     const keys = Object.keys(sets);
-    if (!keys.length) return res.status(400).json({ message: "Nothing to change" });
+    if (!keys.length) {
+      if ("askAs" in body) return res.json(await loadDealParties(pool, deal.id));
+      return res.status(400).json({ message: "Nothing to change" });
+    }
     await pool.query(`UPDATE crm_deals SET ${keys.map((k, i) => `${k} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`, [deal.id, ...keys.map(k => sets[k])]);
     for (const [field, oldValue, newValue, reason] of lines) if (oldValue !== newValue) await audit(pool, deal.id, field, oldValue, newValue, reason, me);
     res.json(await loadDealParties(pool, deal.id));

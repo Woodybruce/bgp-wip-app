@@ -313,3 +313,11 @@ test("on a sale or purchase, who BGP acts for can be chosen (Woody, 25 November 
   assert.equal(dealClientRole({ dealType: "Purchase", bgp_acting_for: "vendor" }), "vendor");
   assert.equal(dealClientRole({ dealType: "New Letting", bgpActingFor: "purchaser" }), "landlord");
 });
+
+test("who to ask has a relationship, and an agent may be at another firm", async () => {
+  const { ASK_RELATIONS, askIsAgent, isAskRelation, ASK_RELATION_EMAIL } = await import("../shared/deal-parties");
+  assert.deepEqual([...ASK_RELATIONS], ["party", "manager", "own_agent", "joint_agent"]);
+  assert.ok(askIsAgent("joint_agent") && askIsAgent("own_agent") && !askIsAgent("party") && !askIsAgent("manager"));
+  assert.ok(!isAskRelation("friend"));
+  assert.match(ASK_RELATION_EMAIL.joint_agent, /not the client checks/);
+});

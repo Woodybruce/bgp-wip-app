@@ -234,7 +234,13 @@ test("a yes or not sure to the question tells the agents what enhanced due dilig
 test("the identity check email links straight to the check", () => {
   const { html } = kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "", link: "https://magic.veriff.me/v/abc", agents: [], sentFrom: "kyc@chatbgp.app" });
   assert.ok(html.includes('href="https://magic.veriff.me/v/abc"'));
-  assert.match(html, /reply to this email/);
+  // Questions go to named people, never "reply to this email" (Woody, 25 November 2026).
+  assert.doesNotMatch(html, /Speak to[^.]*reply to this email/);
+  assert.match(html, /your contact at Bruce Gillingham Pollard/);
+  const named = kycIdCheckEmail({ recipientName: "Jane Smith", partyName: "Jane Smith", kind: "individual", dealName: "", link: "https://magic.veriff.me/v/abc",
+    agents: [{ name: "Jack Barratt", email: "jack@example.com", phone: null }, { name: "Layla O'Driscoll", email: "layla@example.com", phone: null }], sentFrom: "kyc@chatbgp.app" }).html;
+  assert.match(named, /Jack Barratt/);
+  assert.match(named, /Layla O&#39;Driscoll|Layla O'Driscoll/);
 });
 
 test("Veriff's statuses read as the page's states", () => {

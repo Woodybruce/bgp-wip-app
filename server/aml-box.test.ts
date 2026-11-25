@@ -220,3 +220,11 @@ test("a sanctions-only party: other red flags do not hold it, a possible sanctio
   // A trust keeps its own rules.
   assert.notEqual(next({ sanctionsOnly: true, trust: true, trustGaps: ["Add the trust's information"], signOffBlocked: null }).action, "sign_off");
 });
+
+test("who to ask chosen as the joint agent: asked for their documents; as their agent: the checks to pass on", () => {
+  const j = next({ askJointAgent: "Tom Lane", askName: null });
+  assert.equal(j.action, "joint_ask");
+  assert.match(j.words, /Ask Tom Lane, the joint agent, for their documents/);
+  const a = next({ askName: null, theirAgent: "Savills (UK) Limited" });
+  assert.equal(a.action, "send_via_agent");
+});

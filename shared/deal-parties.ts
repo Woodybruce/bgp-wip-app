@@ -93,6 +93,29 @@ export interface DealPartyBilling {
 }
 export interface DealPartyPerson { id: string; name: string; email: string | null; mobile: string | null; jobTitle: string | null }
 
+// Who the person to ask is to the party (Woody, 25 November 2026: "when we are
+// looking at a joint agent led deal we are proposing to ask the joint agent ...
+// pick the relationship when adding who to ask so the app can then send the
+// correct email"). It decides which email the checks go out as.
+export const ASK_RELATIONS = ["party", "manager", "own_agent", "joint_agent"] as const;
+export type AskRelation = typeof ASK_RELATIONS[number];
+export const ASK_RELATION_WORDS: Record<AskRelation, string> = {
+  party: "Someone at the party",
+  manager: "Their asset or managing agent",
+  own_agent: "Their agent",
+  joint_agent: "The joint agent",
+};
+// What each sends, in a line under the choice.
+export const ASK_RELATION_EMAIL: Record<AskRelation, string> = {
+  party: "They get the client checks: their own ID and the company's documents.",
+  manager: "They get the client checks, acting for the party: their ID and their authority to act.",
+  own_agent: "They get our checks to pass on to their client, and can upload what they hold.",
+  joint_agent: "They are asked for the documents they hold as joint agent, not the client checks.",
+};
+export const isAskRelation = (v: unknown): v is AskRelation => (ASK_RELATIONS as readonly string[]).includes(String(v));
+/** An agent relation: the person is at another firm, so they need not be filed under the party. */
+export const askIsAgent = (r: AskRelation | null | undefined): boolean => r === "own_agent" || r === "joint_agent";
+
 export type PartyGapKey = "company" | "person" | "email";
 // words: the full line (the AML box, the editor); short: a few words for a
 // narrow column (the deal page's party lines).
@@ -200,7 +223,7 @@ export interface DealPartyView {
   // Who the client checks and KYC4U go to: set for this party on the deal,
   // or the deal's client contact when that person is filed under the brand,
   // or the person who signs, when a person does.
-  person: (DealPartyPerson & { from: "party" | "client" | "signer" }) | null;
+  person: (DealPartyPerson & { from: "party" | "client" | "signer"; relation?: AskRelation; firm?: string | null }) | null;
   // The people filed under the brand.
   people: DealPartyPerson[];
   // What stops the checks from starting, in the order to fill it.

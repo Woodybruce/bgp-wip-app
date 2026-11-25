@@ -6,6 +6,7 @@
 // and the callers draw these only for staff. The rules are
 // shared/deal-parties.ts. Every change saves straight away.
 import { CrmEmailInput } from "@/components/crm-email-input";
+import { Pill } from "@/components/ui/pill";
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Building2, CheckCircle2, Globe2, Loader2, Plus, Receipt, ShieldCheck, UserRound, AlertTriangle } from "lucide-react";
@@ -22,7 +23,7 @@ import { CreateBillingEntityDialog, type SavedCompany } from "@/components/billi
 import { leaseCompaniesKey } from "@/components/lease-company-picker";
 import { AddPersonButton, useClientChecks } from "@/components/kyc-client-checks";
 import { DealHotsButton } from "@/components/deal-hots";
-import { OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, companyRegisterWords, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
+import { ASK_RELATIONS, ASK_RELATION_EMAIL, ASK_RELATION_WORDS, askIsAgent, type AskRelation, OFFER_WORDS, OWN_NAME_WORDS, SIGNING_COMPANY_WORDS, companyRegisterWords, partyAmlFacts, partyAmlQuietWords, peopleToReach, type DealPartyBilling, type DealPartyPayer, type DealPartyRole, type DealPartyView, type PartyAmlFacts } from "@shared/deal-parties";
 import { PAYER_NOTE_MIN, PAYER_RELATIONSHIPS } from "@shared/deal-billing";
 import { GUARANTOR_CHECKS_WORDS, isGuaranteedRole, type DealGuarantorView } from "@shared/deal-guarantor";
 import { personDisplayName, personNamesMatch } from "@shared/kyc-prechecks";
@@ -921,6 +922,10 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
   // been chosen then those tabs for other choices should disappear").
   const [changingCompany, setChangingCompany] = useState(false);
   const [changingPerson, setChangingPerson] = useState(false);
+  // Who the person to ask is to the party: decides which email goes (25 November 2026).
+  const [askAs, setAskAs] = useState<AskRelation>(party?.person?.relation || "party");
+  useEffect(() => { setAskAs(party?.person?.relation || "party"); }, [party?.person?.relation]);
+  const [agentEmail, setAgentEmail] = useState("");
   const chosenCompanyId = party?.company?.id || null;
   const chosenPersonId = party?.person?.id || null;
   useEffect(() => { setChangingCompany(false); }, [chosenCompanyId]);
@@ -1218,25 +1223,46 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
 
             <section className="space-y-2" data-testid="deal-party-person-section">
               <h4 className="flex items-center gap-1.5 font-semibold"><UserRound className="w-4 h-4 text-muted-foreground" />Who to ask</h4>
+              {/* They are: the relationship decides which email goes (Woody, 25 November 2026). */}
+              <div className="space-y-1" data-testid="deal-party-ask-as">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-muted-foreground">They are</span>
+                  {ASK_RELATIONS.map(r => (
+                    <Pill key={r} active={askAs === r} disabled={busy}
+                      onClick={() => { setAskAs(r); if (party.person && party.person.from === "party") save.mutate({ askAs: r }); }}
+                      data-testid={`deal-party-ask-as-${r}`}>{ASK_RELATION_WORDS[r]}</Pill>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground" data-testid="deal-party-ask-as-email">{ASK_RELATION_EMAIL[askAs]}</p>
+              </div>
               {party.person && !changingPerson && !adding ? (
                 <div className={`flex items-start gap-2 text-xs ${askListed ? "" : "rounded-md border px-2.5 py-2"}`} data-testid="deal-party-person-current">
                   <div className="min-w-0 flex-1">
                     <div className="font-medium">{party.person.name}{party.person.jobTitle ? <span className="font-normal text-muted-foreground"> · {party.person.jobTitle}</span> : null}{askListed ? <span className="font-normal text-muted-foreground"> · details above</span> : null}</div>
                     {!askListed && <div className="text-muted-foreground">{[party.person.email || "no email", party.person.mobile].filter(Boolean).join(" · ")}</div>}
                     {party.person.from === "client" && <div className="text-muted-foreground italic">The transaction's client contact</div>}
+                    {party.person.relation && party.person.relation !== "party" && <div className="text-muted-foreground">{ASK_RELATION_WORDS[party.person.relation]}{party.person.firm ? `, ${party.person.firm}` : ""}</div>}
                   </div>
                   <Button type="button" variant="outline" size="sm" className="h-7 text-xs shrink-0" disabled={busy} onClick={() => setChangingPerson(true)} data-testid="deal-party-person-change">Change</Button>
                 </div>
               ) : <>
-              {party.people.length > 0 && (
-                <Select value={party.person?.from === "party" ? party.person.id : undefined} onValueChange={v => save.mutate({ personId: v })} disabled={busy}>
+              {askIsAgent(askAs) && (
+                // An agent is at another firm: find them anywhere in the CRM.
+                <div className="space-y-1" data-testid="deal-party-agent-person">
+                  <CrmEmailInput value={agentEmail} onChange={setAgentEmail} placeholder={`Find ${askAs === "joint_agent" ? "the joint agent" : "their agent"} in the CRM: name or email`}
+                    onPick={c => { save.mutate({ personId: c.id, askAs }); setAgentEmail(""); }} testId="deal-party-agent-person-input" />
+                  <p className="text-[11px] text-muted-foreground">Not in the CRM yet? Add them under their firm on the CRM page, then find them here.</p>
+                </div>
+              )}
+              {!askIsAgent(askAs) && party.people.length > 0 && (
+                <Select value={party.person?.from === "party" ? party.person.id : undefined} onValueChange={v => save.mutate({ personId: v, askAs })} disabled={busy}>
                   <SelectTrigger className="h-8 text-xs" data-testid="deal-party-person-select"><SelectValue placeholder={`Pick someone at ${party.brand.name}`} /></SelectTrigger>
                   <SelectContent>
                     {party.people.map(p => <SelectItem key={p.id} value={p.id}>{p.name}{p.email ? ` · ${p.email}` : " · no email"}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )}
-              {adding ? (
+              {askIsAgent(askAs) ? null : adding ? (
                 <div className="space-y-2 rounded-md border p-2.5" data-testid="deal-party-add-person">
                   <div className="grid sm:grid-cols-2 gap-2">
                     <div className="space-y-1"><Label className="text-[11px]">Name</Label><Input value={person.name} onChange={e => setPerson(p => ({ ...p, name: e.target.value }))} data-testid="input-party-person-name" /></div>
