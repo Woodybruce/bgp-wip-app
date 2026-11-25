@@ -52,10 +52,10 @@ test("an approval running out asks for the checks again", () => {
   assert.equal(next({ stage: "expired", clientChecks: false }).action, null);
 });
 
-test("nothing starts until the company that signs is set", () => {
+test("nothing starts until the contracting entity is set", () => {
   const step = next({ companyMissing: true, redFlags: 2, request: { status: "sent", to: "Jack Barratt" } });
   assert.equal(step.action, "fill_in");
-  assert.equal(line(step), "To do · Set the company that signs");
+  assert.equal(line(step), "To do · Set the contracting entity");
   // A private individual has no company to set.
   assert.notEqual(next({ company: false, companyMissing: true }).action, "fill_in");
 });

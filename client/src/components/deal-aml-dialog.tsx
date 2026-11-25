@@ -37,7 +37,7 @@ export function DealAmlDialog({ deal, reason, onClose }: {
               </span>
             </DialogTitle>
             <DialogDescription>
-              For each party: set the company that signs and who to ask, add the owners' contact details, then send the client checks.
+              For each party: set the contracting entity and who to ask, add the owners' contact details, then send the client checks.
               Nothing is sent until you press a button. You can come back to it from the AML page, or from the transaction's Parties &amp; AML.
             </DialogDescription>
           </DialogHeader>

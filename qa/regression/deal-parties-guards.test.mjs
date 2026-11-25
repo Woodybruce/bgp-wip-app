@@ -49,7 +49,7 @@ test('a company and a person are set only from under the party\'s own brand', ()
   assert.match(find, /WHERE company_id = \$1 AND lower\(email\) = \$2/);
 });
 
-test('every deal save keeps the company that signs under its party', () => {
+test('every deal save keeps the contracting entity under its party', () => {
   const create = letting.slice(letting.indexOf('export async function createDeal'), letting.indexOf('export async function updateDeal'));
   assert.match(create, /checkPartyCompanies\(db, parsed as Record<string, any>, body\)/);
   const update = letting.slice(letting.indexOf('export async function updateDeal'));
@@ -59,7 +59,7 @@ test('every deal save keeps the company that signs under its party', () => {
   assert.match(crm, /res\.status\(e\?\.name === "PartyCompanyRefusal" \? 400 : 500\)/);
 });
 
-test('clients and joint agents neither read nor write the company that signs', () => {
+test('clients and joint agents neither read nor write the contracting entity', () => {
   const hidden = crm.slice(crm.indexOf('const CLIENT_HIDDEN_DEAL_AML = ['), crm.indexOf('] as const;', crm.indexOf('const CLIENT_HIDDEN_DEAL_AML = [')));
   for (const f of ['landlordTradingEntityId', 'tenantTradingEntityId', 'vendorTradingEntityId', 'purchaserTradingEntityId']) assert.ok(hidden.includes(`"${f}"`), f);
   const ja = landsec.slice(landsec.indexOf('export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = ['), landsec.indexOf('] as const;', landsec.indexOf('export const JOINT_AGENT_HIDDEN_DEAL_FIELDS = [')));
@@ -78,7 +78,7 @@ test('the columns are added at boot, nullable', () => {
   ]) assert.ok(index.includes(sql), sql);
 });
 
-test('the checks before asking read the company that signs, never writing to the brand', () => {
+test('the checks before asking read the contracting entity, never writing to the brand', () => {
   assert.match(prechecks, /AND trading_entity_id IS NOT DISTINCT FROM \$2/);
   assert.match(prechecks, /const partyKey = \(companyId: string, entityId\?: string \| null\)/);
   // The brand-page lookup (which writes the brand's number) is never run for the company that signs.

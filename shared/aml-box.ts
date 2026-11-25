@@ -214,7 +214,7 @@ export function amlNextStep(input: AmlBoxFacts): AmlNextStep {
   const jointRunning = !!f.joint && f.joint.status !== "expired" && f.joint.status !== "not_sent";
   if (f.company && f.companyMissing && !jointRunning) {
     if (f.publicBodyHint) return step("act", "bgp", "To do", "Confirm it is a public body (SDD), or set who signs", "fill_in");
-    return step("act", "bgp", "To do", "Set the company that signs", "fill_in");
+    return step("act", "bgp", "To do", "Set the contracting entity", "fill_in");
   }
   if (f.precheckRunning) {
     return step("wait", "bgp", "Screening", "running now");

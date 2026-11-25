@@ -276,7 +276,7 @@ const ROLE_WORDS: Record<KycPersonRole, string> = {
   owner: "Owner", acting: "Dealing with us", director: "Director", joint: "Alongside them",
   settlor: "Settlor", trustee: "Trustee", protector: "Protector", beneficiary: "Beneficiary", controller: "Other control",
   guarantor: "Guarantor", guarantor_owner: "Owns the guarantor",
-  signer: "Signs too", signer_owner: "Owns a company that signs",
+  signer: "Signs too", signer_owner: "Owns a contracting entity",
 };
 
 const ID_STATE_WORDS: Record<PersonIdState, string> = {
@@ -1235,7 +1235,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
 
             <div className="space-y-1.5">
               <Label>{shownName} is</Label>
-              {party.entityId && <p className="text-[11px] text-muted-foreground">The company that signs for {party.brandName}{party.entityNumber ? ` (Companies House ${party.entityNumber})` : ""}.</p>}
+              {party.entityId && <p className="text-[11px] text-muted-foreground">The contracting entity for {party.brandName}{party.entityNumber ? ` (Companies House ${party.entityNumber})` : ""}.</p>}
               <div className="flex gap-2">
                 {(["company", "individual"] as const).map(k => (
                   <Button key={k} type="button" size="sm" variant={chosenKind === k ? "default" : "outline"} onClick={() => { setKind(k); setDocs(null); }}>

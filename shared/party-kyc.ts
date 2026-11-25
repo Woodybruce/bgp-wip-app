@@ -249,7 +249,7 @@ const SANCTIONS_MATCH_DENIAL = "A possible sanctions match stands: check whether
 /** Done by the officers in-house: their switch is on, or the party is a trust (never KYC4U since 23 November 2026). */
 export const signOffInHouse = (f: Pick<SignOffFacts, "inHouseEdd" | "trust">): boolean => !!f.inHouseEdd || !!f.trust;
 
-const NEEDS_COMPANY_DENIAL = "Set the company that signs first (step 1): BGP's checks run on it, not on the brand.";
+const NEEDS_COMPANY_DENIAL = "Set the contracting entity first (step 1): BGP's checks run on it, not on the brand.";
 const notRunDenial = (f: Pick<SignOffFacts, "needsCompany">, words: string): string => f.needsCompany ? NEEDS_COMPANY_DENIAL : words;
 
 /** Why BGP may not sign the party off, or null when it may. */

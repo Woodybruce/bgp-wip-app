@@ -207,7 +207,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
     // The KYC records' own history, as the transaction's AML box reads it: what set each record flag (24 November 2026).
     read("the KYC records' history", () => loadRecordHistory(pool, brandIds), {} as Awaited<ReturnType<typeof loadRecordHistory>>),
     // The other companies that sign for a party (24 November 2026).
-    read("the other companies that sign", () => import("./deal-guarantors").then(m => m.signerRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
+    read("the other contracting entities", () => import("./deal-guarantors").then(m => m.signerRows(dealIds)), [] as Array<{ dealId: string; companyId: string; entityId: string; name: string }>),
   ]);
   const { kyc4uVerdict } = await import("./kyc4u");
   const meName = me.name.toLowerCase();

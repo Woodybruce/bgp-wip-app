@@ -277,7 +277,7 @@ function PartyPrechecks({ dealId, data, companyId, only, level }: { dealId: stri
       const state = r?.started?.[companyId];
       if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
       else if (state === "off") toast({ title: "Not run", description: "These checks are switched off." });
-      else if (state === "needs_company") toast({ title: "Not run", description: "Set the company that signs for this party first: the checks are about it, not the brand." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the contracting entity for this party first: the checks are about it, not the brand." });
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
     },
     onError: (e: any) => toast({ title: "Not run", description: String(e?.message || e), variant: "destructive" }),
@@ -704,7 +704,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
       trustRecordedGaps.length ? "trust information to add" : null,
       facts.dobNeeded ? "date of birth to add" : null,
       guarantorOpen ? "guarantor checks to run" : null,
-      signerOpen ? "checks to run on the other company that signs" : null,
+      signerOpen ? "checks to run on the other contracting entity" : null,
     ].filter((g): g is string => !!g),
     notes: [
       decision?.person?.details && decision.person.words ? decision.person.words.replace(/^Born /, "born ") : null,
@@ -825,7 +825,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
     partyName !== cp.name ? <Link key="brand" href={`/companies/${cp.id}`} className="hover:underline" data-testid={`aml-box-brand-${cp.role}`}>{cp.name}</Link> : null,
     isClient ? "BGP's client" : null,
     register,
-    companyMissing ? "the company that signs is not set yet" : null,
+    companyMissing ? "the contracting entity is not set yet" : null,
   ].filter(Boolean);
 
   return (
@@ -927,7 +927,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               <PartyFiles dealId={dealId} role={cp.role} />
               {kyc4uPast.length > 0 && <Kyc4uStatusStrip companyId={cp.id} />}
               {companyMissing && !current
-                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the company that signs is set.</p>
+                ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the contracting entity is set.</p>
                 : <>
                     {people?.reliance && <RelianceCard dealId={dealId} role={cp.role} reliance={people.reliance} canDecide={canDecide} />}
                     {jointParty && jointQ.data && current && !settled && <JointAgentPanel dealId={dealId} view={jointQ.data} party={jointParty} decide={jointDecide} />}
@@ -998,7 +998,7 @@ function CompanyStepActions({ dealId, companyId, role, canRun, onChange }: { dea
     onSuccess: (r: any) => {
       const state = r?.started?.[companyId];
       if (state === "cap") toast({ title: "Not run", description: "Today's limit for these checks is used up. They run again tomorrow." });
-      else if (state === "needs_company") toast({ title: "Not run", description: "Set the company that signs for this party first." });
+      else if (state === "needs_company") toast({ title: "Not run", description: "Set the contracting entity for this party first." });
       else toast({ title: "Running BGP's checks", description: "Companies House, the sanctions lists and the web search: a minute or two." });
       queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
     },

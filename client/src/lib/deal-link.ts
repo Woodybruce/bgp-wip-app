@@ -157,7 +157,7 @@ export function linkToTransaction(existing: LinkForm, given: LinkForm, base: Lin
       }
       if (g.key !== "xero" && trading && linkBlank(existing[trading]) && !linkBlank(given[trading])) {
         form[trading] = given[trading];
-        filled.push({ key: `${g.key}.signs`, label: `${g.label}'s company that signs` });
+        filled.push({ key: `${g.key}.signs`, label: `${g.label}'s contracting entity` });
       }
       continue;
     }

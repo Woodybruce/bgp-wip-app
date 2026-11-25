@@ -168,7 +168,7 @@ export async function loadDealRedFlags(dealId: string | null, companyIds: string
     : [];
   // The other companies that sign for a party (24 November 2026): their flags join it the same way.
   const signers = ids.length && dealId
-    ? await read("the other companies that sign", async () => (await import("./deal-guarantors")).signerRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
+    ? await read("the other contracting entities", async () => (await import("./deal-guarantors")).signerRows([dealId]), [] as Array<{ companyId: string; entityId: string; name: string }>)
     : [];
 
   const parties: Record<string, KycRedFlag[]> = {};

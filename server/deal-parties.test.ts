@@ -35,7 +35,7 @@ test("every party's API field and column name the same thing", () => {
   assert.ok(!isDealPartyRole("__proto__"));
 });
 
-test("what stops the checks starting: the company that signs, a person, an email", () => {
+test("what stops the checks starting: the contracting entity, a person, an email", () => {
   const person = { name: "Jane Smith", email: "jane@example.com" };
   // A company party always needs the company that signs set on the deal:
   // the brand's own Companies House record is never assumed (Woody,
@@ -117,7 +117,7 @@ const ENTITIES = [
 ];
 const entityDb = () => fakeDb((sql, params) => sql.includes("FROM crm_trading_entities") ? ENTITIES.filter(e => (params[0] as string[]).includes(e.id)) : []);
 
-test("a deal save keeps the company that signs under its party", async () => {
+test("a deal save keeps the contracting entity under its party", async () => {
   // Filed under the tenant: kept.
   assert.deepEqual(await checkPartyCompanies(entityDb(), { tenantId: "pret", tenantTradingEntityId: "e-pret" }, { tenantTradingEntityId: "e-pret" }), {});
   // Sent for the tenant but filed under another brand: refused, naming it.

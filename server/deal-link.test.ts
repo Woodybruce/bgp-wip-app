@@ -93,14 +93,14 @@ test("the same value in another spelling is no difference", () => {
   assert.ok(!r.differs.some(d => d.key === "pricing" || d.key === "targetDate"));
 });
 
-test("the same party: its billing entity and the company that signs fill only where the transaction has none", () => {
+test("the same party: its billing entity and the contracting entity fill only where the transaction has none", () => {
   const given = { ...READ, purchaserEntityId: "xero-1", purchaserEntityName: "Buyer Ltd", purchaserTradingEntityId: "te-buyer" };
   const r = linkToTransaction(ONE_CLAPHAM, given, BASE);
   assert.equal(r.form.purchaserEntityId, "xero-1");
   assert.equal(r.form.purchaserEntityName, "Buyer Ltd");
   assert.equal(r.form.purchaserTradingEntityId, "te-buyer");
   assert.ok(r.filled.some(f => f.label === "Purchaser's billing entity"));
-  assert.ok(r.filled.some(f => f.label === "Purchaser's company that signs"));
+  assert.ok(r.filled.some(f => f.label === "Purchaser's contracting entity"));
   // Held already: kept, and not listed.
   const held = linkToTransaction({ ...ONE_CLAPHAM, purchaserTradingEntityId: "te-held" }, given, BASE);
   assert.equal(held.form.purchaserTradingEntityId, "te-held");

@@ -18,7 +18,7 @@ const amlBox = read('client/src/components/deal-aml-status.tsx');
 
 const route = (start) => parties.slice(parties.indexOf(start), parties.indexOf('\nrouter.', parties.indexOf(start) + 10));
 
-test('adding a guarantor: BGP staff, a company or person filed under the tenant or buyer, never the company that signs', () => {
+test('adding a guarantor: BGP staff, a company or person filed under the tenant or buyer, never the contracting entity', () => {
   const add = route('router.post("/api/deals/:id/guarantors"');
   assert.match(add, /const me = await staffMe\(req\);\s*if \(!me\) return res\.status\(403\)/);
   assert.match(add, /if \(!isGuaranteedRole\(role\)\) return res\.status\(400\)/);
@@ -40,7 +40,7 @@ test('adding a guarantor: BGP staff, a company or person filed under the tenant 
   assert.match(read('server/brand-dedupe.ts'), /\{ table: "deal_guarantors",\s+column: "company_id" \}/);
 });
 
-test('a guarantor counts only while it is filed under the party and is not the company that signs', () => {
+test('a guarantor counts only while it is filed under the party and is not the contracting entity', () => {
   assert.match(guarantors, /JOIN crm_trading_entities e ON e\.id = g\.entity_id AND e\.parent_company_id = g\.company_id/);
   assert.match(guarantors, /AND g\.company_id = \$\{brandCase\("d"\)\}/);
   assert.match(guarantors, /AND g\.entity_id IS DISTINCT FROM \$\{signerCase\("d"\)\}/);

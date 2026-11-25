@@ -252,7 +252,7 @@ const READ: DealNoteRead = {
   ],
 };
 
-test("what is sure fills an empty box: the type, the property, each party and the company that signs", () => {
+test("what is sure fills an empty box: the type, the property, each party and the contracting entity", () => {
   const patch = dealReadPatch({ dealType: "", propertyId: "", landlordId: "", tenantId: "" }, READ);
   assert.deepEqual(patch, { dealType: "New Letting", propertyId: "p1", landlordId: "c1", landlordEntityId: "", landlordEntityName: "", landlordTradingEntityId: "",
     tenantId: "b1", tenantEntityId: "", tenantEntityName: "", tenantTradingEntityId: "e1" });
@@ -269,7 +269,7 @@ test("nothing chosen is replaced, a looser property or two companies fill nothin
   assert.deepEqual(rolesShownFor("Purchase"), ["vendor", "purchaser"]);
 });
 
-test("a party pick clears the old billing entity; a billing entity made sets the company that signs and the Xero contact", () => {
+test("a party pick clears the old billing entity; a billing entity made sets the contracting entity and the Xero contact", () => {
   assert.deepEqual(partyPatch({ tenantId: "b1", tenantTradingEntityId: "" }, "tenant", { companyId: "b1", entityId: "e1" }), { tenantTradingEntityId: "e1" });
   assert.deepEqual(partyPatch({ tenantId: "b1", tenantTradingEntityId: "e7" }, "tenant", { companyId: "b1", entityId: "e1" }), {}, "a company already set stays");
   assert.deepEqual(billingPatch("landlord", { entity: { id: "e5" }, contact: { ContactID: "x1", Name: "BRUCECAP LIMITED" } }),

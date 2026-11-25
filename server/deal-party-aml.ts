@@ -245,7 +245,7 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     signerChecks: !party.dealId ? [] : await import("./deal-guarantors")
       .then(m => m.signerViews(party.dealId!, db))
       .then(list => list.filter(g => g.companyId === party.brandId && g.role === party.role).map(g => ({ name: g.name, state: g.checks.state })))
-      .catch(() => [{ name: "the other companies that sign (could not be read)", state: "not_run" as const }]),
+      .catch(() => [{ name: "the other contracting entities (could not be read)", state: "not_run" as const }]),
     level: flags?.levels?.[party.brandId] || null,
     dobNeeded: dobNeeded && !personDetails,
     dobAfterRun: dobNeeded && !!personDetails && !!precheck.ranAt && Date.parse(personDetails.recordedAt) > Date.parse(precheck.ranAt),
@@ -496,7 +496,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       const r = await approveEntityKyc("trading_entity", party.entityId, me.name, {
         reminderCompanyId: party.brandId, notes: line, recheckYears: years, evidence,
       });
-      if (r.status !== 200) return res.status(r.status).json({ message: "The company that signs was not found." });
+      if (r.status !== 200) return res.status(r.status).json({ message: "The contracting entity was not found." });
       // Each other company that signs for the party is a customer too: the
       // sign-off, which waited for BGP's checks on it, approves it as well (24 November 2026).
       const others = party.dealId ? await import("./deal-guarantors").then(m => m.signerRows([party.dealId!]))
@@ -504,7 +504,7 @@ router.post("/api/deals/:id/parties/:role/sign-off", async (req: Request, res: R
       for (const g of others) {
         await approveEntityKyc("trading_entity", g.entityId, me.name, {
           reminderCompanyId: party.brandId, notes: `${line} (signing with ${partyName(party)})`, recheckYears: years, evidence,
-        }).catch((e: any) => console.warn("[deal-party-aml] other company that signs not approved:", e?.message));
+        }).catch((e: any) => console.warn("[deal-party-aml] other contracting entity not approved:", e?.message));
       }
       const { recomputeDealsForTradingEntity } = await import("./deal-gates");
       await recomputeDealsForTradingEntity(party.entityId, me.name).catch((e: any) => console.warn("[deal-party-aml] deal recompute failed:", e?.message));

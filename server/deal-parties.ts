@@ -383,7 +383,7 @@ router.put("/api/deals/:id/parties/:role", async (req: Request, res: Response) =
         if (!row || row.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company filed under the ${role}.` });
         lines.push([col.company, deal[col.company] || null, id, `${DEAL_PARTY_LABEL[role]} signs as ${row.name}`]);
       } else {
-        lines.push([col.company, deal[col.company] || null, null, `${DEAL_PARTY_LABEL[role]}'s company that signs cleared`]);
+        lines.push([col.company, deal[col.company] || null, null, `${DEAL_PARTY_LABEL[role]}'s contracting entity cleared`]);
       }
       sets[col.company] = id;
     }
@@ -492,7 +492,7 @@ router.put("/api/deals/:id/parties/:role/individual", async (req: Request, res: 
     if (wanted !== isIndividual) {
       await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
       const words = wanted
-        ? `${text(brand.name)} recorded as a private individual: the checks are about the person, with no company that signs`
+        ? `${text(brand.name)} recorded as a private individual: the checks are about the person, with no contracting entity`
         : `${text(brand.name)} no longer recorded as a private individual`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
@@ -577,7 +577,7 @@ router.put("/api/deals/:id/parties/:role/public-body", async (req: Request, res:
       const after = wanted ? PUBLIC_BODY_SUBJECT : null;
       await pool.query(`UPDATE crm_companies SET aml_subject_type = $2 WHERE id = $1`, [brandId, after]);
       const words = wanted
-        ? `${text(brand.name)} recorded as a UK public body: simplified due diligence, no company that signs and no beneficial owners to verify`
+        ? `${text(brand.name)} recorded as a UK public body: simplified due diligence, no contracting entity and no beneficial owners to verify`
         : `${text(brand.name)} no longer recorded as a public body`;
       await audit(pool, deal.id, "aml_subject_type", before, after, words, me);
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'aml_subject_type', $2, $3)`,
@@ -672,16 +672,16 @@ router.post("/api/deals/:id/billing/same-company", async (req: Request, res: Res
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
     if (!c) return res.status(404).json({ message: "Transaction not found" });
-    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
+    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s contracting entity first.` });
     const ownSet = !!(text(c.deal.xero_contact_id) || text(c.deal.xero_contact_name));
     const contactId = ownSet ? text(c.deal.xero_contact_id) : text(c.deal[c.col.xeroId]);
     const contactName = ownSet ? text(c.deal.xero_contact_name) : text(c.deal[c.col.xeroName]);
     if (!contactId && !contactName) return res.status(400).json({ message: "There is no Xero contact on the transaction to match to the company." });
     const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
-    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
+    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The contracting entity was not found." });
     await c.pool.query(`UPDATE crm_trading_entities SET xero_contact_id = $2, xero_contact_name = $3 WHERE id = $1`, [company.id, contactId || null, contactName || company.name]);
     await audit(c.pool, c.deal.id, "billing_same_company", text(company.xero_contact_id) || null, contactId || contactName,
-      `${contactName || "The Xero contact"} confirmed as ${company.name}, the ${c.role}'s company that signs, by ${me.name || "BGP"}`, me);
+      `${contactName || "The Xero contact"} confirmed as ${company.name}, the ${c.role}'s contracting entity, by ${me.name || "BGP"}`, me);
     res.json(await loadDealParties(c.pool, c.deal.id));
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not save it" });
@@ -697,9 +697,9 @@ router.post("/api/deals/:id/billing/signing", async (req: Request, res: Response
     if (!me) return res.status(403).json({ message: STAFF_ONLY });
     const c = await clientParty(String(req.params.id));
     if (!c) return res.status(404).json({ message: "Transaction not found" });
-    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s company that signs first.` });
+    if (!c.companyId) return res.status(400).json({ message: `Set the ${c.role}'s contracting entity first.` });
     const company = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [c.companyId])).rows[0];
-    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The company that signs was not found." });
+    if (!company || company.parent_company_id !== c.brandId) return res.status(404).json({ message: "The contracting entity was not found." });
     const before = text(c.deal.xero_contact_name) || text(c.deal[c.col.xeroName]) || null;
     const ownId = text(company.xero_contact_id) || null;
     await c.pool.query(
@@ -708,7 +708,7 @@ router.post("/api/deals/:id/billing/signing", async (req: Request, res: Response
               invoice_payer_entity_id = NULL, invoice_payer_relationship = NULL, invoice_payer_note = NULL, updated_at = now()
         WHERE id = $1`,
       [c.deal.id, ownId, ownId ? (text(company.xero_contact_name) || company.name) : null]);
-    await audit(c.pool, c.deal.id, "billing_signing", before, company.name, `The ${c.role} billed as ${company.name}, its company that signs${before ? `, not ${before}` : ""}`, me);
+    await audit(c.pool, c.deal.id, "billing_signing", before, company.name, `The ${c.role} billed as ${company.name}, its contracting entity${before ? `, not ${before}` : ""}`, me);
     res.json(await loadDealParties(c.pool, c.deal.id));
   } catch (err: any) {
     res.status(500).json({ message: err?.message || "Could not save it" });
@@ -754,7 +754,7 @@ router.put("/api/deals/:id/payer", async (req: Request, res: Response) => {
     if (input.companyId) {
       payer = (await c.pool.query(`SELECT id, name, parent_company_id, xero_contact_id, xero_contact_name FROM crm_trading_entities WHERE id = $1`, [input.companyId])).rows[0];
       if (!payer || payer.parent_company_id !== c.brandId) return res.status(400).json({ message: `Pick a company filed under the ${c.role}, or find it at Companies House.` });
-      if (payer.id === c.companyId) return res.status(400).json({ message: "That is the company that signs, not a third party." });
+      if (payer.id === c.companyId) return res.status(400).json({ message: "That is the contracting entity, not a third party." });
     }
     const oldPayer = text(c.deal.invoice_payer_entity_id) || null;
     const sets: Record<string, string | null> = {
@@ -829,7 +829,7 @@ router.post("/api/deals/:id/guarantors", async (req: Request, res: Response) => 
     if (!brandId) return res.status(400).json({ message: `Set the ${label} on the transaction first.` });
     const entity = (await pool.query(`SELECT id, name, parent_company_id FROM crm_trading_entities WHERE id = $1`, [entityId])).rows[0];
     if (!entity || entity.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company or person filed under the ${label}, or find it at Companies House.` });
-    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is the company that signs. The guarantor is another company, or a person." });
+    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is the contracting entity. The guarantor is another company, or a person." });
     // Before the boot migration adds kind (just after a deploy) every row is a guarantor.
     const held = (await pool.query(`SELECT COALESCE(kind, 'guarantor') AS kind FROM deal_guarantors WHERE deal_id = $1 AND role = $2 AND entity_id = $3 AND removed_at IS NULL`,
       [deal.id, role, entityId]).catch((e: any) => { if (e?.code === "42703") return { rows: [] as any[] }; throw e; })).rows[0];
@@ -908,10 +908,10 @@ router.post("/api/deals/:id/signers", async (req: Request, res: Response) => {
     const label = DEAL_PARTY_LABEL[role].toLowerCase();
     const brandId = text(deal[col.brand]);
     if (!brandId) return res.status(400).json({ message: `Set the ${label} on the transaction first.` });
-    if (!text(deal[col.company])) return res.status(400).json({ message: `Set the company that signs for the ${label} first, then add the other.` });
+    if (!text(deal[col.company])) return res.status(400).json({ message: `Set the contracting entity for the ${label} first, then add the other.` });
     const entity = (await pool.query(`SELECT id, name, parent_company_id FROM crm_trading_entities WHERE id = $1`, [entityId])).rows[0];
     if (!entity || entity.parent_company_id !== brandId) return res.status(400).json({ message: `Pick a company or person filed under the ${label}, or find it at Companies House.` });
-    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is already the company that signs." });
+    if (entityId === text(deal[col.company])) return res.status(400).json({ message: "That is already the contracting entity." });
     const held = (await pool.query(`SELECT COALESCE(kind, 'guarantor') AS kind FROM deal_guarantors WHERE deal_id = $1 AND role = $2 AND entity_id = $3 AND removed_at IS NULL`,
       [deal.id, role, entityId])).rows[0];
     if (held?.kind === "guarantor") return res.status(409).json({ message: `${entity.name} is the guarantor. Take it off as guarantor first.` });
@@ -920,14 +920,14 @@ router.post("/api/deals/:id/signers", async (req: Request, res: Response) => {
        ON CONFLICT (deal_id, role, entity_id) WHERE removed_at IS NULL DO NOTHING RETURNING id`,
       [deal.id, role, brandId, entityId, me.id, me.name])).rows[0];
     if (added) {
-      await audit(pool, deal.id, "signer", null, entityId, `${entity.name} added as another company that signs for the ${label}`, me);
+      await audit(pool, deal.id, "signer", null, entityId, `${entity.name} added as another contracting entity for the ${label}`, me);
       await recomputeParty(brandId, me.name);
     }
     const { startPrecheck } = await import("./kyc-prechecks");
     const started = await startPrecheck(brandId, { entityId, dealId: deal.id, userId: me.id }).catch(() => null);
     res.json({ ...(await loadDealParties(pool, deal.id)), started });
   } catch (err: any) {
-    res.status(500).json({ message: err?.message || "Could not add the company that signs" });
+    res.status(500).json({ message: err?.message || "Could not add the contracting entity" });
   }
 });
 
@@ -943,7 +943,7 @@ router.delete("/api/deals/:id/signers/:signerId", async (req: Request, res: Resp
       [String(req.params.id), String(req.params.signerId), me.name])).rows[0];
     if (!row) return res.status(404).json({ message: "That company is not signing on this transaction." });
     await audit(pool, String(req.params.id), "signer", String(row.entity_id), null,
-      `${row.name || "The other company that signs"} taken off as another company that signs for the ${String(row.role)}`, me);
+      `${row.name || "The other contracting entity"} taken off as another contracting entity for the ${String(row.role)}`, me);
     await recomputeParty(String(row.company_id), me.name);
     res.json(await loadDealParties(pool, String(req.params.id)));
   } catch (err: any) {

@@ -575,12 +575,12 @@ function PartyLine({ match, busy, source, onUse, onAdd, onSetParty, onAddParty, 
   const body = (() => {
     switch (match.state) {
       case "signs":
-        return <p className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Already the company that signs.</p>;
+        return <p className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Already the contracting entity.</p>;
       case "filed":
         return (
           <div className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">Filed under {brand!.name}: <span className="font-medium">{companyWords(match.filed!)}</span>{match.signing ? <span className="text-muted-foreground"> (signs now: {match.signing.name})</span> : null}</span>
-            <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onUse(role, match.filed!.id, match.filed!.name)} data-testid={`deal-hots-use-${role}`}>Use as the company that signs</Button>
+            <Button type="button" size="sm" className={quiet} disabled={busy} onClick={() => onUse(role, match.filed!.id, match.filed!.name)} data-testid={`deal-hots-use-${role}`}>Use as the contracting entity</Button>
             {!hotsNamesClose(match.filed!.name, read.name) && <p className="basis-full text-amber-800 dark:text-amber-300">Named as {read.name} in {source.toLowerCase()}: check it is the same company.</p>}
           </div>
         );

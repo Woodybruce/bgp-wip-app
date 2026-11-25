@@ -36,7 +36,7 @@ const line = (state: AmlStepState, words: string, pending = false): AmlStepLine 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const join = (parts: Array<string | null | undefined | false>) => parts.filter((p): p is string => !!p && !!p.trim()).join(" · ");
 
-export const AFTER_COMPANY = "After the company that signs is set";
+export const AFTER_COMPANY = "After the contracting entity is set";
 
 // ── Step 1: the company (or the person) ─────────────────────────────────────
 

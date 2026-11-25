@@ -38,7 +38,7 @@ export function partyFilesForPreview(documents: PartyTrailDocument[], translateF
     url: d.url,
     mime: d.mime || null,
     caption: [amlFileDocWords(d.type), shortDay(d.at)].filter(Boolean).join(" · "),
-    note: [d.onCompany ? "On the company that signs" : null, d.note].filter(Boolean).join(" · ") || null,
+    note: [d.onCompany ? "On the contracting entity" : null, d.note].filter(Boolean).join(" · ") || null,
     // Each file on a party can be read in English (23 November 2026).
     translate: translateFor ? { ...translateFor, documentId: d.id } : null,
   }));

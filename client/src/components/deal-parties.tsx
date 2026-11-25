@@ -197,7 +197,7 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
       <div className="rounded-md border border-red-300 bg-red-50 px-2.5 py-2 text-xs text-red-900 dark:bg-red-950/30 dark:text-red-200 space-y-1" data-testid={`deal-party-trust-${party.role}`}>
         {party.brand.foundationHint
           ? <p><strong>Recorded as a foundation</strong>: enhanced checks, {who}.</p>
-          : <p><strong>Recorded as a trust</strong>: enhanced checks, {who}. If a company is the trustee, set it as the company that signs.</p>}
+          : <p><strong>Recorded as a trust</strong>: enhanced checks, {who}. If a company is the trustee, set it as the contracting entity.</p>}
         <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={mark.isPending} onClick={() => mark.mutate(false)} data-testid={`deal-party-unmark-trust-${party.role}`}>{party.brand.foundationHint ? "Not a foundation?" : "Not a trust?"} Undo</button>
       </div>
     );
@@ -211,7 +211,7 @@ export function TrustLine({ dealId, party, compact }: { dealId: string; party: D
       <span className="min-w-0 flex-1">{party.brand.foundationHint
         ? <>Reads like a foundation. If it is one, record it: {who}.</>
         : party.brand.charityHint && !/\btrust(ees)?\b|\bsettlement\b/i.test(party.brand.name)
-          ? <>Reads like a charity. If it's a charitable trust or a CIO, record it. A charitable company is set as the company that signs.</>
+          ? <>Reads like a charity. If it's a charitable trust or a CIO, record it. A charitable company is set as the contracting entity.</>
           : <>Reads like a trust. If it is one, or holds the property as trustee, record it: {who}.</>}</span>
       <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-background" disabled={mark.isPending} onClick={() => mark.mutate(true)} data-testid={`deal-party-mark-trust-${party.role}`}>
         {mark.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}{party.brand.foundationHint ? "Record as a foundation" : party.brand.charityHint && !/\btrust(ees)?\b|\bsettlement\b/i.test(party.brand.name) ? "Record as a charity or foundation" : "Record as a trust"}
@@ -316,7 +316,7 @@ function usePartyPeople(dealId: string, party: DealPartyView | null | undefined)
 // that signs and a trust's people read "Director" until then).
 const PERSON_ROLE_WORDS: Partial<Record<KycPartyPerson["roles"][number], string>> = {
   settlor: "settlor", trustee: "trustee", protector: "protector", beneficiary: "beneficiary", controller: "other control",
-  owner: "owner", signer: "signs too", signer_owner: "owns a company that signs", guarantor: "guarantor", guarantor_owner: "owns the guarantor",
+  owner: "owner", signer: "signs too", signer_owner: "owns a contracting entity", guarantor: "guarantor", guarantor_owner: "owns the guarantor",
   acting: "dealing with us", joint: "alongside them",
 };
 const roleWords = (p: KycPartyPerson) => {
@@ -443,7 +443,7 @@ function PartyPeopleToCheck({ dealId, party, busy, aml, onAsk }: { dealId: strin
   }, [reading, people?.basis]);
   if (party.brand.kind === "individual") return null;
   if (!party.company) {
-    return <p className="text-xs text-muted-foreground" data-testid="deal-party-people-need-company">Set the company that signs first: the people its checks need are read from Companies House.</p>;
+    return <p className="text-xs text-muted-foreground" data-testid="deal-party-people-need-company">Set the contracting entity first: the people its checks need are read from Companies House.</p>;
   }
   if (loading) return <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Finding who the checks need…</p>;
   if (!people) return null;
@@ -516,7 +516,7 @@ function refreshBilling(dealId: string, data?: DealParties) {
 function useGuarantorActions(dealId: string, kind: "guarantor" | "signer" = "guarantor") {
   const { toast } = useToast();
   const base = `/api/deals/${dealId}/${kind === "signer" ? "signers" : "guarantors"}`;
-  const what = kind === "signer" ? "the other company that signs" : "the guarantor";
+  const what = kind === "signer" ? "the other contracting entity" : "the guarantor";
   const done = (d?: DealParties) => {
     refreshBilling(dealId, d);
     queryClient.invalidateQueries({ queryKey: ["/api/aml-dashboard"] });
@@ -599,12 +599,12 @@ export function PartyBillingDetail({ dealId, party, compact }: { dealId: string;
   const b = party.billing;
   const same = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/billing/same-company`, {})).json() as Promise<DealParties>,
-    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: "Recorded as the same company", description: "The Xero contact is kept on the company that signs." }); },
+    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: "Recorded as the same company", description: "The Xero contact is kept on the contracting entity." }); },
     onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
   });
   const signing = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/billing/signing`, {})).json() as Promise<DealParties>,
-    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: `Billed as ${party.company?.name || "the company that signs"}` }); },
+    onSuccess: (d) => { refreshBilling(dealId, d); toast({ title: `Billed as ${party.company?.name || "the contracting entity"}` }); },
     onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
   });
   const payerChecks = usePayerChecks(dealId, !compact && !!b?.payer);
@@ -621,7 +621,7 @@ export function PartyBillingDetail({ dealId, party, compact }: { dealId: string;
     <div className="space-y-1.5 text-xs" data-testid={`deal-billing-${party.role}`}>
       <p className={BILLING_TONE[b.tone]} data-testid={`deal-billing-words-${party.role}`}>
         {compact && (b.state === "same" || b.state === "signing")
-          ? <><span className="text-foreground">{b.state === "same" ? b.billed?.name : party.company?.name}</span>, the company that signs</>
+          ? <><span className="text-foreground">{b.state === "same" ? b.billed?.name : party.company?.name}</span>, the contracting entity</>
           : b.words}
       </p>
       {b.state === "payer" && b.payer && !compact && (
@@ -684,7 +684,7 @@ export function PayerDialog({ dealId, party, onClose }: { dealId: string; party:
       refreshBilling(dealId, { deal: d.deal, parties: d.parties });
       toast(body.companyId
         ? { title: "Recorded who pays", description: d.started === "started" ? "BGP's checks before asking are running on it now." : "BGP's checks before asking are on it." }
-        : { title: "Taken off", description: `The invoice goes back to ${party.company?.name || "the company that signs"}.` });
+        : { title: "Taken off", description: `The invoice goes back to ${party.company?.name || "the contracting entity"}.` });
       onClose();
     },
     onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
@@ -696,7 +696,7 @@ export function PayerDialog({ dealId, party, onClose }: { dealId: string; party:
         <DialogHeader>
           <DialogTitle>Who pays BGP's invoice</DialogTitle>
           <DialogDescription>
-            When a company other than {party.company?.name || "the company that signs"} pays. It gets BGP's checks too.
+            When a company other than {party.company?.name || "the contracting entity"} pays. It gets BGP's checks too.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 text-sm">
@@ -806,7 +806,7 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
             <span data-testid={`deal-party-public-body-signs-${role}`}>Itself <span className="text-muted-foreground">· a UK public body, no company needed</span></span>
           </PartyRow>
         ) : party.brand.kind === "company" || party.company ? (
-          <PartyRow label={party.company?.kind === "individual" ? "Who signs" : "Company that signs"} testId={`deal-party-row-company-${role}`}>
+          <PartyRow label={party.company?.kind === "individual" ? "Who signs" : "Contracting entity"} testId={`deal-party-row-company-${role}`}>
             {party.company ? (
               <span data-testid={`deal-party-company-${role}`}>
                 <span className="font-medium">{party.company.name}</span>
@@ -826,7 +826,7 @@ export function DealPartyLines({ dealId, role, aml, fullBilling }: { dealId: str
         ) : (
           <PartyRow label="Signs as">A private individual</PartyRow>
         )}
-        {/* Only BGP's client is billed (20 November 2026): as its company that signs, unless the deal says otherwise. A public body with no company has none to bill, as in the party box. */}
+        {/* Only BGP's client is billed (20 November 2026): as its contracting entity, unless the deal says otherwise. A public body with no company has none to bill, as in the party box. */}
         {party.client && party.billing && party.billing.state !== "individual" && !(publicBody && party.billing.state === "no_company") && (
           <PartyRow label="Billed to" testId={`deal-party-row-billing-${role}`}>
             <PartyBillingDetail dealId={dealId} party={party} compact={!fullBilling} />
@@ -1019,7 +1019,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                       <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" disabled={busy} onClick={() => save.mutate({ companyId: null })} data-testid="deal-party-company-clear">Clear</Button>
                     </div>
                   ) : null}
-                  {/* The other companies that sign too (Woody, 24 November 2026: "can we add 2
+                  {/* The other contracting entities too (Woody, 24 November 2026: "can we add 2
                       entities? ... also add another entity"): joint landlords, a joint venture. */}
                   {party.company && !changingCompany && !hotsOpen && (
                     <div className="space-y-1.5" data-testid={`deal-party-signers-${role}`}>
@@ -1065,7 +1065,7 @@ export function DealPartyEditor({ dealId, role, aml, onClose }: { dealId: string
                     </div>
                   )}
                   {party.company && !changingCompany && !hotsOpen ? null : <>
-                  {/* The heads of terms name the company that signs (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
+                  {/* The heads of terms name the contracting entity (Woody, 23 November 2026: "where is the upload HOTs place?"). */}
                   {/* Kept while its dialog is open: setting the company from the heads of terms
                       must not close them (23 November 2026). */}
                   {(!party.company || hotsOpen) && (

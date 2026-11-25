@@ -13,7 +13,7 @@ test("the same legal company, however it is written", () => {
   assert.ok(!sameBillingCompany("", ""));
 });
 
-test("billed as the company that signs by default; another company is flagged", () => {
+test("billed as the contracting entity by default; another company is flagged", () => {
   const signing = { name: "BRUCE CAP LTD", xeroContactId: "x1" };
   assert.equal(billingState({ individual: false, signing, billed: null, payer: null }), "signing");
   assert.equal(billingState({ individual: false, signing, billed: { contactId: "x1", name: "Pave" }, payer: null }), "same", "the Xero contact linked to the company");
@@ -35,7 +35,7 @@ test("a third party recorded as the payer", () => {
   assert.equal(billingWords("payer", { billed: null, signing: "BRUCE CAP LTD", payer: "BGP REAL ESTATE LIMITED", relationship: "group" }).tone, "act");
   assert.equal(billingWords("payer", { billed: null, signing: "BRUCE CAP LTD", payer: "X LTD", relationship: "none" }).tone, "flag");
   assert.match(billingWords("different", { billed: "Brent Cross Partnership Ltd", signing: "HAMMERSON UK PROPERTIES PLC", payer: null, relationship: null }).words,
-    /^Billed to Brent Cross Partnership Ltd, not the company that signs \(HAMMERSON UK PROPERTIES PLC\): a third party paying BGP's invoice needs its own checks\./);
+    /^Billed to Brent Cross Partnership Ltd, not the contracting entity \(HAMMERSON UK PROPERTIES PLC\): a third party paying BGP's invoice needs its own checks\./);
 });
 
 test("the payer is recorded with how it is related, and another relationship says what", () => {

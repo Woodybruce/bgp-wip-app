@@ -1137,7 +1137,7 @@ export function setupXeroRoutes(app: Express) {
         if (!xeroContactId) {
           return res.status(409).json({
             code: "NO_BILLING_ENTITY",
-            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s company that signs under Parties (it is billed), or an invoice contact on this transaction.`,
+            message: `Set who is billed first: the ${DEAL_PARTY_LABEL[resolved.billing.role].toLowerCase()}'s contracting entity under Parties (it is billed), or an invoice contact on this transaction.`,
           });
         }
       }
