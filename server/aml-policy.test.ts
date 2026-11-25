@@ -237,24 +237,30 @@ test("BGP's standard heads of terms carry the AML clause; the 37-clause copy is 
 });
 
 test("the documents are listed by issue, the trust checklist among them; earlier issues are kept behind the current ones", () => {
-  assert.equal(AML_POLICY_DOCUMENTS.length, 8);
+  assert.equal(AML_POLICY_DOCUMENTS.length, 10);
   assert.equal(amlPolicyDocument("checklist-trusts")?.file, "bgp-aml-checklist-trusts.docx");
+  assert.equal(amlPolicyDocument("checklist-trusts-issue-2")?.file, "bgp-aml-checklist-trusts-issue-2.docx");
+  assert.equal(amlPolicyDocument("policy-issue-6")?.file, "bgp-aml-policy-issue-6.docx");
   assert.equal(amlPolicyDocument("policy-issue-5")?.file, "bgp-aml-policy-issue-5.docx");
   assert.equal(amlPolicyDocument("policy-issue-4")?.file, "bgp-aml-policy-issue-4.docx");
   assert.equal(amlPolicyDocument("policy-issue-3")?.file, "bgp-aml-policy-issue-3.docx");
   assert.equal(amlPolicyDocument("policy-issue-2")?.file, "bgp-aml-policy-issue-2.docx");
   assert.equal(amlPolicyDocument("risk-assessment-issue-4")?.file, "bgp-firm-wide-aml-risk-assessment-issue-4.docx");
   assert.equal(amlPolicyDocument("risk-assessment-issue-3")?.file, "bgp-firm-wide-aml-risk-assessment-issue-3.docx");
-  // Issue 5 (Jack signed off, 23 November 2026): no Dun & Bradstreet.
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-5")!), false, "Issue 5 is the current policy");
-  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-4")!), true, "Issue 5 replaced it");
+  // Issue 6 (agreed 25 November 2026): proof of address as HMRC asks; signed terms as authority.
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-6")!), false, "Issue 6 is the current policy");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-5")!), true, "Issue 6 replaced it");
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-4")!), true);
+  // The trust checklist follows it: Issue 2 is current, Issue 1 kept.
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("checklist-trusts-issue-2")!), false);
+  assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("checklist-trusts")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-3")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("policy-issue-2")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-4")!), false, "Issue 4 is the current risk assessment");
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-3")!), true);
   assert.equal(amlPolicyDocumentReplaced(amlPolicyDocument("risk-assessment-issue-2")!), true);
   assert.equal(amlPolicyDocument("../etc/passwd"), null);
-  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 5) and risk assessment (Issue 4)");
+  assert.equal(POLICY_SOURCE, "BGP's AML policy (Issue 6) and risk assessment (Issue 4)");
 });
 
 test("an unconfirmed ComplyAdvantage match does not make a party enhanced; a confirmed one does", () => {

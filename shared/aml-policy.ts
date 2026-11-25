@@ -1,8 +1,12 @@
-// BGP's Anti-Money Laundering Policy (Issue 5, November 2026) and Firm-Wide
+// BGP's Anti-Money Laundering Policy (Issue 6, November 2026) and Firm-Wide
 // Risk Assessment (Issue 4, November 2026), as the rules the app applies; the
 // app's copies of the two documents are the source of truth (Woody, 23
 // November 2026: "amend our Company policy on the app we will use that as the
-// source of truth"). Issue 5 (Jack signed off, 23 November 2026: "Ok crack on
+// source of truth"). Issue 6 (Woody, 25 November 2026: "aml policy 6 is
+// agreed") asks for a proof of address only as HMRC does (an individual who
+// is a customer, or who guarantees), takes a photocard driving licence
+// showing the address for both, and our signed terms of engagement as
+// authority to act. Issue 5 (Jack signed off, 23 November 2026: "Ok crack on
 // and change the d and b policy on the app jack has signed off") drops Dun &
 // Bradstreet: a company registered or owned overseas is checked from its own
 // register's extract, read, translated and checked in the app, and an app
@@ -47,6 +51,7 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-6", title: "Anti-Money Laundering Policy", issue: 6, date: "November 2026", file: "bgp-aml-policy-issue-6.docx" },
   { key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5, date: "November 2026", file: "bgp-aml-policy-issue-5.docx" },
   { key: "policy-issue-4", title: "Anti-Money Laundering Policy", issue: 4, date: "November 2026", file: "bgp-aml-policy-issue-4.docx" },
   { key: "policy-issue-3", title: "Anti-Money Laundering Policy", issue: 3, date: "November 2026", file: "bgp-aml-policy-issue-3.docx" },
@@ -54,27 +59,29 @@ export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
   { key: "risk-assessment-issue-4", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 4, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-4.docx" },
   { key: "risk-assessment-issue-3", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 3, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-3.docx" },
   { key: "risk-assessment-issue-2", title: "Firm-Wide Anti-Money Laundering Risk Assessment", issue: 2, date: "November 2026", file: "bgp-firm-wide-aml-risk-assessment-issue-2.docx" },
+  { key: "checklist-trusts-issue-2", title: "AML checklist: trusts", issue: 2, date: "November 2026", file: "bgp-aml-checklist-trusts-issue-2.docx" },
   { key: "checklist-trusts", title: "AML checklist: trusts", issue: 1, date: "November 2026", file: "bgp-aml-checklist-trusts.docx" },
 ];
 
 // ── Checklists for enhanced due diligence ───────────────────────────────────
-// BGP's AML checklist for trusts (Jack, 20 November 2026), item for item: what
-// KYC4U is asked for on a trust, and what the officers' second read looks for.
+// BGP's AML checklist for trusts (Jack, 20 November 2026; Issue 2 with policy
+// Issue 6, 25 November 2026, its section numbers put right), item for item:
+// what the officers' second read looks for on a trust.
 export interface AmlChecklistItem { n: number; title: string; detail: string }
 export const TRUST_CHECKLIST: readonly AmlChecklistItem[] = [
-  { n: 1, title: "Trust deed", detail: "A certified copy of the trust deed, confirming the form of the trust, the settlor(s), the trustees, the beneficiaries and any protector or other person with control (sections 4.7 and 3.12)." },
+  { n: 1, title: "Trust deed", detail: "A certified copy of the trust deed, confirming the form of the trust, the settlor(s), the trustees, the beneficiaries and any protector or other person with control (sections 4.7 and 3.9)." },
   { n: 2, title: "Trust Registration Service", detail: "Evidence that the trust is registered with HMRC, with a copy of the registration kept on file (section 4.7)." },
-  { n: 3, title: "Structure chart", detail: "If the trust holds the asset through one or more companies, a chart showing the ownership up to the trust (section 3.7.1)." },
+  { n: 3, title: "Structure chart", detail: "If the trust holds the asset through one or more companies, a chart showing the ownership up to the trust (section 3.6.1)." },
   { n: 4, title: "Settlor(s)", detail: "Identity verification, and evidence of source of wealth: the original funds placed in the trust must not be tainted (section 4.7)." },
   { n: 5, title: "Trustees", detail: "Identity verification of each trustee; a professional trust company is checked as a company (sections 4.4 and 4.7)." },
   { n: 6, title: "Protector", detail: "Identity verification, where one is appointed (section 4.7)." },
   { n: 7, title: "Beneficiaries", detail: "Not required if the trust is discretionary; if not, identity verification of any beneficiary entitled to 25% or more (section 4.7)." },
-  { n: 8, title: "Authority to instruct", detail: "Confirmation that the instruction comes from the trustees, or from someone with their written authority (section 3.7.4)." },
-  { n: 9, title: "Source of funds", detail: "Source of funds for this transaction, including the identity of any third party providing funding (sections 3.7.5 and 3.7.6)." },
-  { n: 10, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the trust and on every individual named above (sections 3.13 and 4.12)." },
-  { n: 11, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
+  { n: 8, title: "Authority to instruct", detail: "Our terms of engagement signed by the trustees, or confirmation that the instruction comes from the trustees or from someone with their written authority (section 3.6.4)." },
+  { n: 9, title: "Source of funds", detail: "Source of funds for this transaction, including the identity of any third party providing funding (sections 3.6.5 and 3.6.6)." },
+  { n: 10, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the trust and on every individual named above (sections 3.10 and 4.12)." },
+  { n: 11, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.5.3 and H)." },
 ];
-export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from the online identity check or one valid photo ID (passport or photocard driving licence). No proof of address: HMRC asks for one only from a customer who is a person. Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.12).";
+export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from the online identity check or one valid photo ID (passport or photocard driving licence). No proof of address: HMRC asks for one only from a customer who is a person. Copies for non-UK residents, or for anyone we have not met, must be certified (sections 4.10, 4.11 and 3.9).";
 
 // Any other enhanced party: what the officers' second read looks for (BGP's
 // AML policy, Issue 2, sections 3.7 and F.a).
@@ -86,7 +93,7 @@ export const ENHANCED_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 5, title: "Source of wealth", detail: "How the owners came by their wealth, where the risk calls for it (a PEP, a high-risk country, a large sum)." },
   { n: 6, title: "The higher-risk factor", detail: "What made it enhanced (the red flag or policy factor) and how it was resolved or why it is acceptable." },
   { n: 7, title: "Screening", detail: "Sanctions, PEP and adverse media checks on the party and every person named." },
-  { n: 8, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.11 and H)." },
+  { n: 8, title: "Nominated Officer sign-off", detail: "A file note recording the risk level and the reasons for it (sections 3.5.3 and H)." },
 ];
 
 /** The trust checklist as lines (the officers' second read; KYC4U's note until 23 November 2026). */
@@ -417,7 +424,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy (Issue 5) and risk assessment (Issue 4)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 6) and risk assessment (Issue 4)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);
