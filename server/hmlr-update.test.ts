@@ -53,3 +53,19 @@ test("the nightly job is registered and removes only rows the load did not touch
   // One load of a list at a time.
   assert.match(fetch, /if \(loadingNow\.has\(dataset\)\) throw new Error/);
 });
+
+test("every night's outcome is kept, even one that fails before a load, and the runs list returns it", () => {
+  const fetch = readFileSync(new URL("./hmlr-fetch.ts", import.meta.url), "utf8");
+  // The exported job wraps the whole check, so "off", "no key" and a failed file
+  // list are kept as well as a load (25 November 2026: the first night left no trace).
+  const job = fetch.slice(fetch.indexOf("export async function autoUpdateHmlrDatasets"), fetch.indexOf("async function updateHmlrDatasets"));
+  assert.match(job, /const out = await updateHmlrDatasets\(\);/);
+  assert.match(job, /'hmlr-datasets:last'/);
+  assert.ok(job.indexOf("'hmlr-datasets:last'") < job.indexOf("return out;"));
+  assert.match(fetch, /async function updateHmlrDatasets\(\)[\s\S]*?HMLR_API_KEY not set/);
+  const routes = readFileSync(new URL("./routes.ts", import.meta.url), "utf8");
+  const runs = routes.slice(routes.indexOf(`app.get("/api/admin/hmlr/runs"`));
+  assert.match(runs.slice(0, 2000), /key = 'hmlr-datasets:last'/);
+  assert.match(runs.slice(0, 2000), /lastAuto: /);
+  assert.match(runs.slice(0, 2000), /error, notes, started_at/);
+});

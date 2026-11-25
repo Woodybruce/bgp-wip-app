@@ -6842,6 +6842,14 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   the file's closing "Row Count" line (fixed in September:
   `relax_column_count_less`, and a row with no owner is skipped), so live had
   no finished load and the card read "has not loaded since 22 Jun 2026".
+  **Each night's outcome is kept** (25 November 2026: the first night, 24 to
+  25 November, left no run and no trace, because a failure before a load
+  writes no run row and went only to the log): `autoUpdateHmlrDatasets` saves
+  every outcome, a list switched off or no API key included, in
+  `system_settings` `hmlr-datasets:last` (`{ at, results }`: per list loaded,
+  up to date, busy, failed with HM Land Registry's own words, or off), and
+  `GET /api/admin/hmlr/runs` (admins) returns it as `lastAuto` beside the runs
+  and each run's notes. Read that first when the lists look stale.
 - **Use this owner** (`POST …/ownership/use { titleNumber, dataset, position }`):
   the owner is read again from the lists on the server, never from the request
   (`titleUsePlan`): the title goes on the property (`title_number`,
