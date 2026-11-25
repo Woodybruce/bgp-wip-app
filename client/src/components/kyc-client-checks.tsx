@@ -351,7 +351,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
           Owned through {people.ownersAbroad.map(o => `${o.name} (${o.country})`).join(" and ")}: registered abroad, so Companies House cannot show the people behind {people.ownersAbroad.length === 1 ? "it" : "them"}.{" "}
           {people.ownersAbroad.every(o => o.answered)
             ? <>The people recorded behind {people.ownersAbroad.length === 1 ? "it" : "them"} (under Owners abroad) are listed here, each with their own checks.</>
-            : <>Find them under Owners abroad, or from a structure chart the client sends; each person found gets their own link.</>}
+            : <>Record them under Owners abroad, in The company (step 1), or from a structure chart the client sends; each person found gets their own link.</>}
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} Each gets a link of their own: an identity check (Veriff) and a proof of address from the last three months.</p>

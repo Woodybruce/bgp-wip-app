@@ -6595,6 +6595,21 @@ can and use those for xero invoicing too". Do not re-litigate. Rules:
   screening, documents, sign-off) and a Next line (`clientKycNextStep`); the
   client checks, people and documents are the transaction components, pointed
   at the client file through `AmlUrlsProvider`.
+- **Owners abroad on a client file** (Woody, 25 November 2026, on Federated
+  Hermes Limited, owned through Federated Hermes, Inc. in the United States:
+  "suggesting find them on owners abroad but there isnt anywhere to do it on
+  this form"). The client window's first step (The company) now has the
+  transaction box's **Owners abroad** section (`ClientFileAbroad`, `AbroadTrace`
+  from `aml-abroad.tsx`): what was traced, and Add its register page, Add a
+  register extract, Record a person behind it, Add a note, Add a structure
+  chart. It is drawn inside the client file's `AmlUrlsProvider`, and the
+  section's reads and saves take their address from it (`urls.party`), so they
+  reach the client file's routes in `server/kyc-abroad.ts`, which already
+  answered on `/api/client-kyc/:companyId/subjects/:entity/abroad`. The hint
+  under People reads "Record them under Owners abroad, in The company (step
+  1)", and the basis words say BGP's officers find the people behind a company
+  abroad (they still named KYC4U). Still to find no longer offers "a Creditsafe
+  report" (`abroadStatus`): BGP has no Creditsafe.
 - **CRM boards**: each Landlords, Brands, Agents and Lenders row carries
   `kyc` (`server/crm-hub.ts`, `clientKycSummary`, `clientKycWords`): a chip
   (KYC cleared, KYC due soon, KYC 2 of 5, KYC in progress, KYC expired, KYC
@@ -6714,6 +6729,27 @@ Ok go ahead". Do not re-litigate. Rules: `shared/kyc-companies.ts`,
   **Match** on each request (`MatchToCompany`, the existing hand-set PATCH).
   KYC4U's verdicts come in only through the bookmark on their status page or
   an admin's **Record a past KYC4U sign-off**: nothing guesses them.
+- **A KYC4U check shows on every company it names** (Woody, 25 November 2026,
+  on Sheet Anchor Evolve (London) Ltd: "these guys should have been KYC4U but
+  saying there isn't one"). KYC4U's REQ103894, "SHEET ANCHOR EVOLVE LONDON
+  LIMITED", was read in on 21 November, before that record was added
+  (24 November), so the matcher took the short name "Sheet Anchor" and filed
+  it on the parent's record; the company's window said KYC4U held no check.
+  It was moved by hand on live (Match, 25 November). The strip (`GET
+  /api/kyc4u/company/:id`) and the Companies view's count now also take every
+  request that names one of the record's registered companies (its own
+  registered name, its Companies House name, the companies filed under it),
+  wherever it was filed: the request's entity, or a folder inside it named
+  for a company with a legal form (KYC4U files each company up the chain in
+  its own folder). Every word is kept and only the legal form is set aside
+  (`legalNameKey`): never a display name, never a shortened name. A request
+  filed elsewhere reads "Names this company; filed on <record>". Rules
+  `shared/kyc4u-names.ts`, read `server/kyc4u-named.ts`; tests
+  `server/kyc4u-names.test.ts`, `qa/regression/kyc4u-named-and-client-abroad.test.mjs`.
+  Nothing re-runs the matcher when a company is added; Match on the KYC4U grid
+  moves a request by hand. The strip's chip shows a folder's file count only
+  (its folder names ran off the window's edge and hid the request), and the
+  company window draws the heading once (`Kyc4uStatusStrip bare`).
 - Not built: a lender's or agent's own KYC row; the CRM duplicate records
   merged by themselves (Sephora T1 and the like: the CRM merge is a person's).
 

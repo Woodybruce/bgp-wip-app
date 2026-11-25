@@ -520,8 +520,8 @@ export function abroadStatus(input: {
     const evidence = recs.filter(r => r.kind === "register_page" || r.kind === "document" || r.kind === "chart").length;
     const needs = people.length ? null
       : input.chartReceived ? "the people behind it, from the client's structure chart"
-      : t?.gleif.top?.kind === "company" ? `the people behind ${t.gleif.top.words.replace(/^its ultimate parent in GLEIF is /, "")}: from its own register, the client's structure chart or a Creditsafe report`
-      : "the people behind it: from its own register, the client's structure chart or a Creditsafe report";
+      : t?.gleif.top?.kind === "company" ? `the people behind ${t.gleif.top.words.replace(/^its ultimate parent in GLEIF is /, "")}: from its own register or the client's structure chart`
+      : "the people behind it: from its own register or the client's structure chart";
     return { name: o.name, country: o.country, found, people, evidence, needs };
   });
 }

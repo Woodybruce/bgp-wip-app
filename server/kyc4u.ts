@@ -1097,8 +1097,19 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
           WHERE q.company_id = $1 OR q.company_id_manual = $1
              OR q.trading_entity_id IN (SELECT id FROM crm_trading_entities WHERE parent_company_id = $1)
           ORDER BY q.modified_at_source DESC NULLS LAST LIMIT 20`, [String(req.params.companyId)]);
+      // And every request that names one of its registered companies, wherever
+      // it was filed (Sheet Anchor, 25 November 2026), saying where.
+      const companyId = String(req.params.companyId);
+      const { kyc4uRequestsNaming } = await import("./kyc4u-named");
+      const named = (await kyc4uRequestsNaming([companyId]).catch(() => new Map())).get(companyId) || [];
+      const seen = new Set(r.rows.map((x: any) => `${x.listId}:${x.itemId}`));
+      const at = (v: unknown) => { const d = v ? new Date(v as any) : null; return d && !Number.isNaN(d.getTime()) ? d.getTime() : 0; };
+      const requests = [...r.rows.map((x: any) => ({ ...x, filedOn: null })),
+        ...named.filter((x: any) => !seen.has(`${x.listId}:${x.itemId}`)).map((x: any) => ({ ...x, filedOn: x.filedOn && x.filedOn.id !== companyId ? x.filedOn : null, unmatched: !x.filedOn }))]
+        .sort((a: any, b: any) => at(b.modifiedAt) - at(a.modifiedAt))
+        .slice(0, 20);
       const conn = await loadConnection().catch(() => null);
-      res.json({ requests: r.rows, lastSyncAt: conn?.lastSyncAt || null });
+      res.json({ requests, lastSyncAt: conn?.lastSyncAt || null });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 

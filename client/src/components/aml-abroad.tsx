@@ -5,6 +5,8 @@
 // or structure chart, a note, the people behind it), and the client's
 // structure chart set against what the app found. The rules are
 // shared/foreign-owners.ts; the routes server/kyc-abroad.ts. BGP staff only.
+// The same section serves a client file (BGP's client checked with no
+// transaction, 25 November 2026): its addresses come from aml-scope.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ExternalLink, Loader2, X } from "lucide-react";
@@ -13,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { useAmlUrls, type AmlUrls } from "@/lib/aml-scope";
 import { sameCompany, type AbroadRecord, type AbroadStatus, type ChartComparison, type ChartReading, type PrecheckAbroad } from "@shared/foreign-owners";
 import { gleifTraceWords, parentLineWords } from "@shared/foreign-owner-words";
 
@@ -32,8 +35,14 @@ export interface DealAbroad {
 const keyFor = (dealId: string, role: string) => ["/api/deals", dealId, "parties", role, "abroad"];
 
 export function useDealAbroad(dealId: string, role: string, enabled: boolean) {
+  const urls = useAmlUrls();
   return useQuery<DealAbroad>({
     queryKey: keyFor(dealId, role), enabled: enabled && !!dealId, staleTime: 30_000,
+    queryFn: async () => {
+      const res = await fetch(`${urls.party(dealId, role)}/abroad`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message || "The trace could not be read.");
+      return res.json();
+    },
     // A chart being read comes back in a few seconds.
     refetchInterval: q => ((q.state.data as DealAbroad | undefined)?.charts || []).some(c => !c.reading) ? 8000 : false,
   });
@@ -59,10 +68,12 @@ const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function refresh(dealId: string, role: string) {
+function refresh(dealId: string, role: string, urls: AmlUrls) {
   queryClient.invalidateQueries({ queryKey: keyFor(dealId, role) });
   queryClient.invalidateQueries({ queryKey: ["/api/kyc/deal", dealId, "status"] });
   queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "client-checks"] });
+  // A client file's own view (its checks rerun when a person is recorded).
+  if (urls.clientFile) queryClient.invalidateQueries({ queryKey: ["/api/client-kyc", urls.clientFile.companyId] });
 }
 
 type Mode = "page" | "file" | "chart" | "note" | "person";
@@ -81,7 +92,8 @@ function AddToTrace({ dealId, role, names, owner, mode, onDone }: {
   const [nationality, setNationality] = useState("");
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
-  const base = `/api/deals/${dealId}/parties/${role}/abroad`;
+  const urls = useAmlUrls();
+  const base = `${urls.party(dealId, role)}/abroad`;
   const save = useMutation({
     mutationFn: async () => {
       if (mode === "file" || mode === "chart") {
@@ -103,7 +115,7 @@ function AddToTrace({ dealId, role, names, owner, mode, onDone }: {
     },
     onSuccess: (r: any) => {
       toast({ title: mode === "person" ? `${name} recorded: ${r?.screening === "now" ? "screening them now" : "screened on the next run of BGP's checks"}` : mode === "page" ? "Page copied to PDF and filed" : "Saved" });
-      refresh(dealId, role);
+      refresh(dealId, role, urls);
       onDone();
     },
     onError: (e) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
@@ -156,9 +168,10 @@ function AddToTrace({ dealId, role, names, owner, mode, onDone }: {
 
 function RecordLine({ dealId, role, r, about }: { dealId: string; role: string; r: DealAbroad["records"][number]; about?: string }) {
   const { toast } = useToast();
+  const urls = useAmlUrls();
   const remove = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/parties/${role}/abroad/${r.id}/remove`, {})).json(),
-    onSuccess: () => refresh(dealId, role),
+    mutationFn: async () => (await apiRequest("POST", `${urls.party(dealId, role)}/abroad/${r.id}/remove`, {})).json(),
+    onSuccess: () => refresh(dealId, role, urls),
     onError: (e) => toast({ title: "Not taken off", description: plain(e), variant: "destructive" }),
   });
   const what = r.kind === "person" && r.person

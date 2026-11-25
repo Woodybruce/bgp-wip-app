@@ -56,7 +56,7 @@ test("the screen: one row per company, the company page's own card inside, each 
   assert.match(v, /data-testid="kyc-companies"/);
   assert.match(v, /<AccountEntitiesPanel companyId=\{row\.id\} \/>/, "one version of the Companies and KYC card");
   assert.match(v, /<DealAmlDialog deal=\{aml\}/, "a transaction's AML box, not a copy");
-  assert.match(v, /<Kyc4uStatusStrip companyId=\{row\.id\} \/>/);
+  assert.match(v, /<Kyc4uStatusStrip companyId=\{row\.id\} bare \/>/, 'the window\'s section has the heading; the strip leaves its own out');
   assert.match(v, /<CrmSelectBar kind="kyc"/, "select and delete follow the CRM lists' rules");
   assert.match(v, /\/deals\?new=1&\$\{row\.kind === "brand" \? "tenantId" : "landlordId"\}=/);
   assert.doesNotMatch(v, /<form[\s>]/, "no form element in a dialog");

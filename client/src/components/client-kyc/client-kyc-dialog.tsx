@@ -32,6 +32,7 @@ import type { PrecheckCardLine, PrecheckCompany } from "@shared/kyc-prechecks";
 import type { KycRedFlag, SetAsideFlag } from "@shared/kyc-red-flags";
 import type { PersonDetailsView } from "@shared/kyc-person-details";
 import { PersonDetailsLine } from "@/components/aml-person-details";
+import { AbroadTrace, useDealAbroad } from "@/components/aml-abroad";
 
 export interface ClientFileView {
   subject: { companyId: string; accountName: string; entityId: string | null; name: string; number: string | null; kind: string; country: string | null; sameCompany: boolean };
@@ -67,6 +68,20 @@ export function useClientFile(companyId: string, entityId: string | null, enable
     },
     refetchInterval: q => (q.state.data?.precheck?.running ? 5000 : false),
   });
+}
+
+// Owners abroad on a client file (Woody, 25 November 2026, on Federated Hermes
+// Limited: "suggesting find them on owners abroad but there isnt anywhere to do
+// it on this form"): the transaction box's own section, rendered inside the
+// client file's addresses so its reads and saves go to the client file.
+function ClientFileAbroad({ scopeKey, ownedAbroad, sanctionsOnly }: { scopeKey: string; ownedAbroad: boolean; sanctionsOnly: boolean }) {
+  const query = useDealAbroad(scopeKey, "client", true);
+  return (
+    <div className="space-y-1.5" data-testid="client-kyc-abroad">
+      <p className="text-xs font-medium text-muted-foreground">{query.data?.trace?.party ? "Registered abroad" : ownedAbroad ? "Owners abroad" : "Parent companies"}</p>
+      <AbroadTrace dealId={scopeKey} role="client" query={query} sanctionsOnly={sanctionsOnly} />
+    </div>
+  );
 }
 
 /** Opens the client file: what BGP is instructed on, and who to ask. */
@@ -192,6 +207,9 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
   }) : null;
   const signOffStep = sanctionsOnly ? 3 : 4;
   const isPerson = view?.subject.kind === "individual";
+  // Owned through a company abroad, or anything traced past Companies House: the section to record the people behind it.
+  const ownedAbroad = pre?.company?.ownersAbroad || [];
+  const showAbroad = !!view && !isPerson && (ownedAbroad.length > 0 || (pre?.company?.trace || []).length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -238,6 +256,7 @@ export function ClientKycDialog({ companyId, entityId, name, open, onOpenChange 
               <AmlStep n={1} label={isPerson ? AML_STEP_LABEL.person : AML_STEP_LABEL.company} testId="client-kyc-step-company" open={step(1)} onToggle={() => toggle(1)}
                 state={companyLine.state} summary={companyLine.words}>
                 {pre?.company && <CompanyFactsList company={pre.company} testKey={`client-${view.subject.entityId || view.subject.companyId}`} />}
+                {showAbroad && <ClientFileAbroad scopeKey={scopeKey} ownedAbroad={ownedAbroad.length > 0} sanctionsOnly={sanctionsOnly} />}
                 {view.signOff.person && (
                   <PersonDetailsLine view={view.signOff.person} url={`/api/client-kyc/${encodeURIComponent(companyId)}/subjects/${encodeURIComponent(entity)}/person-details`}
                     onSaved={refresh} testKey="client" />

@@ -355,7 +355,8 @@ test("owners behind a company registered abroad: the client is asked who they ar
   assert.equal(people.basis, "owners_abroad");
   assert.deepEqual(people.ownersAbroad, [{ name: "Scp Aaa Invest", country: "Monaco", foundAt: null }]);
   // Since 21 November 2026 a company abroad goes to KYC4U (Woody: "foreign companies I think we will send to KYC4U").
-  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /They have to be found \(by KYC4U, or by the officers when enhanced checks are in-house\)\. The app traces what it can/);
+  assert.match(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /BGP's officers find them\. The app traces what it can/);
+  assert.doesNotMatch(PARTY_PEOPLE_BASIS_WORDS.owners_abroad, /KYC4U/);
   assert.ok(people.outstanding.some(o => /The people behind Scp Aaa Invest \(Monaco\)/.test(o)), "owed until the client sends the chart");
 
   // Someone recorded behind it (21 November 2026) is an owner to check, and

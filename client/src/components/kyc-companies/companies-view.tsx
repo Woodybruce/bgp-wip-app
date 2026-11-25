@@ -372,7 +372,7 @@ function CompanyKycWindow({ row, onClose }: { row: KycCompanyRow; onClose: () =>
           </Section>
 
           <Section title="KYC4U's past checks" testId="kyc-company-kyc4u">
-            <Kyc4uStatusStrip companyId={row.id} />
+            <Kyc4uStatusStrip companyId={row.id} bare />
           </Section>
         </div>
         <DealAmlDialog deal={aml} onClose={() => { setAml(null); queryClient.invalidateQueries({ queryKey: [KYC_COMPANIES_KEY] }); }} />

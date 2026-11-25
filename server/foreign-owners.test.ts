@@ -173,7 +173,7 @@ test("abroadStatus: what was found about each company abroad, and the people beh
   };
   const owners = [{ name: "KIRKBI A/S", country: "Denmark", via: "accounts" as const }];
   const before = abroadStatus({ owners, abroad, records: [], chartReceived: false });
-  assert.equal(before[0].needs, "the people behind it: from its own register, the client's structure chart or a Creditsafe report");
+  assert.equal(before[0].needs, "the people behind it: from its own register or the client's structure chart");
   assert.deepEqual(before[0].found, ["Named in the accounts as its parent; the register names no owner", "GLEIF: in GLEIF as KIRKBI A/S, LEI 5493005XXPWUMR2E5305; at the top, owned or controlled by individuals; GLEIF does not name them"]);
   const records = [
     rec({ id: "r1", kind: "register_page", documentId: "k1", sourceUrl: "https://datacvr.virk.dk/enhed/virksomhed/18591235" }),
