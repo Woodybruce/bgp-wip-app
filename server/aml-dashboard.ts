@@ -324,6 +324,7 @@ export async function loadAmlDashboard(me: { id: string; name: string }, now: Da
       expiresAt: state.expiresAt ? new Date(state.expiresAt).toISOString() : null,
       agents,
       mine: agentIds.includes(me.id) || agentNames.some(n => n.toLowerCase() === meName),
+      clientRole,
     });
   }
   return { rows, unchecked };

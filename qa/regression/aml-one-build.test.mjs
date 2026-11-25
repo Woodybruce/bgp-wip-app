@@ -81,3 +81,36 @@ test('every other AML and KYC chip is the shared one', () => {
   // The party lines inside "The company" use the shared label and value look.
   assert.match(read('client/src/components/deal-parties.tsx'), /<div className="grid grid-cols-\[8rem_minmax\(0,1fr\)\] gap-x-3 text-xs" data-testid=\{testId\}>/);
 });
+
+// Woody, 25 November 2026, on the grey "!" circles in Screening: "it looks like
+// they are a problem but I think they are just actions? Maybe better just to be
+// a green tick ... all we care about is a issue".
+test('a screening line that only says what happened is a green tick; only an issue looks like one', () => {
+  const line = frame.slice(frame.indexOf('export function AmlCheckLine('), frame.indexOf('export function AmlCheckLines('));
+  assert.match(line, /line\.state === "attention" \? <Flag className="h-3\.5 w-3\.5 text-amber-600" \/>/);
+  assert.match(line, /: line\.failed \? <AlertCircle className="h-3\.5 w-3\.5 text-amber-600" \/>/);
+  assert.match(line, /: <CheckCircle2 className="h-3\.5 w-3\.5 text-emerald-600" \/>;/);
+  assert.doesNotMatch(line, /<AlertCircle className="h-3\.5 w-3\.5 text-muted-foreground" \/>/, 'no grey warning circle for information');
+});
+
+// Woody, 25 November 2026: "on the right side can you put letters alphabetic so
+// can click and search companies and also transactions which should lead with
+// the building or brand depending on if we are acting on the building or then
+// acting on the brand".
+test('the letters down the right of Transactions and Companies, and each transaction by its building or brand', () => {
+  const rail = read('client/src/components/letter-rail.tsx');
+  assert.match(rail, /import \{ INDEX_LETTERS, type IndexLetter \} from "@shared\/letter-index";/);
+  assert.match(rail, /onClick=\{\(\) => onPick\(on \? null : l\)\}/, 'pressing the letter again shows them all');
+  assert.match(page, /<WithLetterRail testId="aml-list" rail=\{<LetterRail counts=\{letters\} active=\{letter\} onPick=\{setLetter\} testId="aml-letters" \/>\}>/);
+  // In the page's right margin on a computer, so the table keeps its width.
+  assert.match(rail, /md:absolute md:inset-y-0 md:-right-6 md:w-6/);
+  assert.match(page, /const inLetter = \(t: AmlTransactionRow\) => !letter \|\| indexLetter\(t\.lead\) === letter;/);
+  assert.match(companies, /<WithLetterRail testId="kyc-companies-list" rail=\{<LetterRail counts=\{letters\} active=\{letter\} onPick=\{setLetter\} testId="kyc-companies-letters" \/>\}>/);
+  assert.match(companies, /indexLetter\(r\.name\) === letter/);
+  // The table and the cards lead with what the transaction is known by.
+  assert.match(page, /<div className="font-medium line-clamp-2 break-words">\{t\.lead\}<\/div>/);
+  assert.match(page, /title=\{t\.lead\}\n\s+sub=\{<TransactionSub t=\{t\} \/>\}/);
+  const rules = read('shared/aml-dashboard.ts');
+  assert.match(rules, /\.\.\.transactionLead\(\{ dealName: first\.dealName, propertyName: first\.propertyName, parties \}\),/);
+  assert.match(read('server/aml-dashboard.ts'), /mine: agentIds\.includes\(me\.id\) \|\| agentNames\.some\(n => n\.toLowerCase\(\) === meName\),\n\s+clientRole,/);
+});

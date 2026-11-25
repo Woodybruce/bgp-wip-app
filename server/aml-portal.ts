@@ -767,8 +767,10 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
   if (!party) throw Object.assign(new Error("That company is not a party to this transaction. Set it on the transaction first."), { status: 400 });
   // The checks are about the company that signs, not the brand (Woody,
   // 19 November 2026: "We must have the company taking the lease or who owns
-  // the property to be able to do a check").
-  if (input.kind === "company" && !party.entityId && !party.trust) {
+  // the property to be able to do a check"). A trust, and a UK public body
+  // (Woody, 25 November 2026, on Wirral Council at Tunsgate Quarter: refused
+  // here although recorded as one), sign for themselves.
+  if (input.kind === "company" && !party.entityId && !party.trust && !party.publicBody) {
     const what = party.role === "tenant" ? "the company taking the lease" : party.role === "landlord" ? "the company that owns the property" : party.role === "vendor" ? "the company selling" : "the company buying";
     throw Object.assign(new Error(`Set ${what} on the transaction first: the client checks are about that company, not ${party.name}.`), { status: 409 });
   }
@@ -976,7 +978,7 @@ export async function createPersonCheck(dealId: string | null, input: z.infer<ty
   if (!found) throw Object.assign(new Error(dealId ? "Transaction not found" : "Company not found"), { status: 404 });
   const party = found.parties.find(p => p.companyId === input.companyId);
   if (!party) throw Object.assign(new Error("That company is not a party to this transaction."), { status: 400 });
-  if (party.kind === "company" && !party.entityId && !party.trust) {
+  if (party.kind === "company" && !party.entityId && !party.trust && !party.publicBody) {
     throw Object.assign(new Error("Set the company that signs on the transaction first: the people to check are read from its register."), { status: 409 });
   }
   const { dealPeopleRequests, partyPeopleFor } = await import("./kyc-people");

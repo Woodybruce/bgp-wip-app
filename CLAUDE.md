@@ -5012,6 +5012,25 @@ easy"; step 6 of `docs/deal-page-review-2026-11-18.md`, brought forward with
   shared chips). Order: a late party first, then the most red flags, then
   the longest unmoved. The property page's AML on transactions here groups
   with the same rule.
+- **A to Z down the right** (Woody, 25 November 2026: "on the right side can
+  you put letters alphabetic so can click and search companies and also
+  transactions which should lead with the building or brand depending on if we
+  are acting on the building or then acting on the brand"). Transactions and
+  Companies each have a letter rail (`LetterRail`, `WithLetterRail` in
+  `client/src/components/letter-rail.tsx`; rules `shared/letter-index.ts`: a
+  name's first letter, accents aside, a number or no letter under #). A letter
+  shows only the names under it, A to Z; pressing it again or All shows them
+  all; a letter with nothing under it on the pill is greyed; the pills' counts
+  follow the letter. On a computer the rail sits in the page's right margin, so
+  the table keeps its width (the Agents column must not run off a 1440px
+  screen); on a phone, beside the cards. **A transaction is known by its
+  building, or by the brand when BGP acts for the tenant** (`transactionLead`
+  in `shared/aml-dashboard.ts`, from `clientRole` on each board row,
+  `dealClientRole`; a sale and a purchase lead with the building). Under it:
+  for a building, the rest of the transaction's name (`nameWithout`: the unit,
+  the tenant), else the other party; for a brand, the building; then the Ref.
+  Tests: `server/letter-index.test.ts`, `server/aml-dashboard.test.ts`,
+  `qa/regression/aml-one-build.test.mjs`.
 - **Start from the AML page** (Woody, 24 November 2026: "what about my add
   new transaction text box and upload files box etc here?", then "and add new
   company AML etc"). At the top of the Transactions and the Companies views
@@ -5290,7 +5309,8 @@ re-litigate. Rules: `shared/kyc-prechecks.ts` (`providerMatchFlags`,
   could not be read (`unread`, or an older match with no profile id: nothing
   to judge it by). An older check that kept only the kinds of profile stays
   a flag. **Every other match is a possible namesake to check**: listed on
-  the AML card ("Possible namesakes to check: N", under Show, with the count
+  the AML card ("Possible namesakes, not red flags: N" since 25 November
+  2026, with a green tick, under Show, with the count
   beside the summary) and in KYC4U's note, never a red flag, never in the
   sign-off's red flags or Kick off AML's KYC4U switch. The split is worked
   out when the flags are read, so stored checks change without a re-run.
@@ -6295,6 +6315,16 @@ flags: `client/src/components/aml-red-flags.tsx`. Tests:
   `AML_CHIP_BASE`; one set of colours, `AML_STAGE_TONE`, `KYC_CHIP_TONE`) and
   the card (`AmlCard`, `AmlCardGrid`). A new AML look goes there, never a
   second copy on a screen.
+- **Only an issue looks like one** (Woody, 25 November 2026, on the grey "!"
+  circles in Screening: "it looks like they are a problem ... better just to
+  be a green tick ... all we care about is a issue"). A screening line that
+  only says what was done or found (state `info`: GLEIF, who was screened,
+  identity verification at Companies House, possible namesakes, names spelt
+  differently) is a green tick, as a clear check is (`AmlCheckLine`). A
+  finding to review (`attention`) is the amber flag, a screen that should have
+  run and did not (`failed`) the amber circle, and a check not run the grey
+  clock. Issues sort first; the rest keep the checks' own order. Guard:
+  `qa/regression/aml-one-build.test.mjs`.
 - **One rule for each step's line** (`shared/aml-steps.ts`):
   `companyStepLine`, `screeningStepLine`, `sanctionsStepLine`,
   `documentsStepLine`, `signOffStepLine`, each giving a state (done, todo,
@@ -6812,6 +6842,14 @@ Do not re-litigate. Rules: `shared/property-ownership.ts`; reads and actions:
   the file's closing "Row Count" line (fixed in September:
   `relax_column_count_less`, and a row with no owner is skipped), so live had
   no finished load and the card read "has not loaded since 22 Jun 2026".
+  **Each night's outcome is kept** (25 November 2026: the first night, 24 to
+  25 November, left no run and no trace, because a failure before a load
+  writes no run row and went only to the log): `autoUpdateHmlrDatasets` saves
+  every outcome, a list switched off or no API key included, in
+  `system_settings` `hmlr-datasets:last` (`{ at, results }`: per list loaded,
+  up to date, busy, failed with HM Land Registry's own words, or off), and
+  `GET /api/admin/hmlr/runs` (admins) returns it as `lastAuto` beside the runs
+  and each run's notes. Read that first when the lists look stale.
 - **Use this owner** (`POST …/ownership/use { titleNumber, dataset, position }`):
   the owner is read again from the lists on the server, never from the request
   (`titleUsePlan`): the title goes on the property (`title_number`,
@@ -10830,7 +10868,19 @@ estate". Rules and the draft: `shared/aml-sdd.ts`; box:
   (`precheckRedFlags(..., { publicBody })`, passed by `partyRedFlags` from
   `aml_subject_type`), so it stays on simplified due diligence. Adverse media
   about it, and a person's public role, still count. Read on stored checks, so
-  no re-run is needed. Test in `server/kyc-prechecks.test.ts`.
+  no re-run is needed. Test in `server/kyc-prechecks.test.ts`. The screening
+  line does the same (`precheckCardLines(result, { publicBody })`, from
+  `dealPrechecks` and the client KYC window): that finding is not one to
+  review, and the line says "Owned by the state, as a UK public body is: not a
+  finding".
+- **It signs for itself, everywhere** (Woody, 25 November 2026: Send client
+  checks to Wirral Council at Tunsgate Quarter was refused "Set the company
+  that owns the property on the transaction first"). `createClientCheck`
+  excuses a recorded public body as it does a trust; the party lines read
+  "Signs as: Itself · a UK public body, no company needed" with no Choose the
+  company and no billing line (as the party box); a recorded trust reads "None
+  needed: checked as a trust"; the AML file prints "Signs as" and does not ask
+  for a company that signs. Guard: `qa/regression/deal-parties-guards.test.mjs`.
 
 ## The sign-off note for a listed company (Woody, 2026-11-24)
 

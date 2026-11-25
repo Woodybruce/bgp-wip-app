@@ -241,6 +241,9 @@ export interface AmlDashboardRow {
   expiresAt: string | null;
   agents: string[];
   mine: boolean;
+  // The party BGP acts for on the transaction (dealClientRole): a transaction is
+  // known by the brand when it is the tenant, else by the building (25 November 2026).
+  clientRole?: string | null;
 }
 
 /** The pills' counts, from the rows shown. */
@@ -285,9 +288,58 @@ export interface AmlTransactionRow {
   redFlags: number;                    // across its parties
   agents: string[];
   mine: boolean;
+  // What the transaction is known by, and the line under it (transactionLead).
+  lead: string;
+  sub: string | null;
+  actingFor: "building" | "brand";
 }
 
 const PARTY_ORDER = ["landlord", "tenant", "vendor", "purchaser"];
+
+// Names compared as they read: case, accents, apostrophes and punctuation aside ("King's Road Park" is "Kings Road Park").
+const nameKey = (s: string): string => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/['\u2019`]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const trimJoin = (s: string): string => s.replace(/^[\s\-\u2013\u2014\u00b7:,|/]+|[\s\-\u2013\u2014\u00b7:,|/]+$/g, "").trim();
+
+/** A name with another name taken off its start or its end ("Bluewater Shopping Centre – U063" less the building is "U063"). */
+export function nameWithout(full: string, part: string): string {
+  const target = nameKey(part);
+  const whole = full.trim();
+  if (!target) return whole;
+  if (nameKey(whole) === target) return "";
+  for (let i = 1; i < whole.length; i++) {
+    if (/[a-z0-9]/i.test(whole[i]) && /[a-z0-9]/i.test(whole[i - 1])) continue;
+    if (nameKey(whole.slice(0, i)) === target) return trimJoin(whole.slice(i));
+  }
+  for (let i = whole.length - 1; i > 0; i--) {
+    if (/[a-z0-9]/i.test(whole[i]) && /[a-z0-9]/i.test(whole[i - 1])) continue;
+    if (nameKey(whole.slice(i)) === target) return trimJoin(whole.slice(0, i));
+  }
+  return whole;
+}
+
+/**
+ * What a transaction is known by (Woody, 25 November 2026: "transactions which
+ * should lead with the building or brand depending on if we are acting on the
+ * building or then acting on the brand"). BGP acting for the tenant: the brand,
+ * with the building under it. Acting for anyone else (a landlord, a seller, a
+ * buyer): the building, with what else tells it apart under it, the rest of the
+ * transaction's name (a unit, the tenant), else the other party.
+ */
+export function transactionLead(t: { dealName: string; propertyName: string | null; parties: Array<Pick<AmlDashboardRow, "role" | "brandName" | "clientRole">> }): { lead: string; sub: string | null; actingFor: "building" | "brand" } {
+  const clientRole = t.parties.find(p => p.clientRole)?.clientRole || null;
+  const nameOf = (role: string) => t.parties.find(p => p.role === role)?.brandName?.trim() || null;
+  const building = t.propertyName?.trim() || null;
+  const dealName = t.dealName.trim();
+  const brand = clientRole === "tenant" ? nameOf("tenant") : null;
+  if (brand) {
+    const rest = nameWithout(dealName, brand);
+    return { lead: brand, sub: building || rest || null, actingFor: "brand" };
+  }
+  const other = nameOf(clientRole === "vendor" ? "purchaser" : clientRole === "purchaser" ? "vendor" : clientRole === "tenant" ? "landlord" : "tenant");
+  if (!building) return { lead: dealName, sub: other && nameKey(other) !== nameKey(dealName) ? other : null, actingFor: "building" };
+  return { lead: building, sub: nameWithout(dealName, building) || other, actingFor: "building" };
+}
 const ACTIVE_BUCKETS: AmlBucket[] = ["todo", "in_progress", "expiring", "closed"];
 
 /**
@@ -318,6 +370,7 @@ export function groupAmlByTransaction(rows: AmlDashboardRow[]): AmlTransactionRo
       dealStatus: first.dealStatus,
       dealType: first.dealType,
       propertyName: first.propertyName,
+      ...transactionLead({ dealName: first.dealName, propertyName: first.propertyName, parties }),
       parties,
       buckets: transactionBuckets(parties.map(p => p.bucket)),
       late: parties.some(p => p.late),

@@ -7096,7 +7096,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
 
       const runs = await pool.query(
-        `SELECT id, dataset, status, source_filename, rows_processed, rows_inserted, rows_updated, rows_skipped, error, started_at, finished_at
+        `SELECT id, dataset, status, source_filename, rows_processed, rows_inserted, rows_updated, rows_skipped, error, notes, started_at, finished_at
            FROM hmlr_ingest_runs
           ORDER BY started_at DESC
           LIMIT 20`,
@@ -7104,10 +7104,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const counts = await pool.query<{ dataset: string; count: string }>(
         `SELECT dataset, COUNT(*)::text AS count FROM hmlr_proprietors GROUP BY dataset`,
       );
+      // The nightly job's last outcome (hmlr-datasets): a failure before a load writes no run.
+      const lastAuto = await pool.query(`SELECT value FROM system_settings WHERE key = 'hmlr-datasets:last'`).catch(() => ({ rows: [] as any[] }));
       res.json({
         runs: runs.rows,
         counts: Object.fromEntries(counts.rows.map((r) => [r.dataset, Number(r.count)])),
         apiKeySet: !!process.env.HMLR_API_KEY,
+        lastAuto: lastAuto.rows[0]?.value ?? null,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

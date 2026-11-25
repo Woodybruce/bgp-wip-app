@@ -52,10 +52,10 @@ test('web results: "may be someone else" is listed, not flagged; one flag per pe
   // A finding the search was unsure of, or one about the person's company only (23 November 2026), is listed, not flagged.
   assert.match(rules, /const sure = webFindingsOf\(line\)\.filter\(f => f\.kind === kind && !webFindingUnsure\(line, f\)\);/);
   assert.match(rules, /Possibly owned or controlled by the state or a politically exposed person: \$\{line\.name\}/);
-  assert.match(rules, /const findings = searched\.flatMap\(l => webFindingsOf\(l\)\.filter\(f => !webFindingUnsure\(l, f\)\)/);
+  assert.match(rules, /const findings = searched\.flatMap\(l => webFindingsOf\(l\)\.filter\(f => !webFindingUnsure\(l, f\) && !stateOwned\(l, f\)\)/);
   assert.match(rules, /if \(!summary \|\| webFindingSaysNothing\(summary\)\) continue;/);
   assert.doesNotMatch(rules, /\bline\.findings\.(filter|map)\(/, "no reader takes a stored line's findings as they are");
-  assert.match(rules, /key: "namesakes", label: `Possible namesakes to check: \$\{namesakes\.length\}`, state: "info"/);
+  assert.match(rules, /key: "namesakes", label: `Possible namesakes, not red flags: \$\{namesakes\.length\}`, state: "info"/);
   assert.match(read('server/kyc-prechecks.ts'), /person: subject\.person, ran: false/);
 });
 

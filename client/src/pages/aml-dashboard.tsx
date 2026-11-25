@@ -34,6 +34,8 @@ import { fetchPartyTrail, partyFilesForPreview, partyTrailKey, type PartyTrailDo
 import { useIsMobile } from "@/hooks/use-mobile";
 import { queryClient } from "@/lib/queryClient";
 import { AmlStartBar, type AmlStart } from "@/components/aml-start";
+import { LetterRail, WithLetterRail } from "@/components/letter-rail";
+import { byName, indexLetter, letterCounts, type IndexLetter } from "@shared/letter-index";
 
 // New Transaction, loaded only when the New transaction box is used: the
 // Transactions page's own form (24 November 2026).
@@ -185,11 +187,20 @@ function PartyCell({ row }: { row: AmlDashboardRow }) {
   );
 }
 
-function DealCell({ row }: { row: AmlDashboardRow }) {
+// The transaction by the building, or by the brand when BGP acts for the tenant
+// (Woody, 25 November 2026: "lead with the building or brand depending on if we
+// are acting on the building or then acting on the brand"): shared/aml-dashboard.ts
+// transactionLead. Under it, what else tells it apart, and the Ref.
+function TransactionSub({ t }: { t: AmlTransactionRow }) {
+  if (!t.sub && t.dealRef == null) return null;
+  return <>{t.sub}{t.dealRef != null && <span className="font-mono">{t.sub ? " · " : ""}#{t.dealRef}</span>}</>;
+}
+
+function DealCell({ t }: { t: AmlTransactionRow }) {
   return (
-    <div className="min-w-0">
-      <div className="line-clamp-2 break-words" title={row.dealName}>{row.dealRef != null ? <span className="font-mono text-muted-foreground mr-1">#{row.dealRef}</span> : null}{row.dealName}</div>
-      {row.propertyName && <div className="text-[11px] text-muted-foreground line-clamp-2 break-words">{row.propertyName}</div>}
+    <div className="min-w-0" title={t.dealName} data-testid={`aml-transaction-lead-${t.dealId}`}>
+      <div className="font-medium line-clamp-2 break-words">{t.lead}</div>
+      <div className="text-[11px] text-muted-foreground line-clamp-2 break-words"><TransactionSub t={t} /></div>
     </div>
   );
 }
@@ -218,7 +229,7 @@ function TransactionRows({ t, bucket, onOpen }: { t: AmlTransactionRow; bucket: 
         <tr key={r.key} onClick={() => onOpen(r)} className="cursor-pointer" data-testid={`aml-row-${r.key}`}>
           {i === 0 && <>
             {/* Narrower below 1536px so every column, the agents included, fits a laptop screen from 1280px (Woody, 23 November 2026). */}
-            <td rowSpan={n} onClick={openLead} className={`${block} max-w-[190px] 2xl:max-w-[260px]`}><DealCell row={first} /></td>
+            <td rowSpan={n} onClick={openLead} className={`${block} max-w-[190px] 2xl:max-w-[260px]`}><DealCell t={t} /></td>
             <td rowSpan={n} onClick={openLead} className={block}><DealStatusChip row={first} /></td>
           </>}
           <td className={`${cell(i)} max-w-[170px] 2xl:max-w-[230px]`}><PartyCell row={r} /></td>
@@ -266,8 +277,8 @@ function AmlTransactionCard({ t, bucket, onOpen }: { t: AmlTransactionRow; bucke
   const first = t.parties[0];
   return (
     <AmlCard testId={`aml-transaction-${t.dealId}`} onOpen={() => onOpen(leadParty(t, bucket))}
-      title={<>{t.dealRef != null ? <span className="mr-1 font-mono font-normal text-muted-foreground">#{t.dealRef}</span> : null}{t.dealName}</>}
-      sub={t.propertyName}
+      title={t.lead}
+      sub={<TransactionSub t={t} />}
       chips={<DealStatusChip row={first} />}
       rows={t.parties.map((r): [string, React.ReactNode] => [roleWords(r.role), <PartyLine row={r} onOpen={onOpen} />])}
       footer={t.agents.length ? <>Agents: {t.agents.join(", ")}</> : null}
@@ -350,6 +361,8 @@ export default function AmlDashboard() {
   const [mine, setMine] = useState(params.get("who") === "mine");
   const [lateOnly, setLateOnly] = useState(params.get("late") === "1");
   const [query, setQuery] = useState("");
+  // A letter down the right picks the transactions known by a name under it (25 November 2026).
+  const [letter, setLetter] = useState<IndexLetter | null>(null);
   const [open, setOpen] = useState<AmlDashboardRow | null>(null);
   // Opened from a transaction page (Woody, 25 November 2026: the AML is worked
   // here; the transaction page mirrors it): ?deal=<id>&role=<role> opens that
@@ -410,13 +423,18 @@ export default function AmlDashboard() {
   // One line per transaction, its parties inside it; a pill, Late, Mine and the
   // search pick transactions, and each line shows every party.
   const transactions = useMemo(() => groupAmlByTransaction(data?.rows || []), [data]);
-  const scoped = useMemo(() => transactions.filter(t => (!mine || t.mine) && (!lateOnly || t.late) && transactionMatches(t, query)), [transactions, mine, lateOnly, query]);
+  const inLetter = (t: AmlTransactionRow) => !letter || indexLetter(t.lead) === letter;
+  const searchedTx = useMemo(() => transactions.filter(t => (!mine || t.mine) && (!lateOnly || t.late) && transactionMatches(t, query)), [transactions, mine, lateOnly, query]);
+  const scoped = useMemo(() => searchedTx.filter(inLetter), [searchedTx, letter]);
   const counts = useMemo(() => transactionBucketCounts(scoped), [scoped]);
-  const lateCount = useMemo(() => transactions.filter(t => t.late && (!mine || t.mine) && transactionMatches(t, query)).length, [transactions, mine, query]);
+  const lateCount = useMemo(() => transactions.filter(t => t.late && (!mine || t.mine) && transactionMatches(t, query) && inLetter(t)).length, [transactions, mine, query, letter]);
+  // The letters with something under them on this pill, before a letter is picked.
+  const letters = useMemo(() => letterCounts(searchedTx.filter(t => t.buckets.includes(bucket)).map(t => t.lead)), [searchedTx, bucket]);
   // Late first: past the point the policy needs the checks by; then the most red flags, then the longest still.
+  // Under a letter, A to Z by what the transaction is known by.
   const stalest = (t: AmlTransactionRow) => Math.max(-1, ...t.parties.map(p => p.movedDays ?? -1));
   const shown = useMemo(() => scoped.filter(t => t.buckets.includes(bucket))
-    .sort((a, b) => (Number(b.late) - Number(a.late)) || (b.redFlags - a.redFlags) || (stalest(b) - stalest(a))), [scoped, bucket]);
+    .sort((a, b) => letter ? byName(a.lead, b.lead) : (Number(b.late) - Number(a.late)) || (b.redFlags - a.redFlags) || (stalest(b) - stalest(a))), [scoped, bucket, letter]);
 
   // The top folds once the table is scrolled, so the rows get the screen and
   // the title and pills stay (Woody, 22 November 2026: "the top of the pages
@@ -519,10 +537,12 @@ export default function AmlDashboard() {
         <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading every live transaction's parties…</div>
       ) : error ? (
         <p className="text-sm text-destructive">The AML dashboard could not be read.</p>
-      ) : !shown.length ? (
-        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
+      ) : (
+      <WithLetterRail testId="aml-list" rail={<LetterRail counts={letters} active={letter} onPick={setLetter} testId="aml-letters" />}>
+      {!shown.length ? (
+        <p className="text-sm text-muted-foreground" data-testid="aml-empty">Nothing here{letter ? ` under ${letter}` : ""}{lateOnly ? " that is late" : ""}{mine ? " on your transactions" : ""}{query ? " for that search" : ""}.</p>
       ) : isMobile || view === "card" ? (
-        <AmlCardGrid items={shown} testId="aml-cards" render={t => <AmlTransactionCard key={t.key} t={t} bucket={bucket} onOpen={setOpen} />} />
+        <AmlCardGrid key={letter || "all"} items={shown} testId="aml-cards" render={t => <AmlTransactionCard key={t.key} t={t} bucket={bucket} onOpen={setOpen} />} />
       ) : (
         // A scroll bar above the table as well as below it, and the heading row
         // stays in view while the rows scroll under it (Woody, 2026-11-20:
@@ -547,6 +567,8 @@ export default function AmlDashboard() {
           </table>
           </ScrollableTable>
         </div>
+      )}
+      </WithLetterRail>
       )}
 
       </>}

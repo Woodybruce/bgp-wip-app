@@ -561,7 +561,7 @@ test("possible namesakes are listed on the card and in KYC4U's note, never as re
   assert.deepEqual(namesakes.map(n => [n.name, n.via]), [["BARRATT, Jack", "ComplyAdvantage"], ["BARRATT, Jack", "web search"]]);
   assert.match(namesakes[0].what, /adverse media, profile "Jack Barratt", no match score/);
   const card = precheckCardLines(run).find(l => l.key === "namesakes")!;
-  assert.equal(card.label, "Possible namesakes to check: 2");
+  assert.equal(card.label, "Possible namesakes, not red flags: 2");
   assert.equal(card.state, "info");
   assert.deepEqual(card.links.map(l => l.url), ["https://news.example/jb"]);
   const ca = precheckCardLines(run).find(l => l.key === "comply_advantage")!;
@@ -624,6 +624,28 @@ test("a UK public body is the state: its own state-ownership finding is no red f
   assert.ok(asBody.some(x => x.label === "Possible public role for Jane Officer"), "a person's public role still counts");
   // Not recorded as a public body: as before.
   assert.ok(precheckRedFlags(run, { sanctionsCurrent: true }).some(x => /Possibly owned or controlled by the state/.test(x.label)));
+});
+
+test("a UK public body's screening line counts its state ownership as nothing to review (25 November 2026)", () => {
+  const f = (kind: "public_role" | "adverse_media", summary: string, url: string) => ({ kind, summary, url, source: "Site", date: null, category: null, unsureIdentity: false });
+  const body = (findings: ReturnType<typeof f>[]) => result({
+    web: { ran: true, skipped: null, lines: [
+      { name: "Wirral Metropolitan Borough Council (as administering authority for Merseyside Pension Fund)", role: "the company", person: false, ran: true,
+        publicRole: "possible", adverseMedia: "none_found", unsourced: 0, findings },
+    ] },
+  });
+  const web = (run: KycPrecheckResult, publicBody?: boolean) => precheckCardLines(run, { publicBody }).find(l => l.key === "web")!;
+  const stateOnly = body([f("public_role", "A local authority, part of the state", "https://a.example/1")]);
+  assert.equal(web(stateOnly, true).state, "ok");
+  assert.match(web(stateOnly, true).label, /nothing found$/);
+  assert.match(web(stateOnly, true).detail || "", /Owned by the state, as a UK public body is: not a finding/);
+  assert.equal(web(stateOnly, true).links.length, 0);
+  // Adverse media about the body is still one to review.
+  const fined = body([f("public_role", "A local authority, part of the state", "https://a.example/1"), f("adverse_media", "Fined for fraud", "https://b.example/2")]);
+  assert.equal(web(fined, true).state, "attention");
+  assert.match(web(fined, true).label, /1 to review$/);
+  // Not recorded as a public body: as before.
+  assert.equal(web(stateOnly).state, "attention");
 });
 
 // Owners behind a company registered abroad (Woody, 20 November 2026, on

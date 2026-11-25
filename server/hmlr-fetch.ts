@@ -483,7 +483,20 @@ export type HmlrAutoOutcome = {
   why?: string;
 };
 
+// Each night's outcome is kept in system_settings "hmlr-datasets:last", which
+// GET /api/admin/hmlr/runs returns as lastAuto (25 November 2026: the first night
+// left no run and no trace, because a failure before a load writes no run row).
 export async function autoUpdateHmlrDatasets(): Promise<HmlrAutoOutcome[]> {
+  const out = await updateHmlrDatasets();
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('hmlr-datasets:last', $1::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [JSON.stringify({ at: new Date().toISOString(), results: out })],
+  ).catch((e: any) => console.warn("[hmlr-datasets] could not keep the night's outcome:", e?.message));
+  return out;
+}
+
+async function updateHmlrDatasets(): Promise<HmlrAutoOutcome[]> {
   const datasets: HmlrDataset[] = ["ocod", "ccod"];
   if (String(process.env.HMLR_AUTO_UPDATE || "").trim().toLowerCase() === "off") {
     return datasets.map(dataset => ({ dataset, outcome: "off" as const, why: "HMLR_AUTO_UPDATE=off" }));

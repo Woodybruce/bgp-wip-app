@@ -221,12 +221,15 @@ export function CompanyFactsList({ company: c, testKey }: { company: PrecheckCom
 // ── Screening ───────────────────────────────────────────────────────────────
 
 /** One line of BGP's checks before asking: its icon, its name and what it found. */
+// A line that only says what was done or found (GLEIF, who was screened,
+// namesakes set against the bars) is a green tick, as a clear check is: only
+// an issue looks like one (Woody, 25 November 2026: "it looks like they are a
+// problem ... better just to be a green tick ... all we care about is a issue").
 export function AmlCheckLine({ line }: { line: PrecheckCardLine }) {
-  const icon = line.state === "ok" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-    : line.state === "attention" ? <Flag className="h-3.5 w-3.5 text-amber-600" />
+  const icon = line.state === "attention" ? <Flag className="h-3.5 w-3.5 text-amber-600" />
     : line.failed ? <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
     : line.state === "not_run" ? <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-    : <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />;
+    : <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />;
   return (
     <li className="flex items-start gap-2 text-xs" data-testid={`aml-check-${line.key}`}>
       <span className="mt-0.5 shrink-0">{icon}</span>
@@ -243,7 +246,7 @@ export function AmlCheckLine({ line }: { line: PrecheckCardLine }) {
 
 /** The lines in order: what needs a look first. */
 export function AmlCheckLines({ lines, only, testId }: { lines: PrecheckCardLine[]; only?: string[]; testId?: string }) {
-  const rank = (l: PrecheckCardLine) => (l.state === "attention" ? 0 : l.failed ? 1 : l.state === "ok" ? 3 : 2);
+  const rank = (l: PrecheckCardLine) => (l.state === "attention" ? 0 : l.failed ? 1 : l.state === "not_run" ? 2 : 3);
   const shown = lines.filter(l => !only || only.includes(l.key)).sort((a, b) => rank(a) - rank(b));
   if (!shown.length) return null;
   return <ul className="space-y-1" data-testid={testId}>{shown.map(l => <AmlCheckLine key={l.key} line={l} />)}</ul>;

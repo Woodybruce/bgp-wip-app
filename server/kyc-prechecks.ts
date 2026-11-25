@@ -1164,6 +1164,10 @@ export interface PartyPrecheckView {
 // company party with no company that signs (`needsCompany`) is not checked.
 export async function dealPrechecks(dealId: string, parties: Array<{ companyId: string; entityId?: string | null; needsCompany?: boolean }>, opts: { userId: string | null; autoStart: boolean }): Promise<Record<string, PartyPrecheckView>> {
   const out: Record<string, PartyPrecheckView> = {};
+  // A party recorded as a UK public body: its state ownership is no finding (25 November 2026).
+  const publicBodies = new Set((await pool.query(
+    `SELECT id FROM crm_companies WHERE id = ANY($1::varchar[]) AND lower(COALESCE(aml_subject_type, '')) = 'public_body'`,
+    [parties.map(p => p.companyId).filter(Boolean)]).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.id)));
   for (const { companyId, entityId: givenEntity, needsCompany } of parties) {
     if (!companyId || out[companyId]) continue;
     const entityId = givenEntity || null;
@@ -1187,7 +1191,7 @@ export async function dealPrechecks(dealId: string, parties: Array<{ companyId: 
       state,
       startedAt: running.get(key)?.startedAt || null,
       ranAt: stored?.ranAt || null,
-      lines: stored ? precheckCardLines(stored.result) : [],
+      lines: stored ? precheckCardLines(stored.result, { publicBody: !entityId && publicBodies.has(companyId) }) : [],
       errors: stored?.result.errors.slice(0, 6) || [],
       company: precheckCompany(stored?.result || null),
       // What the app traced past Companies House, also for a company with no UK record.

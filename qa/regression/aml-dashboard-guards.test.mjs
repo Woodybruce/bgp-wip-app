@@ -92,7 +92,8 @@ test('the table shows the transaction status, the red flags under due diligence 
   assert.match(page, /\{agents\.map\(a => <li key=\{a\} className="whitespace-nowrap">\{a\}<\/li>\)\}/);
   // The party, transaction and waiting-on columns give way below 1536px so the agents fit a laptop screen.
   assert.match(page, /<td className=\{`\$\{cell\(i\)\} max-w-\[170px\] 2xl:max-w-\[230px\]`\}><PartyCell row=\{r\} \/><\/td>/);
-  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{`\$\{block\} max-w-\[190px\] 2xl:max-w-\[260px\]`\}><DealCell row=\{first\} \/><\/td>/);
+  // The transaction cell leads with the building or the brand (25 November 2026), so it takes the whole transaction.
+  assert.match(page, /<td rowSpan=\{n\} onClick=\{openLead\} className=\{`\$\{block\} max-w-\[190px\] 2xl:max-w-\[260px\]`\}><DealCell t=\{t\} \/><\/td>/);
   assert.match(page, /<td className=\{`\$\{cell\(i\)\} min-w-\[120px\] max-w-\[200px\]`\}>\{r\.waitingOn\}<\/td>/);
   assert.doesNotMatch(page, /r\.agents\.join\(", "\)/);
   // The status in the Transactions board's words, a letting's AVA as Marketing.
