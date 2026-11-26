@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Link } from "wouter";
+import { EditExpenseDialog, type Expense as EditableExpense } from "@/pages/my-expenses";
 import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check, Mail, ChevronRight } from "lucide-react";
 
 // React doesn't accept fragments directly inside a <tbody> when each
@@ -69,6 +70,11 @@ interface ExpenseRow {
   receiptFilename: string | null;
   xeroExpenseId: string | null;
   isPersonal: boolean | null;
+  calendarEventId?: string | null;
+  relatedDealId?: string | null;
+  relatedPropertyId?: string | null;
+  revolutTransactionId?: string | null;
+  stripeTransactionId?: string | null;
   attendeeContacts?: { id: string; name: string | null }[];
 }
 
@@ -120,6 +126,8 @@ export default function ExpensesAdmin() {
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Cardholder | null>(null);
   const [viewingCard, setViewingCard] = useState<Cardholder | null>(null);
+  // Anyone's expense, opened in the editor its owner uses on their own page.
+  const [editingExpense, setEditingExpense] = useState<ExpenseRow | null>(null);
   // Spend by Cardholder rows are expandable — click to drill into the
   // cardholder's individual expenses for the period. Set to the
   // cardholder id of the open row (or null when collapsed).
@@ -406,6 +414,9 @@ export default function ExpensesAdmin() {
                               )}
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                 <StateDotChip status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
+                                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs ml-auto order-last" onClick={(ev) => { ev.stopPropagation(); setEditingExpense(e); }} data-testid={`edit-expense-drill-card-${e.id}`}>
+  <Pencil className="w-3 h-3 mr-1" /> Edit
+</Button>
                                 {e.attendeeContacts && e.attendeeContacts.length > 0 && e.attendeeContacts.map(a => (
                                   <Link
                                     key={a.id}
@@ -494,6 +505,7 @@ export default function ExpensesAdmin() {
                                       <th className="py-1.5 pr-6 font-medium">Purpose</th>
                                       <th className="py-1.5 pr-6 font-medium">Attendees</th>
                                       <th className="py-1.5 pl-2 font-medium">Status</th>
+                                      <th className="py-1.5 pl-2 font-medium"><span className="sr-only">Edit</span></th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -529,6 +541,11 @@ export default function ExpensesAdmin() {
                                         </td>
                                         <td className="py-2 pl-2 whitespace-nowrap">
                                           <DrilldownStatusBadge status={e.status} isPersonal={e.isPersonal} hasReceipt={!!e.receiptFilename} hasXero={!!e.xeroExpenseId} />
+                                        </td>
+                                        <td className="py-1 pl-2 whitespace-nowrap">
+                                          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={(ev) => { ev.stopPropagation(); setEditingExpense(e); }} data-testid={`edit-expense-drill-${e.id}`}>
+  <Pencil className="w-3 h-3 mr-1" /> Edit
+</Button>
                                         </td>
                                       </tr>
                                     ))}
@@ -722,7 +739,7 @@ export default function ExpensesAdmin() {
                     </div>
                     <span className="font-mono tabular-nums text-sm shrink-0">{fmt(e.amountPence)}</span>
                   </div>
-                  <div>
+                  <div className="flex items-center justify-between gap-2">
                     {e.receiptFilename ? (
                       <span className="text-[11px] text-emerald-600 flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3" /> Receipt attached
@@ -740,6 +757,9 @@ export default function ExpensesAdmin() {
                         Find in email
                       </Button>
                     )}
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={(ev) => { ev.stopPropagation(); setEditingExpense(e); }} data-testid={`edit-expense-card-${e.id}`}>
+  <Pencil className="w-3 h-3 mr-1" /> Edit
+</Button>
                   </div>
                 </div>
               ))}
@@ -755,6 +775,7 @@ export default function ExpensesAdmin() {
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium">Receipt</th>
                     <th className="px-4 py-2 font-medium">Xero</th>
+                    <th className="px-4 py-2 font-medium"><span className="sr-only">Edit</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -795,6 +816,11 @@ export default function ExpensesAdmin() {
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={(ev) => { ev.stopPropagation(); setEditingExpense(e); }} data-testid={`edit-expense-${e.id}`}>
+  <Pencil className="w-3 h-3 mr-1" /> Edit
+</Button>
                       </td>
                     </tr>
                   ))}
@@ -959,6 +985,11 @@ export default function ExpensesAdmin() {
           saving={limitsMutation.isPending}
         />
       )}
+      <EditExpenseDialog
+        expense={editingExpense as EditableExpense | null}
+        onClose={() => setEditingExpense(null)}
+        onSaved={() => { setEditingExpense(null); refetchExp(); refetchSummary(); }}
+      />
       {viewingCard && (
         <AdminCardDetailsDialog
           cardholder={viewingCard}

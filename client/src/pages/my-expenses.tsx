@@ -22,7 +22,7 @@ import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import ReceiptViewer from "@/components/receipt-viewer";
 
-interface Expense {
+export interface Expense {
   id: string;
   merchant: string | null;
   amountPence: number;
@@ -881,7 +881,9 @@ const ENTERTAINMENT_CATEGORIES = new Set([
   "Meals & Drinks",
 ]);
 
-function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | null; onClose: () => void; onSaved: () => void }) {
+// Also opened from the All expenses page (Layla, 26 November 2026: Wendy
+// changes anyone's expense exactly as the person can).
+export function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | null; onClose: () => void; onSaved: () => void }) {
   const { toast } = useToast();
   const open = !!expense;
 
