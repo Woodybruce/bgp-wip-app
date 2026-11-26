@@ -103,7 +103,7 @@ test("a foreign company on Companies House: its home register is read, and its e
 test("policy Issue 5 is in the app and nothing sends anyone to Dun & Bradstreet", () => {
   assert.match(read("shared/aml-policy.ts"), /\{ key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5,/);
   // Issue 6 (25 November 2026) keeps Issue 5's rules on companies abroad.
-  assert.match(read("shared/aml-policy.ts"), /export const POLICY_SOURCE = "BGP's AML policy \(Issue 8\) and risk assessment \(Issue 4\)";/);
+  assert.match(read("shared/aml-policy.ts"), /export const POLICY_SOURCE = "BGP's AML policy \(Issue 9\) and risk assessment \(Issue 4\)";/);
   for (const f of ["server/chatbgp.ts", "client/src/pages/subscriptions.tsx", "client/src/components/aml-policy-panel.tsx", "shared/aml-rules.ts", "shared/kyc-request.ts"]) {
     assert.doesNotMatch(read(f).replace(/\/\/[^\n]*/g, ""), /download from D&B|D&B Direct|name: "Dun & Bradstreet"|asks for a Dun & Bradstreet report/, f);
   }

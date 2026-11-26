@@ -7570,8 +7570,15 @@ the identity", with no proof of address.
   documents request was never a person to check (`trustDocs`). **Their
   identity check is still asked** (HMRC AMLG11400 14.7 and MLR 2017 reg
   28(10): identify the person acting and their authority): whether to stop
-  that is waiting on Jack, and so is a policy Issue 9 (Issue 8 says the
-  person acting sends a proof of address).
+  Jack answered "Keep it" the same day. **Issue 9 of the policy** (Jack,
+  26 November 2026: "publish") says all of this and is on the Policy pill
+  (`policy-issue-9`, `bgp-aml-policy-issue-9.docx`; Issue 8 kept on the quiet
+  line): the Individuals proof of address paragraph, Authority to Instruct
+  (who the person acting is, the role recorded before sending, advisers not
+  identified individually: the firm's HMRC or SRA registration), a change
+  record row and the footer. `POLICY_SOURCE`, the rules in short, ChatBGP's
+  prompt and the app map name Issue 9; everyone confirms Issue 9 afresh in
+  AML training.
 - **The role question** (Jack, 26 November 2026, on a draft "Rules for
   Persons Acting on Behalf of a Party": "add Role Question for every contact
   before we hit send. A drop down list ... add choice of adding 'other' ...
