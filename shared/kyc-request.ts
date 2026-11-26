@@ -194,6 +194,44 @@ export function owesProofOfAddress(kind: KycPartyKind, roles: Iterable<KycPerson
 /** Why the person acting for a listed company gives their identity alone. */
 export const LISTED_ID_ONLY = "A listed company: the person dealing with us gives their identity check and their authority to act, with no proof of address.";
 /** Why the person dealing with us for a company or a trust is not asked for a proof of address. */
+// What the person asked does for the party (Jack, 26 November 2026: "add Role
+// Question for every contact before we hit send. A drop down list ... And add
+// choice of adding 'other' ... a warning box, not a block"). Chosen in the send
+// window and kept on the request. `acting` is someone who instructs us,
+// negotiates or agrees terms, or signs for the party: they do an identity
+// check. An adviser or someone who only passes on information does not.
+export const CONTACT_ROLES = [
+  { key: "director", label: "Director or LLP member", acting: true },
+  { key: "owner", label: "Owner (beneficial owner)", acting: true },
+  { key: "employee", label: "Senior employee (commercial director, head of real estate)", acting: true },
+  { key: "asset_manager", label: "Asset manager", acting: true },
+  { key: "family_office", label: "Family office staff", acting: true },
+  { key: "attorney", label: "Attorney (under a power of attorney)", acting: true },
+  { key: "trustee", label: "Trustee", acting: true },
+  { key: "adviser", label: "Solicitor, agent or other professional adviser", acting: false },
+  { key: "info", label: "Information only (copied in, or provides data)", acting: false },
+  { key: "other", label: "Other", acting: true },
+] as const;
+export type KycContactRoleKey = typeof CONTACT_ROLES[number]["key"];
+export const CONTACT_ROLE_KEYS = CONTACT_ROLES.map(r => r.key) as [KycContactRoleKey, ...KycContactRoleKey[]];
+export interface KycContactRole { key: KycContactRoleKey; other?: string | null }
+
+/** The role in words: the list's label, or what was typed for Other. */
+export function contactRoleWords(role: KycContactRole | null | undefined): string | null {
+  if (!role) return null;
+  if (role.key === "other") return role.other?.trim() || "Other";
+  return CONTACT_ROLES.find(r => r.key === role.key)?.label || null;
+}
+
+/** The warning the send window shows about the role chosen. It never stops a send. */
+export function contactRoleWarning(role: KycContactRole | null | undefined, partyName: string): string | null {
+  if (!role) return `Choose what this person does for ${partyName} before you send.`;
+  if (role.key === "adviser") return "A solicitor or agent is not asked for ID. Send the checks through their agent to pass on, or choose the person at the party who instructs, negotiates or signs.";
+  if (role.key === "info") return "Someone who only passes on information is not checked. Choose the person who instructs us, negotiates or signs.";
+  if (role.key === "other" && !role.other?.trim()) return "Say what they do.";
+  return null;
+}
+
 export const REPRESENTATIVE_NO_ADDRESS = "The person dealing with us is a representative, not an owner: no proof of address is asked of them. Each owner sends their own.";
 /** Why someone is not asked for a proof of address. */
 export const NO_ADDRESS_WORDS = "A proof of address is for the owners and the party in person, not for an agent or representative acting for them.";

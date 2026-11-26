@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 26 November 2026
+  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Say what the contact does before sending client checks",
+    text: "The send window asks what the person does for a company party: director, owner, senior employee, asset manager, family office, attorney, trustee, professional adviser, information only, or Other typed in. The role is kept on the request. No role, an adviser or information only shows a warning; it never stops the send. Advisers and agents are not checked: BGP records the firm's HMRC or SRA registration, as now." },
   { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "No proof of address from an agent or representative",
     text: "A proof of address is for the beneficial owners, a trust's people and a party in person. The person acting for a company or a trust (an agent, a solicitor, a representative) is never asked for one, whether or not the company is listed. An owner who also acts for the company still sends theirs." },
   { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Proof of address from everyone checked, except a listed company's contact", changed: "26 November 2026: the person acting for a company or trust is not asked for one either.",

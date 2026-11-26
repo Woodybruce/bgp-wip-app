@@ -35,7 +35,7 @@ import {
 } from "@shared/kyc-request";
 import { idCheckIsThePerson, personNamesMatch, precheckAsks, verifiedPersonName } from "@shared/kyc-prechecks";
 import { kycWorkFor, kycWorkOpening, type KycWork } from "@shared/kyc-work-words";
-import { dealOrClientFileTokensSql, tokenPartyCompanySql, kycAsksOwners, kycDocWords } from "@shared/kyc-request";
+import { dealOrClientFileTokensSql, tokenPartyCompanySql, kycAsksOwners, kycDocWords, CONTACT_ROLE_KEYS, contactRoleWords, type KycContactRole } from "@shared/kyc-request";
 import { personKey, personRequestAsks, priorIdCheckFor, priorIdCheckWords, verifiedLicenceAddress, type KycPartyPerson, type PartyPeople } from "@shared/kyc-people";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { dealClientRole, partySubjectKind } from "@shared/deal-parties";
@@ -141,6 +141,8 @@ export interface KycRequestDetails {
   // completes it is contact_name once named. passedOn: the people at the
   // party the agent sent it to from the page.
   viaAgent?: KycViaAgent | null;
+  // What the person asked does for the party, as BGP chose it when sending (26 November 2026).
+  contactRole?: KycContactRole | null;
   // A proof of address sent on this link for someone else on the party, by
   // the KYC document's id: the person's key (24 November 2026, Woody: "Let's
   // allow others to drop proof of address"). A hint only: it counts for them
@@ -644,6 +646,8 @@ export const clientCheckBody = z.object({
     name: z.string().trim().min(2).max(120),
     email: z.string().trim().max(200),
   }).strict().nullish(),
+  // What the person asked does for the party (26 November 2026).
+  contactRole: z.object({ key: z.enum(CONTACT_ROLE_KEYS), other: z.string().trim().max(120).nullish() }).strict().nullish(),
   // When BGP's checks before asking last finished, as the send window saw it
   // (null: none had). A list made before a newer read of the register is
   // refused (24 November 2026). Absent from a window loaded before then.
@@ -904,6 +908,7 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     notAsked: trustDocs ? [] : asks.notAsked.filter(n => !docs.includes(n.key)), precheckId: pre?.precheckId ?? null,
     ownLinksFor, ...(trustDocs ? { purpose: "trust_structure" as const } : {}),
     ...(viaAgent ? { viaAgent } : {}),
+    ...(input.contactRole && !viaAgent ? { contactRole: { key: input.contactRole.key, other: input.contactRole.key === "other" ? input.contactRole.other?.trim() || null : null } } : {}),
     work: workFor(found, party),
   };
   // Someone typed rather than picked is saved to the CRM under the brand
@@ -1180,6 +1185,7 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
       notAsked: request.notAsked || [],
       person: request.person ? { key: request.person.key, name: request.person.name, roles: request.person.roles } : null,
       viaAgent: request.viaAgent ? { firm: request.viaAgent.firm, name: request.viaAgent.name, email: request.viaAgent.email, passedOn: request.viaAgent.passedOn || [] } : null,
+      contactRole: contactRoleWords(request.contactRole),
       ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
       // The old single step for every owner's ID: files there do not say
       // whose they are (Woody, 19 November 2026), so it is never ticked here.

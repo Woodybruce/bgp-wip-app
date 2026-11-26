@@ -7572,6 +7572,23 @@ the identity", with no proof of address.
   28(10): identify the person acting and their authority): whether to stop
   that is waiting on Jack, and so is a policy Issue 9 (Issue 8 says the
   person acting sends a proof of address).
+- **The role question** (Jack, 26 November 2026, on a draft "Rules for
+  Persons Acting on Behalf of a Party": "add Role Question for every contact
+  before we hit send. A drop down list ... add choice of adding 'other' ...
+  a warning box, not a block"). Send client checks, for a company party not
+  sent through its agent, asks **What does <person> do for <party>?**
+  (`CONTACT_ROLES` in `shared/kyc-request.ts`: director or LLP member, owner,
+  senior employee, asset manager, family office staff, attorney, trustee,
+  professional adviser, information only, Other with a box). No role, an
+  adviser, information only or a blank Other shows an amber warning
+  (`contactRoleWarning`) and Send stays enabled. Kept on the request
+  (`request.contactRole`) and shown on its row. It changes nothing asked.
+  From the same draft Jack decided, and nothing was built: authority stays
+  as it is (a director's email or letter, or signed terms; no email domain
+  check); trustees keep full ID and proof of address; advisers and agents
+  are not checked beyond the firm's HMRC or SRA registration; an owner who
+  acts is checked as an owner. The draft's data-only ID check was not taken
+  up: the person acting keeps the Veriff check ("Keep it").
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in

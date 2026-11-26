@@ -435,3 +435,17 @@ test("every request asks for proofs of address, except one to a listed company o
   assert.match(KYC_DOCS.proof_of_address.detail, /photocard driving licence, if it shows your current address/);
   assert.match(KYC_DOCS.owner_ids.detail, /and a proof of address from the last three months/);
 });
+
+test("the role question: a warning for no role, an adviser, information only or a blank Other; never for an acting person", async () => {
+  const { CONTACT_ROLES, contactRoleWarning, contactRoleWords } = await import("../shared/kyc-request");
+  assert.match(contactRoleWarning(null, "Acme Ltd") || "", /Choose what this person does for Acme Ltd/);
+  assert.match(contactRoleWarning({ key: "adviser" }, "Acme Ltd") || "", /not asked for ID/);
+  assert.match(contactRoleWarning({ key: "info" }, "Acme Ltd") || "", /not checked/);
+  assert.equal(contactRoleWarning({ key: "other", other: " " }, "Acme Ltd"), "Say what they do.");
+  assert.equal(contactRoleWarning({ key: "other", other: "Fund manager" }, "Acme Ltd"), null);
+  for (const r of CONTACT_ROLES) if (r.acting && r.key !== "other") assert.equal(contactRoleWarning({ key: r.key }, "Acme Ltd"), null);
+  assert.equal(contactRoleWords({ key: "other", other: "Fund manager" }), "Fund manager");
+  assert.equal(contactRoleWords({ key: "director" }), "Director or LLP member");
+  assert.equal(contactRoleWords(null), null);
+  assert.equal(CONTACT_ROLES[CONTACT_ROLES.length - 1].key, "other");
+});
