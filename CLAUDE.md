@@ -7556,6 +7556,22 @@ the identity", with no proof of address.
   record row and the footer. `POLICY_SOURCE`, the rules in short, ChatBGP's
   prompt and the app map name Issue 8; everyone confirms Issue 8 afresh in AML
   training. The trust checklist stays at Issue 3.
+- **Never a proof of address from an agent or representative** (Jack, later
+  on 26 November 2026: "We dont check agents or representatives for ID and
+  proof or address ... we only check ID and proof of address for the
+  Ultimate Beneficial Owners"). `owesProofOfAddress` is false for someone
+  whose only roles are the person acting or a director, for any company or
+  trust, listed or not (a private individual is the party in person and
+  still owes one). `defaultKycDocs` asks a company's or trust's contact for
+  none; `precheckAsks` adds it only when the person asked is one of the
+  owners, and otherwise lists it as not asked (`REPRESENTATIVE_NO_ADDRESS`).
+  Owners, a trust's people, signers and guarantors still send one, and
+  request emails still list List B for them. The recipient of a trust's
+  documents request was never a person to check (`trustDocs`). **Their
+  identity check is still asked** (HMRC AMLG11400 14.7 and MLR 2017 reg
+  28(10): identify the person acting and their authority): whether to stop
+  that is waiting on Jack, and so is a policy Issue 9 (Issue 8 says the
+  person acting sends a proof of address).
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in

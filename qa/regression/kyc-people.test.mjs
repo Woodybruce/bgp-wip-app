@@ -55,8 +55,8 @@ test('the old owners step is never ticked by files on the deal card, and the req
   // asks an owner and the person acting for their identity only).
   assert.match(read('shared/kyc-request.ts'), /else if \(kind !== "individual"\) docs\.push\("ownership", "owner_ids", "authority"\);/);
   assert.doesNotMatch(asks, /askAddressAsOwner/);
-  // Everyone checked owes a proof of address but a listed company's contact (Jack, 26 November 2026).
-  assert.match(read('shared/kyc-request.ts'), /if \(idOnly && \[\.\.\.set\]\.every\(r => r === "acting" \|\| r === "director"\)\) return false;\s*return true;/);
+  // Owners and the party in person owe a proof of address; a representative never does (Jack, 26 November 2026).
+  assert.match(read('shared/kyc-request.ts'), /if \(kind === "individual"\) return true;\s*if \(set\.size && \[\.\.\.set\]\.every\(r => r === "acting" \|\| r === "director"\)\) return false;\s*return true;/);
   assert.match(read('shared/kyc-people.ts'), /const noAddress = !owesProofOfAddress\(input\.kind, d\.roles, publicBody \|\| !!ch\?\.listing \|\| !!input\.precheck\?\.abroad\?\.listing\);/);
   // A request sent before then stops asking an owner for one, on the page, in reminders and for Finish.
   const portalNow = read('server/aml-portal.ts');
