@@ -302,6 +302,8 @@ async function userCanAccessExpense(req: Request, expenseId: string): Promise<bo
     const { pool } = await import("./db");
     const r = await pool.query("SELECT is_admin, email FROM users WHERE id = $1", [userId]);
     if (r.rows[0]?.is_admin) return true;
+    const { ADMIN_EMAILS } = await import("./auth");
+    if (ADMIN_EMAILS.has(String(r.rows[0]?.email || "").toLowerCase().trim())) return true;
   } catch {}
   return false;
 }
