@@ -11043,10 +11043,31 @@ By adding the Heads of Terms the app should auto add the Landlord and Tenant
   `HOTS_REQUIRED`): BGP staff moving a unit to HOTs or Solicitors with no
   final file and no issued heads of terms. That covers the bulk Change
   Status. Client logins and joint agents are not held by it.
-- **Not blocked, waiting on Jack and Woody**: the Transactions table, the
-  transaction's Edit form and the Solicitors form's own save move a
-  transaction through the transaction save, which does not ask for heads of
-  terms; ChatBGP's status change likewise. Not checked in a browser.
+- **Every transaction, the same day** (Jack: "Lets add this block to these as
+  well, as AML checks should start earlier in the deal but absolutely minimum
+  once the deal is at HOTs stage"; button "Add HOTs or Proforma"). One rule,
+  `hotsGateApplies` in `shared/deal-hots-gate.ts`: a move to HOTs or
+  Solicitors from an earlier stage (never a move back from Solicitors or
+  later; never a Rent Review, Dilapidations or Service Charge).
+  `server/deal-hots-gate.ts` (`hotsRequiredDenial`, `dealHotsOnFile`): heads
+  of terms are on a transaction when its tracker unit holds them, or a file
+  was added to the transaction itself (`deal_hots_files`, a boot table, for a
+  sale, a purchase or a tenant-side letting; `POST
+  /api/deals/:id/heads-of-terms/file`, `GET …/on-file`, BGP staff as
+  themselves). The transaction save (`PUT /api/crm/deals/:id`: the
+  Transactions table, the Edit form, ChatBGP's update_deal, the Solicitors
+  form) and the bulk status change refuse the move for BGP staff with 409
+  `HOTS_REQUIRED`. Client logins are not held. Screens: `DealHotsGate` in
+  `tracker-hots-gate.tsx` (one box, `HotsGateBox`, shared with the tracker's)
+  on the Transactions table's status cell (then the HOTs checklist reading
+  the file just added, or at Solicitors the save; the AML window opens after
+  either) and on the Edit form's Save (`setParties={false}`: the form saves
+  its own parties). A sale or purchase sets Vendor and Purchaser.
+  Guard: `qa/regression/deal-hots-gate.test.mjs`.
+- **Not held**: creating a transaction straight at HOTs or Solicitors (New
+  Transaction, ChatBGP's create_deal), the Investment Tracker's own status
+  change, and joint agents' and clients' trackers. The AML file does not yet
+  carry a file added to the transaction itself. Not checked in a browser.
 
 ## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
 

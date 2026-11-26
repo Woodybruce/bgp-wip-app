@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 26 November 2026
+  { date: "2026-11-26", who: ["Jack"], topic: "Who we check and when", title: "Heads of terms before HOTs or Solicitors",
+    text: "A transaction moves to HOTs or Solicitors only once its heads of terms or proforma are added: on the Letting Tracker, the Transactions table, the Edit form and through ChatBGP. The parties are set from the file and the AML window opens, so checks start at heads of terms at the latest. Rent reviews, dilapidations and service charge work are not held." },
   { date: "2026-11-26", who: ["Jack"], topic: "Policy", title: "Policy Issue 9",
     text: "Issue 9 of the AML policy replaces Issue 8. An agent, solicitor or other representative acting for a company or a trust gives no proof of address, only identity and authority to act. Owners, a trust's people and a party in person still give one. The role of the person asked is recorded, and advisers are not checked individually. Everyone confirms Issue 9 in training." },
   { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Say what the contact does before sending client checks",

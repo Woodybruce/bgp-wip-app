@@ -3189,6 +3189,21 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
     // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
     `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
+    // Heads of terms added to a transaction with no Letting Tracker unit (26
+    // November 2026, server/deal-hots-gate.ts): a move to HOTs or Solicitors
+    // needs them.
+    `CREATE TABLE IF NOT EXISTS deal_hots_files (
+      id serial PRIMARY KEY,
+      deal_id varchar NOT NULL,
+      file_name text NOT NULL,
+      storage_key text NOT NULL,
+      mime text,
+      size integer,
+      added_by varchar,
+      added_by_name text,
+      added_at timestamptz NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS deal_hots_files_deal_idx ON deal_hots_files (deal_id)`,
     // A private individual's date of birth and nationality, typed in by BGP
     // (Woody, 24 November 2026): one row per party record (the brand, and the
     // person who signs when there is one). BGP's checks screen with them, and
@@ -4714,6 +4729,7 @@ import { jointAgentRouter } from "./joint-agent-checks";
 import kycPrecheckRouter from "./kyc-prechecks";
 import dealPartiesRouter from "./deal-parties";
 import dealHotsRouter from "./deal-hots";
+import { dealHotsGateRouter } from "./deal-hots-gate";
 import dealPartyAmlRouter from "./deal-party-aml";
 import { kycDocumentsRouter } from "./kyc-documents";
 import { clientKycRouter } from "./client-kyc";
@@ -6119,6 +6135,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(dealPartiesRouter);
   // Heads of terms read on the transaction page (BGP staff only, 23 November 2026).
   app.use(dealHotsRouter);
+  app.use(dealHotsGateRouter);
   app.use(dealPartyAmlRouter);
   app.use(kycDocumentsRouter);
   app.use(kycTranslationRouter);

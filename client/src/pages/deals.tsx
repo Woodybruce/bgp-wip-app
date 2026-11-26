@@ -153,6 +153,9 @@ import { hotsCall } from "@/components/unit-hots/hots-api";
 import { billingPatch, dealAutoName, dealNotePatch, dealReadPatch, findCompanyByName, hotsParties, hotsPricePatch, isInvestmentDealType, noteTenant, noteUnitId, PARTY_FORM_KEYS, partyPatch, propertyPickPatch, teamForDealType, teamPatch } from "@/lib/deal-note";
 import { DealNoteReadPanel } from "@/components/deal-note-read";
 import { linkToTransaction, linkValueWords, type LinkDifference } from "@/lib/deal-link";
+import { DealHotsGate, type HotsGateDeal, type HotsGateTarget } from "@/components/tracker-hots-gate";
+import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
+import { hotsGateApplies } from "@shared/deal-hots-gate";
 import { DEAL_NOTE_ROLE_TYPES, DEAL_NOTE_ROLE_WORDS, type DealNoteCandidate, type DealNoteRead, type DealNoteRegisterHit, type DealNoteRole } from "@shared/deal-note";
 import { SendClientChecksButton } from "@/components/kyc-client-checks";
 import { DealPartyEditor, PartyBillingDetail, PartyReadyToStart, partyAmlFacts, useDealParties } from "@/components/deal-parties";
@@ -3580,6 +3583,7 @@ export function DealFormDialog({
     taken: string[];
   };
   const [linked, setLinked] = useState<LinkedTransaction | null>(null);
+  const [hotsGate, setHotsGate] = useState<{ deal: HotsGateDeal; target: HotsGateTarget } | null>(null);
   const [linking, setLinking] = useState<string | null>(null);
   useEffect(() => { if (!open) { setLinked(null); setLinking(null); } }, [open]);
   const linkTo = async (target: { id: string }) => {
@@ -4027,11 +4031,26 @@ export function DealFormDialog({
       }
     }
 
+    // Heads of terms first (Jack, 26 November 2026): BGP staff move a
+    // transaction to HOTs or Solicitors only once they are on it. A handover
+    // files its own; the server refuses the save either way.
+    const moving = linked?.deal || (isEdit ? deal : null);
+    if (moving && !handover && !isClientCreate) {
+      const target = hotsGateApplies(moving.status, form.status, form.dealType || moving.dealType);
+      if (target) {
+        setHotsGate({ deal: { id: moving.id, name: moving.name || null, dealType: form.dealType || moving.dealType || null }, target });
+        return;
+      }
+    }
+
     mutation.mutate();
   };
 
   return (
     <>
+      <DealHotsGate deal={hotsGate?.deal || null} target={hotsGate?.target || "HOT"} setParties={false}
+        onCancel={() => setHotsGate(null)}
+        onDone={() => { setHotsGate(null); mutation.mutate(); }} />
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -5177,6 +5196,7 @@ function HotsChecklistDialog({
   users,
   onComplete,
   colorMap,
+  initialFile,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -5186,6 +5206,8 @@ function HotsChecklistDialog({
   users: { id: number; name: string; email: string }[];
   onComplete: () => void;
   colorMap?: Record<string, string>;
+  /** The heads of terms just added in the box before this one: read at once, not asked for again. */
+  initialFile?: File | null;
 }) {
   const { toast } = useToast();
 
@@ -5298,6 +5320,16 @@ function HotsChecklistDialog({
   }, [properties, propertySearch]);
 
   const selectedProperty = properties.find(p => p.id === form.propertyId);
+
+  const readInitial = useRef<File | null>(null);
+  useEffect(() => {
+    if (!open) { readInitial.current = null; return; }
+    if (deal && initialFile && readInitial.current !== initialFile) {
+      readInitial.current = initialFile;
+      void handleFileUpload(initialFile);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, deal?.id, initialFile]);
 
   const handleFileUpload = async (file: File) => {
     if (!deal) return;
@@ -7174,6 +7206,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
+  const [hotsChecklistFile, setHotsChecklistFile] = useState<File | null>(null);
+  const [statusGate, setStatusGate] = useState<{ deal: CrmDeal; target: HotsGateTarget } | null>(null);
+  const [amlDeal, setAmlDeal] = useState<AmlDialogDeal | null>(null);
   // The unit's Targeting Brief, opened from the Brief check cell.
   const [briefUnit, setBriefUnit] = useState<{ id: string; unitName: string; propertyId: string } | null>(null);
   // Team / Agent / Asset class are the SAME columnFilters keys the header
@@ -7555,6 +7590,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     if (jointAgentDeals) {
       toast({ title: "Read only", description: "Transactions are read only for joint agents. Make changes on the Letting Tracker." });
       return;
+    }
+    // Heads of terms first (Jack, 26 November 2026): the box asks for the
+    // file before a move to HOTs or Solicitors; the server refuses it too.
+    if (field === "status" && !isClientDeals) {
+      const deal = deals.find(d => d.id === dealId);
+      const target = deal ? hotsGateApplies(deal.status, String(value ?? ""), deal.dealType) : null;
+      if (deal && target) {
+        setStatusGate({ deal, target });
+        return;
+      }
     }
     if (field === "status" && value === "HOTs") {
       const deal = deals.find(d => d.id === dealId);
@@ -9478,14 +9523,40 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
           <HotsChecklistDialog
             open={!!hotsChecklistDeal}
-            onOpenChange={(open) => !open && setHotsChecklistDeal(null)}
+            onOpenChange={(open) => { if (!open) { setHotsChecklistDeal(null); setHotsChecklistFile(null); } }}
             deal={hotsChecklistDeal}
             properties={properties}
             companies={companies}
             users={users}
-            onComplete={() => setHotsChecklistDeal(null)}
+            onComplete={() => {
+              const done = hotsChecklistDeal;
+              setHotsChecklistDeal(null);
+              setHotsChecklistFile(null);
+              if (done) setAmlDeal({ id: done.id, name: done.name || null, dealRef: done.dealRef ?? null, status: "HOT" });
+            }}
             colorMap={userColorMap2}
+            initialFile={hotsChecklistFile}
           />
+          <DealHotsGate
+            deal={statusGate ? { id: statusGate.deal.id, name: statusGate.deal.name || null, dealType: statusGate.deal.dealType || null } : null}
+            target={statusGate?.target || "HOT"}
+            onCancel={() => setStatusGate(null)}
+            onDone={result => {
+              const gate = statusGate;
+              setStatusGate(null);
+              if (!gate) return;
+              if (result.added.length || result.note) toast({ title: result.added.length ? "Added from the heads of terms" : "Heads of terms added", description: [...result.added, result.note].filter(Boolean).join(" · ") });
+              if (gate.target === "HOT") {
+                // The HOTs checklist as before, reading the file just added.
+                setHotsChecklistFile(result.file || null);
+                setHotsChecklistDeal(gate.deal);
+              } else {
+                inlineUpdateMutation.mutate({ id: gate.deal.id, field: "status", value: "SOL" });
+                setAmlDeal({ id: gate.deal.id, name: gate.deal.name || null, dealRef: gate.deal.dealRef ?? null, status: "SOL" });
+              }
+            }}
+          />
+          <DealAmlDialog deal={amlDeal} reason={amlDeal?.status === "HOT" ? "hots" : "solicitors"} onClose={() => setAmlDeal(null)} />
         </>
       )}
 

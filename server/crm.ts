@@ -2961,6 +2961,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           // Stopped for AML reasons (server/aml-stop.ts): only Withdrawn.
           const stopped = await amlStopDenial(id, value);
           if (stopped) { failures.push({ id, reason: stopped.error }); continue; }
+          // Heads of terms first (Jack, 26 November 2026): BGP staff move a
+          // transaction to HOTs or Solicitors only once they are on it.
+          if (!scope) {
+            const { hotsRequiredDenial } = await import("./deal-hots-gate");
+            const noHots = await hotsRequiredDenial(pool, { id, status: (oldDeal as any).status, dealType: (oldDeal as any).dealType }, value);
+            if (noHots) { failures.push({ id, reason: noHots.error }); continue; }
+          }
 
           if (APPROVAL_STATUSES.has(value) && !isSenior) {
             failures.push({ id, reason: `senior approval required for ${value}` });
@@ -4043,6 +4050,15 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const { amlStopDenial } = await import("./aml-stop");
         const stopped = await amlStopDenial(String(req.params.id), req.body.status);
         if (stopped) return res.status(stopped.status).json({ error: stopped.error, code: stopped.code });
+      }
+      // Heads of terms first (Jack, 26 November 2026: "Lets add this block to
+      // these as well"): the Transactions table, the Edit form and ChatBGP all
+      // save here. BGP staff move a transaction to HOTs or Solicitors only
+      // once its heads of terms are on it (server/deal-hots-gate.ts).
+      if (oldDeal && !editScope && typeof req.body?.status === "string" && req.body.status !== oldDeal.status) {
+        const { hotsRequiredDenial } = await import("./deal-hots-gate");
+        const noHots = await hotsRequiredDenial(pool, { id: String(req.params.id), status: oldDeal.status, dealType: (oldDeal as any).dealType }, req.body.status);
+        if (noHots) return res.status(noHots.status).json({ error: noHots.error, message: noHots.error, code: noHots.code });
       }
 
       // Same tenancy-token resolve as POST — picker can hand us a
