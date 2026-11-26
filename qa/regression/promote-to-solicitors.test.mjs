@@ -377,7 +377,9 @@ test('a Heads of Terms convert starts from the agreed offer\'s tenant and terms;
 test('the Letting Tracker\'s move to Solicitors opens the one form on the unit\'s deal; the old Promote box is gone', () => {
   const page = source(TRACKER);
   assert.match(page, /import \{ DealHandoverDialog \} from "@\/pages\/deals";/);
-  assert.match(page, /if \(field === "marketingStatus" && legacyToCode\(value\) === "SOL" && !isClientTracker\) \{[\s\S]{0,120}setPromoteUnit\(unit\);/);
+  // Since 26 November 2026 the heads of terms box comes first, then the one form.
+  assert.match(page, /if \(unit && toCode === "SOL"\) \{[\s\S]{0,60}setPromoteUnit\(unit\);/);
+  assert.match(page, /if \(gate\.target === "SOL"\) \{ setPromoteUnit\(\{ \.\.\.gate\.unit, dealId \}\); return; \}/);
   assert.match(page, /<DealHandoverDialog\s+open=\{!!promoteUnit\}/);
   assert.match(page, /kind: "promote",\s+unit: \{\s+id: promoteUnit\.id,/);
   for (const gone of ['wipForm', 'wipDealMutation', 'applyPromoteNote', '/create-deal`']) assert.ok(!page.includes(gone), gone);

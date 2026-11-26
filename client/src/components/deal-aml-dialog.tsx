@@ -22,7 +22,7 @@ export type AmlDialogDeal = { id: string; name?: string | null; dealRef?: number
 export function DealAmlDialog({ deal, reason, onClose }: {
   deal: AmlDialogDeal | null;
   /** "solicitors": opened because the deal has just moved to Solicitors; "marketing": a sale just on the market (its seller is checked before marketing, Issue 4). */
-  reason?: "solicitors" | "marketing" | "property";
+  reason?: "solicitors" | "marketing" | "property" | "hots";
   onClose: () => void;
 }) {
   return (
@@ -31,7 +31,7 @@ export function DealAmlDialog({ deal, reason, onClose }: {
         {deal && (<>
           <DialogHeader>
             <DialogTitle>
-              {reason === "solicitors" ? "At Solicitors: start the AML checks" : reason === "marketing" ? "On the market: check the seller" : "AML and KYC"}
+              {reason === "hots" ? "At heads of terms: start the AML checks" : reason === "solicitors" ? "At Solicitors: start the AML checks" : reason === "marketing" ? "On the market: check the seller" : "AML and KYC"}
               <span className="block text-sm font-normal text-muted-foreground mt-0.5">
                 {deal.dealRef != null ? `#${deal.dealRef} ` : ""}{deal.name || "Transaction"}
               </span>

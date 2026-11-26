@@ -6524,6 +6524,22 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // would move the linked deal — the same rules the deal PUT enforces.
       // The mirror re-checks (and audits) as a backstop, but by then the unit
       // row has already changed; denying here keeps the boards consistent.
+      // Heads of terms first (Jack, 26 November 2026: "I want to make it a
+      // block, people cant bypass not adding HOTs"). BGP staff move a unit to
+      // HOTs or Solicitors from the tracker only once its heads of terms are
+      // on it: the final agreed file, or the ones drawn up and issued in the
+      // app. Client logins and joint agents keep their own routes.
+      if ("marketingStatus" in partial && !scopedCaller) {
+        const to = legacyToCode(String((partial as any).marketingStatus ?? ""));
+        const from = legacyToCode(String(existing.marketingStatus ?? ""));
+        if ((to === "HOT" || to === "SOL") && to !== from && from !== "SOL") {
+          const held = (await pool.query(`SELECT hots_final_file_id, hots_issued_at FROM available_units WHERE id = $1`, [existing.id])).rows[0];
+          if (!held?.hots_final_file_id && !held?.hots_issued_at) {
+            return res.status(409).json({ code: "HOTS_REQUIRED", message: `Add the heads of terms first: ${existing.unitName || "this unit"} moves to ${to === "HOT" ? "HOTs" : "Solicitors"} once they are on it.` });
+          }
+        }
+      }
+
       if ("marketingStatus" in partial && existing.dealId) {
         try {
           const { dealStatusTransitionDenial, AML_HELD_FOR_CLIENT } = await import("./deal-gates");

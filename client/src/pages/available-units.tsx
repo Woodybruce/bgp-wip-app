@@ -38,6 +38,8 @@ import { BriefProgressChip } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealHandoverDialog } from "@/pages/deals";
+import { TrackerHotsGate, type HotsGateTarget } from "@/components/tracker-hots-gate";
+import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
@@ -828,6 +830,10 @@ export default function AvailableUnitsPage() {
   // Moving a unit to Solicitors opens the one deal form on the unit's own deal
   // (Woody, 2026-11-17: "in each of these situations lets have one form").
   const [promoteUnit, setPromoteUnit] = useState<AvailableUnit | null>(null);
+  // Heads of terms before HOTs or Solicitors (Jack, 26 November 2026): the box
+  // that asks for them, then the AML window once a unit is at HOTs.
+  const [hotsGate, setHotsGate] = useState<{ unit: AvailableUnit; target: HotsGateTarget } | null>(null);
+  const [amlDeal, setAmlDeal] = useState<AmlDialogDeal | null>(null);
   const { toast } = useToast();
 
   // The units list polls faster than the app default (30s felt laggy in
@@ -1744,9 +1750,18 @@ export default function AvailableUnitsPage() {
     // Clients skip it on the SOL flip — that's the BGP fee/compliance
     // handover, which stays internal. Their status change just applies
     // directly (the server strips fee fields anyway).
-    if (field === "marketingStatus" && legacyToCode(value) === "SOL" && !isClientTracker) {
+    // Heads of terms come first (Jack, 26 November 2026): a move to HOTs or
+    // Solicitors opens the box that asks for them, and goes on only once they
+    // are on the unit. The server refuses the move without them too.
+    const toCode = field === "marketingStatus" ? legacyToCode(value) : null;
+    if ((toCode === "HOT" || toCode === "SOL") && !isClientTracker) {
       const unit = units.find(u => u.id === id);
-      if (unit) {
+      const fromCode = unit ? legacyToCode(unit.marketingStatus) : null;
+      if (unit && fromCode !== toCode && fromCode !== "SOL") {
+        setHotsGate({ unit, target: toCode });
+        return;
+      }
+      if (unit && toCode === "SOL") {
         setPromoteUnit(unit);
         return;
       }
@@ -3658,6 +3673,26 @@ export default function AvailableUnitsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TrackerHotsGate
+        unit={hotsGate ? {
+          id: hotsGate.unit.id, unitName: hotsGate.unit.unitName, dealId: hotsGate.unit.dealId || null,
+          propertyName: propertyMap[hotsGate.unit.propertyId]?.name || null,
+          landlordId: (propertyMap[hotsGate.unit.propertyId] as any)?.landlordId || null,
+        } : null}
+        target={hotsGate?.target || "HOT"}
+        onCancel={() => setHotsGate(null)}
+        onDone={({ dealId, added, note }) => {
+          const gate = hotsGate;
+          setHotsGate(null);
+          if (!gate) return;
+          if (added.length || note) toast({ title: added.length ? "Heads of terms added" : "Heads of terms saved", description: [...added, note].filter(Boolean).join(" · ") });
+          if (gate.target === "SOL") { setPromoteUnit({ ...gate.unit, dealId }); return; }
+          updateMutation.mutate({ id: gate.unit.id, data: { marketingStatus: "HOT" } });
+          setAmlDeal({ id: dealId, name: `${gate.unit.unitName}${propertyMap[gate.unit.propertyId]?.name ? `, ${propertyMap[gate.unit.propertyId]?.name}` : ""}` });
+        }}
+      />
+      <DealAmlDialog deal={amlDeal} reason="hots" onClose={() => { setAmlDeal(null); queryClient.invalidateQueries({ queryKey: ["/api/available-units"] }); }} />
 
       <DealHandoverDialog
         open={!!promoteUnit}

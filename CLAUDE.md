@@ -11010,6 +11010,44 @@ being cleared greys it again. It records; it decides nothing and gates
 nothing. Guard: `qa/regression/aml-complete-button.test.mjs`. Not checked in
 a browser.
 
+## Heads of terms before HOTs or Solicitors on the Letting Tracker (Jack, 2026-11-26)
+
+Jack: "On the letting tracker, like the investment rules when people move
+deal status to 'solicitors' or 'HOTs' a box needs to pop up saying adding
+HOTs", then "I want to make it a block, people cant bypass not adding HOTs.
+By adding the Heads of Terms the app should auto add the Landlord and Tenant
+(for leasing it should say Landlord and Tenant not vendor purchaser)". Box:
+`client/src/components/tracker-hots-gate.tsx`. Guard:
+`qa/regression/tracker-hots-gate.test.mjs`.
+
+- **The box** (`TrackerHotsGate`, BGP staff on the staff Letting Tracker): a
+  move to HOTs or Solicitors in the status menu (`inlineUpdate` in
+  `available-units.tsx`) opens **Add the heads of terms**: drop or choose a
+  PDF or Word file, or Cancel, which leaves the status as it was. Nothing
+  else. A unit whose heads of terms are already on it (the final agreed
+  file, or issued in the app: `GET /api/unit-hots/:unitId`) goes straight on.
+- **What adding does**: the unit's transaction is made if it has none
+  (`ensure-deal`); the file is kept as the unit's final agreed heads of terms
+  (`POST /api/unit-hots/:unitId/final`); the transaction's own reader reads
+  it (`POST /api/deals/:id/heads-of-terms/read`); and a landlord or tenant
+  the transaction lacks is set (`addParties`): the one CRM record of that
+  name, else for the landlord the property's landlord, else a new CRM record
+  (type Landlord or Tenant). Two CRM records of the name are left for a
+  person. A reading that fails leaves the file saved and says so.
+- **Then**: at HOTs the status moves and the AML window opens
+  (`DealAmlDialog`, reason `hots`: "At heads of terms: start the AML
+  checks"); at Solicitors the one transaction form opens as before (Woody's
+  form of 17 November is unchanged). A letting's window reads Landlord and
+  Tenant (`partySlotDefs`: Vendor and Purchaser only on a Sale or Purchase).
+- **The server refuses the move too** (`PATCH /api/available-units/:id`, 409
+  `HOTS_REQUIRED`): BGP staff moving a unit to HOTs or Solicitors with no
+  final file and no issued heads of terms. That covers the bulk Change
+  Status. Client logins and joint agents are not held by it.
+- **Not blocked, waiting on Jack and Woody**: the Transactions table, the
+  transaction's Edit form and the Solicitors form's own save move a
+  transaction through the transaction save, which does not ask for heads of
+  terms; ChatBGP's status change likewise. Not checked in a browser.
+
 ## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
 
 Layla, on transaction #3965 (The Crown Estate, BGP's client and the
