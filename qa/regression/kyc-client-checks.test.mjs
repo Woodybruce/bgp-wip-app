@@ -227,3 +227,13 @@ test("client checks are never sent with a list made before BGP's checks read the
   const box = read("client/src/components/deal-aml-status.tsx");
   assert.match(box, /if \(before && runs\(before\) !== runs\(next\)\) queryClient\.invalidateQueries\(\{ queryKey: \["\/api\/aml\/deal", dealId, "client-checks"\] \}\)/);
 });
+
+test("the send window asks what the contact does, as a warning that never blocks a send", () => {
+  const ui = readFileSync(new URL("../../client/src/components/kyc-client-checks.tsx", import.meta.url), "utf8");
+  assert.match(ui, /select-client-check-role/);
+  assert.match(ui, /client-checks-role-warning/);
+  const canSend = ui.match(/const canSend = [^\n]+/)?.[0] || "";
+  assert.ok(canSend && !/role/i.test(canSend), "the role never decides whether Send is enabled");
+  const server = readFileSync(new URL("../../server/aml-portal.ts", import.meta.url), "utf8");
+  assert.match(server, /contactRole: z\.object\(\{ key: z\.enum\(CONTACT_ROLE_KEYS\)/);
+});

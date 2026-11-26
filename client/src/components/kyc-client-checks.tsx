@@ -29,7 +29,7 @@ import type { KycWork } from "@shared/kyc-work-words";
 import { precheckAsks, precheckDay, type PrecheckAskInput } from "@shared/kyc-prechecks";
 import { NO_ADDRESS_WORDS, PARTY_PEOPLE_BASIS_WORDS, PUBLIC_FIGURE_MAX_LINKS, PUBLIC_FIGURE_NOTE_MIN, personRequestAsks, personVerifiedWords, type KycPartyPerson, type PartyPeople, type PersonIdState, type PersonSanctions } from "@shared/kyc-people";
 import type { PublicRecordsResult, PublicRecordsSuggestion } from "@shared/public-records";
-import type { KycPersonRole } from "@shared/kyc-request";
+import { CONTACT_ROLES, contactRoleWarning, type KycContactRole, type KycContactRoleKey, type KycPersonRole } from "@shared/kyc-request";
 
 interface PartyContact { id: string; name: string; email: string | null; mobile: string | null }
 interface Party {
@@ -67,6 +67,8 @@ export interface ClientCheckRequest {
   person?: { key: string; name: string; roles: KycPersonRole[] } | null;
   // Sent through the party's own agent to pass on (23 November 2026).
   viaAgent?: { firm: string; name: string; email: string; passedOn: Array<{ name: string; email: string; at: string }> } | null;
+  // What the person asked does for the party, in words (26 November 2026).
+  contactRole?: string | null;
   ownLinksFor?: string[];
   // note: why a step is not ticked (the old owners' step's files say nobody's name).
   docs: Array<{ key: KycDocKey; title: string; done: boolean; note?: string | null }>;
@@ -166,7 +168,7 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
           {!request.viaAgent.passedOn.length && <div>Not passed on from the page yet: they may have forwarded the email.</div>}
         </div>
       ) : (
-        <div className="text-muted-foreground truncate">{request.recipientEmail}</div>
+        <div className="text-muted-foreground truncate">{request.recipientEmail}{request.contactRole ? ` · ${request.contactRole}` : ""}</div>
       )}
       <div className="text-muted-foreground">
         {request.sentAt
@@ -1039,6 +1041,9 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const [kind, setKind] = useState<KycPartyKind | null>(null);
   const [idCheck, setIdCheck] = useState<boolean | null>(null);
   const [docs, setDocs] = useState<KycDocKey[] | null>(null);
+  // What the person asked does for the party (26 November 2026): a warning, never a block.
+  const [roleKey, setRoleKey] = useState<KycContactRoleKey | "">("");
+  const [roleOther, setRoleOther] = useState("");
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(false);
   const [sent, setSent] = useState<null | { link: string; from: string | null; cc: string[]; error: string | null; fellBack: boolean; idCheckNote: string | null }>(null);
@@ -1072,6 +1077,9 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
   const toEmail = usingOther ? email.trim() : pickedContact?.email || "";
   const mobileValue = mobile ?? (usingOther ? "" : pickedContact?.mobile || "");
   const toMobile = mobileValue.trim();
+  const askRole = !via && chosenKind === "company";
+  const contactRole: KycContactRole | null = askRole && roleKey ? { key: roleKey, other: roleKey === "other" ? roleOther.trim() || null : null } : null;
+  const roleWarning = askRole && party ? contactRoleWarning(contactRole, shownName) : null;
 
   const toggleDoc = (key: KycDocKey) => setDocs(current => {
     const list = current || chosenDocs;
@@ -1113,6 +1121,7 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
       } : {
         companyId, contactId: usingOther ? null : pickedContact?.id || null, name: toName, email: toEmail,
         mobile: toMobile || null, kind: chosenKind, needsIdCheck: wantId, docs: chosenDocs, note: note.trim() || null, basedOn,
+        ...(contactRole ? { contactRole } : {}),
       };
       const res = await fetch(urls.clientChecks(dealId), {
         method: "POST", credentials: "include", headers: { ...getAuthHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -1261,6 +1270,22 @@ function SendClientChecksDialog({ dealId, companyId, partyName, agent, startViaA
                 ))}
               </div>
             </div>
+
+            {askRole && (
+              <div className="space-y-1.5" data-testid="client-checks-role">
+                <Label>What does {toName || "this person"} do for {shownName}?</Label>
+                <Select value={roleKey} onValueChange={v => setRoleKey(v as KycContactRoleKey)}>
+                  <SelectTrigger data-testid="select-client-check-role"><SelectValue placeholder="Choose their role" /></SelectTrigger>
+                  <SelectContent>
+                    {CONTACT_ROLES.map(r => <SelectItem key={r.key} value={r.key}>{r.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {roleKey === "other" && <Input placeholder="What they do for the party" value={roleOther} maxLength={120} onChange={e => setRoleOther(e.target.value)} data-testid="input-client-check-role-other" />}
+                {roleWarning && (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900" data-testid="client-checks-role-warning">{roleWarning} You can still send.</p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>What to ask for</Label>

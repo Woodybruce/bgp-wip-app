@@ -109,10 +109,10 @@ test("Woody's check on Jack's link counts for Woody, not for Jack, and a file on
   assert.deepEqual(woody.outstanding, ["proof of address"], "an owner still owes a proof of address (26 November 2026)");
   assert.equal(jack.id.state, "not_started");
   assert.equal(jack.id.someoneElse, "Woody Bruce");
-  // Jack acts for the company and is not an owner: his identity check and a
-  // proof of address (the company is not listed).
-  assert.equal(jack.address.notNeeded, undefined);
-  assert.deepEqual(jack.outstanding, ["identity check", "proof of address"]);
+  // Jack acts for the company and is not an owner: a representative sends no
+  // proof of address (Jack Barratt, 26 November 2026).
+  assert.equal(jack.address.notNeeded, true);
+  assert.deepEqual(jack.outstanding, ["identity check"]);
   assert.equal(jack.canSend, true, "his request is finished, so nothing live asks for them");
   assert.equal(huseyn.id.state, "not_started", "a passport on the old owners' step is not his check");
   assert.deepEqual(out.loose, [{ ref: "7MJEGT", files: 2, names: ["Woody Bruce", "Huseyn Mirhadiyev"] }]);
@@ -191,13 +191,12 @@ test("a listed company, an unread register and a private individual", () => {
   assert.deepEqual(acting.outstanding, ["identity check"]);
   assert.deepEqual(personRequestAsks(acting, false).docs, ["photo_id"]);
   assert.deepEqual(listed.outstanding, ["Jack Barratt: identity check"]);
-  // A company that is not listed: the person acting sends one (Jack, 26 November
-  // 2026: "The only time we need ID only by itself is Listed Businesses").
+  // A company that is not listed: its representative sends none either (Jack, 26 November 2026).
   const unlisted = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: { ...bgpLtd, owners: [] }, sanctions: sanctions([]) }, requests: [request({})] });
   const same = unlisted.people.find(p => p.roles.includes("acting"))!;
-  assert.equal(same.address.notNeeded, undefined);
-  assert.deepEqual(same.outstanding, ["identity check", "proof of address"]);
-  assert.deepEqual(personRequestAsks(same, true).docs, ["proof_of_address"]);
+  assert.equal(same.address.notNeeded, true);
+  assert.deepEqual(same.outstanding, ["identity check"]);
+  assert.deepEqual(personRequestAsks(same, true).docs, []);
   // And the person acting who is also an owner.
   const ownerActing = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({ recipientName: "Woody Bruce" })] });
   const woody = ownerActing.people.find(p => p.roles.includes("acting"))!;
@@ -310,14 +309,14 @@ test("a proof of address counts only when it reads as theirs, in date and accept
 
 // Who sends a proof of address (Jack, 26 November 2026: "applied back to all
 // checks ... The only time we need ID only by itself is Listed Businesses").
-test("everyone whose identity is checked owes a proof of address, except the person acting for a listed company", () => {
+test("owners and the party in person owe a proof of address; an agent or representative never does", () => {
   assert.equal(owesProofOfAddress("individual", ["acting"]), true, "a private individual");
   assert.equal(owesProofOfAddress("individual", ["joint"]), true, "someone named alongside them");
   assert.equal(owesProofOfAddress("company", ["guarantor"]), true, "a person who guarantees");
   assert.equal(owesProofOfAddress("company", ["signer"]), true, "a person who signs too");
   assert.equal(owesProofOfAddress("company", ["owner"]), true);
   assert.equal(owesProofOfAddress("company", ["owner", "acting", "director"]), true);
-  assert.equal(owesProofOfAddress("company", ["acting"]), true, "the person acting for a company that is not listed");
+  assert.equal(owesProofOfAddress("company", ["acting"]), false, "a representative of a company, listed or not");
   assert.equal(owesProofOfAddress("company", ["acting", "director"], true), false, "the person acting for a listed company");
   assert.equal(owesProofOfAddress("company", ["guarantor"], true), true, "a guarantor of a listed company");
   assert.equal(owesProofOfAddress("company", ["guarantor_owner"]), true, "the owner of a company that guarantees");

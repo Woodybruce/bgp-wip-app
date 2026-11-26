@@ -68,10 +68,10 @@ test("People to check on a trust: the ones to verify each get a link; the rest a
 });
 
 test("the client checks for a trust ask for its own documents, and skip what the file holds", () => {
-  // The person acting for a trust sends a proof of address too (Jack, 26 November 2026).
-  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
+  // The person acting for a trust is a representative: no proof of address (Jack, 26 November 2026).
+  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
   const asks = precheckAsks(null, { kind: "company", role: "purchaser", idCheck: true, contactName: "David Ellis", trust: { deed: true, trs: false, trsNotRequired: false, trustees: ["David Ellis"] } });
-  assert.deepEqual(asks.docs, ["proof_of_address", "trs_excerpt", "trust_wealth", "source_of_funds"]);
+  assert.deepEqual(asks.docs, ["trs_excerpt", "trust_wealth", "source_of_funds"]);
   assert.deepEqual(asks.notAsked.map(n => n.key), ["trust_deed", "trust_authority"]);
 });
 

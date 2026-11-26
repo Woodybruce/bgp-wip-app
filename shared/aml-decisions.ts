@@ -40,9 +40,15 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 26 November 2026
-  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Proof of address from everyone checked, except a listed company's contact",
+  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Say what the contact does before sending client checks",
+    text: "The send window asks what the person does for a company party: director, owner, senior employee, asset manager, family office, attorney, trustee, professional adviser, information only, or Other typed in. The role is kept on the request. No role, an adviser or information only shows a warning; it never stops the send. Advisers and agents are not checked: BGP records the firm's HMRC or SRA registration, as now." },
+  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "No proof of address from an agent or representative",
+    text: "A proof of address is for the beneficial owners, a trust's people and a party in person. The person acting for a company or a trust (an agent, a solicitor, a representative) is never asked for one, whether or not the company is listed. An owner who also acts for the company still sends theirs." },
+  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Proof of address from everyone checked, except a listed company's contact", changed: "26 November 2026: the person acting for a company or trust is not asked for one either.",
     text: "Everyone whose identity is checked sends a proof of address: a company's owners, the person acting for it, a trust's people, a private individual and anyone who signs or guarantees. The only exception is the person acting for a listed company or a UK public body. Request emails and pages show List B again. This goes further than HMRC's minimum on purpose." },
   // 25 November 2026
+  { date: "2026-11-26", who: ["Jack"], topic: "Policy", title: "Policy Issue 8",
+    text: "Issue 8 of the AML policy replaces Issue 7 on the Policy pill. It says everyone whose identity is verified gives a proof of address, a company's owners and the person acting included. The only exception is the person acting for a listed company or a UK public body. Everyone confirms Issue 8 in AML training." },
   { date: "2026-11-25", who: ["Jack"], topic: "Policy", title: "Policy Issue 7 and trust checklist Issue 3",
     text: "Issue 7 of the AML policy and Issue 3 of the trust checklist replace Issue 6 and Issue 2 on the Policy pill. They add that each individual on a trust who is verified also gives a proof of address. Everything else in Issue 6 stands. Everyone confirms Issue 7 in AML training." },
   { date: "2026-11-25", who: ["Jack"], topic: "Trusts and charities", title: "A trust's people send a proof of address",

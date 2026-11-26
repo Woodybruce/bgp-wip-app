@@ -409,6 +409,56 @@ export async function sddNotesFor(dealId: string): Promise<Record<string, SavedS
 
 const router = Router();
 
+// AML complete on a transaction (Jack, 26 November 2026: "a big button at
+// the bottom that says Complete"). Pressed by a BGP person once every party
+// is cleared or needs no checks; read again here by the gate's own rule. A
+// line on the transaction's history, the latest standing. It decides nothing:
+// each party's sign-off is still what counts.
+export async function amlCompleteFor(dealId: string): Promise<{ by: string | null; at: string } | null> {
+  const r = (await pool.query(
+    `SELECT changed_by_name, created_at FROM deal_audit_log WHERE deal_id = $1 AND field = 'aml_complete' ORDER BY created_at DESC NULLS LAST, id DESC LIMIT 1`, [dealId])).rows[0];
+  return r ? { by: text(r.changed_by_name) || null, at: new Date(r.created_at).toISOString() } : null;
+}
+
+router.get("/api/deals/:id/aml-complete", async (req: Request, res: Response) => {
+  try {
+    const { contactViewer } = await import("./contact-viewer");
+    if (!(await contactViewer(req)).staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    res.json({ complete: await amlCompleteFor(String(req.params.id)) });
+  } catch (err: any) {
+    console.error("[deal-party-aml] AML complete not read:", err?.message);
+    res.status(500).json({ message: "Could not read whether the AML is complete." });
+  }
+});
+
+router.post("/api/deals/:id/aml-complete", async (req: Request, res: Response) => {
+  try {
+    const { contactViewer } = await import("./contact-viewer");
+    const viewer = await contactViewer(req);
+    if (!viewer.staff) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const dealId = String(req.params.id);
+    const d = (await pool.query(`SELECT id, landlord_id, tenant_id, vendor_id, purchaser_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+    if (!d) return res.status(404).json({ message: "Transaction not found." });
+    const parties = [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id].filter(Boolean);
+    if (parties.length < 2) return res.status(409).json({ message: "This transaction needs both its parties before its AML can be complete." });
+    const { checkCounterpartyAml } = await import("./deal-gates");
+    const gate = await checkCounterpartyAml({ dealId, landlordId: d.landlord_id, tenantId: d.tenant_id, vendorId: d.vendor_id, purchaserId: d.purchaser_id });
+    if (gate.notReady.length) {
+      return res.status(409).json({ message: `Not complete yet: ${gate.notReady.map(n => `${n.name} (${n.reason})`).join("; ")}.` });
+    }
+    const userId = String((req as any).session?.userId || (req as any).tokenUserId || "");
+    const u = userId ? (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0] : null;
+    const name = text(u?.name) || text(u?.email) || "BGP";
+    await pool.query(
+      `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'aml_complete', NULL, 'complete', $2, $3, $4)`,
+      [dealId, "Every party cleared or needing no checks", userId || null, name]);
+    res.json({ complete: await amlCompleteFor(dealId) });
+  } catch (err: any) {
+    console.error("[deal-party-aml] AML complete not saved:", err?.message);
+    res.status(500).json({ message: "Could not mark the AML complete." });
+  }
+});
+
 router.get("/api/deals/:id/sdd-notes", async (req: Request, res: Response) => {
   try {
     const { contactViewer } = await import("./contact-viewer");

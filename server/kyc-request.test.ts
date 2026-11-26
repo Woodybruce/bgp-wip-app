@@ -54,10 +54,10 @@ test("the steps follow the request: the identity check, each document, then the 
 test("what is asked for by default: photo ID only without the online check; ownership and authority for a company; the money from whoever pays", () => {
   // Everyone asked sends a proof of address (Jack, 26 November 2026); a listed
   // company's is dropped by precheckAsks.
-  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["proof_of_address", "ownership", "owner_ids", "authority"]);
-  assert.ok(defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"), "the person acting for a trust too");
+  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
+  assert.ok(!defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"), "a trust's representative is not asked");
   assert.deepEqual(defaultKycDocs("company", "landlord", true, false, true), ["authority"], "a UK public body: authority only");
   assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
   assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
@@ -434,4 +434,18 @@ test("every request asks for proofs of address, except one to a listed company o
   // The step's words take a driving licence that shows the address.
   assert.match(KYC_DOCS.proof_of_address.detail, /photocard driving licence, if it shows your current address/);
   assert.match(KYC_DOCS.owner_ids.detail, /and a proof of address from the last three months/);
+});
+
+test("the role question: a warning for no role, an adviser, information only or a blank Other; never for an acting person", async () => {
+  const { CONTACT_ROLES, contactRoleWarning, contactRoleWords } = await import("../shared/kyc-request");
+  assert.match(contactRoleWarning(null, "Acme Ltd") || "", /Choose what this person does for Acme Ltd/);
+  assert.match(contactRoleWarning({ key: "adviser" }, "Acme Ltd") || "", /not asked for ID/);
+  assert.match(contactRoleWarning({ key: "info" }, "Acme Ltd") || "", /not checked/);
+  assert.equal(contactRoleWarning({ key: "other", other: " " }, "Acme Ltd"), "Say what they do.");
+  assert.equal(contactRoleWarning({ key: "other", other: "Fund manager" }, "Acme Ltd"), null);
+  for (const r of CONTACT_ROLES) if (r.acting && r.key !== "other") assert.equal(contactRoleWarning({ key: r.key }, "Acme Ltd"), null);
+  assert.equal(contactRoleWords({ key: "other", other: "Fund manager" }), "Fund manager");
+  assert.equal(contactRoleWords({ key: "director" }), "Director or LLP member");
+  assert.equal(contactRoleWords(null), null);
+  assert.equal(CONTACT_ROLES[CONTACT_ROLES.length - 1].key, "other");
 });

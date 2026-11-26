@@ -7550,8 +7550,45 @@ the identity", with no proof of address.
   23 to 25 November keeps its steps; its people show the proof as owed on
   People to check. Told to Jack at the time: HMRC's AMLG11400 14.7 asks only
   "reasonable measures to verify the identity" of beneficial owners, so this
-  goes further than HMRC on purpose. **Policy Issue 7 still says owners give
-  identity only: a new issue waits on Jack's word.**
+  goes further than HMRC on purpose. **Issue 8 of the policy** (Jack, the same day: "publish issue 8") says
+  the same and is on the Policy pill (`policy-issue-8`, Issue 7 kept on the
+  quiet line): the Individuals section's proof of address paragraph, a change
+  record row and the footer. `POLICY_SOURCE`, the rules in short, ChatBGP's
+  prompt and the app map name Issue 8; everyone confirms Issue 8 afresh in AML
+  training. The trust checklist stays at Issue 3.
+- **Never a proof of address from an agent or representative** (Jack, later
+  on 26 November 2026: "We dont check agents or representatives for ID and
+  proof or address ... we only check ID and proof of address for the
+  Ultimate Beneficial Owners"). `owesProofOfAddress` is false for someone
+  whose only roles are the person acting or a director, for any company or
+  trust, listed or not (a private individual is the party in person and
+  still owes one). `defaultKycDocs` asks a company's or trust's contact for
+  none; `precheckAsks` adds it only when the person asked is one of the
+  owners, and otherwise lists it as not asked (`REPRESENTATIVE_NO_ADDRESS`).
+  Owners, a trust's people, signers and guarantors still send one, and
+  request emails still list List B for them. The recipient of a trust's
+  documents request was never a person to check (`trustDocs`). **Their
+  identity check is still asked** (HMRC AMLG11400 14.7 and MLR 2017 reg
+  28(10): identify the person acting and their authority): whether to stop
+  that is waiting on Jack, and so is a policy Issue 9 (Issue 8 says the
+  person acting sends a proof of address).
+- **The role question** (Jack, 26 November 2026, on a draft "Rules for
+  Persons Acting on Behalf of a Party": "add Role Question for every contact
+  before we hit send. A drop down list ... add choice of adding 'other' ...
+  a warning box, not a block"). Send client checks, for a company party not
+  sent through its agent, asks **What does <person> do for <party>?**
+  (`CONTACT_ROLES` in `shared/kyc-request.ts`: director or LLP member, owner,
+  senior employee, asset manager, family office staff, attorney, trustee,
+  professional adviser, information only, Other with a box). No role, an
+  adviser, information only or a blank Other shows an amber warning
+  (`contactRoleWarning`) and Send stays enabled. Kept on the request
+  (`request.contactRole`) and shown on its row. It changes nothing asked.
+  From the same draft Jack decided, and nothing was built: authority stays
+  as it is (a director's email or letter, or signed terms; no email domain
+  check); trustees keep full ID and proof of address; advisers and agents
+  are not checked beyond the firm's HMRC or SRA registration; an owner who
+  acts is checked as an owner. The draft's data-only ID check was not taken
+  up: the person acting keeps the Veriff check ("Keep it").
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in
@@ -10949,6 +10986,22 @@ and database) takes the request's own token.
 | Migrations | `migrations/` |
 | Build script | `script/build.ts` |
 | Project runbook | `replit.md` |
+
+## Complete on a transaction's AML (Jack, 2026-11-26)
+
+Jack: "Once checks are all complete on this page, id like a big button at the
+bottom that says Complete. Its grey and unable to click if check not complete
+but turns orange and clickable if done". `AmlCompleteButton` at the foot of
+the transaction's AML box (`deal-aml-status.tsx`, BGP staff, not the view-only
+copy): greyed while `allApproved` is false, with who is still to clear under
+it; pressed, `POST /api/deals/:id/aml-complete` (BGP staff as themselves)
+reads the parties again by the gate's rule (`checkCounterpartyAml`: cleared,
+or Not required) and writes a `deal_audit_log` line, field `aml_complete`
+(hidden from client logins with the other AML lines); the button then reads
+"Completed by <name> · <date>" (`GET` the same address). A party that stops
+being cleared greys it again. It records; it decides nothing and gates
+nothing. Guard: `qa/regression/aml-complete-button.test.mjs`. Not checked in
+a browser.
 
 ## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
 

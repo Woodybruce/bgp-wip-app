@@ -14,7 +14,7 @@
 // the deal's agents, the Nominated Officer and the Deputy do, with KYC4U
 // (BGP's outsourced KYC provider) for enhanced due diligence.
 
-import { defaultKycDocs, termsAuthorityWords, LISTED_ID_ONLY, type KycDocKey, type KycPartyKind } from "./kyc-request";
+import { defaultKycDocs, termsAuthorityWords, LISTED_ID_ONLY, REPRESENTATIVE_NO_ADDRESS, type KycDocKey, type KycPartyKind } from "./kyc-request";
 import type { PrecheckAbroad, PrecheckGleif } from "./foreign-owners";
 import { gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords } from "./foreign-owner-words";
 import { charityConcerns, charityLines, charityRegisterUrl, type PrecheckCharity } from "./charity-register";
@@ -1200,7 +1200,7 @@ const monthsSince = (iso: string | null, today: Date): number | null => {
 };
 
 /** Why the person dealing with us for a company or a trust is not asked for a proof of address. */
-export const ACTING_NO_ADDRESS = LISTED_ID_ONLY;
+export const ACTING_NO_ADDRESS = REPRESENTATIVE_NO_ADDRESS;
 
 export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
@@ -1253,7 +1253,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
-    drop("proof_of_address", LISTED_ID_ONLY);
+    notAsked.push({ key: "proof_of_address", reason: LISTED_ID_ONLY });
   } else if (input.owners.length && input.ownersAbroad?.length) {
     // A company registered abroad owns it: Companies House cannot show who
     // owns that company, so the structure chart and the owners' IDs are asked
@@ -1277,6 +1277,13 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const others = ownerNames.filter(n => !(ctx.contactName && personNamesMatch(ctx.contactName, n)));
     if (others.length) drop("owner_ids", `Each owner gets a link of their own for their identity check: ${others.map(personDisplayName).join(", ")}. Send them from People to check on the transaction's AML card, or the client passes them on from their page.`);
     else drop("owner_ids", "The person you are asking is the only owner the register names: their own identity check covers it.");
+  }
+  // The person asked sends a proof of address only as one of the owners
+  // (Jack, 26 November 2026: never an agent or representative).
+  if (!input.listing) {
+    const owning = [...input.owners.filter(o => o.kind === "individual").map(o => o.name), ...input.peopleUpChain.map(p => p.name)];
+    if (ctx.contactName && owning.some(n => personNamesMatch(ctx.contactName!, n))) { if (!docs.includes("proof_of_address")) docs.unshift("proof_of_address"); }
+    else notAsked.push({ key: "proof_of_address", reason: REPRESENTATIVE_NO_ADDRESS });
   }
 
   if (isRegisterDirector(ctx.contactName, input.directors)) {

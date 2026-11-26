@@ -177,19 +177,64 @@ export const CERTIFIED_IDS_A_ONLY = "Upload each person's certified List A docum
  * guarantees. This goes further than HMRC's minimum on purpose and replaces
  * Woody's rule of 25 November 2026 (only a customer in person).
  *
- * idOnly: the party is a listed company (or a UK public body), which has no
- * owners to check: the person acting for it gives their identity alone.
+ * Never the person acting who is nothing else (Jack, later the same day:
+ * "We dont check agents or representatives for ID and proof or address ...
+ * we only check ID and proof of address for the Ultimate Beneficial Owners"):
+ * an agent, a solicitor or a representative sends no proof of address, for
+ * any party. An owner who is also the person acting still does.
  */
-export function owesProofOfAddress(_kind: KycPartyKind, roles: Iterable<KycPersonRole>, idOnly = false): boolean {
+export function owesProofOfAddress(kind: KycPartyKind, roles: Iterable<KycPersonRole>, _idOnly = false): boolean {
   const set = new Set(roles);
-  if (idOnly && [...set].every(r => r === "acting" || r === "director")) return false;
+  // A private individual is the party in person, whatever their row says.
+  if (kind === "individual") return true;
+  if (set.size && [...set].every(r => r === "acting" || r === "director")) return false;
   return true;
 }
 
 /** Why the person acting for a listed company gives their identity alone. */
 export const LISTED_ID_ONLY = "A listed company: the person dealing with us gives their identity check and their authority to act, with no proof of address.";
+/** Why the person dealing with us for a company or a trust is not asked for a proof of address. */
+// What the person asked does for the party (Jack, 26 November 2026: "add Role
+// Question for every contact before we hit send. A drop down list ... And add
+// choice of adding 'other' ... a warning box, not a block"). Chosen in the send
+// window and kept on the request. `acting` is someone who instructs us,
+// negotiates or agrees terms, or signs for the party: they do an identity
+// check. An adviser or someone who only passes on information does not.
+export const CONTACT_ROLES = [
+  { key: "director", label: "Director or LLP member", acting: true },
+  { key: "owner", label: "Owner (beneficial owner)", acting: true },
+  { key: "employee", label: "Senior employee (commercial director, head of real estate)", acting: true },
+  { key: "asset_manager", label: "Asset manager", acting: true },
+  { key: "family_office", label: "Family office staff", acting: true },
+  { key: "attorney", label: "Attorney (under a power of attorney)", acting: true },
+  { key: "trustee", label: "Trustee", acting: true },
+  { key: "adviser", label: "Solicitor, agent or other professional adviser", acting: false },
+  { key: "info", label: "Information only (copied in, or provides data)", acting: false },
+  { key: "other", label: "Other", acting: true },
+] as const;
+export type KycContactRoleKey = typeof CONTACT_ROLES[number]["key"];
+export const CONTACT_ROLE_KEYS = CONTACT_ROLES.map(r => r.key) as [KycContactRoleKey, ...KycContactRoleKey[]];
+export interface KycContactRole { key: KycContactRoleKey; other?: string | null }
+
+/** The role in words: the list's label, or what was typed for Other. */
+export function contactRoleWords(role: KycContactRole | null | undefined): string | null {
+  if (!role) return null;
+  if (role.key === "other") return role.other?.trim() || "Other";
+  return CONTACT_ROLES.find(r => r.key === role.key)?.label || null;
+}
+
+/** The warning the send window shows about the role chosen. It never stops a send. */
+export function contactRoleWarning(role: KycContactRole | null | undefined, partyName: string): string | null {
+  if (!role) return `Choose what this person does for ${partyName} before you send.`;
+  if (role.key === "adviser") return "A solicitor or agent is not asked for ID. Send the checks through their agent to pass on, or choose the person at the party who instructs, negotiates or signs.";
+  if (role.key === "info") return "Someone who only passes on information is not checked. Choose the person who instructs us, negotiates or signs.";
+  if (role.key === "other" && !role.other?.trim()) return "Say what they do.";
+  return null;
+}
+
+export const REPRESENTATIVE_NO_ADDRESS = "The person dealing with us is a representative, not an owner: no proof of address is asked of them. Each owner sends their own.";
 /** Why someone is not asked for a proof of address. */
-export const NO_ADDRESS_WORDS = "Everyone whose identity we check sends a proof of address, except the person acting for a listed company or a UK public body.";
+export const NO_ADDRESS_WORDS = "A proof of address is for the owners and the party in person, not for an agent or representative acting for them.";
 
 /** Why authority to act is not asked for: our signed terms of engagement are on file (25 November 2026). */
 export const termsAuthorityWords = (summary: string): string =>
@@ -215,8 +260,10 @@ export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefin
   if (!idCheck) docs.push("photo_id");
   // A trust (23 November 2026): its deed, HMRC's registration, the trustees'
   // instruction and the settlor's wealth. Its people each get their own link.
-  // Everyone asked sends a proof of address (Jack, 26 November 2026); a listed company's is dropped by precheckAsks.
-  docs.push("proof_of_address");
+  // A proof of address is the party's own or an owner's (Jack, 26 November
+  // 2026), never a representative's: precheckAsks adds it when the person
+  // asked for a company is one of its owners.
+  if (kind === "individual") docs.push("proof_of_address");
   if (kind === "company" && trust) docs.push("trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
   else if (kind !== "individual") docs.push("ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");

@@ -51,6 +51,7 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-8", title: "Anti-Money Laundering Policy", issue: 8, date: "November 2026", file: "bgp-aml-policy-issue-8.docx" },
   { key: "policy-issue-7", title: "Anti-Money Laundering Policy", issue: 7, date: "November 2026", file: "bgp-aml-policy-issue-7.docx" },
   { key: "policy-issue-6", title: "Anti-Money Laundering Policy", issue: 6, date: "November 2026", file: "bgp-aml-policy-issue-6.docx" },
   { key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5, date: "November 2026", file: "bgp-aml-policy-issue-5.docx" },
@@ -92,7 +93,7 @@ export const TRUST_PERSON_EVIDENCE = "For each individual: their identity, from 
 export const ENHANCED_CHECKLIST: readonly AmlChecklistItem[] = [
   { n: 1, title: "Identity of the party", detail: "The company verified from its register (or the person's photo ID), and who is acting for it with their authority." },
   { n: 2, title: "Beneficial owners", detail: "Everyone owning or controlling more than 25%, through any chain of companies, identified and verified; a structure chart where there is a chain." },
-  { n: 3, title: "Each person's identity", detail: "The online identity check or one valid photo ID for each beneficial owner and the person acting. And a proof of address for each of them, except the person acting for a listed company." },
+  { n: 3, title: "Each person's identity", detail: "The online identity check or one valid photo ID for each beneficial owner and the person acting. And a proof of address for each beneficial owner; never for an agent or representative." },
   { n: 4, title: "Source of funds", detail: "Where the money for this transaction comes from, with evidence, and who provides it." },
   { n: 5, title: "Source of wealth", detail: "How the owners came by their wealth, where the risk calls for it (a PEP, a high-risk country, a large sum)." },
   { n: 6, title: "The higher-risk factor", detail: "What made it enhanced (the red flag or policy factor) and how it was resolved or why it is acceptable." },
@@ -428,7 +429,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy (Issue 7) and risk assessment (Issue 4)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 8) and risk assessment (Issue 4)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);

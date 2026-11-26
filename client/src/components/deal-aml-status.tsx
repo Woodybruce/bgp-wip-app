@@ -1214,9 +1214,47 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
             </AmlStep>
           </div>
         )}
+        {staffView && !mirror && data.counterparties.length > 0 && <AmlCompleteButton dealId={dealId} ready={data.allApproved} missing={data.missing || []} />}
         {footer}
       </CardContent>
     </Card>
+  );
+}
+
+// Complete (Jack, 26 November 2026): grey until every party is cleared or
+// needs no checks, then pressed once; the transaction's history keeps who and when.
+function AmlCompleteButton({ dealId, ready, missing }: { dealId: string; ready: boolean; missing: string[] }) {
+  const { toast } = useToast();
+  const key = ["/api/deals", dealId, "aml-complete"];
+  const q = useQuery<{ complete: { by: string | null; at: string } | null }>({
+    queryKey: key, enabled: !!dealId, staleTime: 30_000,
+    queryFn: async () => (await apiRequest("GET", `/api/deals/${dealId}/aml-complete`)).json(),
+  });
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/deals/${dealId}/aml-complete`, {})).json(),
+    onSuccess: (r: any) => {
+      queryClient.setQueryData(key, r);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+      toast({ title: "AML complete", description: "Recorded on the transaction's history." });
+    },
+    onError: (e: any) => toast({ title: "Not complete yet", description: String(e?.message || e).replace(/^\d+:\s*/, "").replace(/^\{"message":"(.*?)".*\}$/, "$1"), variant: "destructive" }),
+  });
+  const done = ready ? q.data?.complete || null : null;
+  const when = done ? new Date(done.at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+  return (
+    <div className="pt-1" data-testid="aml-complete">
+      {done ? (
+        <div className="flex h-12 w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 text-sm font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" data-testid="aml-complete-done">
+          <CheckCircle2 className="h-4 w-4" />Completed{done.by ? ` by ${done.by}` : ""} · {when}
+        </div>
+      ) : (
+        <Button type="button" size="lg" className="h-12 w-full text-base font-semibold disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100" disabled={!ready || save.isPending || q.isLoading}
+          onClick={() => save.mutate()} data-testid="button-aml-complete">
+          {save.isPending ? "Saving…" : "Complete"}
+        </Button>
+      )}
+      {!ready && <p className="mt-1 text-center text-xs text-muted-foreground" data-testid="aml-complete-waiting">{missing.length ? `Still to clear: ${missing.join(", ")}.` : "Every party needs to be cleared first."}</p>}
+    </div>
   );
 }
 
