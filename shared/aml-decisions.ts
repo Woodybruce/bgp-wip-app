@@ -43,6 +43,8 @@ export const AML_DECISIONS: AmlDecision[] = [
   { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Proof of address from everyone checked, except a listed company's contact",
     text: "Everyone whose identity is checked sends a proof of address: a company's owners, the person acting for it, a trust's people, a private individual and anyone who signs or guarantees. The only exception is the person acting for a listed company or a UK public body. Request emails and pages show List B again. This goes further than HMRC's minimum on purpose." },
   // 25 November 2026
+  { date: "2026-11-26", who: ["Jack"], topic: "Policy", title: "Policy Issue 8",
+    text: "Issue 8 of the AML policy replaces Issue 7 on the Policy pill. It says everyone whose identity is verified gives a proof of address, a company's owners and the person acting included. The only exception is the person acting for a listed company or a UK public body. Everyone confirms Issue 8 in AML training." },
   { date: "2026-11-25", who: ["Jack"], topic: "Policy", title: "Policy Issue 7 and trust checklist Issue 3",
     text: "Issue 7 of the AML policy and Issue 3 of the trust checklist replace Issue 6 and Issue 2 on the Policy pill. They add that each individual on a trust who is verified also gives a proof of address. Everything else in Issue 6 stands. Everyone confirms Issue 7 in AML training." },
   { date: "2026-11-25", who: ["Jack"], topic: "Trusts and charities", title: "A trust's people send a proof of address",

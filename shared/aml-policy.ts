@@ -51,6 +51,7 @@ export interface AmlPolicyDocument { key: string; title: string; issue: number; 
 // are kept for five years from their review, older versions included). A new
 // issue is a new entry and a new file; never overwrite an old one.
 export const AML_POLICY_DOCUMENTS: readonly AmlPolicyDocument[] = [
+  { key: "policy-issue-8", title: "Anti-Money Laundering Policy", issue: 8, date: "November 2026", file: "bgp-aml-policy-issue-8.docx" },
   { key: "policy-issue-7", title: "Anti-Money Laundering Policy", issue: 7, date: "November 2026", file: "bgp-aml-policy-issue-7.docx" },
   { key: "policy-issue-6", title: "Anti-Money Laundering Policy", issue: 6, date: "November 2026", file: "bgp-aml-policy-issue-6.docx" },
   { key: "policy-issue-5", title: "Anti-Money Laundering Policy", issue: 5, date: "November 2026", file: "bgp-aml-policy-issue-5.docx" },
@@ -428,7 +429,7 @@ export function sectorMatches(input: { sicCodes?: string[] | null; companyType?:
 
 // ── Higher-risk factors as flags ────────────────────────────────────────────
 
-export const POLICY_SOURCE = "BGP's AML policy (Issue 7) and risk assessment (Issue 4)";
+export const POLICY_SOURCE = "BGP's AML policy (Issue 8) and risk assessment (Issue 4)";
 const keyPart = (v: unknown) => norm(v).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "x";
 const POOLED_TYPES = new Set(["limited-partnership"]);
 const ICVC_TYPES = new Set(["investment-company-with-variable-capital", "icvc-securities", "icvc-warrant", "icvc-umbrella"]);

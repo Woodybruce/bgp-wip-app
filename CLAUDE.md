@@ -7550,8 +7550,12 @@ the identity", with no proof of address.
   23 to 25 November keeps its steps; its people show the proof as owed on
   People to check. Told to Jack at the time: HMRC's AMLG11400 14.7 asks only
   "reasonable measures to verify the identity" of beneficial owners, so this
-  goes further than HMRC on purpose. **Policy Issue 7 still says owners give
-  identity only: a new issue waits on Jack's word.**
+  goes further than HMRC on purpose. **Issue 8 of the policy** (Jack, the same day: "publish issue 8") says
+  the same and is on the Policy pill (`policy-issue-8`, Issue 7 kept on the
+  quiet line): the Individuals section's proof of address paragraph, a change
+  record row and the footer. `POLICY_SOURCE`, the rules in short, ChatBGP's
+  prompt and the app map name Issue 8; everyone confirms Issue 8 afresh in AML
+  training. The trust checklist stays at Issue 3.
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in
