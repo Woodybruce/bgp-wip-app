@@ -14,7 +14,7 @@
 // the deal's agents, the Nominated Officer and the Deputy do, with KYC4U
 // (BGP's outsourced KYC provider) for enhanced due diligence.
 
-import { defaultKycDocs, termsAuthorityWords, type KycDocKey, type KycPartyKind } from "./kyc-request";
+import { defaultKycDocs, termsAuthorityWords, LISTED_ID_ONLY, type KycDocKey, type KycPartyKind } from "./kyc-request";
 import type { PrecheckAbroad, PrecheckGleif } from "./foreign-owners";
 import { gleifPartyWords, gleifTraceWords, gleifUkRegister, parentLineWords } from "./foreign-owner-words";
 import { charityConcerns, charityLines, charityRegisterUrl, type PrecheckCharity } from "./charity-register";
@@ -1200,7 +1200,7 @@ const monthsSince = (iso: string | null, today: Date): number | null => {
 };
 
 /** Why the person dealing with us for a company or a trust is not asked for a proof of address. */
-export const ACTING_NO_ADDRESS = "HMRC asks for a proof of address only from a customer who is a person: the person dealing with us gives their identity check and their authority to act, and each owner their identity check.";
+export const ACTING_NO_ADDRESS = LISTED_ID_ONLY;
 
 export function precheckAsks(input: PrecheckAskInput | null, ctx: {
   kind: KycPartyKind; role: string | null | undefined; idCheck: boolean; contactName: string | null | undefined; today?: Date;
@@ -1232,17 +1232,11 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     if (ctx.trust.trs) drop("trs_excerpt", "HMRC's proof of registration is already on the trust's KYC record.");
     else if (ctx.trust.trsNotRequired) drop("trs_excerpt", "The trust's structure records that it does not need to register with HMRC.");
     if (ctx.contactName && ctx.trust.trustees.some(t => personNamesMatch(ctx.contactName!, t))) drop("trust_authority", `${ctx.contactName} is a trustee, as the trust's structure records.`);
-    notAsked.push({ key: "proof_of_address", reason: ACTING_NO_ADDRESS });
     return { docs, notAsked, confirmOwners: null, ownerNames: [] };
   }
-  // Nobody acting for a company sends a proof of address, an owner included
-  // (Woody, 25 November 2026: "mirror hmrc about proof of address"): HMRC asks
-  // the person acting for their identity and authority, the owners for their
-  // identity. Until then the person asked gave one as an owner.
-  const noAddress = () => {
-    if (ctx.kind === "company" && !docs.includes("proof_of_address")) notAsked.push({ key: "proof_of_address", reason: ACTING_NO_ADDRESS });
-  };
-  if (!input || ctx.kind !== "company") { noAddress(); return { docs, notAsked, confirmOwners: null, ownerNames: [] }; }
+  // Everyone asked sends a proof of address (Jack, 26 November 2026), except
+  // the person acting for a listed company (below).
+  if (!input || ctx.kind !== "company") return { docs, notAsked, confirmOwners: null, ownerNames: [] };
   const today = ctx.today || new Date();
   let confirmOwners: PrecheckAsks["confirmOwners"] = null;
   let ownerNames: string[] = [];
@@ -1259,6 +1253,7 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
     const reason = `${who} (Companies House PSC exemption${input.listing.since ? ` since ${input.listing.since}` : ""}): no beneficial owners to identify.${check}`;
     drop("ownership", reason);
     drop("owner_ids", reason);
+    drop("proof_of_address", LISTED_ID_ONLY);
   } else if (input.owners.length && input.ownersAbroad?.length) {
     // A company registered abroad owns it: Companies House cannot show who
     // owns that company, so the structure chart and the owners' IDs are asked
@@ -1303,7 +1298,6 @@ export function precheckAsks(input: PrecheckAskInput | null, ctx: {
       drop("source_of_funds", `It has no accounts of its own yet. Its parent ${input.parentAccounts.name}'s latest accounts, made up to ${input.parentAccounts.madeUpTo}, were downloaded from Companies House and are on file (BGP's AML policy 4.4).`);
     }
   }
-  noAddress();
   return { docs, notAsked, confirmOwners, ownerNames, ...(input.ownersAbroad?.length ? { ownersAbroad: input.ownersAbroad } : {}) };
 }
 

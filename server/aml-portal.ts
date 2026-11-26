@@ -612,10 +612,10 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     // Certified copies in place of the online check, on every request but the joint agent's (23 November 2026).
     ...(isJointRequest(request) ? {} : {
       certifiedWords: certifiedWords({ kind: request.kind, person: request.person, purpose: request.purpose, work: request.work || null }),
-      certifiedListB: requestOwesProofOfAddress({ kind: request.kind, person: request.person, purpose: request.purpose }),
+      certifiedListB: requestOwesProofOfAddress(request),
       optionalDocs: TRUST_OPTIONAL_DOCS.filter(k => !request.docs.includes(k)).map(key => ({
         key, title: KYC_DOCS[key].title,
-        detail: key === "certified_ids" && !requestOwesProofOfAddress({ kind: request.kind, person: request.person, purpose: request.purpose }) ? CERTIFIED_IDS_A_ONLY : KYC_DOCS[key].detail,
+        detail: key === "certified_ids" && !requestOwesProofOfAddress(request) ? CERTIFIED_IDS_A_ONLY : KYC_DOCS[key].detail,
         files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
       })),
     }),
@@ -957,7 +957,7 @@ export async function createClientCheck(dealId: string | null, input: z.infer<ty
     partyName: party.name, kind: input.kind, dealName: found.deal.name, ref, link, expiresAt,
     needsIdCheck: request.needsIdCheck, docs: request.docs, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(agentList), askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: ownLinksFor.map(o => o.name),
-    purpose: request.purpose || null, work: request.work || null,
+    purpose: request.purpose || null, work: request.work || null, notAsked: request.notAsked || null,
   };
   const sent = await sendKycEmail({
     to: [email], cc,
@@ -1216,7 +1216,7 @@ export async function sendReminder(row: TokenRow, by?: string | null): Promise<K
   await primeAmlContact();
   const common = {
     partyName: request.partyName, kind: request.kind, dealName: request.dealName,
-    ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request),
+    ref: request.ref, link, expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request), notAsked: request.notAsked || null,
     agents: amlContact(request.agents), progress, test: !!row.is_test, askPep: !!request.askPep,
     confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, ownLinksFor: progress.ownersToLink ?? (request.ownLinksFor || []).map(o => o.name),
     person: request.person ? { roles: request.person.roles } : null, purpose: request.purpose || null,
@@ -2092,7 +2092,7 @@ kycRequestRouter.post("/api/kyc-upload/:token/pass-on", async (req: Request, res
       to: [email], cc: [cleanEmail(row.contact_email), ...request.cc], test: !!row.is_test,
       build: sentFrom => kycRequestEmail({
         recipientName: name, partyName: request.partyName, kind: request.kind, dealName: request.dealName, ref: request.ref, link,
-        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request), note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
+        expiresAt: row.expires_at, needsIdCheck: request.needsIdCheck, docs: docsStillAsked(request), notAsked: request.notAsked || null, note: request.note, noteFrom: request.sentBy?.name || null, agents: amlContact(request.agents), sentFrom,
         askPep: !!request.askPep, confirmOwners: request.confirmOwners, ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad,
         ownLinksFor: (request.ownLinksFor || []).map(o => o.name), passedOnBy: { name: via.name, firm: via.firm },
       }),

@@ -103,8 +103,8 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
     docType: "ubo_declaration",
   },
   owner_ids: {
-    title: "ID for each of those owners",
-    detail: "For each person on that list: a passport, photocard driving licence, national identity card or firearms certificate. Clear copies are fine to start with; owners who live outside the UK send certified copies, and we may ask for them from others.",
+    title: "ID and proof of address for each of those owners",
+    detail: "For each person on that list: a passport, photocard driving licence, national identity card or firearms certificate, and a proof of address from the last three months. Clear copies are fine to start with; owners who live outside the UK send certified copies, and we may ask for them from others.",
     docType: "passport",
   },
   authority: {
@@ -165,39 +165,31 @@ export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docTyp
 // the specific documents we need"). The trust's people then each get a link
 // of their own for their identity check and proof of address.
 export const TRUST_REQUEST_DOCS: KycDocKey[] = ["trust_deed", "trust_people", "trs_excerpt", "trust_wealth", "trust_authority"];
-/** The optional certified copies card where nobody asked owes a proof of address (25 November 2026). */
+/** The optional certified copies card for a listed company or public body: identity only. */
 export const CERTIFIED_IDS_A_ONLY = "Upload each person's certified List A document here. Name each file after the person if you can.";
 
 /**
- * Who sends a proof of address: what HMRC asks, and no more (Woody,
- * 25 November 2026: "mirror hmrc about proof of address we dont want to
- * request more than we need"). HMRC's guidance (AMLG11400, 14.1 and 14.2): a
- * customer who is an individual has their name, photo, date of birth and home
- * address verified by ID evidence, one document or more; 14.7: the beneficial
- * owners of a customer need "reasonable measures to verify the identity", and
- * the person acting for a customer their identity and their authority to act.
- * So only a customer in person sends a proof of address: a private individual
- * party and anyone named alongside them, and a person who signs or guarantees in their own name.
- * Owners (up the chain, behind a company abroad, of a company that signs or
- * guarantees) and the person acting for a company or trust do an identity
- * check only.
+ * Who sends a proof of address: everyone whose identity is checked (Jack,
+ * Nominated Officer, 26 November 2026: "Reasonable measures to verify identity
+ * in my view includes proof of address ... applied back to all checks ... The
+ * only time we need ID only by itself is Listed Businesses"). Owners, the
+ * person acting, a trust's people, a private individual, a person who signs or
+ * guarantees. This goes further than HMRC's minimum on purpose and replaces
+ * Woody's rule of 25 November 2026 (only a customer in person).
  *
- * A trust's people send one too (Jack, Nominated Officer, 25 November 2026:
- * "A trust isn't a legal person, so when you act for one, the trustees are in
- * practice your customer ... One rule for every trust individual"): the
- * settlor, each trustee, a protector, a beneficiary who is verified and anyone
- * else with control. Trusts are enhanced due diligence under BGP's policy, so
- * this goes further than HMRC's minimum on purpose.
+ * idOnly: the party is a listed company (or a UK public body), which has no
+ * owners to check: the person acting for it gives their identity alone.
  */
-export function owesProofOfAddress(kind: KycPartyKind, roles: Iterable<KycPersonRole>): boolean {
+export function owesProofOfAddress(_kind: KycPartyKind, roles: Iterable<KycPersonRole>, idOnly = false): boolean {
   const set = new Set(roles);
-  if (set.has("signer") || set.has("guarantor")) return true;
-  if (TRUST_PERSON_ROLES.some(r => set.has(r))) return true;
-  return kind === "individual" && (set.has("acting") || set.has("joint"));
+  if (idOnly && [...set].every(r => r === "acting" || r === "director")) return false;
+  return true;
 }
 
+/** Why the person acting for a listed company gives their identity alone. */
+export const LISTED_ID_ONLY = "A listed company: the person dealing with us gives their identity check and their authority to act, with no proof of address.";
 /** Why someone is not asked for a proof of address. */
-export const NO_ADDRESS_WORDS = "We ask for a proof of address only from a private individual, a person who signs or guarantees in their own name, or a trust's people.";
+export const NO_ADDRESS_WORDS = "Everyone whose identity we check sends a proof of address, except the person acting for a listed company or a UK public body.";
 
 /** Why authority to act is not asked for: our signed terms of engagement are on file (25 November 2026). */
 export const termsAuthorityWords = (summary: string): string =>
@@ -223,9 +215,10 @@ export function defaultKycDocs(kind: KycPartyKind, role: string | null | undefin
   if (!idCheck) docs.push("photo_id");
   // A trust (23 November 2026): its deed, HMRC's registration, the trustees'
   // instruction and the settlor's wealth. Its people each get their own link.
+  // Everyone asked sends a proof of address (Jack, 26 November 2026); a listed company's is dropped by precheckAsks.
+  docs.push("proof_of_address");
   if (kind === "company" && trust) docs.push("trust_deed", "trs_excerpt", "trust_authority", "trust_wealth");
-  else if (kind === "individual") docs.push("proof_of_address");
-  else docs.push("ownership", "owner_ids", "authority");
+  else if (kind !== "individual") docs.push("ownership", "owner_ids", "authority");
   if (["purchaser", "tenant"].includes(String(role || "").toLowerCase())) docs.push("source_of_funds");
   return docs;
 }
@@ -353,6 +346,8 @@ export interface KycEmailContext {
   // Companies registered abroad that own the company: the structure chart is
   // to show who owns them (20 November 2026).
   ownersAbroad?: Array<{ name: string; country: string }> | null;
+  // What was not asked and why: a listed company's request lists no List B.
+  notAsked?: Array<{ key: KycDocKey; reason: string }> | null;
   // A person's own request: who they are to the company (19 November 2026).
   person?: { roles: KycPersonRole[] } | null;
   // The owners the person acting is asked to pass a link of their own to.
@@ -662,34 +657,35 @@ export const TRUST_NEXT_WORDS = {
 // Certified copies in place of the online check, on every request (Jack, 23
 // November 2026: "these need to be sent on all AML request emails"). Who
 // they are for depends on who is asked.
+/** A request to a listed company or a UK public body: identity only, as recorded when it was made. */
+type AddressCtx = { kind: KycPartyKind; person?: unknown; purpose?: string | null; notAsked?: Array<{ key: KycDocKey; reason: string }> | null; work?: { publicBody?: boolean } | null };
+export function requestIsIdOnly(ctx: AddressCtx): boolean {
+  if (ctx.work?.publicBody) return true;
+  // A request made before 26 November 2026 says it by its ownership line.
+  return (ctx.notAsked || []).some(n => (n.key === "proof_of_address" && (n.reason === LISTED_ID_ONLY || /^A UK public body/.test(n.reason)))
+    || (n.key === "ownership" && /no beneficial owners to identify/.test(n.reason)));
+}
 /**
- * Whether a request's recipient owes a proof of address (owesProofOfAddress;
- * 25 November 2026): on a person's own link, by their roles; otherwise only
- * the main request to a private individual. Its certified copies then take a
- * List B (address) document too.
+ * Whether a request asks for proofs of address (owesProofOfAddress; Jack,
+ * 26 November 2026): every request does, except one to a listed company or a
+ * UK public body. Its certified copies then take a List B (address) document.
  */
-export function requestOwesProofOfAddress(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null }): boolean {
-  // A trust's people each send one (Jack, 25 November 2026), so its documents request lists List B.
+export function requestOwesProofOfAddress(ctx: AddressCtx): boolean {
   if (ctx.purpose === "trust_structure") return true;
   const roles = (ctx.person as { roles?: unknown } | null | undefined)?.roles;
-  if (Array.isArray(roles)) return owesProofOfAddress(ctx.kind, roles as KycPersonRole[]);
-  return ctx.kind === "individual";
+  if (Array.isArray(roles)) return owesProofOfAddress(ctx.kind, roles as KycPersonRole[], requestIsIdOnly(ctx));
+  return ctx.kind === "individual" || !requestIsIdOnly(ctx);
 }
-/**
- * A request's document steps as asked now: a proof of address asked before
- * 25 November 2026 of someone HMRC asks only for their identity (an owner,
- * the person acting for a company) is no longer asked, shown
- * or chased, and nothing waits on it.
- */
-export function docsStillAsked(request: { kind: KycPartyKind; person?: unknown; purpose?: string | null; docs: KycDocKey[] }): KycDocKey[] {
+/** A request's document steps as asked now: a listed company's person acting is never asked a proof of address. */
+export function docsStillAsked(request: AddressCtx & { docs: KycDocKey[] }): KycDocKey[] {
   return requestOwesProofOfAddress(request) ? request.docs : request.docs.filter(k => k !== "proof_of_address");
 }
-export function certifiedWords(ctx: { kind: KycPartyKind; person?: unknown; purpose?: string | null; work?: { publicBody?: boolean } | null }): string {
+export function certifiedWords(ctx: AddressCtx): string {
   if (ctx.purpose === "trust_structure") return TRUST_NEXT_WORDS.certified;
   const listB = requestOwesProofOfAddress(ctx) ? ", and one from List B" : "";
   // A public body has no owners: the copies are for the person dealing with us (25 November 2026).
   if (ctx.person || ctx.kind === "individual" || ctx.work?.publicBody) return `Prefer not to do the online identity check? You can upload certified copies instead, on the same page: one document from List A, certified${listB}.`;
-  return "Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified.";
+  return `Prefer not to do the online identity check? You can upload certified copies instead, on the same page, for yourself and for anyone who owns more than 25% of the company: for each person, one document from List A, certified${listB}.`;
 }
 // Who may certify and what the certification must carry (Jack, 23 November
 // 2026; the details are HMRC's, AMLG11400). The app checks each copy against
@@ -874,9 +870,8 @@ export function jointAgentAsks(ctx: Pick<JointAgentEmailContext, "kind" | "letti
     { title: "Proof of identity", detail: ctx.kind === "company"
       ? "For each owner and the person acting for the company: their passport, photocard driving licence or national identity card, or your electronic identity check report."
       : "For each person: their passport, photocard driving licence or national identity card, or your electronic identity check report." },
-    // Only from a private individual: HMRC asks a company's owners and the
-    // person acting for it for their identity only (Woody, 25 November 2026).
-    ...(ctx.kind === "company" ? [] : [{ title: "Proof of address", detail: "For each of them: a utility bill, bank or building society statement or council tax bill from the last three months, their photocard driving licence if it shows their current address, or your electronic check confirming it." }]),
+    // For everyone whose identity is checked (Jack, 26 November 2026).
+    { title: "Proof of address", detail: `For each ${ctx.kind === "company" ? "owner and the person acting" : "of them"}: a utility bill, bank or building society statement or council tax bill from the last three months, their photocard driving licence if it shows their current address, or your electronic check confirming it.` },
     ...(ctx.kind === "company" ? [{ title: "The company", detail: "Its register entry and who owns it, with a structure chart if it is owned through other companies." }] : []),
     { title: "Any further AML you have done", detail: "Your sanctions, PEP and adverse media screening, your risk assessment or CDD summary, and anything you hold on where the money comes from." },
   ];

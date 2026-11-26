@@ -558,7 +558,8 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
     // Only a customer in person sends a proof of address (owesProofOfAddress:
     // HMRC's line, 25 November 2026) and a trust's people (Jack, the same day).
     // Until then an owner and the person acting who was also an owner were asked for one.
-    const noAddress = !owesProofOfAddress(input.kind, d.roles);
+    // A listed company or a UK public body: the person acting gives identity only (Jack, 26 November 2026).
+    const noAddress = !owesProofOfAddress(input.kind, d.roles, publicBody || !!ch?.listing || !!input.precheck?.abroad?.listing);
     // A UK photocard driving licence the identity check read, with the address
     // on it, verifies the address too (HMRC: ID evidence, one document or more).
     let fromLicence: { ref: string; address: string } | null = null;

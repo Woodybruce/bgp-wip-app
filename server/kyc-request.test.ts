@@ -52,15 +52,13 @@ test("the steps follow the request: the identity check, each document, then the 
 });
 
 test("what is asked for by default: photo ID only without the online check; ownership and authority for a company; the money from whoever pays", () => {
-  // The person dealing with us for a company gives a proof of address only as an
-  // owner, which precheckAsks adds once the register names them (Woody, 23 November
-  // 2026: "If they don't need it then let's not require it"; from 19 November it was always asked).
-  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "ownership", "owner_ids", "authority", "source_of_funds"]);
-  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["ownership", "owner_ids", "authority"]);
-  // Nor the person acting for a trust (25 November 2026: HMRC asks the person
-  // acting for their identity and authority, and a trust's people their identity).
-  assert.ok(!defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"));
+  // Everyone asked sends a proof of address (Jack, 26 November 2026); a listed
+  // company's is dropped by precheckAsks.
+  assert.deepEqual(defaultKycDocs("company", "tenant", true), ["proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "tenant", false), ["photo_id", "proof_of_address", "ownership", "owner_ids", "authority", "source_of_funds"]);
+  assert.deepEqual(defaultKycDocs("company", "landlord", true), ["proof_of_address", "ownership", "owner_ids", "authority"]);
+  assert.ok(defaultKycDocs("company", "landlord", true, true).includes("proof_of_address"), "the person acting for a trust too");
+  assert.deepEqual(defaultKycDocs("company", "landlord", true, false, true), ["authority"], "a UK public body: authority only");
   assert.deepEqual(defaultKycDocs("individual", "purchaser", true), ["proof_of_address", "source_of_funds"]);
   assert.ok(defaultKycDocs("individual", "landlord", false).includes("photo_id"));
   assert.ok(isKycDocKey("owner_ids") && isKycDocKey("authority") && !isKycDocKey("passport"));
@@ -414,25 +412,26 @@ test("the dialog's preview names the same contact as the email sent, and nobody 
 
 // ── 25 November 2026: a proof of address only where HMRC asks for one ───────
 
-test("a request asks for a proof of address only from a customer in person, and an old step is no longer asked", async () => {
-  const { requestOwesProofOfAddress, docsStillAsked, certifiedWords } = await import("../shared/kyc-request");
+test("every request asks for proofs of address, except one to a listed company or a UK public body (Jack, 26 November 2026)", async () => {
+  const { requestOwesProofOfAddress, docsStillAsked, certifiedWords, LISTED_ID_ONLY } = await import("../shared/kyc-request");
+  const listed = { notAsked: [{ key: "proof_of_address" as const, reason: LISTED_ID_ONLY }] };
   assert.equal(requestOwesProofOfAddress({ kind: "individual" }), true, "the main request to a private individual");
-  assert.equal(requestOwesProofOfAddress({ kind: "company" }), false, "the person acting for a company");
-  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["owner"] } }), false, "an owner's own link");
-  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["guarantor"] } }), true, "a person who guarantees");
-  assert.equal(requestOwesProofOfAddress({ kind: "individual", person: { roles: ["joint"] } }), true, "someone named alongside a private individual");
+  assert.equal(requestOwesProofOfAddress({ kind: "company" }), true, "a company: the person acting and its owners");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", ...listed }), false, "a listed company: identity only");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", work: { publicBody: true } }), false, "a UK public body");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["owner"] } }), true, "an owner's own link");
+  assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["guarantor"] }, ...listed }), true, "a person who guarantees for a listed company");
   assert.equal(requestOwesProofOfAddress({ kind: "company", purpose: "trust_structure" }), true, "a trust's people send one");
   assert.equal(requestOwesProofOfAddress({ kind: "company", person: { roles: ["trustee"] } }), true, "a trustee's own link");
-  // An owner's link sent before today asked for one: it is no longer asked, shown or chased.
-  assert.deepEqual(docsStillAsked({ kind: "company", person: { roles: ["owner"] }, docs: ["proof_of_address"] }), []);
-  assert.deepEqual(docsStillAsked({ kind: "company", docs: ["proof_of_address", "authority"] }), ["authority"]);
-  assert.deepEqual(docsStillAsked({ kind: "individual", docs: ["proof_of_address", "source_of_funds"] }), ["proof_of_address", "source_of_funds"]);
-  // Certified copies: List B only where a proof of address is owed.
+  assert.deepEqual(docsStillAsked({ kind: "company", person: { roles: ["owner"] }, docs: ["proof_of_address"] }), ["proof_of_address"]);
+  assert.deepEqual(docsStillAsked({ kind: "company", docs: ["proof_of_address", "authority"] }), ["proof_of_address", "authority"]);
+  assert.deepEqual(docsStillAsked({ kind: "company", docs: ["proof_of_address", "authority"], ...listed }), ["authority"], "a listed company's old step is not asked");
+  // Certified copies: List B wherever a proof of address is owed.
   assert.match(certifiedWords({ kind: "individual" }), /one from List B/);
-  assert.doesNotMatch(certifiedWords({ kind: "company" }), /List B/);
-  assert.doesNotMatch(certifiedWords({ kind: "company", person: { roles: ["owner"] } }), /List B/);
-  assert.match(certifiedWords({ kind: "company", person: { roles: ["signer"] } }), /one from List B/);
+  assert.match(certifiedWords({ kind: "company" }), /for each person, one document from List A, certified, and one from List B\./);
+  assert.doesNotMatch(certifiedWords({ kind: "company", ...listed }), /List B/);
+  assert.match(certifiedWords({ kind: "company", person: { roles: ["owner"] } }), /one from List B/);
   // The step's words take a driving licence that shows the address.
   assert.match(KYC_DOCS.proof_of_address.detail, /photocard driving licence, if it shows your current address/);
-  assert.doesNotMatch(KYC_DOCS.owner_ids.detail, /proof of address/);
+  assert.match(KYC_DOCS.owner_ids.detail, /and a proof of address from the last three months/);
 });

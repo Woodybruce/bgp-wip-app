@@ -69,9 +69,10 @@ export const AML_RULES: AmlRuleGroup[] = [
     rules: [
       { text: "A company: its register entry, its directors, and anyone who owns more than 25% or controls it.", refs: ["mlr_reg5", "amlg11400"] },
       { text: "A private individual, or a person signing or guaranteeing in their own name: photo ID and proof of address under 3 months old. A licence showing their address covers both.", refs: ["amlg11400"] },
-      { text: "A company's owners: their identity. No proof of address.", refs: ["amlg11400"] },
-      { text: "A trust's settlor, trustees and anyone else with control: photo ID and proof of address. BGP asks more than HMRC's minimum for trusts.", refs: ["bgp_policy"] },
-      { text: "The person acting for a company: their identity and their authority to act, such as our signed terms of engagement. No proof of address.", refs: ["amlg11400"] },
+      { text: "A company's owners: photo ID and proof of address. BGP asks more than HMRC's minimum.", refs: ["bgp_policy"] },
+      { text: "A trust's settlor, trustees and anyone else with control: photo ID and proof of address.", refs: ["bgp_policy"] },
+      { text: "The person acting for a company: photo ID, proof of address and their authority to act, such as our signed terms of engagement.", refs: ["bgp_policy"] },
+      { text: "A listed company: the person acting gives photo ID and authority only. No proof of address.", refs: ["bgp_policy"] },
       { text: "A company registered abroad: an extract from its own register, from the last 3 months. A document we can't read is translated; HMRC can ask for a certified translation.", refs: ["amlg11400", "bgp_policy"] },
       { text: "Where the money comes from.", refs: ["amlg11630"] },
       { text: "Sanctions: everyone, on every transaction, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },

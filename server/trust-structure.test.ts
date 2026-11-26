@@ -8,7 +8,7 @@ import {
 } from "../shared/trust-structure";
 import { partyPeople } from "../shared/kyc-people";
 import { chooseScreened, precheckAsks } from "../shared/kyc-prechecks";
-import { TRUST_REQUEST_DOCS, defaultKycDocs, kycPersonRoleWords, kycReminderEmail, kycRequestEmail, trustDocsReadyEmail } from "../shared/kyc-request";
+import { LISTED_ID_ONLY, TRUST_REQUEST_DOCS, defaultKycDocs, kycPersonRoleWords, kycReminderEmail, kycRequestEmail, trustDocsReadyEmail } from "../shared/kyc-request";
 import { signOffDenial, signOffEnhanced, type SignOffFacts } from "../shared/party-kyc";
 import { amlNextStep, type AmlBoxFacts } from "../shared/aml-box";
 
@@ -68,11 +68,11 @@ test("People to check on a trust: the ones to verify each get a link; the rest a
 });
 
 test("the client checks for a trust ask for its own documents, and skip what the file holds", () => {
-  // No proof of address from the person acting for a trust (25 November 2026: HMRC).
-  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
+  // The person acting for a trust sends a proof of address too (Jack, 26 November 2026).
+  assert.deepEqual(defaultKycDocs("company", "vendor", true, true), ["proof_of_address", "trust_deed", "trs_excerpt", "trust_authority", "trust_wealth"]);
   const asks = precheckAsks(null, { kind: "company", role: "purchaser", idCheck: true, contactName: "David Ellis", trust: { deed: true, trs: false, trsNotRequired: false, trustees: ["David Ellis"] } });
-  assert.deepEqual(asks.docs, ["trs_excerpt", "trust_wealth", "source_of_funds"]);
-  assert.deepEqual(asks.notAsked.map(n => n.key), ["trust_deed", "trust_authority", "proof_of_address"]);
+  assert.deepEqual(asks.docs, ["proof_of_address", "trs_excerpt", "trust_wealth", "source_of_funds"]);
+  assert.deepEqual(asks.notAsked.map(n => n.key), ["trust_deed", "trust_authority"]);
 });
 
 test("screening a trust: the people on its structure in full, under reg 6", () => {
@@ -223,7 +223,7 @@ test("the request asks for the trust's documents in plain words, and the ready n
   assert.match(ready.html, /HMRC&#39;s proof of registration|HMRC's proof of registration/);
 });
 
-test("every request email offers certified copies: List A, and List B only where a proof of address is asked (Jack, 23 November 2026)", () => {
+test("every request email offers certified copies: List A and List B, List A alone for a listed company (Jack, 26 November 2026)", () => {
   const base = {
     recipientName: "Adam Harvey", partyName: "Acme Ltd", dealName: "1 High Street", ref: "7K2Q9M", link: "https://chatbgp.app/kyc-upload/x",
     expiresAt: new Date("2026-12-07"), needsIdCheck: true, docs: ["proof_of_address"] as any, agents: [], sentFrom: "kyc@chatbgp.app", askPep: true,
@@ -235,8 +235,11 @@ test("every request email offers certified copies: List A, and List B only where
   assert.match(company, /Who can certify: a solicitor, lawyer or notary public, a chartered accountant, or a bank or building society official/);
   assert.match(company, /sign and date it, and print their name, occupation, address and telephone number/);
   assert.match(company, /residence permit issued by the Home Office/);
-  // A company's people send no proof of address (25 November 2026), so no List B.
-  assert.doesNotMatch(company, /List B/);
+  // A company's owners and the person acting send a proof of address (Jack, 26 November 2026).
+  assert.match(company, /List B<\/strong> \(one\)/);
+  assert.match(company, /for each person, one document from List A, certified, and one from List B\./);
+  const listed = kycRequestEmail({ ...base, kind: "company" as any, docs: ["authority"] as any, notAsked: [{ key: "proof_of_address", reason: LISTED_ID_ONLY }] }).html;
+  assert.doesNotMatch(listed, /List B/, "a listed company: identity only");
   const person = kycRequestEmail({ ...base, kind: "individual" as any }).html;
   assert.match(person, /upload certified copies instead/);
   assert.doesNotMatch(person, /25%/);

@@ -39,6 +39,9 @@ export interface AmlDecision {
 }
 
 export const AML_DECISIONS: AmlDecision[] = [
+  // 26 November 2026
+  { date: "2026-11-26", who: ["Jack"], topic: "ID and documents", title: "Proof of address from everyone checked, except a listed company's contact",
+    text: "Everyone whose identity is checked sends a proof of address: a company's owners, the person acting for it, a trust's people, a private individual and anyone who signs or guarantees. The only exception is the person acting for a listed company or a UK public body. Request emails and pages show List B again. This goes further than HMRC's minimum on purpose." },
   // 25 November 2026
   { date: "2026-11-25", who: ["Jack"], topic: "Policy", title: "Policy Issue 7 and trust checklist Issue 3",
     text: "Issue 7 of the AML policy and Issue 3 of the trust checklist replace Issue 6 and Issue 2 on the Policy pill. They add that each individual on a trust who is verified also gives a proof of address. Everything else in Issue 6 stands. Everyone confirms Issue 7 in AML training." },
@@ -58,7 +61,7 @@ export const AML_DECISIONS: AmlDecision[] = [
     text: "Issue 6 of the AML policy is agreed and replaces Issue 5 on the Policy pill: a proof of address comes only from an individual who is a customer, a photocard licence showing the address covers both, and our signed terms of engagement show authority to act. Everyone confirms Issue 6 in AML training. The trust checklist is Issue 2 to match." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Proof of address only where HMRC asks for it",
     text: "A proof of address comes only from a customer who is a person: a private individual, someone buying or renting alongside them, or a person who signs or guarantees in their own name. A photocard driving licence showing their current address covers both. A company's owners, a trust's people and the person acting do an identity check only. Requests already sent stop asking them for one.",
-    changed: "25 November 2026: a trust's people send a proof of address (Jack)." },
+    changed: "25 November 2026: a trust's people send a proof of address (Jack). 26 November 2026: everyone whose identity is checked sends one, except the person acting for a listed company (Jack)." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "Signed terms of engagement show the authority to act",
     text: "Our terms of engagement, signed for the client and uploaded on the party, are the evidence that the person instructing us can act for it, as HMRC allows. The client checks then stop asking for a director's email or letter. The identity check is still asked. Terms with no signature read wait for an officer to accept them." },
   { date: "2026-11-25", who: ["Woody"], topic: "ID and documents", title: "A person checked before is not asked again",
@@ -164,7 +167,7 @@ export const AML_DECISIONS: AmlDecision[] = [
     text: "When an overseas entity's only registered owners are companies abroad, such as TPG Inc., they are read as listed: the Register of Overseas Entities takes a company as an owner only when it has its own disclosure duties. No people behind them are asked for. The officers confirm the listing." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a company",
     text: "The person dealing with us for any company does an identity check and shows their authority to act. They send a proof of address only if they are also one of its owners. HMRC asks only for their identity and authority. A trust's representative and a private individual are asked as before. Requests already sent keep the step.",
-    changed: "25 November 2026: no company's owners send one either (see Proof of address only where HMRC asks for it)." },
+    changed: "25 November 2026: no company's owners send one either. 26 November 2026: the person acting for a company that is not listed sends one again (Jack)." },
   { date: "2026-11-23", who: ["Woody"], topic: "ID and documents", title: "No proof of address from the person acting for a listed group",
     text: "The person dealing with us for a company listed on a regulated market, or a company owned through one, does an identity check and shows their authority to act. They are not asked for a proof of address: HMRC asks only for their identity and authority (MLR 2017 regulation 28(10)), and the policy asks for one only from the party or an owner.",
     changed: "23 November 2026: the same now applies to every company (see No proof of address from the person acting for a company)." },

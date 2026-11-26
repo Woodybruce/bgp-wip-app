@@ -693,7 +693,7 @@ function writeParty(w: Writer, data: AmlFileData, p: AmlFileParty, docNames: Map
       const address = person.address.done
         ? `proof of address: ${proof?.summary || (person.address.fromLicence ? `the driving licence their identity check read (${person.address.fromLicence})` : "received")}${proof?.accepted ? ` (accepted by ${proof.accepted.by}: ${proof.accepted.note})` : ""}`
         : proof ? `proof of address to check: ${proof.summary}${proof.reasons.length ? ` (${proof.reasons.join("; ")})` : ""}`
-        : person.address.notNeeded ? "proof of address: not needed (HMRC asks for one only from a private individual, or a person who signs or guarantees in their own name)" : "proof of address not sent";
+        : person.address.notNeeded ? "proof of address: not needed (the person acting for a listed company or a UK public body gives their identity only)" : "proof of address not sent";
       w.item("•", `${person.name} (${person.roles.join(", ")})${person.born ? `, born ${person.born}` : ""}`, person.outstanding.length ? AMBER : INK,
         [person.ownerDetail, `${id}${person.id.elsewhere ? ` ${person.id.elsewhere}` : ""}${person.id.someoneElse ? ` (the check on their link was ${person.id.someoneElse}'s)` : ""}`, address,
           `sanctions: ${person.sanctions.replace(/_/g, " ")}`].filter(Boolean).join("\n"));

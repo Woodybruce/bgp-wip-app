@@ -84,10 +84,10 @@ test("the owners up the chain and the person acting need checks; the other direc
   assert.equal(huseyn.ownerDetail, "up the ownership chain, in Thames Commercial Properties Limited: more than 75% of the shares");
   assert.equal(huseyn.born, "February 1982");
   assert.equal(huseyn.sanctions, "clear");
-  // An owner does an identity check only: HMRC asks a beneficial owner for no
-  // proof of address (AMLG11400 14.7; Woody, 25 November 2026: "mirror hmrc").
-  assert.deepEqual(huseyn.outstanding, ["identity check"]);
-  assert.equal(huseyn.address.notNeeded, true);
+  // An owner does an identity check and sends a proof of address (Jack,
+  // 26 November 2026: "applied back to all checks").
+  assert.deepEqual(huseyn.outstanding, ["identity check", "proof of address"]);
+  assert.equal(huseyn.address.notNeeded, undefined);
   assert.equal(huseyn.canSend, true);
   assert.deepEqual(out.directors, [{ name: "Rupert Bentley-Smith", sanctions: "clear" }, { name: "Charlotte Caroline Roberts", sanctions: "clear" }]);
   assert.equal(out.outstanding.length, 3);
@@ -106,13 +106,13 @@ test("Woody's check on Jack's link counts for Woody, not for Jack, and a file on
   const [woody, huseyn, jack] = out.people;
   assert.equal(woody.id.state, "passed");
   assert.equal(woody.id.elsewhere, "on the link sent to Jack Barrat (7MJEGT)");
-  assert.deepEqual(woody.outstanding, [], "an owner owes no proof of address (25 November 2026)");
+  assert.deepEqual(woody.outstanding, ["proof of address"], "an owner still owes a proof of address (26 November 2026)");
   assert.equal(jack.id.state, "not_started");
   assert.equal(jack.id.someoneElse, "Woody Bruce");
-  // Jack acts for the company and is not an owner: his identity check, no proof
-  // of address (Woody, 23 November 2026: "If they don't need it then let's not require it").
-  assert.equal(jack.address.notNeeded, true);
-  assert.deepEqual(jack.outstanding, ["identity check"]);
+  // Jack acts for the company and is not an owner: his identity check and a
+  // proof of address (the company is not listed).
+  assert.equal(jack.address.notNeeded, undefined);
+  assert.deepEqual(jack.outstanding, ["identity check", "proof of address"]);
   assert.equal(jack.canSend, true, "his request is finished, so nothing live asks for them");
   assert.equal(huseyn.id.state, "not_started", "a passport on the old owners' step is not his check");
   assert.deepEqual(out.loose, [{ ref: "7MJEGT", files: 2, names: ["Woody Bruce", "Huseyn Mirhadiyev"] }]);
@@ -191,21 +191,19 @@ test("a listed company, an unread register and a private individual", () => {
   assert.deepEqual(acting.outstanding, ["identity check"]);
   assert.deepEqual(personRequestAsks(acting, false).docs, ["photo_id"]);
   assert.deepEqual(listed.outstanding, ["Jack Barratt: identity check"]);
-  // Nor for a company that is not listed (Woody, 23 November 2026: "If they
-  // don't need it then let's not require it"): HMRC asks the person acting for
-  // their identity and their authority.
+  // A company that is not listed: the person acting sends one (Jack, 26 November
+  // 2026: "The only time we need ID only by itself is Listed Businesses").
   const unlisted = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: { ...bgpLtd, owners: [] }, sanctions: sanctions([]) }, requests: [request({})] });
   const same = unlisted.people.find(p => p.roles.includes("acting"))!;
-  assert.equal(same.address.notNeeded, true);
-  assert.deepEqual(same.outstanding, ["identity check"]);
-  assert.deepEqual(personRequestAsks(same, true).docs, []);
-  // Nor the person acting who is also an owner (25 November 2026: HMRC asks
-  // an owner for their identity only). Until then they gave one as an owner.
+  assert.equal(same.address.notNeeded, undefined);
+  assert.deepEqual(same.outstanding, ["identity check", "proof of address"]);
+  assert.deepEqual(personRequestAsks(same, true).docs, ["proof_of_address"]);
+  // And the person acting who is also an owner.
   const ownerActing = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [request({ recipientName: "Woody Bruce" })] });
   const woody = ownerActing.people.find(p => p.roles.includes("acting"))!;
   assert.deepEqual(woody.roles, ["owner", "acting", "director"]);
-  assert.equal(woody.address.notNeeded, true);
-  assert.deepEqual(woody.outstanding, ["identity check"]);
+  assert.equal(woody.address.notNeeded, undefined);
+  assert.deepEqual(woody.outstanding, ["identity check", "proof of address"]);
   const unread = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: null, requests: [request({})] });
   assert.equal(unread.basis, "not_read");
   assert.deepEqual(unread.people.map(p => [p.name, p.roles]), [["Jack Barrat", ["acting"]]]);
@@ -310,20 +308,23 @@ test("a proof of address counts only when it reads as theirs, in date and accept
   assert.equal(fixed.address.proof?.documentId, "doc-2");
 });
 
-// Who sends a proof of address (Woody, 25 November 2026: "mirror hmrc about
-// proof of address we dont want to request more than we need").
-test("a customer in person and a trust's people owe a proof of address: never an owner or the person acting", () => {
+// Who sends a proof of address (Jack, 26 November 2026: "applied back to all
+// checks ... The only time we need ID only by itself is Listed Businesses").
+test("everyone whose identity is checked owes a proof of address, except the person acting for a listed company", () => {
   assert.equal(owesProofOfAddress("individual", ["acting"]), true, "a private individual");
   assert.equal(owesProofOfAddress("individual", ["joint"]), true, "someone named alongside them");
   assert.equal(owesProofOfAddress("company", ["guarantor"]), true, "a person who guarantees");
   assert.equal(owesProofOfAddress("company", ["signer"]), true, "a person who signs too");
-  assert.equal(owesProofOfAddress("company", ["owner"]), false);
-  assert.equal(owesProofOfAddress("company", ["owner", "acting", "director"]), false);
-  assert.equal(owesProofOfAddress("company", ["guarantor_owner"]), false, "the owner of a company that guarantees");
-  assert.equal(owesProofOfAddress("company", ["signer_owner"]), false);
+  assert.equal(owesProofOfAddress("company", ["owner"]), true);
+  assert.equal(owesProofOfAddress("company", ["owner", "acting", "director"]), true);
+  assert.equal(owesProofOfAddress("company", ["acting"]), true, "the person acting for a company that is not listed");
+  assert.equal(owesProofOfAddress("company", ["acting", "director"], true), false, "the person acting for a listed company");
+  assert.equal(owesProofOfAddress("company", ["guarantor"], true), true, "a guarantor of a listed company");
+  assert.equal(owesProofOfAddress("company", ["guarantor_owner"]), true, "the owner of a company that guarantees");
+  assert.equal(owesProofOfAddress("company", ["signer_owner"]), true);
   assert.equal(owesProofOfAddress("company", ["trustee", "settlor"]), true, "a trust's people (Jack, 25 November 2026)");
   assert.equal(owesProofOfAddress("company", ["protector"]), true);
-  assert.equal(owesProofOfAddress("individual", ["guarantor_owner"]), false, "a guarantor company's owner on a private individual's side");
+  assert.equal(owesProofOfAddress("individual", ["guarantor_owner"]), true, "a guarantor company's owner on a private individual's side");
 });
 
 // The online check on a UK photocard driving licence verifies the address
@@ -417,7 +418,7 @@ test("owners behind a company registered abroad: the client is asked who they ar
   assert.equal(anna.ownerDetail, "behind SCP AAA INVEST (Monaco): 100% of the shares");
   assert.equal(anna.born, "March 1975");
   assert.ok(!recorded.outstanding.some(o => /The people behind/.test(o)));
-  assert.ok(recorded.outstanding.includes("Anna Rossi: identity check"));
+  assert.ok(recorded.outstanding.some(o => /^Anna Rossi: identity check/.test(o)));
 
   // Recorded behind a parent GLEIF found above the owner abroad also answers it.
   const withTrace = { ...precheck, abroad: { accounts: null, checkedAt: "2026-11-21T00:00:00Z", traced: [{ name: "Scp Aaa Invest", country: "Monaco", registrationNumber: null, via: "register", foundAt: null,
@@ -433,7 +434,7 @@ test("owners behind a company registered abroad: the client is asked who they ar
 test("a person verified from public sources owes nothing more (KYC4U's Public figure method, 21 November 2026)", () => {
   const base: PartyPeopleInput = { companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) as any }, requests: [request({})] };
   const before = partyPeople(base).people.find(p => p.name === "Huseyn Mirhadiyev")!;
-  assert.deepEqual(before.outstanding, ["identity check"]);
+  assert.deepEqual(before.outstanding, ["identity check", "proof of address"]);
   assert.equal(before.publicFigure, null);
   const after = partyPeople({ ...base, publicFigures: [{ id: "1", name: "Mr Huseyn Mirhadiyev", note: "Named with photograph in the group's annual report", by: "Jack Barratt", at: "2026-11-21T10:00:00Z", links: ["https://example.org/annual-report"], documents: 1 }] });
   const huseyn = after.people.find(p => p.name === "Huseyn Mirhadiyev")!;
@@ -498,12 +499,12 @@ test("a proof of address from another transaction counts while in date, and is f
   assert.equal(h2.address.proof?.expired, "2027-01-30");
   assert.match(h2.address.proof!.reasons[0], /Out of date since 30 Jan 2027: ask for a new one/);
   assert.ok(h2.outstanding.includes("proof of address"));
-  // A company's owner owes none (HMRC asks an owner for their identity only):
-  // an out-of-date proof from elsewhere is not flagged against them.
+  // A company's owner owes one too (Jack, 26 November 2026): an out-of-date
+  // proof from elsewhere is flagged against them.
   const ownerReq = request({ token: "t-o", ref: "NEW2", recipientName: "Huseyn Mirhadiyev", email: "h@example.com", person: { key: personKey("Huseyn Mirhadiyev"), name: "Huseyn Mirhadiyev", roles: ["owner"] } });
   const asOwner = partyPeople({ companyId: "brand-bgp", kind: "company", precheck: { companiesHouse: bgpLtd, sanctions: sanctions([]) }, requests: [ownerReq], priorAddressProofs: [proof], today: new Date("2027-02-15") });
   const o = asOwner.people.find(p => p.name.includes("Mirhadiyev"))!;
-  assert.equal(o.address.notNeeded, true);
-  assert.equal(o.address.proof?.earlier, undefined);
-  assert.ok(!o.outstanding.includes("proof of address"));
+  assert.equal(o.address.notNeeded, undefined);
+  assert.equal(o.address.proof?.expired, "2027-01-30");
+  assert.ok(o.outstanding.includes("proof of address"));
 });

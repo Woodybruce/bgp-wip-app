@@ -7531,6 +7531,27 @@ the identity", with no proof of address.
   change record row for Issue 7, and the checklist's "For each individual"
   line. `POLICY_SOURCE`, the rules in short, ChatBGP's prompt and the app
   map name Issue 7; everyone confirms Issue 7 afresh in AML training.
+- **Everyone whose identity is checked sends a proof of address, except a
+  listed company's contact** (Jack, Nominated Officer, 26 November 2026:
+  "Reasonable measures to verify identity in my view includes proof of
+  address ... it needs to be applied back to all checks, including List B to
+  emails ... The only time we need ID only by itself is Listed Businesses").
+  Do not re-litigate. This SUPERSEDES Woody's rule at the top of this
+  section and "the person acting gives one only as an owner" (23 November).
+  `owesProofOfAddress(kind, roles, idOnly)` is true for everyone but the
+  person acting (no other role) where `idOnly`: a listed company, one owned
+  through a listed one, or a UK public body. `defaultKycDocs` asks a
+  company's and a trust's contact for one; `precheckAsks` drops it for a
+  listed company (`LISTED_ID_ONLY`); `requestIsIdOnly` reads that from a
+  request's `notAsked`; every other request email and page lists List B
+  (`certifiedWords`: "one document from List A, certified, and one from
+  List B"); the owners' ID step and the joint agent's list ask for it too.
+  The licence-for-both and terms-of-engagement rules stand. A request sent
+  23 to 25 November keeps its steps; its people show the proof as owed on
+  People to check. Told to Jack at the time: HMRC's AMLG11400 14.7 asks only
+  "reasonable measures to verify the identity" of beneficial owners, so this
+  goes further than HMRC on purpose. **Policy Issue 7 still says owners give
+  identity only: a new issue waits on Jack's word.**
 - Tests: `server/kyc-people.test.ts`, `server/kyc-request.test.ts`,
   `server/kyc-documents.test.ts`, `server/kyc-address-proof.test.ts`,
   `server/kyc-prechecks.test.ts`, `server/sign-off-note.test.ts` (all in

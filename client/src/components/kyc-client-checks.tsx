@@ -365,7 +365,7 @@ function PeopleToCheck({ dealId, data, party, people, sanctionsOnly, canDecide }
         </p>
       )}
       <p className="text-[11px] text-muted-foreground">{PARTY_PEOPLE_BASIS_WORDS[people.basis]} {people.people.some(p => !p.address.notNeeded)
-        ? "Each gets a link of their own: an identity check (Veriff), and a proof of address from a private individual or a person who signs or guarantees in their own name."
+        ? "Each gets a link of their own: an identity check (Veriff) and a proof of address."
         : "Each gets a link of their own for an identity check (Veriff)."}</p>
     </div>
   );
