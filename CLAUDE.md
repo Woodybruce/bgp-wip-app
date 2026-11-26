@@ -10954,6 +10954,22 @@ and database) takes the request's own token.
 | Build script | `script/build.ts` |
 | Project runbook | `replit.md` |
 
+## Complete on a transaction's AML (Jack, 2026-11-26)
+
+Jack: "Once checks are all complete on this page, id like a big button at the
+bottom that says Complete. Its grey and unable to click if check not complete
+but turns orange and clickable if done". `AmlCompleteButton` at the foot of
+the transaction's AML box (`deal-aml-status.tsx`, BGP staff, not the view-only
+copy): greyed while `allApproved` is false, with who is still to clear under
+it; pressed, `POST /api/deals/:id/aml-complete` (BGP staff as themselves)
+reads the parties again by the gate's rule (`checkCounterpartyAml`: cleared,
+or Not required) and writes a `deal_audit_log` line, field `aml_complete`
+(hidden from client logins with the other AML lines); the button then reads
+"Completed by <name> · <date>" (`GET` the same address). A party that stops
+being cleared greys it again. It records; it decides nothing and gates
+nothing. Guard: `qa/regression/aml-complete-button.test.mjs`. Not checked in
+a browser.
+
 ## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
 
 Layla, on transaction #3965 (The Crown Estate, BGP's client and the
