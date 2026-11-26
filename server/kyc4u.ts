@@ -1130,12 +1130,24 @@ export function registerKyc4uRoutes(app: Express, requireAuth: any, requireAdmin
       const years = Number(req.body?.recheckYears) === 1 ? 1 : 3;
       const u = (await pool.query(`SELECT name FROM users WHERE id = $1`, [req.session.userId || (req as any).tokenUserId || null]).catch(() => ({ rows: [] as any[] }))).rows[0];
       const by = u?.name || "an admin";
+      // Recorded from a transaction's party, it is about the company that signs
+      // (Jack, 26 November 2026: recorded on 334 Ramsbury Oxford's landlord, it
+      // went on the brand's record and the party stayed uncleared). As KYC4U's
+      // result does: on the brand too only when that company is the brand's own.
+      let entityId: string | null = null, entityName: string | null = null, onBrand = true;
+      if (req.body?.dealId && req.body?.role) {
+        const { loadAmlParty } = await import("./deal-party-aml");
+        const party = await loadAmlParty(pool as any, String(req.body.dealId), String(req.body.role) as any).catch(() => null);
+        if (!party || party.brandId !== companyId) return res.status(400).json({ message: "That party is not on this transaction any more. Reload the page and try again." });
+        if (party.entityId) { entityId = party.entityId; entityName = party.entityName; onBrand = party.sameCompany; }
+      }
       await pool.query(
-        `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, company_id_manual, fields, created_at_source, modified_at_source, synced_at)
-         VALUES ('manual', $1, 'Recorded in the app', $2, 'Approved', $2, $3, $3, $4::jsonb, $5, $5, NOW())`,
-        [`${companyId}:${Date.now()}`, c.name, companyId, JSON.stringify({ "Recorded by": by, Note: note || null, "Due diligence": years === 1 ? "Enhanced due diligence" : "Standard due diligence", "Re-check years": years }), on]);
+        `INSERT INTO kyc4u_requests (list_id, item_id, list_name, title, status, entity_name, company_id, company_id_manual, trading_entity_id, fields, created_at_source, modified_at_source, synced_at)
+         VALUES ('manual', $1, 'Recorded in the app', $2, 'Approved', $2, $3, $4, $5, $6::jsonb, $7, $7, NOW())`,
+        [`${companyId}:${entityId || "brand"}:${Date.now()}`, entityName || c.name, onBrand ? companyId : null, companyId, entityId,
+          JSON.stringify({ "Recorded by": by, Note: note || null, "Due diligence": years === 1 ? "Enhanced due diligence" : "Standard due diligence", "Re-check years": years }), on]);
       const r = await mirrorKyc4uStatuses();
-      res.json({ ok: true, ...r });
+      res.json({ ok: true, ...r, about: entityName || c.name });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 

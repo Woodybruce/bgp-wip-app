@@ -3799,6 +3799,10 @@ sections as history. Rules: `KYC4U_RETIRED_ON` / `KYC4U_RETIRED_WORDS` in
   their latest records across while BGP can still sign in (it only reads; it
   fills no form). A company's strip reads "KYC4U's past checks", and an admin
   can still **Record a past KYC4U sign-off** given by email before then.
+  Recorded from a transaction's party it goes on the company that signs
+  (26 November 2026, Jack: on 334 Ramsbury Oxford it had gone on the brand's
+  record and the party stayed uncleared), and on the brand too only when
+  that company is the brand's own (`dealId`, `role` on the sign-off route).
   **Add KYC4U result** in a party's Sign-off step is offered only where a
   KYC4U request was made on that transaction (`pastKyc4u`, 23 November 2026).
 - **Words**: the box's red-flag hints and the red-flag email name the

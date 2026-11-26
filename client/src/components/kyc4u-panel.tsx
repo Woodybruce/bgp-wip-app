@@ -244,7 +244,8 @@ function kyc4uTone(status: string | null): string {
   return "bg-muted text-muted-foreground";
 }
 // bare: inside a section that already has the heading (the Companies view's company window).
-export function Kyc4uStatusStrip({ companyId, bare = false }: { companyId: string; bare?: boolean }) {
+// party: on a transaction, so a past sign-off is recorded on the company that signs.
+export function Kyc4uStatusStrip({ companyId, bare = false, party }: { companyId: string; bare?: boolean; party?: { dealId: string; role: string } }) {
   const { data } = useQuery<{ requests: Kyc4uCompanyRequest[]; lastSyncAt: string | null }>({
     queryKey: ["/api/kyc4u/company", companyId],
     enabled: !!companyId,
@@ -284,12 +285,12 @@ export function Kyc4uStatusStrip({ companyId, bare = false }: { companyId: strin
         ))}
       </ul>
       {requests.length > 4 && <p className="text-xs text-muted-foreground mt-1">+{requests.length - 4} more on the KYC hub</p>}
-      {isAdmin && <Kyc4uSignoffButton companyId={companyId} />}
+      {isAdmin && <Kyc4uSignoffButton companyId={companyId} party={party} />}
     </div>
   );
 }
 
-function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
+function Kyc4uSignoffButton({ companyId, party }: { companyId: string; party?: { dealId: string; role: string } }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -297,11 +298,11 @@ function Kyc4uSignoffButton({ companyId }: { companyId: string }) {
   const [years, setYears] = useState<1 | 3>(3);
   const until = (() => { const d = new Date(date); if (Number.isNaN(d.getTime())) return null; d.setFullYear(d.getFullYear() + years); return d; })();
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/kyc4u/company/${companyId}/signoff`, { date, note, recheckYears: years })).json(),
-    onSuccess: () => {
+    mutationFn: async () => (await apiRequest("POST", `/api/kyc4u/company/${companyId}/signoff`, { date, note, recheckYears: years, ...(party || {}) })).json(),
+    onSuccess: (r: any) => {
       setOpen(false); setNote("");
       queryClient.invalidateQueries();
-      toast({ title: "KYC4U's past sign-off recorded", description: "Approved by KYC4U: the company's transactions update now." });
+      toast({ title: "KYC4U's past sign-off recorded", description: `${r?.about ? `${r.about}: approved` : "Approved"} by KYC4U. Its transactions update now.` });
     },
     onError: (e: any) => toast({ title: "Couldn't record it", description: e?.message, variant: "destructive" }),
   });

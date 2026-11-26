@@ -942,7 +942,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             <AmlStep id={sid("documents")} testId={tid("documents")} n={3} label={AML_STEP_LABEL.documents} state={documents.state} summary={documents.words} open={open.has("documents")} onToggle={() => toggle("documents")}>
               {/* Every file on the party's record as a thumbnail that pops out (Woody, 23 November 2026). */}
               <PartyFiles dealId={dealId} role={cp.role} />
-              {kyc4uPast.length > 0 && <Kyc4uStatusStrip companyId={cp.id} />}
+              {kyc4uPast.length > 0 && <Kyc4uStatusStrip companyId={cp.id} party={{ dealId, role: cp.role }} />}
               {companyMissing && !current
                 ? <p className="text-xs text-muted-foreground" data-testid={`kyc-actions-wait-${cp.id}`}>Starts once the contracting entity is set.</p>
                 : <>
