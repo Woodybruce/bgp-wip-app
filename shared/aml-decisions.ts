@@ -40,6 +40,8 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 27 November 2026
+  { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "A party's documents can be sent on to another agent for its own checks",
+    text: "The officers send a pack from a party's Sign-off step: a cover sheet saying how BGP holds each document, and the documents ticked. BGP's own notes, screening and red flags never go. It is not reliance, and each pack sent is recorded on the transaction." },
   { date: "2026-11-27", who: ["Jack"], topic: "Who we check and when", title: "No new transaction starts at HOTs or Solicitors without heads of terms",
     text: "New Transaction, ChatBGP and the Investment Tracker are held as the Transactions table is. A new transaction at HOTs or Solicitors needs its heads of terms or proforma added on the form; the Investment Tracker asks for them before the move." },
   { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "Identity check results print as a readable page in the AML file",

@@ -11078,6 +11078,49 @@ re-litigate. Tests: `server/rules-spec.test.ts`, cases in
   business on the AML file's report; the invoice hold on an invoice edited
   directly in Xero. Not checked in a browser.
 
+## A party's documents sent on to another agent (Jack, 2026-11-27)
+
+Jack: "How can I make it so that I can send it on to the vendors agent for
+their checks? We use Veriff but a lot of people use old School PDF uploads
+and normally I send on email as attachments", then "Yes" to the pack as
+proposed. HMRC asks the agent who did not identify the buyer to request the
+CDD documentation from the other agent (AMLG2200 s21): the documents, not a
+letter (a letter alone is reliance, which BGP does not agree). Rules:
+`shared/aml-share.ts`; server: `server/aml-share.ts`; dialog:
+`client/src/components/aml-share-button.tsx`. Tests:
+`server/aml-share.test.ts` (in `npm test`).
+
+- **Send to their agent**, beside the AML file button in a party's Sign-off
+  step. The Nominated Officer and the Deputies only (`decider`): `GET` /
+  `POST /api/deals/:id/parties/:role/share-pack`. The recipient is one of the
+  agents the transaction records (a press fills the boxes) or typed.
+- **What may go**: documents on the party's KYC record, read again on the
+  server; ticked to start with are identity, proof of address and the
+  register (`shareTicked`). Never offered (`SHARE_NEVER_TYPES`): the AML
+  file, screening reports, web copies, credit reports, KYC4U's reports,
+  reliance letters, heads of terms, terms of engagement, source of funds.
+  A Veriff check goes as its PDF page, once.
+- **The cover sheet** (`shareCoverLines`, the pack's first file) says how BGP
+  holds each document (`shareStatement`: verified electronically by Veriff;
+  from Companies House; original seen by a named BGP agent; certified copy,
+  with the certifier; else "Copy supplied to BGP and checked by BGP. BGP has
+  not seen the original"), that BGP is not agreeing reliance, and the
+  regulation 41 data line. Never say more than BGP can.
+- **Sent** from the KYC mailbox (`sendKycEmail` with `files`), the
+  transaction's agents, the sender and the officers copied: the files
+  attached when the pack is 2.5 MB or less (`SHARE_ATTACH_MAX_BYTES`:
+  Microsoft's send limit is about 4 MB), and always a download link
+  (`GET /api/kyc-upload/pack/:token`, the token the only key, 14 days,
+  downloads counted). The ZIP is kept in the file store (`kyc-share/`).
+- **Recorded**: `kyc_share_packs` (boot migration), a KYC history line
+  (`kyc_documents_shared`) and a transaction history line
+  (`aml_documents_shared`, hidden from client logins with the other AML
+  lines). Five-year deletion and company merges cover the table.
+- Not built: Veriff's own document and selfie images (the app holds the
+  result, not the pictures); a pack from a client file with no transaction;
+  larger attachments through Microsoft's upload sessions. Not run against
+  Microsoft and not checked in a browser.
+
 ## Complete on a transaction's AML (Jack, 2026-11-26)
 
 Jack: "Once checks are all complete on this page, id like a big button at the

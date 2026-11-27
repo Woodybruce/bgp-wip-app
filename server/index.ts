@@ -3189,6 +3189,32 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     `CREATE INDEX IF NOT EXISTS kyc_public_figure_checks_party_idx ON kyc_public_figure_checks (company_id) WHERE withdrawn_at IS NULL`,
     // 'certified' = certified copies of ID and address accepted by an officer (23 November 2026); NULL = public sources.
     `ALTER TABLE kyc_public_figure_checks ADD COLUMN IF NOT EXISTS method text`,
+    // A party's KYC documents sent on to another agent for their own checks
+    // (Jack, 27 November 2026, server/aml-share.ts): who, what, and the pack's
+    // download link, which stops working at expires_at.
+    `CREATE TABLE IF NOT EXISTS kyc_share_packs (
+      id serial PRIMARY KEY,
+      token text NOT NULL UNIQUE,
+      deal_id varchar,
+      role text,
+      company_id varchar NOT NULL,
+      trading_entity_id varchar,
+      to_email text NOT NULL,
+      to_name text,
+      firm text,
+      document_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+      file_names jsonb NOT NULL DEFAULT '[]'::jsonb,
+      note text,
+      storage_key text NOT NULL,
+      attached boolean NOT NULL DEFAULT false,
+      sent_by varchar,
+      sent_by_name text,
+      sent_at timestamptz NOT NULL DEFAULT now(),
+      expires_at timestamptz NOT NULL,
+      downloads integer NOT NULL DEFAULT 0,
+      last_download_at timestamptz
+    )`,
+    `CREATE INDEX IF NOT EXISTS kyc_share_packs_deal_idx ON kyc_share_packs (deal_id, role)`,
     // Heads of terms added to a transaction with no Letting Tracker unit (26
     // November 2026, server/deal-hots-gate.ts): a move to HOTs or Solicitors
     // needs them.
@@ -4740,6 +4766,7 @@ import kycAbroadRouter from "./kyc-abroad";
 import amlStopRouter from "./aml-stop";
 import amlDashboardRouter from "./aml-dashboard";
 import amlFileRouter from "./aml-file";
+import amlShareRouter from "./aml-share";
 import amlCommentaryRouter from "./aml-commentary";
 import dealPeopleRouter from "./deal-people";
 import amlSecondReadRouter from "./aml-second-read";
@@ -6151,6 +6178,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);
   app.use(amlCommentaryRouter);
+  app.use(amlShareRouter);
   app.use(dealPeopleRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);

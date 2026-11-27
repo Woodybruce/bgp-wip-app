@@ -43,6 +43,7 @@ import type { PersonDetailsView } from "@shared/kyc-person-details";
 import { PersonDetailsLine } from "@/components/aml-person-details";
 import { CHARITY_ATTRIBUTION, type CharityFacts } from "@shared/charity-register";
 import { AmlFileButton } from "@/components/aml-file-button";
+import { AmlShareButton } from "@/components/aml-share-button";
 import { AbroadTrace, abroadSummary, useDealAbroad } from "@/components/aml-abroad";
 import { JointRelianceButton, RelianceCard } from "@/components/aml-reliance";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -988,6 +989,8 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               {canDecide && (
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                   <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
+                  {/* Their documents sent on to another agent for its own checks (Jack, 27 November 2026). */}
+                  <AmlShareButton dealId={dealId} role={cp.role} partyName={partyName} />
                 </div>
               )}
             </AmlStep>

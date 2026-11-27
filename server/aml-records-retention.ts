@@ -43,6 +43,7 @@ const PARTY_TABLES: Array<{ table: string; party: string; at: string }> = [
   { table: "kyc_public_figure_checks", party: "company_id", at: "COALESCE(withdrawn_at, verified_at)" },
   { table: "kyc_person_details", party: "company_id", at: "recorded_at" },
   { table: "kyc_document_readings", party: "company_id", at: "COALESCE(accepted_at, uploaded_at)" },
+  { table: "kyc_share_packs", party: "company_id", at: "sent_at" },
   { table: "kyc_document_translations", party: "company_id", at: "made_at" },
   { table: "kyc_abroad_records", party: "company_id", at: "COALESCE(removed_at, added_at)" },
   { table: "kyc_reliance", party: "company_id", at: "COALESCE(withdrawn_at, recorded_at)" },
@@ -234,6 +235,12 @@ async function deleteParty(client: PoolClient, companyId: string): Promise<Recor
   if (tables.has("kyc_party_exemptions")) await del("kyc_party_exemptions", `DELETE FROM kyc_party_exemptions WHERE company_id = $1`);
   if (tables.has("kyc_public_figure_checks")) await del("kyc_public_figure_checks", `DELETE FROM kyc_public_figure_checks WHERE company_id = $1`);
   if (tables.has("kyc_person_details")) await del("kyc_person_details", `DELETE FROM kyc_person_details WHERE company_id = $1`);
+  if (tables.has("kyc_share_packs")) {
+    // Packs sent on to another agent, with their stored copies.
+    const packs = (await client.query(`SELECT storage_key FROM kyc_share_packs WHERE company_id = $1`, [companyId])).rows.map((r: any) => String(r.storage_key));
+    if (packs.length) await client.query(`DELETE FROM file_storage WHERE storage_key = ANY($1::text[])`, [packs]);
+    await del("kyc_share_packs", `DELETE FROM kyc_share_packs WHERE company_id = $1`);
+  }
   if (tables.has("kyc_document_readings")) await del("kyc_document_readings", `DELETE FROM kyc_document_readings WHERE company_id = $1`);
   if (tables.has("kyc_document_translations")) await del("kyc_document_translations", `DELETE FROM kyc_document_translations WHERE company_id = $1`);
   if (tables.has("kyc_abroad_records")) await del("kyc_abroad_records", `DELETE FROM kyc_abroad_records WHERE company_id = $1`);

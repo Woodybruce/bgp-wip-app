@@ -804,6 +804,35 @@ export function trustDocsReadyEmail(ctx: {
   };
 }
 
+// A party's documents sent on to another agent for their own checks (Jack,
+// 27 November 2026; shared/aml-share.ts). Attached when small, and always
+// with a link that works for a fortnight.
+export function amlSharePackEmail(ctx: {
+  toName: string | null; partyName: string; partyRoleWords: string; place: string; senderName: string; sentFrom: string;
+  files: string[]; attached: boolean; link: string; expiresAt: string | Date; note: string | null; notReliance: string; dataUse: string;
+}): { subject: string; html: string } {
+  const until = new Date(ctx.expiresAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
+  const inner = [
+    `<h1 style="margin:0 0 18px;font-family:${FONT};font-size:20px;line-height:1.3;color:${ACCENT}">Our KYC documents for ${escHtml(ctx.partyName)}</h1>`,
+    p(greeting(ctx.toName)),
+    p(`Here are the documents we hold on <strong>${escHtml(ctx.partyName)}</strong>, ${escHtml(ctx.partyRoleWords)} on ${escHtml(ctx.place)}, for your own checks.`),
+    p(ctx.attached
+      ? `They are attached, with a cover sheet saying how we hold each one. The same pack can be downloaded here until ${escHtml(until)}:`
+      : `They are too large to attach, so please download the pack here. The link works until ${escHtml(until)}:`),
+    button("Download the documents", ctx.link),
+    linkFallback(ctx.link),
+    h2(`In the pack (${ctx.files.length})`),
+    bullets(ctx.files),
+    ctx.note ? h2(`A note from ${escHtml(firstName(ctx.senderName) || "us")}`) + p(escHtml(ctx.note).replace(/\n/g, "<br>")) : "",
+    p(escHtml(ctx.notReliance), `font-size:13px;color:${BODY}`),
+    p(escHtml(ctx.dataUse), `font-size:13px;color:${BODY}`),
+  ].join("\n");
+  return {
+    subject: `KYC documents for ${ctx.partyName}: ${ctx.place}`,
+    html: frame("KYC documents", inner, `Sent from ${escHtml(ctx.sentFrom)} by ${escHtml(ctx.senderName)}, Bruce Gillingham Pollard.`, false),
+  };
+}
+
 export interface KycProgress {
   idDone: boolean;
   docsDone: KycDocKey[];

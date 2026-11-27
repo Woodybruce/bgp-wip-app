@@ -270,6 +270,8 @@ export async function sendKycEmail(opts: {
   // An admin's test, or an email about a test request: the AML officers are
   // not copied on it (every other AML email copies them, kycCopyList).
   test?: boolean;
+  // Files to attach (a pack sent on to another agent, server/aml-share.ts).
+  files?: EmailAttachment[];
 }): Promise<KycSendResult> {
   await primeAmlContact();
   const to = [...new Set(opts.to.map(cleanEmail).filter(isEmail))];
@@ -280,6 +282,7 @@ export async function sendKycEmail(opts: {
   const attachments: EmailAttachment[] = logo
     ? [{ name: "bgp-logo.png", contentType: "image/png", contentBytes: logo, isInline: true, contentId: KYC_LOGO_CID }]
     : [];
+  if (opts.files?.length) attachments.push(...opts.files);
   try {
     const sent = await sendFromFirstMailbox({ mailboxes: [KYC_MAILBOX], to, cc: cc.length ? cc : undefined, attachments, build: opts.build, appMailbox: false });
     const fellBack = cleanEmail(sent.from) !== cleanEmail(KYC_MAILBOX);
