@@ -25,7 +25,13 @@ interface PackView {
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*?)"(,.*)?\}$/, "$1");
 const day = (v: string) => new Date(v).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-export function AmlShareButton({ dealId, role, partyName }: { dealId: string; role: string; partyName?: string | null }) {
+// parties: every party on the transaction, for the button on the AML box's top
+// bar (Jack, 27 November 2026); the dialog then asks whose documents to send.
+export function AmlShareButton({ dealId, role: oneRole, partyName, parties }: {
+  dealId: string; role?: string; partyName?: string | null; parties?: Array<{ role: string; name: string }>;
+}) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const role = picked || oneRole || parties?.[0]?.role || "";
   const { toast } = useToast();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -36,7 +42,7 @@ export function AmlShareButton({ dealId, role, partyName }: { dealId: string; ro
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const url = `/api/deals/${dealId}/parties/${role}/share-pack`;
-  const q = useQuery<PackView>({ queryKey: [url], enabled: open });
+  const q = useQuery<PackView>({ queryKey: [url], enabled: open && !!role });
 
   useEffect(() => {
     if (!q.data || !open) return;
@@ -73,7 +79,7 @@ export function AmlShareButton({ dealId, role, partyName }: { dealId: string; ro
   const docs = q.data?.documents || [];
   return (
     <>
-      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={`aml-share-${role}`}>
+      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid={parties ? "aml-share" : `aml-share-${role}`}>
         <Send className="w-3.5 h-3.5 mr-1" />Send to their agent
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -84,6 +90,16 @@ export function AmlShareButton({ dealId, role, partyName }: { dealId: string; ro
               For another agent's own checks. A cover sheet says how we hold each document and that BGP is not agreeing reliance. Our own notes, screening and red flags are never included.
             </DialogDescription>
           </DialogHeader>
+          {parties && parties.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-sm" data-testid="aml-share-parties">
+              <span className="mr-1 font-medium">Whose documents</span>
+              {parties.map(p => (
+                <Button key={p.role} type="button" size="sm" variant={p.role === role ? "default" : "outline"} className="h-7 rounded-full text-xs" onClick={() => setPicked(p.role)} data-testid={`aml-share-party-${p.role}`}>
+                  {p.name}
+                </Button>
+              ))}
+            </div>
+          )}
           {q.isLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Reading the documents…</div>
             : q.isError ? <p className="text-sm text-destructive">{plain(q.error)}</p>
             : (

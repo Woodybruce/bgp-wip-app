@@ -11093,8 +11093,9 @@ letter (a letter alone is reliance, which BGP does not agree). Rules:
 `client/src/components/aml-share-button.tsx`. Tests:
 `server/aml-share.test.ts` (in `npm test`).
 
-- **Send to their agent**, beside the AML file button in a party's Sign-off
-  step. Any BGP person signed in as themselves (`staffMe`; Jack, the same
+- **Send to their agent**, on the AML box's top bar beside the AML file
+  button (Jack, the same day; it was in each party's Sign-off step): the
+  dialog asks **Whose documents** when the transaction has two parties. Any BGP person signed in as themselves (`staffMe`; Jack, the same
   day: "everyone running deals should be able to press this button"; it was
   the officers only for an hour): `GET` /
   `POST /api/deals/:id/parties/:role/share-pack`. The recipient is one of the

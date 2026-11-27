@@ -991,10 +991,6 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
                   <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
                 </div>
               )}
-              {/* Their documents sent on to another agent for its own checks: any BGP person (Jack, 27 November 2026). */}
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-share-line-${cp.role}`}>
-                <AmlShareButton dealId={dealId} role={cp.role} partyName={partyName} />
-              </div>
             </AmlStep>
             </>
           )}
@@ -1173,6 +1169,10 @@ export function DealAmlStatusCard({ dealId, focusCompanyId, slots, actingFor, fo
               <Button type="button" size="sm" className="h-7 text-xs" onClick={() => mirror()} data-testid="aml-open-board">Open the AML board</Button>
             ) : (<>
               {officer && data.counterparties.length > 0 && <AmlFileButton dealId={dealId} />}
+              {/* A party's documents sent on to another agent for its own checks: any BGP person (Jack, 27 November 2026). */}
+              {staffView && data.counterparties.length > 0 && (
+                <AmlShareButton dealId={dealId} parties={data.counterparties.map(c => ({ role: c.role, name: c.kycName || c.name }))} />
+              )}
               <AmlBoxMenu dealId={dealId} openAll={openAll.all} onToggleAll={toggleAll} officer={officer} staff={staffView} />
             </>)}
           </span>
