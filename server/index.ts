@@ -6178,8 +6178,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // The officers' AML file: a report and every document, for HMRC or KYC4U (20 November 2026).
   app.use(amlFileRouter);
   app.use(amlCommentaryRouter);
-  app.use(amlShareRouter);
   app.use(dealPeopleRouter);
+  app.use(amlShareRouter);
   // The officers' second read of an enhanced party's file (20 November 2026).
   app.use(amlSecondReadRouter);
   app.use(trustStructureRouter);

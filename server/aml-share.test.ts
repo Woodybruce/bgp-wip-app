@@ -18,7 +18,7 @@ test("identity, address and the register are ticked to start with", () => {
 
 test("each statement says only what BGP can say", () => {
   assert.match(shareStatement(facts), /Copy supplied to BGP on 20 Nov 2026 and checked by BGP\. BGP has not seen the original\./);
-  assert.match(shareStatement({ ...facts, seenOriginal: true, uploadedBy: "Jack Barratt" }), /Original seen by Jack Barratt of BGP/);
+  assert.match(shareStatement({ ...facts, seenOriginal: true, uploadedBy: "Jack Barratt" }), /BGP has not seen the original/);
   assert.match(shareStatement({ ...facts, type: "onfido_report", veriff: true }), /verified electronically by Veriff/);
   assert.match(shareStatement({ ...facts, type: "ch_register_excerpt" }), /From Companies House/);
   assert.match(shareStatement({ ...facts, certifiedBy: "A Smith, solicitor" }), /certified by A Smith, solicitor/);

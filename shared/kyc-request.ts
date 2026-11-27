@@ -79,7 +79,7 @@ export const KYC_DOC_KEYS: KycDocKey[] = ["photo_id", "proof_of_address", "sourc
 export const KYC_DOCS: Record<KycDocKey, { title: string; detail: string; docType: string }> = {
   photo_id: {
     title: "Photo ID (a certified copy)",
-    detail: "Your passport, photocard driving licence, national identity card, or firearms or shotgun certificate, in date. As we have not met you to see the original, please send a copy certified by a practising solicitor or accountant who has met you, with the words \"I have met the person concerned and confirm the likeness to the photo ID provided\", their name and signature, the date, their professional body, and their firm's name and registered office. Or show the original to your agent.",
+    detail: "Your passport, photocard driving licence, national identity card, or firearms or shotgun certificate, in date. As we have not met you to see the original, please send a copy certified by a practising solicitor or accountant who has met you, with the words \"I have met the person concerned and confirm the likeness to the photo ID provided\", their name and signature, the date, their professional body, and their firm's name and registered office.",
     docType: "passport",
   },
   // A utility bill, bank statement or council tax bill, not more than three

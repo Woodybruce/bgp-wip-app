@@ -440,7 +440,8 @@ kycDocumentsRouter.post(["/api/deals/:id/parties/:role/documents", "/api/client-
     const keep = entries.filter(f => f.buffer.length <= MAX_FILE_BYTES && kycUploadAllowed(f.name, f.mime));
     const refused = [...skipped.map(sk => `${sk.path} (${sk.reason})`), ...entries.filter(f => !keep.includes(f)).map(f => `${f.name} (${f.buffer.length > MAX_FILE_BYTES ? "over 25MB" : "not a document or photo"})`)];
     if (!keep.length) return res.status(400).json({ message: `Nothing here can be kept${refused.length ? `: ${refused.slice(0, 3).join("; ")}` : ""}. Send PDFs, photos or Word documents.` });
-    const seenOriginal = String(req.body?.seenOriginal || "") === "true";
+    // The "an agent saw the originals" tick is gone (Jack, 27 November 2026): never taken from a request.
+    const seenOriginal = false;
     const { saveFile } = await import("./file-storage");
     const ids: string[] = [];
     // The same file dropped twice is filed once (same name and size on this
@@ -456,12 +457,7 @@ kycDocumentsRouter.post(["/api/deals/:id/parties/:role/documents", "/api/client-
     for (const f of keep) {
       const same = held.get(`${f.name}|${f.buffer.length}`);
       if (same) {
-        if (seenOriginal && !same.seen) {
-          await pool.query(`UPDATE kyc_document_readings SET seen_original = true WHERE document_id = $1`, [same.id]);
-          same.seen = true;
-          marked.push(f.name);
-          refused.push(`${f.name} (already uploaded: now marked as seen in the original)`);
-        } else refused.push(`${f.name} (already uploaded)`);
+        refused.push(`${f.name} (already uploaded)`);
         continue;
       }
       const stored = `kyc-doc-${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeFileName(f.name)}`;

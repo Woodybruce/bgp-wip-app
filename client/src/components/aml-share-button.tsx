@@ -1,7 +1,7 @@
 // Send a party's KYC documents on to another agent for their own checks
 // (Jack, 27 November 2026: "How can I make it so that I can send it on to the
-// vendors agent for their checks?"). The officers only: the server
-// (server/aml-share.ts) refuses anyone else and decides what may be sent. No
+// vendors agent for their checks?"). Any BGP person signed in as
+// themselves; the server (server/aml-share.ts) decides what may be sent. No
 // form element: this opens inside the transaction's AML box.
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

@@ -4168,14 +4168,17 @@ Tests: `server/kyc-documents.test.ts` (in `npm test`),
 - **Where**: **Upload documents** in each party's Documents step on the
   transaction's AML (BGP staff): drag files onto it or Choose files (PDF,
   photos including HEIC, Word, or a zip, opened; up to 10 at a time, 25MB
-  each), with **An agent saw the originals** to tick when they did. The box
+  each). (The **An agent saw the originals** tick was taken off on
+  27 November 2026, Jack: "this never happens so remove it"; a copy of an
+  identity document counts only when certified, or accepted by an officer,
+  the server never takes the tick from a request, and an old mark no longer
+  counts.) The box
   keeps its own drops: its drag handlers stop the event, so the app-wide
   **Drop to import** (`GlobalDropZone`, on window) neither shows over it nor
   opens Import Anything (a drop on it did both until a browser check on
   23 November 2026; the Describe the transaction box had the same fault and
   the same fix). The same file (name and size) is filed once per party:
-  dropped again it is listed as already uploaded, or, with the tick, the
-  copy already filed is marked as seen in the original.
+  dropped again it is listed as already uploaded.
 - **Filed** on the party's KYC record (the company that signs when the
   transaction names one, else the brand), with a `kyc_document_readings` row
   (boot migration in `server/index.ts`: the reading, seen original, who
@@ -4192,7 +4195,7 @@ Tests: `server/kyc-documents.test.ts` (in `npm test`),
 - **Checked** (`checkKycDocument`): an identity document counts for the one
   person to check it names (date of birth agreeing with the register's),
   in date, and certified with the certifier's name, profession or firm and
-  date, or seen in the original by an agent; a proof of address by the
+  date; a proof of address by the
   proof of address rules; company documents are kept on the record. Each
   failure is a plain reason. **Accept it** (the Nominated Officer or a
   Deputy, with a note) counts one that did not pass.
@@ -11091,7 +11094,9 @@ letter (a letter alone is reliance, which BGP does not agree). Rules:
 `server/aml-share.test.ts` (in `npm test`).
 
 - **Send to their agent**, beside the AML file button in a party's Sign-off
-  step. The Nominated Officer and the Deputies only (`decider`): `GET` /
+  step. Any BGP person signed in as themselves (`staffMe`; Jack, the same
+  day: "everyone running deals should be able to press this button"; it was
+  the officers only for an hour): `GET` /
   `POST /api/deals/:id/parties/:role/share-pack`. The recipient is one of the
   agents the transaction records (a press fills the boxes) or typed.
 - **What may go**: documents on the party's KYC record, read again on the
@@ -11102,8 +11107,7 @@ letter (a letter alone is reliance, which BGP does not agree). Rules:
   A Veriff check goes as its PDF page, once.
 - **The cover sheet** (`shareCoverLines`, the pack's first file) says how BGP
   holds each document (`shareStatement`: verified electronically by Veriff;
-  from Companies House; original seen by a named BGP agent; certified copy,
-  with the certifier; else "Copy supplied to BGP and checked by BGP. BGP has
+  from Companies House; certified copy, with the certifier; else "Copy supplied to BGP and checked by BGP. BGP has
   not seen the original"), that BGP is not agreeing reliance, and the
   regulation 41 data line. Never say more than BGP can.
 - **Sent** from the KYC mailbox (`sendKycEmail` with `files`), the

@@ -5,7 +5,8 @@
 //   POST /api/deals/:id/parties/:role/share-pack   { toEmail, toName, firm, documentIds, note }
 //   GET  /api/kyc-upload/pack/:token               the pack as a ZIP, for a fortnight
 //
-// The Nominated Officer and the Deputies only (decider): the pack leaves BGP.
+// BGP staff signed in as themselves (staffMe): the pack leaves BGP, so each
+// one sent is recorded and the officers are copied on the email.
 // It holds a cover sheet (how BGP holds each document, and that BGP is not
 // agreeing reliance) and the documents ticked, never BGP's own working
 // (SHARE_NEVER_TYPES): the server reads the documents again from the party's
@@ -52,6 +53,18 @@ async function recipientsFor(dealId: string): Promise<Array<{ label: string; fir
     out.push({ label, firm: text(firm?.name) || null, name: text(person?.name) || null, email: text(person?.email).toLowerCase() || null });
   }
   return out;
+}
+
+// Any BGP person signed in as themselves (Jack, 27 November 2026: "everyone
+// running deals should be able to press this button"); never a client login
+// or staff viewing as one.
+async function staffMe(req: Request): Promise<{ id: string; name: string } | { refusal: string; status: number }> {
+  const userId = (req as any).session?.userId || (req as any).tokenUserId;
+  if (!userId) return { refusal: "Not signed in.", status: 401 };
+  const { contactViewer } = await import("./contact-viewer");
+  if (!(await contactViewer(req)).staff) return { refusal: "BGP staff only, signed in as themselves.", status: 403 };
+  const u = (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0];
+  return { id: String(userId), name: text(u?.name) || text(u?.email) || "BGP" };
 }
 
 interface PackDoc { id: string; type: string; name: string; at: string | null; url: string | null; size: number | null; mime: string | null; facts: ShareDocFacts }
@@ -110,8 +123,7 @@ const MIME: Record<string, string> = {
 
 router.get("/api/deals/:id/parties/:role/share-pack", async (req: Request, res: Response) => {
   try {
-    const { decider } = await import("./deal-party-aml");
-    const me = await decider(req);
+    const me = await staffMe(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = text(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });
@@ -138,8 +150,7 @@ router.get("/api/deals/:id/parties/:role/share-pack", async (req: Request, res: 
 
 router.post("/api/deals/:id/parties/:role/share-pack", async (req: Request, res: Response) => {
   try {
-    const { decider } = await import("./deal-party-aml");
-    const me = await decider(req);
+    const me = await staffMe(req);
     if (!("id" in me)) return res.status(me.status).json({ message: me.refusal });
     const role = text(req.params.role);
     if (!isDealPartyRole(role)) return res.status(400).json({ message: "Which party?" });

@@ -59,7 +59,6 @@ export function shareStatement(d: ShareDocFacts): string {
   const when = on ? ` on ${on}` : "";
   if (d.veriff) return `Identity verified electronically by Veriff, a provider on the UK digital verification services register${when}. This page is the result of that check.`;
   if (COMPANIES_HOUSE.has(d.type)) return `From Companies House, read by BGP${when}.`;
-  if (d.seenOriginal) return `Original seen by ${d.uploadedBy || "a BGP agent"} of BGP${when}. This is a copy of it.`;
   if (d.certifiedBy) return `Certified copy supplied to BGP${when}, certified by ${d.certifiedBy}.`;
   if (d.type === "certified_id") return `Supplied to BGP as a certified copy${when}.`;
   return `Copy supplied to BGP${when} and checked by BGP. BGP has not seen the original.`;

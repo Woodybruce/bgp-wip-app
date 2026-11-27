@@ -989,10 +989,12 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
               {canDecide && (
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-file-line-${cp.role}`}>
                   <AmlFileButton dealId={dealId} role={cp.role} partyName={partyName} />
-                  {/* Their documents sent on to another agent for its own checks (Jack, 27 November 2026). */}
-                  <AmlShareButton dealId={dealId} role={cp.role} partyName={partyName} />
                 </div>
               )}
+              {/* Their documents sent on to another agent for its own checks: any BGP person (Jack, 27 November 2026). */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid={`aml-share-line-${cp.role}`}>
+                <AmlShareButton dealId={dealId} role={cp.role} partyName={partyName} />
+              </div>
             </AmlStep>
             </>
           )}

@@ -291,17 +291,17 @@ export function checkKycDocument(
     const today = Date.UTC(opts.today.getUTCFullYear(), opts.today.getUTCMonth(), opts.today.getUTCDate(), 12);
     if (expires == null) reasons.push("No expiry date found: check it is in date");
     else if (expires < today - DAY / 2) reasons.push(`It expired on ${dayWords(reading.expires)}`);
-    if (!opts.seenOriginal) {
-      if (!reading.certified) reasons.push("Not a certified copy, and no agent saw the original");
-      else {
-        const gaps = certificationGaps(reading.certification);
-        if (gaps.length) reasons.push(`The certification does not give ${gaps.join(", ")}`);
-        const refused = certifierRefusal(reading.certification);
-        if (refused) reasons.push(refused);
-      }
+    // "An agent saw the originals" was taken off on 27 November 2026 (Jack:
+    // "this never happens so remove it"): a copy counts only when certified.
+    if (!reading.certified) reasons.push("Not a certified copy");
+    else {
+      const gaps = certificationGaps(reading.certification);
+      if (gaps.length) reasons.push(`The certification does not give ${gaps.join(", ")}`);
+      const refused = certifierRefusal(reading.certification);
+      if (refused) reasons.push(refused);
     }
     const summary = [what, person ? personDisplayName(person.name) : names[0] || null, reading.expires ? `expires ${dayWords(reading.expires)}` : null,
-      reading.certified ? `certified${reading.certification?.name ? ` by ${reading.certification.name}` : ""}` : opts.seenOriginal ? "original seen" : null]
+      reading.certified ? `certified${reading.certification?.name ? ` by ${reading.certification.name}` : ""}` : null]
       .filter(Boolean).join(", ");
     return { use: "identity", person: person ? person.name : null, ok: !reasons.length && !!person, reasons, summary };
   }

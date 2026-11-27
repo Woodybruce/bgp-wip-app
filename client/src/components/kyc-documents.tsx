@@ -60,14 +60,12 @@ export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { deal
   const { toast } = useToast();
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [seenOriginal, setSeenOriginal] = useState(false);
   const docs = useUploadedDocuments(dealId, role);
   const landed = useLanded(dealId, role);
   const send = useMutation({
     mutationFn: async (files: File[]) => {
       const fd = new FormData();
       for (const f of files) fd.append("files", f);
-      fd.append("seenOriginal", seenOriginal ? "true" : "false");
       const res = await fetch(`${urls.party(dealId, role)}/documents`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "The documents could not be uploaded.");
@@ -110,10 +108,6 @@ export function PartyDocumentsBox({ dealId, role, partyName, canDecide }: { deal
           <input ref={input} type="file" multiple className="hidden" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,.webp,.doc,.docx,.zip,application/pdf,image/*"
             onChange={e => { take(e.target.files); e.target.value = ""; }} data-testid={`aml-documents-input-${role}`} />
         </div>
-        <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-muted-foreground">
-          <input type="checkbox" className="h-3.5 w-3.5" checked={seenOriginal} onChange={e => setSeenOriginal(e.target.checked)} data-testid={`aml-documents-seen-${role}`} />
-          An agent saw the originals (then a copy needs no certification)
-        </label>
       </div>
       {list.length > 0 && (
         <ul className="space-y-1" data-testid={`aml-documents-list-${role}`}>

@@ -136,7 +136,7 @@ test("a certified copy a client sends is read and checked by the app, never take
   assert.doesNotMatch(block, /accepted_/);
   // An identity copy counts only with the certifier's name, profession or firm, and date.
   const rule = read("shared/kyc-documents.ts");
-  assert.match(rule, /if \(!reading\.certified\) reasons\.push\("Not a certified copy, and no agent saw the original"\);/);
+  assert.match(rule, /if \(!reading\.certified\) reasons\.push\("Not a certified copy"\);/);
   // The optional card asks for a List B copy only where someone owes a proof of address (25 November 2026).
   assert.match(portal, /detail: key === "certified_ids" && !requestOwesProofOfAddress\(request\) \? CERTIFIED_IDS_A_ONLY : KYC_DOCS\[key\]\.detail,/);
   // Counts once it passes or an officer accepts it; a licence showing the address counts for both (25 November 2026).

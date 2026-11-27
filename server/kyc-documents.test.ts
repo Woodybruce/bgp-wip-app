@@ -48,7 +48,7 @@ test("a certified passport in date names one person to check: it counts for thei
 test("an identity document is held back: expired, not certified, a certification short of what the policy asks, someone else, another date of birth", () => {
   assert.match(checkKycDocument(passport({ expires: "2025-01-01" }), people, opts).reasons.join(" "), /It expired on 1 Jan 2025/);
   assert.match(checkKycDocument(passport({ certified: false, certification: null }), people, opts).reasons.join(" "), /Not a certified copy/);
-  assert.equal(checkKycDocument(passport({ certified: false, certification: null }), people, { ...opts, seenOriginal: true }).ok, true, "an agent saw the original");
+  assert.equal(checkKycDocument(passport({ certified: false, certification: null }), people, { ...opts, seenOriginal: true }).ok, false, "an old 'agent saw the original' mark no longer counts");
   assert.deepEqual(certificationGaps({ words: null, name: "Sarah Price", profession: null, firm: null, date: null }),
     ["the words that it is a true copy of the original", "their occupation", "the date", "their address", "their telephone number"]);
   assert.match(checkKycDocument(passport({ certification: { words: "Certified true copy of the original", name: null, profession: "Solicitor", firm: null, date: "2026-11-20", address: "1 High St", phone: "020 7946 0000", signed: true } }), people, opts).reasons.join(" "), /does not give the certifier's name$/);

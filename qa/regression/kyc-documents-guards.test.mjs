@@ -52,7 +52,8 @@ test("the box is on each party's Documents step, with drag and drop", () => {
   // Its address is the transaction's party, or a client file's (client/src/lib/aml-scope.tsx, 24 November 2026).
   assert.match(c, /\$\{urls\.party\(dealId, role\)\}\/documents/);
   assert.match(read("client/src/lib/aml-scope.tsx"), /party: \(dealId, role\) => `\/api\/deals\/\$\{dealId\}\/parties\/\$\{role\}`/);
-  assert.match(c, /An agent saw the originals/);
+  // The "an agent saw the originals" tick was taken off (Jack, 27 November 2026).
+  assert.doesNotMatch(c, /saw the originals|setSeenOriginal|aml-documents-seen/);
 });
 
 // A file dropped on a box of its own never reaches the app-wide "Drop to
@@ -69,10 +70,11 @@ test("the Upload documents and Describe the transaction boxes keep their own dro
   }
 });
 
-test("the same file dropped twice is filed once; dropped again with the tick, it is marked as seen in the original", () => {
+test("the same file dropped twice is filed once, and nothing is marked as seen in the original", () => {
   const s = read("server/kyc-documents.ts");
   assert.match(s, /held\.set\(`\$\{r\.file_name\}\|\$\{r\.file_size\}`/);
   assert.match(s, /const same = held\.get\(`\$\{f\.name\}\|\$\{f\.buffer\.length\}`\);/);
-  assert.match(s, /UPDATE kyc_document_readings SET seen_original = true WHERE document_id = \$1/);
+  assert.doesNotMatch(s, /SET seen_original = true/);
+  assert.doesNotMatch(s, /req\.body\?\.seenOriginal/);
   assert.match(s, /refused\.push\(`\$\{f\.name\} \(already uploaded\)`\)/);
 });
