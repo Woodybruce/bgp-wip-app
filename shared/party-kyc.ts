@@ -198,6 +198,10 @@ export interface SignOffFacts {
   // first: no one deals with a designated person.
   inHouseEdd?: boolean;
   sanctionsFlags?: number;
+  // Risk factors no officer has assessed yet (Jack, 27 November 2026): the
+  // party is not signed off until each is recorded as standard, with the
+  // reason, or as high risk (shared/kyc-red-flags.ts, factorToAssess).
+  toAssess?: string[];
   // Recorded as a trust: checked in-house by the officers, never KYC4U, and
   // signed off only once its structure and documents are complete (Jack,
   // 23 November 2026). trustGaps: what its file still needs.
@@ -270,6 +274,10 @@ export const signOffInHouse = (f: Pick<SignOffFacts, "inHouseEdd" | "trust">): b
 const NEEDS_COMPANY_DENIAL = "Set the contracting entity first (step 1): BGP's checks run on it, not on the brand.";
 const notRunDenial = (f: Pick<SignOffFacts, "needsCompany">, words: string): string => f.needsCompany ? NEEDS_COMPANY_DENIAL : words;
 
+/** Why a party with a risk factor nobody has assessed cannot be signed off yet. */
+export const riskFactorsDenial = (labels: string[]): string =>
+  `Risk factor to assess first: ${labels.slice(0, 3).map(l => l.replace(/\.$/, "")).join("; ")}${labels.length > 3 ? ` and ${labels.length - 3} more` : ""}. The Nominated Officer or a Deputy records each as standard, with the reason, or as high risk (Screening).`;
+
 /** Why BGP may not sign the party off, or null when it may. */
 export function signOffDenial(input: SignOffFacts): string | null {
   const f: SignOffFacts = input.trust ? { ...input, inHouseEdd: true } : input;
@@ -295,6 +303,7 @@ export function signOffDenial(input: SignOffFacts): string | null {
     if (f.dobAfterRun) return PERSON_DOB_AFTER_RUN;
     return guarantorChecksDenial(f.guarantorChecks) || signerChecksDenial(f.signerChecks);
   }
+  if (f.toAssess?.length) return riskFactorsDenial(f.toAssess);
   // A company registered abroad: its own register's extract first, for any
   // sign-off on the full checks (23 November 2026).
   const extract = registerExtractDenial(f.registerExtract);

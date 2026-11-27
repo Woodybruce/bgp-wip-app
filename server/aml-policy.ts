@@ -128,6 +128,7 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
     const officers = await amlOfficers();
     const actor = await amlActor(req);
     const inHouseEdd = await readInHouseEdd();
+    const invoiceBlock = await import("./aml-invoice-block").then(m => m.readInvoiceBlock());
     res.json({
       documents: AML_POLICY_DOCUMENTS.map(d => ({ key: d.key, title: d.title, issue: d.issue, date: d.date, url: `/api/aml-policy/documents/${d.key}`, onFile: !!documentPath(d.file), replaced: amlPolicyDocumentReplaced(d) })),
       officers: {
@@ -149,6 +150,8 @@ router.get("/api/aml-policy", async (req: Request, res: Response) => {
       fatfAsOf: FATF_LISTS_AS_OF,
       // In-house enhanced due diligence (21 November 2026): the officers switch it.
       inHouseEdd,
+      // No invoice until the AML checks are complete (27 November 2026): the officers switch it.
+      invoiceBlock,
     });
   } catch (err: any) {
     console.error("[aml-policy] read failed:", err?.message);
@@ -260,6 +263,25 @@ router.post("/api/aml-policy/officers/from-policy", async (req: Request, res: Re
 // KYC4U is no longer used (Woody, 23 November 2026): there is nothing to switch.
 router.put("/api/aml-policy/in-house-edd", (_req: Request, res: Response) => {
   res.status(410).json({ message: "KYC4U is no longer used: enhanced due diligence is always done by BGP's officers." });
+});
+
+// ── No invoice until the AML checks are complete ────────────────────────────
+// Jack, 27 November 2026. The Nominated Officer or a Deputy switches it on.
+router.put("/api/aml-policy/invoice-block", async (req: Request, res: Response) => {
+  try {
+    const me = await staffMe(req);
+    if (!me) return res.status(403).json({ message: "BGP staff only, signed in as themselves." });
+    const { amlActor } = await import("./aml-authority");
+    if (!(await amlActor(req)).isMlro) return res.status(403).json({ message: "Only the Nominated Officer or a Deputy changes this." });
+    if (typeof req.body?.on !== "boolean") return res.status(400).json({ message: "On or off?" });
+    const { writeInvoiceBlock } = await import("./aml-invoice-block");
+    const saved = await writeInvoiceBlock(req.body.on, me.name);
+    console.log(`[aml-policy] invoice block ${saved.on ? "on" : "off"} by ${me.name}`);
+    res.json({ invoiceBlock: saved });
+  } catch (err: any) {
+    console.error("[aml-policy] invoice block not saved:", err?.message);
+    res.status(500).json({ message: "The setting could not be saved." });
+  }
 });
 
 export default router;

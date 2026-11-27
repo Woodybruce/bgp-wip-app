@@ -42,7 +42,7 @@ import {
   isKyc4uResultKey, kyc4uResultDate, kycVerdict, sameLegalCompany, signOffDenial, signOffEnhanced, signOffInHouse,
   type PartyKycState, type SignOffFacts,
 } from "@shared/party-kyc";
-import { isSanctionsFlag } from "@shared/kyc-red-flags";
+import { factorToAssess, isAssessedFactor, isSanctionsFlag } from "@shared/kyc-red-flags";
 import {
   DUE_DILIGENCE_LABEL, NOT_REQUIRED_REASONS, RECHECK_YEARS, amlRegime, deputyNames, isDealAgent, jointAgentRule, notRequiredInput, officerWords,
   type AmlOfficers, type AmlRegime, type JointAgentRule, type PartyDueDiligence,
@@ -225,6 +225,7 @@ export async function signOffFacts(db: Db, party: AmlSubject, known: KnownFacts 
     redFlags: (flags?.parties?.[party.brandId] || []).length,
     dealRedFlags: (flags?.deal || []).length,
     unchecked: flags?.unchecked || [],
+    toAssess: [...(flags?.parties?.[party.brandId] || []), ...(flags?.deal || [])].filter((f: any) => factorToAssess(f)).map((f: any) => String(f.label)),
     higherRisk: isHigherRisk(brand),
     precheck: precheck.ranAt ? { ranAt: precheck.ranAt } : null,
     precheckRunning: precheck.running,
@@ -615,7 +616,10 @@ async function flagDecision(req: Request, res: Response, confirm: boolean) {
     }
     const { setFlagAside } = await import("./kyc-red-flags");
     const done = await setFlagAside({ dealId: String(req.params.id), brandId, entityId, key, comment: said.comment, me, confirm });
-    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label, confirm ? `confirmed as the person by ${me.name}` : `set aside by ${me.name}`, `${partyWords} · ${done.flag.label} · ${confirm ? "" : "why: "}${said.comment}`, me);
+    const assessed = isAssessedFactor(done.flag);
+    await dealAudit(String(req.params.id), "aml_red_flag", done.flag.label,
+      assessed ? (confirm ? `assessed as high risk by ${me.name}` : `assessed as standard by ${me.name}`) : confirm ? `confirmed as the person by ${me.name}` : `set aside by ${me.name}`,
+      `${partyWords} · ${done.flag.label} · ${confirm ? "" : "why: "}${said.comment}`, me);
     res.json({ ok: true, review: done.review });
   } catch (err: any) {
     if (err?.name === "FlagReviewRefusal") return res.status(err.status || 409).json({ message: err.message });

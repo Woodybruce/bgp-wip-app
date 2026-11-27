@@ -291,7 +291,7 @@ export function jointFlagWords(f: JointFlag): string {
 /**
  * What the joint agent's files cover. A person's identity: a photo ID naming
  * them and in date at the document's date (or today), an electronic check
- * naming them that passed, or their CDD summary saying it was verified. Their
+ * naming them that passed (never their CDD summary's word alone). Their
  * address: a proof of address naming them, an electronic check that verified
  * it, or their CDD summary saying so. A company: its register entry and who
  * owns it. Screening: a report that came back clear. A screening match, a
@@ -345,9 +345,11 @@ export function jointCoverage(input: {
         if (r.addressVerified) address = address || `${evidence(r)} (address verified)`;
       }
       if (r.kind === "proof_of_address") address = address || evidence(r);
-      // Their CDD summary or risk assessment, saying what they verified.
+      // Their CDD summary or risk assessment saying an address was verified.
+      // A summary saying an identity was verified does not count (Jack,
+      // 27 November 2026): taking their word for it is reliance, which BGP
+      // does not agree. The identity needs the document or their check report.
       if (r.kind !== "photo_id" && r.kind !== "proof_of_address") {
-        if (entry.idVerified) id = id || `${evidence(r)} (identity verified)`;
         if (entry.addressVerified) address = address || `${evidence(r)} (address verified)`;
       }
     }
@@ -408,7 +410,7 @@ export function jointGapLines(c: JointCoverage | null, opts: { you: boolean; rel
   }
   if (!opts.nothingYet && c && !(opts.you && (c.unread || 0) > 0)) {
     for (const p of c.people) {
-      if (p.missing.includes("identity")) lines.push(`${p.name}: an ID document (a passport, photocard driving licence or national identity card), ${your} electronic identity check showing a pass, or ${your} CDD summary saying their identity was verified`);
+      if (p.missing.includes("identity")) lines.push(`${p.name}: an ID document (a passport, photocard driving licence or national identity card), or ${your} electronic identity check showing a pass`);
       if (p.missing.includes("address")) lines.push(`${p.name}: a proof of address (a utility bill, bank or building society statement, or council tax bill), or ${your} check confirming it`);
     }
     if (c.company && !c.company.register) lines.push("The company's register entry (Companies House, or its register abroad)");

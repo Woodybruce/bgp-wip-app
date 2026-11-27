@@ -381,7 +381,7 @@ function DealRedFlags({ dealId, data }: { dealId: string; data: DealAmlStatus })
         setAside={(data.redFlags?.dealSetAside || []).filter(a => a.flag.factor)}
         canDecide={!!data.decisions?.canDecide}
         whoDecides={data.decisions?.officerWords}
-        title="Enhanced due diligence on the transaction: a higher-risk factor in BGP's AML policy"
+        title="A risk factor on the transaction"
         step={`It applies to every party: ${officer} checks it before signing them off.`}
         testId="kyc-policy-factors-deal"
       />

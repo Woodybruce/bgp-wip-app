@@ -36,7 +36,7 @@
 // Pure rules: the server reads the records (server/aml-policy.ts,
 // server/kyc-red-flags.ts, server/deal-party-aml.ts).
 
-import { flagToConfirm, type KycRedFlag } from "./kyc-red-flags";
+import { flagToConfirm, MANDATORY_EVIDENCE, type KycRedFlag } from "./kyc-red-flags";
 import { fundCase, isPublicBodyRecord, listedCase, publicBodyCase, publicBodyMarkInName, type SddCase } from "./aml-sdd";
 import { ownerRegister, tradingState, type KycPrecheckResult } from "./kyc-prechecks";
 import { isInvestmentDeal } from "./deal-status";
@@ -238,7 +238,9 @@ export function dueDiligenceLevel(input: {
   // A ComplyAdvantage match not yet confirmed is a match to check, not enhanced (25 November 2026).
   const toCheck = flags.filter(f => flagToConfirm({ kind: f.kind as any, evidence: f.evidence || [], confirmed: f.confirmed, factor: f.factor }));
   const all = flags.filter(f => !toCheck.includes(f));
-  const toWeigh = [...(input.toWeigh || []), ...toCheck.map(f => `${f.label}: a possible match to check. It makes the party enhanced only if an officer confirms it is them`)];
+  const toWeigh = [...(input.toWeigh || []), ...toCheck.map(f => f.factor
+    ? `${f.label}: a risk factor for the Nominated Officer or a Deputy to assess. It makes the party enhanced only if they record it as high risk`
+    : `${f.label}: a possible match to check. It makes the party enhanced only if an officer confirms it is them`)];
   if (all.length) {
     return { level: "enhanced", why: all.map(f => f.label), toWeigh, recheckYears: RECHECK_YEARS.enhanced };
   }
@@ -381,7 +383,7 @@ export const sellsCitizenship = (country: string | null): boolean => !!country &
 
 const COUNTRY_RISK_WORDS: Record<CountryRisk, string> = {
   fatf_call_for_action: `on FATF's call for action list (${FATF_LISTS_AS_OF}): enhanced due diligence is required by law`,
-  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): BGP's policy treats it as high risk, so enhanced due diligence applies`,
+  fatf_increased_monitoring: `on FATF's increased monitoring list (${FATF_LISTS_AS_OF}): a risk factor to assess, not enhanced by itself (only call for action countries are, since 30 June 2026)`,
   fwra_eurasia_africa: "named in BGP's risk assessment among the countries linked to corruption and fraud laundered through UK property: refer it to the Nominated Officer",
 };
 
@@ -481,7 +483,7 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
     flags.push({
       ...base, kind: "policy_pooled",
       label: `A limited partnership (${ch.name})`,
-      detail: "Risk assessment: a pooled investment vehicle that is neither listed nor regulated is higher risk. Identify the general partner, the manager and investors of 25% or more; set this aside with a comment if its manager is FCA-regulated.",
+      detail: "A pooled vehicle that is neither listed nor regulated is a risk factor. Identify the general partner, the manager, the people who control them and any investor with more than 25%; an FCA-authorised manager is a reason to assess it as standard.",
       key: "policy:pooled", evidence: [`company:${keyPart(ch.number)}`],
       facts: [{ label: "Register", value: `${ch.name} (${ch.number}), ${ch.type.replace(/-/g, " ")}` }],
     });
@@ -500,7 +502,7 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
       ...base, kind: "policy_country",
       label: `${who}: ${how} ${country}`,
       detail: `${country} is ${COUNTRY_RISK_WORDS[risk]}.`,
-      key: `policy:country:${keyPart(country)}`, evidence: [`who:${id}`],
+      key: `policy:country:${keyPart(country)}`, evidence: [`who:${id}`, ...(risk === "fatf_call_for_action" ? [MANDATORY_EVIDENCE] : [])],
       facts: [{ label: country, value: COUNTRY_RISK_WORDS[risk] }],
     });
   };
@@ -516,25 +518,12 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
       addCountry(o.name, "registered in", o.country);
     }
   }
-  // Owners who are citizens of a country that sells citizenship.
-  for (const o of (ch?.owners || []).filter(x => x.kind === "individual")) {
-    const country = countryOf(o.nationality);
-    if (!sellsCitizenship(country)) continue;
-    flags.push({
-      ...base, kind: "policy_cbi",
-      label: `${o.name}: a national of ${country}, which sells citizenship by investment`,
-      detail: "Risk assessment: an owner from a country with a citizenship by investment scheme gets enhanced due diligence, to check it does not hide a sanctioned person.",
-      key: `policy:cbi:${keyPart(country)}`, evidence: [`owner:${keyPart(o.name)}`],
-      facts: [{ label: "Nationality on the register", value: String(o.nationality || country) }],
-    });
-  }
-
   // Business sectors the risk assessment names as higher risk.
   for (const s of sectorMatches({ sicCodes: ch?.sicCodes || [], companyType: input.companyType }).filter(m => m.enhanced)) {
     flags.push({
       ...base, kind: "policy_sector",
       label: s.label,
-      detail: "Policy 3.6.3 and the risk assessment: an industry with an increased risk of being used for crime needs enhanced due diligence.",
+      detail: "An industry with an increased risk of being used for crime: a risk factor to assess (how much is taken in cash, how long it has traded, its accounts).",
       key: `policy:sector:${s.key}`, evidence: [`via:${keyPart(s.via)}`],
       facts: [{ label: "Read from", value: s.via }],
     });
@@ -546,10 +535,18 @@ export function policyFactorFlags(input: { precheck?: KycPrecheckResult | null; 
 export function policyFactorsToWeigh(input: { precheck?: KycPrecheckResult | null; companyType?: string | null }): string[] {
   // A dormant, non-trading or newly formed company (Woody, 21 November 2026, "and 8").
   const trading = tradingState(input.precheck?.companiesHouse || null);
+  // An owner who is a national of a country that sells citizenship: to weigh
+  // only (Jack, 27 November 2026). The regulations' factor is a person
+  // applying for citizenship or residence in exchange for investment, which a
+  // nationality does not show.
+  const cbi = (input.precheck?.companiesHouse?.owners || []).filter(o => o.kind === "individual")
+    .map(o => ({ name: o.name, country: countryOf(o.nationality) })).filter(o => sellsCitizenship(o.country))
+    .map(o => `${o.name} is a national of ${o.country}, which sells citizenship by investment`);
   return [
     ...sectorMatches({ sicCodes: input.precheck?.companiesHouse?.sicCodes || [], companyType: input.companyType })
       .filter(m => !m.enhanced).map(m => `${m.label} (${m.via})`),
     ...(trading.words ? [trading.words] : []),
+    ...cbi,
   ];
 }
 

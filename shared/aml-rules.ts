@@ -60,6 +60,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "Sales: the agent who finds the buyer checks them. If that was the other agent, ask them for their checks. If they don't send them, record that you asked.", refs: ["amlg2200"] },
       { text: "Lettings: HMRC has no such exception. Every party to the lease is verified, so use the joint agent's checks on the tenant only under a reliance agreement.", refs: ["amlg2300", "amlg11410"] },
       { text: "BGP's policy (Issue 9) goes further than HMRC on sales: we check the counterparty on every joint instruction, using the joint agent's documents or our own checks.", refs: ["bgp_policy"] },
+      { text: "A joint agent's summary saying an identity was verified does not count. We need the ID document or their identity check report.", refs: ["amlg11410", "bgp_policy"] },
       { text: "Agents who share a fee check each other.", refs: ["amlg2200", "amlg2300"] },
       { text: "Only work with agents registered with HMRC for AML. If one isn't, stop working with them and tell HMRC.", refs: ["amlg2200", "amlg11300"] },
     ],
@@ -73,6 +74,7 @@ export const AML_RULES: AmlRuleGroup[] = [
       { text: "A trust's settlor, trustees and anyone else with control: photo ID and proof of address.", refs: ["bgp_policy"] },
       { text: "An agent or representative acting for a party: photo ID and their authority to act, such as our signed terms of engagement. No proof of address.", refs: ["amlg11400"] },
       { text: "A listed company has no owners to check: only the person acting for it.", refs: ["amlg11400"] },
+      { text: "Owners that differ from Companies House: report it only if the difference is material, such as a missing or wrong owner that could hide who is behind the company.", refs: ["amlg11400"] },
       { text: "A company registered abroad: an extract from its own register, from the last 3 months. A document we can't read is translated; HMRC can ask for a certified translation.", refs: ["amlg11400", "bgp_policy"] },
       { text: "Where the money comes from.", refs: ["amlg11630"] },
       { text: "Sanctions: everyone, on every transaction, at any rent. A match goes to the Nominated Officer, who reports it to OFSI.", refs: ["ofsi", "bgp_policy"] },
@@ -82,7 +84,10 @@ export const AML_RULES: AmlRuleGroup[] = [
     title: "Higher risk",
     rules: [
       { text: "Public roles (PEPs), their family and close associates: enhanced checks, until at least 12 months after they leave the role.", refs: ["amlg11650"] },
-      { text: "Red flags, high-risk countries, trusts and complex ownership: enhanced checks, signed off by the Nominated Officer or a Deputy.", refs: ["amlg11600", "amlg3200"] },
+      { text: "Red flags, FATF call for action countries and trusts: enhanced checks, signed off by the Nominated Officer or a Deputy.", refs: ["amlg11600", "amlg3200"] },
+      { text: "Risk factors (an offshore owner, a limited partnership, an increased monitoring country, a cash-heavy sector) are assessed by an officer: standard, with the reason, or high risk.", refs: ["amlg3200", "bgp_policy"] },
+      { text: "A name on the US or EU sanctions list only is a risk factor, not a sanctions match. Only the UK list binds us.", refs: ["ofsi", "bgp_policy"] },
+      { text: "A SIPP or SSAS is a trust and is checked as one.", refs: ["bgp_policy"] },
       { text: "A screening match on a name is not a PEP until an officer confirms it is them. Only then is the party enhanced.", refs: ["amlg11650", "bgp_policy"] },
       { text: "Check again every 3 years, or every year if higher risk.", refs: ["bgp_policy"] },
     ],
@@ -92,6 +97,7 @@ export const AML_RULES: AmlRuleGroup[] = [
     rules: [
       { text: "Stop: sign nothing, take no money from them, end the instruction.", refs: ["amlg2200", "amlg2300"] },
       { text: "Tell the Nominated Officer. They decide whether to report to the NCA, and record why if they don't.", refs: ["amlg11300", "amlg11100"] },
+      { text: "BGP's own hold: once the officers switch it on, no invoice is made or approved until every party is cleared.", refs: ["bgp_policy"] },
     ],
   },
   {
@@ -106,6 +112,7 @@ export const AML_RULES: AmlRuleGroup[] = [
     rules: [
       { text: "Allowed with a UK firm under the same rules. Get their checks straight away, and their agreement to send documents on request and keep them 5 years. We stay responsible.", refs: ["amlg11410"] },
       { text: "Never on a firm's simplified checks, or on a firm in a high-risk country.", refs: ["amlg11410"] },
+      { text: "BGP does not rely on another firm's checks. We ask for the documents and check them ourselves.", refs: ["bgp_policy"] },
     ],
   },
   {

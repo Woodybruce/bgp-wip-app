@@ -48,15 +48,18 @@ test("the client's yes or not sure is a red flag, with their words; a no is not"
   assert.match(changed[0].source, /FIRST5/);
 });
 
-test("a declined identity check is a red flag; a retry or an expiry is not", () => {
+test("a declined identity check is a red flag only where fraud is suspected; a poor photo, a retry or an expiry is not", () => {
   const flags = partyRedFlags(facts({ idChecks: [
-    { status: "declined", decision_reason: "Document not valid", received_at: "2026-11-17T12:00:00Z", name: "John Smith" },
+    { status: "declined", decision_reason: "Suspected document tampering", received_at: "2026-11-17T12:00:00Z", name: "John Smith" },
+    // A decline that is not about fraud is tried again (Jack, 27 November 2026).
+    { status: "declined", decision_reason: "Document not valid", received_at: "2026-11-17T12:00:00Z", name: "Mary Jones" },
+    { status: "declined", decision_reason: "Poor image quality", received_at: "2026-11-17T12:00:00Z", name: "Tom Brown" },
     { status: "resubmission_requested" }, { status: "abandoned" },
   ] }));
   assert.equal(flags.length, 1);
   assert.equal(flags[0].kind, "id_declined");
   assert.equal(flags[0].label, "Identity check declined for John Smith");
-  assert.equal(flags[0].detail, "Document not valid");
+  assert.equal(flags[0].detail, "Suspected document tampering");
   assert.equal(flags[0].source, "Veriff");
 });
 
@@ -213,4 +216,49 @@ test("each person's own yes is a red flag of its own, with their name (19 Novemb
     "Huseyn Mirhadiyev said yes to the question about public roles",
     "David Bruce was not sure about the question about public roles",
   ]);
+});
+
+// ── Risk factors an officer assesses (Jack, 27 November 2026) ───────────────
+
+test("a risk factor waits for an officer's assessment and does not make the party enhanced by itself", async () => {
+  const { factorToAssess, flagToConfirm, isAssessedFactor, MANDATORY_EVIDENCE, idDeclineIsSuspect } = await import("@shared/kyc-red-flags");
+  const { dueDiligenceLevel } = await import("@shared/aml-policy");
+  const lp = { kind: "policy_pooled" as const, label: "A limited partnership (PROPCO LP)", factor: true, evidence: ["company:lp1"] };
+  assert.equal(factorToAssess(lp), true);
+  assert.equal(flagToConfirm(lp), true, "it takes the officer's two answers, as a match to check does");
+  assert.equal(dueDiligenceLevel({ partyFlags: [lp], dealFlags: [], simplifiedBasis: null }).level, "standard");
+  assert.match(dueDiligenceLevel({ partyFlags: [lp], dealFlags: [], simplifiedBasis: null }).toWeigh.join(" "), /risk factor for the Nominated Officer or a Deputy to assess/);
+  // Recorded as high risk: enhanced.
+  assert.equal(factorToAssess({ ...lp, confirmed: true }), false);
+  assert.equal(isAssessedFactor({ ...lp, confirmed: true }), true);
+  assert.equal(dueDiligenceLevel({ partyFlags: [{ ...lp, confirmed: true }], dealFlags: [], simplifiedBasis: null }).level, "enhanced");
+  // A call for action country is enhanced by law: never assessed down.
+  const iran = { kind: "policy_country" as const, label: "Holdco: registered in Iran", factor: true, evidence: ["who:x", MANDATORY_EVIDENCE] };
+  assert.equal(factorToAssess(iran), false);
+  assert.equal(dueDiligenceLevel({ partyFlags: [iran], dealFlags: [], simplifiedBasis: null }).level, "enhanced");
+  // A trust keeps its own rule.
+  assert.equal(factorToAssess({ kind: "policy_trust", factor: true, evidence: [] }), false);
+  assert.equal(idDeclineIsSuspect("Person showing the document does not appear to match document photo"), true);
+  assert.equal(idDeclineIsSuspect("Poor image quality"), false);
+});
+
+test("a party with a factor nobody has assessed is not signed off, by an agent or an officer", async () => {
+  const { signOffDenial } = await import("@shared/party-kyc");
+  const base = { rejected: false, current: null, withKyc4u: false, redFlags: 1, dealRedFlags: 0, unchecked: [], higherRisk: false,
+    precheck: { ranAt: new Date().toISOString() }, precheckRunning: false, clientChecksFinished: true, sanctionsOnly: false,
+    note: "The general partner is FCA-authorised and the fund's investors are institutions we have identified." } as any;
+  assert.match(signOffDenial({ ...base, toAssess: ["A limited partnership (PROPCO LP)"] }) || "", /^Risk factor to assess first: A limited partnership \(PROPCO LP\)/);
+  // Assessed as high risk: the officers' enhanced sign-off, with their note.
+  assert.equal(signOffDenial({ ...base, toAssess: [], inHouseEdd: true }), null);
+  // A small letting needs the sanctions checks only: a factor does not hold it.
+  assert.equal(signOffDenial({ ...base, sanctionsOnly: true, toAssess: ["A limited partnership (PROPCO LP)"] }), null);
+});
+
+test("no invoice until the checks are complete: every party, or BGP's client alone on advisory work", async () => {
+  const { invoiceBlockParties, invoiceBlockWords } = await import("@shared/aml-invoice");
+  const notReady = [{ role: "landlord", name: "Acme Estates Ltd", reason: "no checks run" }, { role: "tenant", name: "Bistro Ltd", reason: "no checks run" }];
+  assert.equal(invoiceBlockParties({ notReady, advisory: false, clientRole: "landlord" }).length, 2);
+  assert.deepEqual(invoiceBlockParties({ notReady, advisory: true, clientRole: "landlord" }).map(p => p.name), ["Acme Estates Ltd"]);
+  assert.deepEqual(invoiceBlockParties({ notReady: [notReady[1]], advisory: true, clientRole: "landlord" }), []);
+  assert.match(invoiceBlockWords(notReady), /^No invoice until the AML checks are complete: Acme Estates Ltd, Bistro Ltd are not cleared yet/);
 });

@@ -28,6 +28,8 @@ interface PolicyFeed {
   isOfficer?: boolean;
   // In-house enhanced due diligence (21 November 2026): the officers switch it.
   inHouseEdd?: { on: boolean; by: string | null; at: string | null };
+  // No invoice until the AML checks are complete (27 November 2026).
+  invoiceBlock?: { on: boolean; by: string | null; at: string | null };
 }
 
 const plain = (e: unknown) => String((e as any)?.message || e || "").replace(/^\d{3}:\s*/, "").replace(/^\{"message":"(.*)"(,.*)?\}$/, "$1");
@@ -129,6 +131,30 @@ function InHouseEddLine() {
   );
 }
 
+// No invoice until the AML checks are complete (Jack, 27 November 2026: "we
+// cant invoice until check complete"). The officers switch it on.
+function InvoiceBlockLine({ data }: { data: PolicyFeed }) {
+  const { toast } = useToast();
+  const on = !!data.invoiceBlock?.on;
+  const save = useMutation({
+    mutationFn: async (next: boolean) => (await apiRequest("PUT", "/api/aml-policy/invoice-block", { on: next })).json(),
+    onSuccess: (_r, next) => { refreshOfficers(); toast({ title: next ? "Invoices now wait for the AML checks" : "Invoices no longer wait for the AML checks" }); },
+    onError: (e: unknown) => toast({ title: "Not saved", description: plain(e), variant: "destructive" }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-testid="aml-invoice-block">
+      <span className="text-muted-foreground">Invoices:</span>
+      <span className="text-foreground font-medium" data-testid="aml-invoice-block-state">{on ? "wait until every party is cleared" : "not held for AML"}</span>
+      <span className="text-muted-foreground">{on ? "No draft is made or approved while a party is not cleared." : "Switch on to stop a draft being made or approved while a party is not cleared."}</span>
+      {data.isOfficer && (
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={save.isPending} onClick={() => save.mutate(!on)} data-testid="button-aml-invoice-block">
+          {save.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}{on ? "Switch off" : "Switch on"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** Enhanced checks are always the officers' (KYC4U is no longer used). */
 export function useAmlInHouse(): boolean {
   return true;
@@ -184,6 +210,7 @@ export function AmlPolicyPanel() {
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enhanced checks</h3>
           <InHouseEddLine />
+          <InvoiceBlockLine data={feed} />
         </section>
         <section className="space-y-1.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</h3>

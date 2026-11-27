@@ -15,7 +15,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAmlUrls } from "@/lib/aml-scope";
 import { RaiseReportButton } from "@/components/aml-register";
 import { useAmlOfficerLabel } from "@/components/aml-policy-panel";
-import { FLAG_REVIEW_COMMENT_MIN, flagToConfirm, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
+import { FLAG_REVIEW_COMMENT_MIN, factorToAssess, flagToConfirm, isAssessedFactor, isSanctionsFlag, type KycRedFlag, type SetAsideFlag } from "@shared/kyc-red-flags";
 import { precheckDay } from "@shared/kyc-prechecks";
 import { SET_ASIDE_VERDICT_WORDS, type SetAsideSuggestion } from "@shared/flag-set-aside";
 
@@ -62,16 +62,18 @@ function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: st
   useEffect(() => { suggest.mutate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const save = useMutation({
     mutationFn: async () => (await apiRequest("POST", `${urls.redFlags(dealId)}/set-aside`, { role, key: flag.key, comment })).json(),
-    onSuccess: () => { refreshAml(dealId, onChanged); toast({ title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
+    onSuccess: () => { refreshAml(dealId, onChanged); toast(assess ? { title: "Assessed as standard", description: "Your reason is kept on the KYC record. Standard checks apply." } : { title: "Set aside", description: "It stays on the KYC record with your comment, and no longer counts as a red flag." }); onClose(); },
     onError: (e: any) => toast({ title: "Not set aside", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
   });
+  // A risk factor: the officer records why standard checks are enough (27 November 2026).
+  const assess = isAssessedFactor(flag);
   const short = comment.trim().length < FLAG_REVIEW_COMMENT_MIN;
   const draft = suggest.data;
   const verdictTone = draft?.verdict === "set_aside" ? "text-foreground" : draft?.verdict === "keep" ? "text-red-700 dark:text-red-400" : "text-amber-700 dark:text-amber-400";
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="kyc-flag-set-aside-dialog">
-        <DialogHeader><DialogTitle>Set this red flag aside</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{assess ? "Assess as standard: why is the risk mitigated?" : "Set this red flag aside"}</DialogTitle></DialogHeader>
         <div className="space-y-3 text-sm">
           <div>
             <div className="font-medium">{flag.label}</div>
@@ -79,7 +81,7 @@ function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: st
             <FlagFacts flag={flag} />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Why it is not a concern</Label>
+            <Label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{assess ? "Why standard checks are enough" : "Why it is not a concern"}</Label>
             <div className="flex items-start gap-1.5 text-xs" data-testid="kyc-flag-suggestion">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -101,7 +103,7 @@ function SetAsideDialog({ dealId, role, flag, onClose, onChanged }: { dealId: st
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button disabled={short || save.isPending} onClick={() => save.mutate()} data-testid="button-kyc-flag-set-aside-save">
-            {save.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}Set aside
+            {save.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}{assess ? "Record as standard" : "Set aside"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -130,8 +132,8 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
   });
   // It's them: an officer confirms a ComplyAdvantage match is the person, and it then counts (25 November 2026).
   const confirm = useMutation({
-    mutationFn: async (f: KycRedFlag) => (await apiRequest("POST", `${urls.redFlags(dealId)}/confirm`, { role, key: f.key, comment: `Confirmed it is the same person: ${f.label}` })).json(),
-    onSuccess: () => { refreshAml(dealId, onChanged); toast({ title: "Confirmed", description: "The match is the person: the party is now enhanced due diligence." }); },
+    mutationFn: async (f: KycRedFlag) => (await apiRequest("POST", `${urls.redFlags(dealId)}/confirm`, { role, key: f.key, comment: factorToAssess(f) ? `Assessed as high risk: enhanced checks apply. ${f.label}` : `Confirmed it is the same person: ${f.label}` })).json(),
+    onSuccess: (_r, f) => { refreshAml(dealId, onChanged); toast(factorToAssess(f) ? { title: "Assessed as high risk", description: "Enhanced checks apply: an officer signs the party off with a note of what was checked." } : { title: "Confirmed", description: "The match is the person: the party is now enhanced due diligence." }); },
     onError: (e: any) => toast({ title: "Not confirmed", description: String(e?.message || e).replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
   });
   if (!flags.length && !setAside.length) return null;
@@ -149,7 +151,7 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
                   <div className="flex items-start gap-1.5">
                     <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${factors ? "bg-amber-600" : "bg-red-600"}`} />
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium">{f.label}{flagToConfirm(f) && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-testid={`kyc-flag-to-check-${f.key}`}>possible match to check</span>}{f.confirmed && <span className="ml-1.5 text-[10px] font-medium" data-testid={`kyc-flag-confirmed-${f.key}`}>confirmed as the person</span>}</div>
+                      <div className="font-medium">{f.label}{flagToConfirm(f) && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200" data-testid={`kyc-flag-to-check-${f.key}`}>{factorToAssess(f) ? "to assess" : "possible match to check"}</span>}{f.confirmed && <span className="ml-1.5 text-[10px] font-medium" data-testid={`kyc-flag-confirmed-${f.key}`}>{isAssessedFactor(f) ? "assessed as high risk" : "confirmed as the person"}</span>}</div>
                       {f.detail && <div className={`${factors ? "text-amber-900/80 dark:text-amber-100/80" : "text-red-800/80 dark:text-red-200/80"} break-words`}>{f.detail}</div>}
                       {f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label)) ? (
                         <div className="mt-0.5 font-medium" data-testid={`kyc-flag-ofsi-${f.key}`}>If it is a true match: tell the Nominated Officer now. It is reported to OFSI as soon as practicable, and legal advice is taken before BGP acts further (AML policy J and 3.10).</div>
@@ -159,10 +161,10 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
                           {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}{open ? "Hide detail" : "Detail"}
                         </button>
                         {canDecide && flagToConfirm(f) && (
-                          <button type="button" className="font-medium underline-offset-2 hover:underline" disabled={confirm.isPending} onClick={() => confirm.mutate(f)} data-testid={`kyc-flag-confirm-${f.key}`}>It's them</button>
+                          <button type="button" className="font-medium underline-offset-2 hover:underline" disabled={confirm.isPending} onClick={() => confirm.mutate(f)} data-testid={`kyc-flag-confirm-${f.key}`}>{factorToAssess(f) ? "High risk" : "It's them"}</button>
                         )}
                         {canDecide && (
-                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>{flagToConfirm(f) ? "Not them" : "Set aside"}</button>
+                          <button type="button" className="underline-offset-2 hover:underline" onClick={() => setDialog(f)} data-testid={`kyc-flag-set-aside-${f.key}`}>{factorToAssess(f) ? "Standard, with reason" : flagToConfirm(f) ? "Not them" : "Set aside"}</button>
                         )}
                         {(f.kind === "sanctions" || (f.kind === "provider_screen" && /sanction/i.test(f.label))) && (
                           <RaiseReportButton variant="text" className="underline-offset-2 hover:underline"
@@ -184,7 +186,7 @@ export function RedFlagList({ dealId, role, flags, setAside, canDecide, title, s
         <div className="rounded-md border border-border bg-muted/30 p-2 text-xs" data-testid={`${testId}-aside`}>
           <button type="button" data-view-ok className="flex w-full items-center gap-1 text-left text-muted-foreground hover:text-foreground" onClick={() => setAsideOpen(o => !o)}>
             {asideOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            {setAside.length} {factors ? "factor" : "red flag"}{setAside.length === 1 ? "" : "s"} set aside
+            {setAside.length} {factors ? "factor" : "red flag"}{setAside.length === 1 ? "" : "s"} {factors ? "assessed as standard or set aside" : "set aside"}
           </button>
           {asideOpen && (
             <ul className="mt-1.5 space-y-1.5">
@@ -232,8 +234,8 @@ export function RedFlagLists({ dealId, role, flags, setAside, canDecide, whoDeci
         testId={`kyc-red-flags-${testKey}`} />}
       {only !== "flags" && <RedFlagList {...common} factors
         flags={f.filter(x => x.factor)} setAside={a.filter(x => x.flag.factor)}
-        title="Enhanced due diligence: higher-risk factors in BGP's AML policy"
-        step={`${officer} checks these and signs the party off, or sets one aside where it does not apply.`}
+        title={`Risk factors: ${officer} to assess`}
+        step={`${officer} records each one as standard, with the reason the risk is mitigated, or as high risk, which applies enhanced checks. The party is not signed off until each has one.`}
         testId={`kyc-policy-factors-${testKey}`} />}
     </>
   );

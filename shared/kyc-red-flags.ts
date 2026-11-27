@@ -32,6 +32,9 @@ export type KycRedFlagKind =
   | "disqualified"
   | "ownership_unclear"
   | "offshore_owner"
+  // On the US or EU sanctions list but not the UK one: a risk factor, not a
+  // sanctions match (27 November 2026).
+  | "foreign_sanctions"
   // The client says the owners Companies House lists are not right.
   | "owners_differ"
   // Higher-risk factors BGP's AML policy and risk assessment name (Issue 2,
@@ -94,8 +97,40 @@ export interface KycRedFlag {
  * waits for a decision before sign-off: confirm it, or set it aside.
  */
 export function flagToConfirm(f: Pick<KycRedFlag, "kind" | "evidence" | "confirmed"> & { factor?: boolean }): boolean {
+  if (factorToAssess(f)) return true;
   return f.kind === "provider_screen" && !f.factor && !f.confirmed && !(f.evidence || []).some(e => /^type:sanction/.test(e));
 }
+
+// ── Risk factors an officer assesses (Jack, 27 November 2026) ───────────────
+//
+// The regulations make enhanced checks mandatory in a short list of cases (a
+// call for action country, a politically exposed person, false documents).
+// Everything else is a risk factor to take into account (MLR 2017 reg 33(6)):
+// an offshore owner, a limited partnership, a FATF increased monitoring
+// country, a higher-risk sector, an owners discrepancy. None makes a party
+// enhanced by itself. The Nominated Officer or a Deputy assesses each one and
+// records an outcome: standard, with the reason the risk is mitigated (set
+// aside), or high risk (confirmed), which applies enhanced checks. The party
+// is not signed off until every factor has one. Agents never choose (Jack:
+// "I dont want agent being able to choose").
+const ASSESSED_KINDS: ReadonlySet<string> = new Set(["policy_pooled", "policy_country", "policy_sector", "offshore_owner", "overseas_entity_missing", "owners_differ", "foreign_sanctions"]);
+/** Evidence that marks a factor the regulations make mandatory: never assessed down to standard by this route. */
+export const MANDATORY_EVIDENCE = "mandatory:enhanced";
+
+/** A risk factor still waiting for an officer's assessment. */
+export function factorToAssess(f: Pick<KycRedFlag, "kind" | "evidence" | "confirmed"> & { factor?: boolean }): boolean {
+  return !!f.factor && !f.confirmed && ASSESSED_KINDS.has(f.kind) && !(f.evidence || []).includes(MANDATORY_EVIDENCE);
+}
+/** Any risk factor of the assessed kind, decided or not. */
+export const isAssessedFactor = (f: Pick<KycRedFlag, "kind" | "evidence"> & { factor?: boolean }): boolean =>
+  !!f.factor && ASSESSED_KINDS.has(f.kind) && !(f.evidence || []).includes(MANDATORY_EVIDENCE);
+
+// Veriff declines a check for a blurred photo as readily as for a forged
+// document. Only a decline that says the document or the person is not
+// genuine is a red flag (MLR 2017 reg 33(1)(e): false or stolen identification);
+// any other is tried again (Jack, 27 November 2026).
+const DECLINE_IS_FRAUD = /tamper|fraud|forge|fake|counterfeit|stolen|not genuine|does not (appear to )?match|doesn.t (appear to )?match|not the same person|suspicious|velocity|abuse|deceased|impersonat|presentation attack|deepfake/i;
+export const idDeclineIsSuspect = (reason: unknown): boolean => DECLINE_IS_FRAUD.test(String(reason ?? ""));
 
 // ── Setting a flag aside ────────────────────────────────────────────────────
 //
@@ -320,19 +355,27 @@ export function partyRedFlags(facts: PartyRedFlagFacts): KycRedFlag[] {
   // The client's reply about the owners on the register, the latest that
   // has one: a difference is reported to Companies House (HMRC, AMLG11400
   // 14.8) and the owners found out.
+  // Only a material discrepancy is reported (MLR 2017 reg 30A and Schedule
+  // 3AZA: one that could reasonably be linked to money laundering or to
+  // concealing the business), so this is a factor for an officer to assess,
+  // not a red flag by itself (Jack, 27 November 2026).
   for (const r of facts.requests.filter(r => r.ownersAnswer?.answer).slice(0, 1).filter(r => r.ownersAnswer!.answer === "no")) {
     flags.push({
       kind: "owners_differ",
-      label: "Says the owners Companies House lists are not right",
+      factor: true,
+      label: "Says the owners Companies House lists are not right: is the difference material?",
       detail: words(r.ownersAnswer!.detail),
       source: `Client checks, ref ${r.ref}`,
       at: iso(r.ownersAnswer!.answeredAt),
       key: `owners_differ:${keyPart(r.ref)}`,
       evidence: [],
-      facts: words(r.ownersAnswer!.detail) ? [{ label: "What they said", value: words(r.ownersAnswer!.detail)! }] : [],
+      facts: [
+        ...(words(r.ownersAnswer!.detail) ? [{ label: "What they said", value: words(r.ownersAnswer!.detail)! }] : []),
+        { label: "What to do", value: "Find out who owns it. Report the difference to Companies House only if it is material: a wrong or missing owner, name, date of birth, nationality or nature of control that could be linked to money laundering or to hiding who is behind the business." },
+      ],
     });
   }
-  for (const s of facts.idChecks.filter(c => String(c.status || "").toLowerCase() === "declined")) {
+  for (const s of facts.idChecks.filter(c => String(c.status || "").toLowerCase() === "declined" && idDeclineIsSuspect(c.decision_reason))) {
     flags.push({
       kind: "id_declined",
       label: `Identity check declined${s.name ? ` for ${s.name}` : ""}`,

@@ -6,7 +6,7 @@
 
 import { pool } from "./db";
 import {
-  applyFlagReviews, dealRedFlags, flagToConfirm, oldScreeningMarks, partyRedFlags, redFlagAlertKey,
+  applyFlagReviews, dealRedFlags, flagToConfirm, isAssessedFactor, oldScreeningMarks, partyRedFlags, redFlagAlertKey,
   type KycFlagReview, type KycRedFlag, type KycRedFlagKind, type PartyRedFlagFacts, type SetAsideFlag,
 } from "@shared/kyc-red-flags";
 import { kycRedFlagEmail, kycReplyAddresses } from "@shared/kyc-request";
@@ -246,7 +246,7 @@ export async function setFlagAside(input: {
   const live = input.brandId ? flags.parties[input.brandId] || [] : flags.deal;
   const flag = live.find(f => f.key === input.key);
   if (!flag) throw new FlagReviewRefusal("That red flag is not there any more (it may have been set aside already). Reload the box.");
-  if (input.confirm && !flagToConfirm(flag)) throw new FlagReviewRefusal("Only a ComplyAdvantage match still to check can be confirmed.");
+  if (input.confirm && !flagToConfirm(flag)) throw new FlagReviewRefusal("Only a possible match still to check, or a risk factor still to assess, can be confirmed.");
   // A flag read from the brand's own KYC record holds for the brand, whoever
   // signs; any other holds for the company that signs now.
   const entityId = input.brandId && !flag.key.startsWith("record:") ? input.entityId : null;
@@ -258,7 +258,9 @@ export async function setFlagAside(input: {
     await pool.query(
       `INSERT INTO kyc_audit_log (company_id, action, performed_by, notes, entity_kind, entity_id) VALUES ($1, $2, $3, $4, $5, $6)`,
       [input.brandId, input.confirm ? "red_flag_confirmed" : "red_flag_set_aside", input.me.name,
-        input.confirm ? `Match confirmed as the person by ${input.me.name}: ${flag.label}. ${input.comment}` : `Red flag set aside by ${input.me.name}: ${flag.label}. Why: ${input.comment}`,
+        isAssessedFactor(flag)
+          ? (input.confirm ? `Risk factor assessed as high risk by ${input.me.name}: ${flag.label}. ${input.comment}` : `Risk factor assessed as standard by ${input.me.name}: ${flag.label}. Why the risk is mitigated: ${input.comment}`)
+          : input.confirm ? `Match confirmed as the person by ${input.me.name}: ${flag.label}. ${input.comment}` : `Red flag set aside by ${input.me.name}: ${flag.label}. Why: ${input.comment}`,
         entityId ? "trading_entity" : null, entityId]).catch(() => {});
   }
   return {

@@ -137,7 +137,9 @@ test("the policy's higher-risk factors, read from the register", () => {
   const bvi = policyFactorFlags({ precheck: precheck({ owners: [{ name: "Holdco Ltd", kind: "company", controls: [], notifiedOn: null, country: "British Virgin Islands" }] }) });
   assert.ok(bvi.some(f => f.kind === "policy_country" && f.key === "policy:country:british-virgin-islands"));
   const cbi = policyFactorFlags({ precheck: precheck({ owners: [{ name: "Ayse Kaya", kind: "individual", controls: [], notifiedOn: null, nationality: "Turkish", residence: "United Kingdom" }] }) });
-  assert.ok(cbi.some(f => f.kind === "policy_cbi"));
+  // A nationality that can be bought is weighed, not a factor needing a decision (Jack, 27 November 2026).
+  assert.equal(cbi.some(f => f.kind === "policy_cbi"), false);
+  assert.match(policyFactorsToWeigh({ precheck: precheck({ owners: [{ name: "Ayse Kaya", kind: "individual", controls: [], notifiedOn: null, nationality: "Turkish", residence: "United Kingdom" }] }) }).join(" "), /Ayse Kaya.*citizenship by investment/);
   const sector = policyFactorFlags({ precheck: precheck({ sicCodes: ["92000"] }) });
   assert.ok(sector.some(f => f.kind === "policy_sector" && f.key === "policy:sector:gambling"));
   assert.deepEqual(policyFactorFlags({ precheck: precheck({ sicCodes: ["56101"] }) }), [], "a restaurant is not enhanced by itself");

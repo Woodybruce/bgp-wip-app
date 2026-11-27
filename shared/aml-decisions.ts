@@ -39,6 +39,21 @@ export interface AmlDecision {
 }
 
 export const AML_DECISIONS: AmlDecision[] = [
+  // 27 November 2026
+  { date: "2026-11-27", who: ["Jack"], topic: "Higher risk", title: "Risk factors are assessed by an officer, not enhanced automatically",
+    text: "An offshore owner, a limited partnership, a FATF increased monitoring country, a higher-risk sector and a name on the US or EU sanctions list only are risk factors. The Nominated Officer or a Deputy records each as standard, with the reason, or as high risk. Agents never choose, and a party is not signed off until each has an outcome. Call for action countries, PEPs and trusts stay enhanced." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "No invoice until the AML checks are complete",
+    text: "BGP cannot stop a client exchanging, so its own hold is on the invoice. Once the officers switch it on (Policy), no Xero draft is made or approved while a party on the transaction is not cleared. On advisory work only BGP's own client counts. A party marked Not required counts as done." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Agents and joint agents", title: "A joint agent's summary does not prove identity",
+    text: "A joint agent's CDD summary saying an identity was verified no longer counts for that person. BGP needs the ID document or the joint agent's identity check report. BGP does not rely on another firm's checks." },
+  { date: "2026-11-27", who: ["Jack"], topic: "ID and documents", title: "A declined identity check is a red flag only where fraud is suspected",
+    text: "Veriff declines a check for a poor photo as often as for a false document. Only a decline whose reason says the document or the person is not genuine is a red flag. Any other is tried again." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "Only a material ownership discrepancy is reported",
+    text: "When a client says the owners at Companies House are wrong, an officer judges whether the difference is material: one that could be linked to money laundering or to hiding who is behind the company. Only a material one is reported to Companies House." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Higher risk", title: "Citizenship by investment is a factor to weigh",
+    text: "An owner who is a national of a country that sells citizenship is noted to weigh, not a risk factor needing a decision. The regulations cover a person applying for citizenship in exchange for investment, which a nationality does not show." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Trusts and charities", title: "SIPPs and SSASs are checked as trusts",
+    text: "A self-invested personal pension or small self-administered scheme is a trust. The app suggests recording it as one, and the trust rules then apply in full." },
   // 26 November 2026
   { date: "2026-11-26", who: ["Jack"], topic: "Who we check and when", title: "Heads of terms before HOTs or Solicitors",
     text: "A transaction moves to HOTs or Solicitors only once its heads of terms or proforma are added: on the Letting Tracker, the Transactions table, the Edit form and through ChatBGP. The parties are set from the file and the AML window opens, so checks start at heads of terms at the latest. Rent reviews, dilapidations and service charge work are not held." },

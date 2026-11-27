@@ -282,16 +282,17 @@ test("with no people read by BGP, the owners their own register names are the pe
 // Found by playing the agent on live on 23 November 2026: a CDD summary that
 // said the owner's address was not verified asked for nothing about her, and
 // a complete summary was asked for the owners and the screening again.
-test("their CDD summary: its owners are the people, what it says was verified counts, and so does its screening", () => {
+test("their CDD summary: its owners are the people and its screening counts; its word on identity does not", () => {
   const tenant = jointCoverage({
     partyName: "AML Test Tenant Ltd", kind: "company", people: [], now: today,
     readings: [read({ file: "cdd.pdf", kind: "risk_assessment", title: "CDD summary", owners: ["Jane Testperson"], result: "clear",
       people: [{ name: "Jane Testperson", born: "1980-05", idVerified: true, addressVerified: false }] })],
   });
-  assert.deepEqual(tenant.people.map(p => [p.name, p.missing]), [["Jane Testperson", ["address"]]]);
+  // A summary saying an identity was verified is not the document (Jack, 27 November 2026).
+  assert.deepEqual(tenant.people.map(p => [p.name, p.missing]), [["Jane Testperson", ["identity", "address"]]]);
   assert.match(tenant.company?.ownership || "", /cdd\.pdf|CDD summary/);
   assert.match(tenant.screening || "", /screening clear/);
-  assert.deepEqual(tenant.missing, ["Jane Testperson: address", "the company's register entry"]);
+  assert.deepEqual(tenant.missing, ["Jane Testperson: identity and address", "the company's register entry"]);
   const lines = jointGapLines(tenant, { you: true, reliance: true, agreed: true, nothingYet: false, partyName: "AML Test Tenant Ltd" });
   assert.ok(lines.some(l => /^Jane Testperson: a proof of address/.test(l)), lines.join(" | "));
   assert.ok(!lines.some(l => /screening|Who owns/.test(l)), lines.join(" | "));
@@ -312,7 +313,10 @@ test("what BGP's own checks read from the register is not asked of the agent aga
   const done = jointCoverage({
     partyName: "Acme Ltd", kind: "company", now: today, held: registerHeld("owners"),
     people: [{ name: "Jane Smith", roles: ["owner"], born: "1980-05" }],
-    readings: [read({ kind: "risk_assessment", result: "clear", people: [{ name: "Jane Smith", born: "1980-05", idVerified: true, addressVerified: true }] })],
+    readings: [
+      read({ kind: "risk_assessment", result: "clear", people: [{ name: "Jane Smith", born: "1980-05", idVerified: true, addressVerified: true }] }),
+      read({ file: "id-check.pdf", kind: "electronic_id", result: "pass", people: [{ name: "Jane Smith", born: "1980-05" }] }),
+    ],
   });
   assert.equal(done.complete, true, done.missing.join(" | "));
   assert.match(done.company!.register!, /Companies House, read by BGP's checks/);
@@ -451,7 +455,7 @@ test("a reply by email counts from the address asked or a colleague at the same 
 // ── What is missing, and chasing it (Woody, 22 November 2026: "we need to
 // explain whats missing and keep emailing") ─────────────────────────────────
 
-test("a CDD summary that says what they verified counts, without the documents themselves", () => {
+test("a CDD summary's word counts for an address, never for an identity", () => {
   const c = jointCoverage({
     partyName: "Acme Trading Ltd", kind: "company", now: today,
     people: [{ name: "Jane Smith", roles: ["owner"], born: "1980-05" }, { name: "Bob Jones", roles: ["owner"] }],
@@ -459,8 +463,8 @@ test("a CDD summary that says what they verified counts, without the documents t
       read({ file: "cdd.pdf", kind: "risk_assessment", title: "CDD summary", people: [{ name: "Jane Smith", born: "1980-05", idVerified: true, addressVerified: true }, { name: "Bob Jones", born: null, idVerified: true, addressVerified: false }] }),
     ],
   });
-  assert.deepEqual(c.people.find(p => p.name === "Jane Smith")!.missing, []);
-  assert.deepEqual(c.people.find(p => p.name === "Bob Jones")!.missing, ["address"]);
+  assert.deepEqual(c.people.find(p => p.name === "Jane Smith")!.missing, ["identity"]);
+  assert.deepEqual(c.people.find(p => p.name === "Bob Jones")!.missing, ["identity", "address"]);
 });
 
 test("simplified checks are a flag only when BGP would rely on them", () => {

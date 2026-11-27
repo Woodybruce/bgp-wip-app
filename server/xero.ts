@@ -1108,6 +1108,12 @@ export function setupXeroRoutes(app: Express) {
           return res.status(409).json({ code: "AML_STOPPED", message: AML_STOP_REFUSAL });
         }
       }
+      // No invoice until the AML checks are complete (Jack, 27 November 2026).
+      {
+        const { amlInvoiceDenial } = await import("./aml-invoice-block");
+        const held = await amlInvoiceDenial(dealId);
+        if (held) return res.status(409).json(held);
+      }
       const currency = feeCurrencyOf(bodyCurrency || deal.feeCurrency);
       const currencyFields = await invoiceCurrencyFields(req.session, currency);
 

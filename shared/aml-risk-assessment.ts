@@ -111,7 +111,7 @@ export function riskHeadingOf(f: Pick<KycRedFlag, "kind" | "label" | "key">): Ri
   const words = `${f.label} ${f.key}`;
   if (f.kind === "client_pep" || f.kind === "web_pep" || f.kind === "screening") return "pep";
   if (f.kind === "provider_screen" && /\bpep\b|public role|politic/i.test(words)) return "pep";
-  if (f.kind === "offshore_owner" || f.kind === "policy_country" || f.kind === "policy_cbi" || f.kind === "overseas_entity_missing") return "geographic";
+  if (f.kind === "offshore_owner" || f.kind === "policy_country" || f.kind === "policy_cbi" || f.kind === "overseas_entity_missing" || f.kind === "foreign_sanctions") return "geographic";
   if (f.kind === "super_prime" || f.kind === "sof_mismatch" || f.kind === "third_party_payer" || f.kind === "policy_sector" || f.kind === "policy_pooled") return "other";
   return "client";
 }

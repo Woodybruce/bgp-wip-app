@@ -292,6 +292,9 @@ export function setupXeroInvoiceRoutes(app: Express) {
     if (!row?.xeroInvoiceId) return res.status(404).json({ message: "Invoice not found." });
     const stop = await stopped(row.dealId);
     if (stop) return res.status(409).json({ code: "AML_STOPPED", message: stop });
+    // No invoice is approved until the AML checks are complete (Jack, 27 November 2026).
+    const held = await import("./aml-invoice-block").then(m => m.amlInvoiceDenial(row.dealId));
+    if (held) return res.status(409).json(held);
     try {
       const now = await fetchInvoice(req.session, row.xeroInvoiceId, true);
       const status = xeroStatusOf(now.Status);

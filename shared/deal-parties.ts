@@ -149,8 +149,12 @@ export const SIGNING_COMPANY_WORDS: Record<DealPartyRole, string> = {
 export const isTrustRecord = (subjectType: unknown): boolean => text(subjectType).toLowerCase() === "trust";
 
 /** A name that reads like a trust: a suggestion a person confirms, never applied by itself. */
+// A self-invested pension (a SIPP or SSAS) is a trust and takes the trust
+// rules (Jack, 27 November 2026: "apply same rules to SIPPs as we do trusts").
+export const pensionSchemeMarkInName = (name: unknown): boolean =>
+  /\b(sipps?|ssas|self[- ]invested personal pensions?|small self[- ]administered schemes?|pension (?:scheme|trust)s?)\b/i.test(text(name));
 export const trustMarkInName = (name: unknown): boolean =>
-  /\b(trust|trusts|trustees?|settlement|trust corporation)\b/i.test(text(name)) && !/\btrust ?pilot\b/i.test(text(name));
+  (/\b(trust|trusts|trustees?|settlement|trust corporation)\b/i.test(text(name)) && !/\btrust ?pilot\b/i.test(text(name))) || pensionSchemeMarkInName(name);
 
 /**
  * A name that reads like a foundation (Woody, 21 November 2026: "Foundations:

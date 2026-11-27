@@ -1137,8 +1137,12 @@ export function precheckSanctionsMatch(result: Pick<KycPrecheckResult, "sanction
   })
     || !!result.companiesHouse?.owners.some(o => o.sanctioned);
   if (!result.sanctions.ran) return provider ? true : null;
-  return provider || result.sanctions.lines.some(l => l.outcome === "possible");
+  return provider || result.sanctions.lines.some(l => l.outcome === "possible" && sanctionsLineIsUk(l));
 }
+
+/** A possible match that is on the UK Sanctions List (an entry stored before the lists were named counts as UK). */
+export const sanctionsLineIsUk = (line: Pick<SanctionsLine, "matches">): boolean =>
+  !line.matches.length || line.matches.some(m => !m.source || m.source === "UK");
 
 // ── What is still to ask ────────────────────────────────────────────────────
 
@@ -1730,7 +1734,26 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
   const k = flagKeyPart;
   if (opts.sanctionsCurrent) {
     for (const line of result.sanctions.lines.filter(l => l.outcome === "possible")) {
-      const m = line.matches[0];
+      // Only the UK Sanctions List binds BGP (Jack, 27 November 2026). A name
+      // on the US or EU list alone is a risk factor for an officer to assess,
+      // not a sanctions match: no OFSI report follows from it.
+      if (!sanctionsLineIsUk(line)) {
+        const first = line.matches[0];
+        flags.push({
+          kind: "foreign_sanctions", factor: true,
+          label: `${line.name} (${line.role}) may be on the ${first ? sanctionsListName(first.source) : "US or EU list"}, not the UK Sanctions List`,
+          detail: `${first ? `${first.name}${first.regime ? `, ${first.regime}` : ""}. ${first.why} ` : ""}UK law does not stop BGP acting for someone listed only abroad, but it is a risk factor: check whether it is the same person or company, and whether banks or other parties to the transaction would refuse to deal with them.`,
+          source: `${source}: sanctions lists`, at,
+          key: `sanctions-abroad:${k(line.name)}`,
+          evidence: line.matches.map(x => `entry:${x.source}:${k(x.name)}`).sort(),
+          facts: line.matches.map(x => ({
+            label: sanctionsListName(x.source),
+            value: [x.name, x.regime, x.designationType, x.dob ? `born ${x.dob}` : "", x.nationality].filter(Boolean).join(", ") + `. ${x.why}`,
+          })),
+        });
+        continue;
+      }
+      const m = line.matches.find(x => !x.source || x.source === "UK") || line.matches[0];
       flags.push({
         kind: "sanctions",
         label: `Possible sanctions match for ${line.name} (${line.role})`,
@@ -1840,7 +1863,7 @@ export function precheckRedFlags(result: KycPrecheckResult, opts: { sanctionsCur
     }
     for (const o of offshoreOwnersOf(ch)) {
       const note = offshoreNote(o.country);
-      flags.push({ kind: "offshore_owner", label: `Owned through ${o.name}, registered in ${o.country}${o.foundAt ? ` (up the chain, owning ${o.foundAt})` : ""}`,
+      flags.push({ kind: "offshore_owner", factor: true, label: `Owned through ${o.name}, registered in ${o.country}${o.foundAt ? ` (up the chain, owning ${o.foundAt})` : ""}`,
         detail: `${note ? `${note} ` : ""}Companies House cannot show who owns ${o.name}: ask the client for a structure chart up to the people, ${o.name}'s register extract, and each owner's ID and proof of address.`,
         source: `${source}: Companies House`, at,
         key: `ch:offshore:${k(o.name)}`, evidence: [`country:${k(o.country)}`],
