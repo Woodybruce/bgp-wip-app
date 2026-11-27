@@ -40,6 +40,10 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 27 November 2026
+  { date: "2026-11-27", who: ["Jack"], topic: "Who we check and when", title: "No new transaction starts at HOTs or Solicitors without heads of terms",
+    text: "New Transaction, ChatBGP and the Investment Tracker are held as the Transactions table is. A new transaction at HOTs or Solicitors needs its heads of terms or proforma added on the form; the Investment Tracker asks for them before the move." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "Identity check results print as a readable page in the AML file",
+    text: "Each Veriff identity check in the AML file is a PDF with the result, the person and the document as read, in place of the raw record. The same check filed twice is included once." },
   { date: "2026-11-27", who: ["Jack"], topic: "Who we check and when", title: "A limited partnership's general partner and partners over 25% are checked",
     text: "Companies House holds no register of a limited partnership's partners. Its general partner is added to the transaction as also signing, so its owners are checked, and any person with more than 25% or control is recorded under Partners and does an identity check. The party is not signed off until one or the other is done." },
   { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "The register is kept as a dated PDF each time it is read",

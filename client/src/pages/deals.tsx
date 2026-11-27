@@ -3820,7 +3820,20 @@ export function DealFormDialog({
       } else {
         const splitAgents = splitAgentNames(feeRows);
         if (splitAgents.length > 0) payload.internalAgent = splitAgents;
+        // Heads of terms first (Jack, 27 November 2026): a transaction that
+        // starts at HOTs or Solicitors is made at Negotiating, the heads of
+        // terms read into the form are filed on it, and it is then moved on.
+        const startsAt = isClientCreate ? null : hotsGateApplies(null, String(payload.status || ""), String(payload.dealType || "") || null);
+        const wanted = payload.status;
+        if (startsAt) payload.status = "NEG";
         const created = await postDeal(payload);
+        if (created?.id && startsAt && hotsReadFile) {
+          const fd = new FormData();
+          fd.append("file", hotsReadFile);
+          const filed = await fetch(`/api/deals/${encodeURIComponent(created.id)}/heads-of-terms/file`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+          if (!filed.ok) throw new Error(`The transaction was made at Negotiating, but the heads of terms could not be saved: ${(await filed.json().catch(() => ({})))?.message || filed.status}. Add them on the transaction, then move it on.`);
+          await apiRequest("PUT", `/api/crm/deals/${created.id}`, { status: wanted });
+        }
         if (created?.id) {
           await saveSplit(created.id, "Transaction created");
           await saveJointAgencyNote(created.id, "Transaction created");
@@ -4034,6 +4047,10 @@ export function DealFormDialog({
     // Heads of terms first (Jack, 26 November 2026): BGP staff move a
     // transaction to HOTs or Solicitors only once they are on it. A handover
     // files its own; the server refuses the save either way.
+    if (!isEdit && !linked && !handover && !isClientCreate && hotsGateApplies(null, form.status, form.dealType) && !hotsReadFile) {
+      toast({ title: "Add the heads of terms first", description: "A transaction starts at HOTs or Solicitors only with its heads of terms or proforma on it. Use Add heads of terms above, or start it at an earlier stage.", variant: "destructive" });
+      return;
+    }
     const moving = linked?.deal || (isEdit ? deal : null);
     if (moving && !handover && !isClientCreate) {
       const target = hotsGateApplies(moving.status, form.status, form.dealType || moving.dealType);

@@ -56,3 +56,19 @@ test("the Transactions table and the Edit form ask for the file first", () => {
   assert.match(box, /\/api\/deals\/\$\{encodeURIComponent\(deal\.id\)\}\/heads-of-terms\/file/);
   assert.match(box, /"vendor", "purchaser"/);
 });
+
+test("New Transaction and the Investment Tracker are held too (27 November 2026)", () => {
+  assert.equal(hotsGateApplies(null, "SOL", "Purchase"), "SOL");
+  const crm = read("server/crm.ts");
+  const post = crm.slice(crm.indexOf('app.post("/api/crm/deals"'));
+  const at = post.indexOf("hotsGateApplies(null");
+  assert.ok(at > 0 && at < post.indexOf("const deal = await createDeal(req.body"), "refused before the transaction is made");
+  assert.match(post.slice(at - 300, at), /if \(!dealScope &&/);
+  const tracker = read("server/investment-tracker-service.ts");
+  assert.ok(tracker.indexOf("hotsRequiredDenial") > 0 && tracker.indexOf("hotsRequiredDenial") < tracker.indexOf("db.transaction"), "refused before the tracker row is written");
+  const page = read("client/src/pages/investment-tracker.tsx");
+  assert.match(page, /<DealHotsGate deal=\{hotsGate\?\.deal \|\| null\}/);
+  const deals = read("client/src/pages/deals.tsx");
+  assert.match(deals, /if \(startsAt\) payload\.status = "NEG";/);
+  assert.match(deals, /heads-of-terms\/file/);
+});

@@ -3863,6 +3863,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           }
         }
       }
+      // Heads of terms first (Jack, 27 November 2026: "yep block"): BGP staff
+      // do not start a transaction at HOTs or Solicitors. It is made a stage
+      // earlier, the heads of terms are added, and it is then moved on.
+      if (!dealScope && req.body && typeof req.body === "object") {
+        const { hotsGateApplies, hotsRequiredWords, HOTS_REQUIRED_CODE } = await import("./deal-hots-gate");
+        const startsAt = hotsGateApplies(null, String((req.body as any).status || ""), (req.body as any).dealType || null);
+        if (startsAt) return res.status(409).json({ error: hotsRequiredWords(startsAt), code: HOTS_REQUIRED_CODE });
+      }
       const deal = await createDeal(req.body, {
         userId: (req as any).session?.userId || (req as any).tokenUserId || null,
         source: lettingSource(req),

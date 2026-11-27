@@ -11148,10 +11148,22 @@ By adding the Heads of Terms the app should auto add the Landlord and Tenant
   either) and on the Edit form's Save (`setParties={false}`: the form saves
   its own parties). A sale or purchase sets Vendor and Purchaser.
   Guard: `qa/regression/deal-hots-gate.test.mjs`.
-- **Not held**: creating a transaction straight at HOTs or Solicitors (New
-  Transaction, ChatBGP's create_deal), the Investment Tracker's own status
-  change, and joint agents' and clients' trackers. The AML file does not yet
-  carry a file added to the transaction itself. Not checked in a browser.
+- **New Transaction, ChatBGP and the Investment Tracker too** (Jack,
+  27 November 2026: "yep block"). `POST /api/crm/deals` from BGP staff at
+  HOTs or Solicitors answers 409 `HOTS_REQUIRED` (imports call `createDeal`
+  directly and are not held). New Transaction needs the file read by its Add
+  heads of terms (`hotsReadFile`); it makes the transaction at Negotiating,
+  files the heads of terms on it (`/api/deals/:id/heads-of-terms/file`) and
+  then moves it to the stage chosen. The Investment Tracker
+  (`updateTrackerAsset`) refuses the move, and its screen opens
+  `DealHotsGate` first (`saveUpdate`); its bulk status change shows the
+  refusal.
+- **Not held**: joint agents' and clients' trackers. The AML file does not
+  yet carry a file added to the transaction itself. Not checked in a browser.
+- **Identity check results in the AML file** (Jack, the same day): a Veriff
+  result is written as a PDF (`veriffResultLines`, `veriffResultPdf` in
+  `server/aml-file.ts`), not JSON, and one check filed twice is included
+  once.
 
 ## Simplified due diligence said out loud, and UK public bodies (Layla, 2026-11-23)
 

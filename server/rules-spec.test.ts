@@ -51,3 +51,20 @@ test("the principal place of business in words", () => {
   assert.equal(placeOfBusinessWords({ same: false, address: "2 Mill Lane, Leeds", answeredAt: "x" }), "2 Mill Lane, Leeds");
   assert.match(KYC_PLACE_QUESTION.intro, /registered office/);
 });
+
+test("an identity check result is written as lines a person can read", async () => {
+  const { veriffResultLines } = await import("./aml-file");
+  const lines = veriffResultLines({
+    session_id: "32ed013c", first_name: "Jonny", last_name: "Miller", status: "approved", decision_code: 9001,
+    verdict_person: { firstName: "JONATHAN PATRICK", lastName: "MILLER", dateOfBirth: "1974-08-02", nationality: "GB", addresses: [] },
+    verdict_document: { type: "PASSPORT", number: "156702525", country: "GB", validFrom: "2026-01-13", validUntil: "2036-01-13" },
+    created_at: "2026-11-20T21:30:20Z", received_at: "2026-11-20T21:33:10Z",
+  }).map(l => l.head || `${l.label}: ${l.value}`).join("\n");
+  assert.match(lines, /Result: Passed/);
+  assert.match(lines, /Asked of: Jonny Miller/);
+  assert.match(lines, /Name: JONATHAN PATRICK MILLER/);
+  assert.match(lines, /Date of birth: 2 August 1974/);
+  assert.match(lines, /Type: passport/);
+  assert.match(lines, /Valid until: 13 January 2036/);
+  assert.doesNotMatch(lines, /[{}"]/);
+});

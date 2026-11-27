@@ -47,6 +47,8 @@ import {
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DealAmlDialog, type AmlDialogDeal } from "@/components/deal-aml-dialog";
+import { DealHotsGate, type HotsGateDeal, type HotsGateTarget } from "@/components/tracker-hots-gate";
+import { hotsGateApplies } from "@shared/deal-hots-gate";
 import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes, heroThumbUrl } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
@@ -1519,8 +1521,17 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
 
 
 
+  // Heads of terms first (Jack, 27 November 2026): a move to HOTs or
+  // Solicitors asks for them when the transaction has none.
+  const [hotsGate, setHotsGate] = useState<{ deal: HotsGateDeal; target: HotsGateTarget; id: string; data: any } | null>(null);
+  const saveUpdate = (id: string, data: any) => {
+    const item: any = (items as any[]).find(i => i.id === id);
+    const target = item?.dealId && data?.status ? hotsGateApplies(item.status, String(data.status), item.boardType === "Sales" ? "Sale" : "Purchase") : null;
+    if (target) { setHotsGate({ deal: { id: item.dealId, name: item.assetName || null, dealType: item.boardType === "Sales" ? "Sale" : "Purchase" }, target, id, data }); return; }
+    updateMutation.mutate({ id, data });
+  };
   const inlineUpdate = (id: string, field: string, value: any) => {
-    updateMutation.mutate({ id, data: { [field]: value } });
+    saveUpdate(id, { [field]: value });
   };
 
   const createProperty = async (name: string) => {
@@ -1947,6 +1958,9 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     // left the list a window barely two cards tall.
     <div ref={setPageEl} className={`${present ? "p-3 space-y-2" : foldedTop ? "px-4 py-2 sm:px-6 space-y-2" : "p-4 sm:p-6 space-y-4"} flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
+      <DealHotsGate deal={hotsGate?.deal || null} target={hotsGate?.target || "HOT"}
+        onCancel={() => setHotsGate(null)}
+        onDone={() => { const g = hotsGate; setHotsGate(null); if (g) updateMutation.mutate({ id: g.id, data: g.data }); }} />
       <DealAmlDialog deal={amlDeal} reason={amlDeal?.reason || "solicitors"} onClose={() => setAmlDeal(null)} />
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       {!soldCompFor && soldCompQueue.items[0] && (
@@ -3096,7 +3110,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               disabled={!form.assetName}
               onClick={() => {
                 if (editItem) {
-                  updateMutation.mutate({ id: editItem.id, data: formToPayload(form) });
+                  saveUpdate(editItem.id, formToPayload(form));
                 } else {
                   createMutation.mutate(formToPayload(form));
                 }

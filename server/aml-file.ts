@@ -353,6 +353,67 @@ export function riskAssessmentFor(data: AmlFileData, p: AmlFileParty): RiskAsses
 
 // ── The documents themselves ────────────────────────────────────────────────
 
+const VERIFF_STATUS_WORDS: Record<string, string> = {
+  approved: "Passed", declined: "Declined", resubmission_requested: "Asked to try again", expired: "Expired, not finished",
+  abandoned: "Abandoned, not finished", submitted: "Done, waiting for Veriff's result", started: "Started, not finished", created: "Not started",
+};
+const veriffDay = (v: unknown): string => {
+  const d = v ? new Date(String(v)) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }) : "";
+};
+const veriffDocType = (t: unknown): string => String(t || "").toLowerCase().replace(/_/g, " ").replace(/^drivers licen[cs]e$/, "driving licence").replace(/^id card$/, "identity card");
+
+/** A Veriff identity check as label and value lines: what the AML file prints. */
+export function veriffResultLines(s: any): Array<{ head?: string; label?: string; value?: string }> {
+  const person = s?.verdict_person || {};
+  const doc = s?.verdict_document || {};
+  const name = [person.firstName, person.lastName].filter(Boolean).join(" ");
+  const asked = [s?.first_name, s?.last_name].filter(Boolean).join(" ");
+  const out: Array<{ head?: string; label?: string; value?: string }> = [];
+  const row = (label: string, value: unknown) => { const v = String(value ?? "").trim(); if (v) out.push({ label, value: v }); };
+  out.push({ head: "Result" });
+  row("Result", VERIFF_STATUS_WORDS[String(s?.status || "")] || String(s?.status || "Not known"));
+  row("Reason given", s?.decision_reason);
+  row("Asked of", asked);
+  row("Started", veriffDay(s?.created_at));
+  row("Decided", veriffDay(s?.received_at));
+  out.push({ head: "The person, as read from the document" });
+  row("Name", name);
+  row("Date of birth", veriffDay(person.dateOfBirth) || person.yearOfBirth);
+  row("Nationality", person.nationality || person.citizenship);
+  row("Place of birth", person.placeOfBirth);
+  for (const a of Array.isArray(person.addresses) ? person.addresses : []) row("Address", typeof a === "string" ? a : a?.fullAddress);
+  if (!name) out.push({ label: "Name", value: "Not read" });
+  out.push({ head: "The document" });
+  row("Type", veriffDocType(doc.type) || "Not read");
+  row("Number", doc.number);
+  row("Issued by", [doc.state, doc.country].filter(Boolean).join(", "));
+  row("Valid from", veriffDay(doc.validFrom));
+  row("Valid until", veriffDay(doc.validUntil));
+  out.push({ head: "Reference" });
+  row("Veriff session", s?.session_id);
+  row("Veriff decision code", s?.decision_code);
+  return out;
+}
+
+async function veriffResultPdf(s: any): Promise<Buffer> {
+  const PDFDocument = (await import("pdfkit")).default;
+  const doc = new PDFDocument({ size: "A4", margins: { top: 50, bottom: 56, left: 50, right: 50 }, info: { Title: "Identity check result", Author: "Bruce Gillingham Pollard" } });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c: Buffer) => chunks.push(c));
+  const done = new Promise<void>(resolve => doc.on("end", () => resolve()));
+  const width = doc.page.width - 100;
+  doc.font("Helvetica-Bold").fontSize(16).fillColor("#1a1a1a").text("Identity check result", { width });
+  doc.font("Helvetica").fontSize(9.5).fillColor("#6b6b6b").text("An online identity check run by Veriff for BGP's AML checks: the document, and the face against it.", { width });
+  for (const l of veriffResultLines(s)) {
+    if (l.head) { doc.moveDown(0.9); doc.font("Helvetica-Bold").fontSize(11).fillColor("#6E0C25").text(l.head, { width }); doc.moveDown(0.2); continue; }
+    doc.font("Helvetica-Bold").fontSize(9.5).fillColor("#1a1a1a").text(`${l.label}: `, { width, continued: true }).font("Helvetica").text(l.value || "");
+  }
+  doc.end();
+  await done;
+  return Buffer.concat(chunks);
+}
+
 /** A document's bytes, as stored: the app's file store, or a Veriff result written out from its session. */
 export async function amlFileDocBytes(doc: AmlFileDoc): Promise<{ data: Buffer; ext: string } | { missing: string }> {
   const url = doc.url || "";
@@ -373,12 +434,8 @@ export async function amlFileDocBytes(doc: AmlFileDoc): Promise<{ data: Buffer; 
   if (veriff) {
     const s = (await pool.query(`SELECT * FROM veriff_sessions WHERE session_id = $1`, [decodeURIComponent(veriff[1])]).catch(() => ({ rows: [] as any[] }))).rows[0];
     if (!s) return { missing: "the Veriff session is no longer held" };
-    const json = {
-      sessionId: s.session_id, askedOf: [s.first_name, s.last_name].filter(Boolean).join(" ") || null, status: s.status,
-      decisionCode: s.decision_code, decisionReason: s.decision_reason, person: s.verdict_person, document: s.verdict_document,
-      started: s.created_at, decided: s.received_at,
-    };
-    return { data: Buffer.from(JSON.stringify(json, null, 2)), ext: ".json" };
+    // A page a person can read, not the raw record (Jack, 27 November 2026).
+    return { data: await veriffResultPdf(s), ext: ".pdf" };
   }
   if (/^https?:\/\//i.test(url)) return { missing: `held outside the app: ${url}` };
   return { missing: url ? `held at ${url}, which the file cannot read` : "no file was kept" };
@@ -850,13 +907,18 @@ export async function buildAmlZip(data: AmlFileData, capBytes = 200 * 1024 * 102
   for (const p of data.parties) {
     const folder = data.parties.length > 1 ? `${top}/${amlFileSafeName(`${DEAL_PARTY_LABEL[p.role]} - ${p.company?.name || p.brand.name}`)}` : top;
     let n = 0;
+    // One identity check filed twice is written once.
+    const checksIn = new Set<string>();
     for (const d of p.documents) {
+      const check = (d.url || "").match(/^\/api\/veriff\/sessions\/([^/?#]+)\/report$/)?.[1];
+      if (check && checksIn.has(check)) { docNames.set(`${p.role}:${d.id}`, "(the same identity check as the one above)"); continue; }
+      if (check) checksIn.add(check);
       n += 1;
       const got = await amlFileDocBytes(d);
       if ("missing" in got) { missing += 1; docNames.set(`${p.role}:${d.id}`, `(not included: ${got.missing})`); continue; }
       if (total + got.data.length > capBytes) { missing += 1; docNames.set(`${p.role}:${d.id}`, "(not included: the file would be over 200 MB; download it from the deal)"); continue; }
       const base = d.name.replace(/\.[A-Za-z0-9]{1,6}$/, "");
-      const ext = path.extname(d.name) || got.ext;
+      const ext = got.ext || path.extname(d.name);
       const name = `${String(n).padStart(2, "0")} ${amlFileSafeName(`${amlFileDocWords(d.type)} - ${base}`)}${ext}`;
       files.push({ path: `${folder}/documents/${name}`, data: got.data });
       docNames.set(`${p.role}:${d.id}`, `documents/${name}`);

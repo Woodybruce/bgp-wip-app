@@ -133,6 +133,13 @@ export async function updateTrackerAsset(id: string, body: Record<string, any>, 
   // Solicitors or beyond.
   let amlWarning: string | null = null;
   const actorId = actor.id || null;
+  // Heads of terms first (Jack, 27 November 2026): no move to HOTs or
+  // Solicitors until they are on the transaction.
+  if (statusMoved && before?.dealId) {
+    const { hotsRequiredDenial } = await import("./deal-hots-gate");
+    const noHots = await hotsRequiredDenial(pool, { id: String(before.dealId), status: before.status, dealType: "Purchase" }, updates.status as string);
+    if (noHots) return { status: noHots.status, body: { message: noHots.error, code: noHots.code } };
+  }
   if (statusMoved && before?.dealId && ["SOL", "EXC", "COM", "INV"].includes(legacyToCode(updates.status as string) || "")) {
     const dealRow = await pool.query(`SELECT landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`, [before.dealId]);
     const dr = dealRow.rows[0];
