@@ -40,6 +40,12 @@ export interface AmlDecision {
 
 export const AML_DECISIONS: AmlDecision[] = [
   // 27 November 2026
+  { date: "2026-11-27", who: ["Jack"], topic: "Who we check and when", title: "A limited partnership's general partner and partners over 25% are checked",
+    text: "Companies House holds no register of a limited partnership's partners. Its general partner is added to the transaction as also signing, so its owners are checked, and any person with more than 25% or control is recorded under Partners and does an identity check. The party is not signed off until one or the other is done." },
+  { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "The register is kept as a dated PDF each time it is read",
+    text: "Each run of BGP's checks on a transaction's party saves an excerpt of the register at Companies House on its KYC record: the company, its people with significant control, its officers and the ownership chain, with the day it was read." },
+  { date: "2026-11-27", who: ["Jack"], topic: "ID and documents", title: "A company is asked where it is run from",
+    text: "The law asks for a company's registered office and, if different, its principal place of business. The client checks page asks the person acting for a company whether the two are the same, and for the address if not. It holds nothing up on the transaction." },
   { date: "2026-11-27", who: ["Jack"], topic: "Higher risk", title: "Risk factors are assessed by an officer, not enhanced automatically",
     text: "An offshore owner, a limited partnership, a FATF increased monitoring country, a higher-risk sector and a name on the US or EU sanctions list only are risk factors. The Nominated Officer or a Deputy records each as standard, with the reason, or as high risk. Agents never choose, and a party is not signed off until each has an outcome. Call for action countries, PEPs and trusts stay enhanced." },
   { date: "2026-11-27", who: ["Jack"], topic: "Records and reports", title: "No invoice until the AML checks are complete",

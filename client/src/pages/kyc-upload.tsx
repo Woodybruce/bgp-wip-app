@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { AlertCircle, CheckCircle2, ChevronDown, Copy, FileText, Loader2, Lock, Mail, Phone, ShieldCheck, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CERTIFIED_LIST_A, CERTIFIED_WHO, CERTIFIED_HOW, CERTIFIED_LIST_B, TRUST_NEXT_WORDS, KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPortalView } from "@shared/kyc-request";
+import { CERTIFIED_LIST_A, CERTIFIED_WHO, CERTIFIED_HOW, CERTIFIED_LIST_B, TRUST_NEXT_WORDS, KYC_DATA_USE, KYC_OWNER_LINKS_TITLE, KYC_OWNERS_QUESTION, KYC_PLACE_QUESTION, KYC_PEP_QUESTION, KYC_PRIVACY_URL, KYC_UPLOAD_EXTENSIONS, KYC_WHY_WE_ASK, kycLongDate, kycPepWords, type KycAgent, type KycDocKey, type KycOwnersAnswer, type KycPepAnswer, type KycPlaceOfBusiness, type KycPortalView } from "@shared/kyc-request";
 
 type Loaded =
   | { state: "loading" }
@@ -176,6 +176,53 @@ function QuestionCard({ n, kind, answer, detail, onSave }: {
 // The owners Companies House lists, to confirm rather than send a chart
 // (Woody, 2026-11-17: ask only what is left). Yes saves at once; No asks
 // what has changed.
+// Where the company is run from, when that is not its registered office (27
+// November 2026). Asked, never required: it holds nothing open.
+function PlaceCard({ place, onSave }: { place: KycPlaceOfBusiness; onSave: (same: boolean, address: string | null) => Promise<string | null> }) {
+  const [editing, setEditing] = useState(place.same === null);
+  const [choice, setChoice] = useState<boolean | null>(place.same);
+  const [text, setText] = useState(place.address || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (same: boolean, address: string | null) => {
+    setSaving(true);
+    setError(null);
+    const failed = await onSave(same, address);
+    setSaving(false);
+    if (failed) setError(failed); else setEditing(false);
+  };
+  const done = place.same !== null && !editing;
+  return (
+    <div className={`rounded-lg border p-4 ${done ? "border-emerald-200 bg-emerald-50/40 dark:bg-emerald-950/10" : ""}`} data-testid="kyc-place">
+      <h3 className="font-semibold text-base leading-snug">{KYC_PLACE_QUESTION.title}</h3>
+      <p className="mt-1 text-sm leading-relaxed">{KYC_PLACE_QUESTION.intro}</p>
+      {done ? (
+        <div className="mt-2 text-sm">
+          <span className="text-muted-foreground">Your answer: </span><strong>{place.same ? "Yes, the same" : place.address}</strong>
+          <button type="button" className="ml-3 text-sm underline text-muted-foreground hover:text-foreground" onClick={() => setEditing(true)}>Change</button>
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" variant={choice === true ? "default" : "outline"} disabled={saving} onClick={() => { setChoice(true); void save(true, null); }} data-testid="kyc-place-yes">Yes, the same</Button>
+            <Button type="button" variant={choice === false ? "default" : "outline"} disabled={saving} onClick={() => setChoice(false)} data-testid="kyc-place-no">No, somewhere else</Button>
+          </div>
+          {choice === false && (
+            <div className="mt-3 space-y-2">
+              <label className="text-sm font-medium" htmlFor="kyc-place-address">{KYC_PLACE_QUESTION.no}</label>
+              <textarea id="kyc-place-address" rows={2} value={text} onChange={e => setText(e.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+              <Button type="button" disabled={saving || text.trim().length < 8} onClick={() => save(false, text.trim())} data-testid="kyc-place-save">
+                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}Save
+              </Button>
+            </div>
+          )}
+          {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function OwnersCard({ n, owners, onSave }: {
   n: number; owners: NonNullable<KycPortalView["owners"]>;
   onSave: (answer: KycOwnersAnswer, detail: string | null) => Promise<string | null>;
@@ -809,6 +856,18 @@ export default function KycUploadPage() {
     }
   };
 
+  const savePlace = async (same: boolean, address: string | null): Promise<string | null> => {
+    try {
+      const res = await fetch(`/api/kyc-upload/${encodeURIComponent(token)}/place-of-business`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ same, address }) });
+      const body = await readJson(res);
+      if (!res.ok) { if (res.status === 410) await load(); return body.message || "Your answer wasn't saved. Please try again."; }
+      setView(body);
+      return null;
+    } catch {
+      return "Your answer wasn't saved. Please check your connection and try again.";
+    }
+  };
+
   const finish = async () => {
     if (outstanding.length && !confirmFinish) { setConfirmFinish(true); return; }
     setFinishing(true);
@@ -943,6 +1002,8 @@ export default function KycUploadPage() {
           step++;
           return <OwnersCard n={step} owners={view.owners} onSave={saveOwners} />;
         })()}
+
+        {view.placeOfBusiness && <PlaceCard place={view.placeOfBusiness} onSave={savePlace} />}
 
         {view.people && view.people.length > 0 && (() => {
           step++;

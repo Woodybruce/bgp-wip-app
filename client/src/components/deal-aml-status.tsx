@@ -609,7 +609,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
   const ownedAbroad = pre?.company?.ownersAbroad || [];
   // What the app traced past Companies House and what BGP recorded (21 November 2026).
   const traceLines = pre?.company?.trace || pre?.trace || [];
-  const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0);
+  const showAbroad = staff && (party ? party.brand.kind === "company" : true) && (ownedAbroad.length > 0 || traceLines.length > 0 || !!pre?.company?.partnership);
   const abroadQ = useDealAbroad(dealId, cp.role, showAbroad);
   const companyMissing = party ? party.brand.kind === "company" && !party.company && !isTrust && !isPublicBody : pre?.state === "needs_company";
   const people = checks?.people?.[cp.id] || null;
@@ -903,7 +903,7 @@ function PartyAmlBox({ dealId, data, cp, row, party, checks, openAll, startOpen,
             {showAbroad && (
               <div className="space-y-1.5" data-testid={`aml-abroad-${cp.role}`}>
                 {/* The party itself registered abroad, with no UK record (23 November 2026): not a parent. */}
-                <SubHead>{abroadQ.data?.trace?.party ? "Registered abroad" : ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
+                <SubHead>{pre?.company?.partnership ? "Partners" : abroadQ.data?.trace?.party ? "Registered abroad" : ownedAbroad.length ? "Owners abroad" : "Parent companies"}</SubHead>
                 <AbroadTrace dealId={dealId} role={cp.role} query={abroadQ} sanctionsOnly={sanctionsOnly} />
               </div>
             )}

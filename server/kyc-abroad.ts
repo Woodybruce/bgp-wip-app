@@ -35,7 +35,7 @@ import {
   ABROAD_NOTE_MIN, ABROAD_PERSON_DETAIL_MIN, abroadStatus, checkParentNoteAnswer, compareChart, foreignParentsIn, readParentNote, sameCompany,
   type AbroadRecord, type AbroadRecordKind, type AccountsParentNote, type ChartFoundName, type ChartReading, type PrecheckAbroad,
 } from "@shared/foreign-owners";
-import { ownersAbroadOf, personNamesMatch, type KycPrecheckResult, type OwnerAbroad } from "@shared/kyc-prechecks";
+import { isLimitedPartnership, ownersAbroadOf, personNamesMatch, type KycPrecheckResult, type OwnerAbroad } from "@shared/kyc-prechecks";
 
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 const text = (v: unknown, max = 400): string => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -311,6 +311,8 @@ async function partyCtx(req: Request, res: Response): Promise<PartyCtx | null> {
 function abroadNames(pre: KycPrecheckResult | null): Array<{ name: string; country: string | null }> {
   const out: Array<{ name: string; country: string | null }> = [];
   const keep = (name: string, country: string | null) => { if (name && !out.some(o => sameCompany(o.name, name))) out.push({ name, country }); };
+  // A limited partnership itself (27 November 2026): its partners and controllers are recorded against it.
+  if (isLimitedPartnership(pre?.companiesHouse) && pre?.companiesHouse?.name) keep(pre.companiesHouse.name, "United Kingdom");
   for (const o of ownersAbroadOf(pre?.companiesHouse)) keep(o.name, o.country);
   for (const t of pre?.abroad?.traced || []) {
     keep(t.name, t.country);
@@ -376,9 +378,20 @@ router.get(["/api/deals/:id/parties/:role/abroad", "/api/client-kyc/:companyId/s
     const found = foundNames(pre, records);
     const partyName = pre?.companiesHouse?.name || ctx.party.entityName || ctx.party.brandName;
     const owners = ownersAbroadOf(pre?.companiesHouse).map(o => ({ name: o.name, country: o.country, via: o.via, foundAt: o.foundAt }));
+    // A limited partnership: one block for the partnership itself, where its partners are recorded.
+    const lp = isLimitedPartnership(pre?.companiesHouse) && pre?.companiesHouse?.name ? pre.companiesHouse.name : null;
+    const lpRecs = lp ? records.filter(r => sameCompany(r.ownerName, lp)) : [];
+    const lpPeople = lpRecs.filter(r => r.kind === "person" && r.person).map(r => r.person!.name);
+    const lpBlock = lp ? [{
+      name: lp, country: "United Kingdom",
+      found: ["A limited partnership: Companies House holds no register of its partners", "Its beneficial owners are any partner with more than 25% of its capital, profits or votes, and whoever controls it (usually the general partner)"],
+      people: lpPeople, evidence: lpRecs.filter(r => r.kind !== "person" && r.kind !== "note").length,
+      needs: lpPeople.length ? null : "its general partner (add it under Also signs so its owners are checked) and any partner over 25%: from the partnership agreement or the client's structure chart",
+    }] : [];
     res.json({
       partyName,
-      owners: abroadStatus({ owners, abroad: pre?.abroad, records, chartReceived: charts.some(c => c.reading?.read) }),
+      partnership: !!lp,
+      owners: [...lpBlock, ...abroadStatus({ owners, abroad: pre?.abroad, records, chartReceived: charts.some(c => c.reading?.read) })],
       trace: pre?.abroad || null,
       ranAt: pre?.ranAt || null,
       names: abroadNames(pre),

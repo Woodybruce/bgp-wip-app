@@ -69,6 +69,8 @@ export const AML_RULES: AmlRuleGroup[] = [
     title: "What we check",
     rules: [
       { text: "A company: its register entry, its directors, and anyone who owns more than 25% or controls it.", refs: ["mlr_reg5", "amlg11400"] },
+      { text: "A limited partnership: its general partner, and any partner with more than 25% or control. Companies House does not list them, so we record them.", refs: ["mlr_reg5", "amlg11400"] },
+      { text: "A company's registered office and, if different, where it is mainly run from.", refs: ["amlg11400"] },
       { text: "A private individual, or a person signing or guaranteeing in their own name: photo ID and proof of address under 3 months old. A licence showing their address covers both.", refs: ["amlg11400"] },
       { text: "A company's owners: photo ID and proof of address. BGP asks more than HMRC's minimum.", refs: ["bgp_policy"] },
       { text: "A trust's settlor, trustees and anyone else with control: photo ID and proof of address.", refs: ["bgp_policy"] },

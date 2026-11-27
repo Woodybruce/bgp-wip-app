@@ -1152,6 +1152,12 @@ export async function runPrecheck(companyId: string, opts: { dealId?: string | n
     risk = { level: r.level, score: r.score };
   } catch { /* the risk score is a convenience */ }
 
+  // The register as it stood today, kept as a PDF on the party's KYC record (27 November 2026).
+  if (companiesHouse) {
+    const { fileRegisterExcerpt } = await import("./kyc-register-excerpt");
+    await fileRegisterExcerpt({ companyId, entityId, dealId, ch: companiesHouse });
+  }
+
   // Stored under sanctionsScreening as well, in the shape the other readers
   // know, so this row counts as the party's latest screening.
   const sanctionsScreening = sanctions.ran ? sanctions.lines.map(l => ({

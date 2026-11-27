@@ -10994,6 +10994,90 @@ and database) takes the request's own token.
 | Build script | `script/build.ts` |
 | Project runbook | `replit.md` |
 
+## The rules specification build (Jack, 2026-11-27)
+
+Jack sent "BGP AML App: Rules Specification" as guidance, agreed a list of 14
+amendments and five decisions, and said of K1: "I dont want to reverse the
+rule I dont want agent being able to choose 'within reason'". Do not
+re-litigate. Tests: `server/rules-spec.test.ts`, cases in
+`server/kyc-red-flags.test.ts`, `server/aml-policy.test.ts`,
+`server/joint-agent-checks.test.ts` (all in `npm test`).
+
+- **Risk factors are assessed by an officer, never enhanced automatically
+  and never chosen by an agent.** `ASSESSED_KINDS` in
+  `shared/kyc-red-flags.ts` (a limited partnership, a FATF increased
+  monitoring or other listed country, a higher-risk sector, an offshore
+  owner, an overseas entity not found, owners the client disputes, a name on
+  the US or EU sanctions list only). `factorToAssess` is true until the
+  Nominated Officer or a Deputy presses **High risk** (the flag is confirmed
+  and counts: enhanced) or **Standard, with reason** (set aside with a
+  comment), through the red flags' own confirm and set-aside routes
+  (`decider`). Until then the party stays at its level, and it is not signed
+  off by anyone (`toAssess` on `SignOffFacts`, `riskFactorsDenial`: "Risk
+  factor to assess first: …"); a sanctions-only letting is not held. Still
+  enhanced with no assessment: a call for action country (evidence
+  `MANDATORY_EVIDENCE`), a PEP, a trust (`policy_trust`) and any red flag
+  that is not a factor. Citizenship by investment is only weighed
+  (`policyFactorsToWeigh`).
+- **Only the UK Sanctions List is a sanctions match.** A name found on the US
+  or EU list alone is the factor `foreign_sanctions`
+  (`sanctionsLineIsUk`, `precheckSanctionsMatch` counts UK lines): the UK list
+  is the one that binds UK persons (OFSI), the others are a real risk signal
+  an officer assesses.
+- **A declined identity check** is a red flag only when Veriff's reason reads
+  as fraud (`idDeclineIsSuspect`); any other is tried again.
+- **Owners the client disputes** (`owners_differ`) is an assessed factor: the
+  officer judges whether the difference is material; only a material one is
+  reported to Companies House.
+- **A joint agent's CDD summary** saying identity was verified no longer
+  counts for identity (`shared/joint-agent-checks.ts`); it still counts for
+  the address. BGP does not rely on another firm.
+- **SIPPs, SSASs and pension schemes** read as trusts by name
+  (`pensionSchemeMarkInName`, in `trustMarkInName`): a suggestion, as any
+  trust's.
+- **No invoice until the checks are complete** (Jack: "Our internal blocks
+  need to be at invoice stage"). `shared/aml-invoice.ts`,
+  `server/aml-invoice-block.ts` (`amlInvoiceDenial`): while the officers'
+  switch is on (`system_settings.aml_invoice_block`, **off until an officer
+  switches it on** on the Policy pill, `PUT /api/aml-policy/invoice-block`),
+  `POST /api/xero/invoices` and the invoice approval answer 409
+  `AML_NOT_COMPLETE` naming each party not cleared (the gate's own reading,
+  `checkCounterpartyAml`; Not required counts as done; on advisory work only
+  BGP's client). A transaction whose officer set "AML check: YES" passes.
+  Moves to Exchanged or Completed are still never blocked.
+- **Limited partnerships** (`isLimitedPartnership` in
+  `shared/kyc-prechecks.ts`: Companies House types limited-partnership,
+  scottish-limited-partnership, scottish-partnership). People to check reads
+  `partnership`; the party owes "add its general partner under Also signs, or
+  record who holds more than 25% or controls it" until a signer is added or a
+  person is recorded against the partnership. The company step shows
+  **Partners** (the Owners abroad section, `server/kyc-abroad.ts`: the
+  partnership itself is a block there, so Record a person behind it, Add a
+  note and Add a structure chart work for it). The `policy_pooled` factor is
+  the officer's to assess (an FCA-authorised manager is the usual reason for
+  standard).
+- **The register excerpt** (`server/kyc-register-excerpt.ts`): each run of
+  BGP's checks that read Companies House files a PDF on the party's KYC
+  record (doc type `ch_register_excerpt`, once a London day per company): the
+  company, its people with significant control (or an overseas entity's
+  registered beneficial owners), statements, officers, the chain and when it
+  was read. It goes into the AML file with the other documents.
+- **Principal place of business** (MLR 2017 reg 28(3)(a)): the client checks
+  page asks the person acting for a company "Is the company's main place of
+  business the same as its registered office?" (`KYC_PLACE_QUESTION`,
+  `POST /api/kyc-upload/:token/place-of-business`, kept as
+  `request.placeOfBusiness`, shown on the request's row; a KYC history line).
+  Never for a person's own link, a trust's documents, a joint agent or a
+  public body, and it never holds a request open or is chased.
+- **Policy wording**: `docs/aml-policy-issue-10-proposed-wording.md` lists
+  the changes for Issue 10 of the policy and Issue 5 of the risk assessment.
+  They are NOT published: Issue 9 and risk assessment Issue 4 stay the source
+  until Jack says publish.
+- Not built: a client file's Partners section in the client KYC window; the
+  partnership agreement as its own client-check document; the place of
+  business on the AML file's report; the invoice hold on an invoice edited
+  directly in Xero. Not checked in a browser.
+
 ## Complete on a transaction's AML (Jack, 2026-11-26)
 
 Jack: "Once checks are all complete on this page, id like a big button at the

@@ -20,7 +20,7 @@
 // identity checks, and the deal card, the client page and the sign-off read
 // the answer.
 
-import { controlWords, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
+import { controlWords, isLimitedPartnership, nameTokens, ownersAbroadOf, personDisplayName, personNamesMatch, type KycPrecheckResult } from "./kyc-prechecks";
 import { sameCompany } from "./foreign-owners";
 import { relianceWords, type PartyReliance } from "./aml-reliance";
 import { owesProofOfAddress, type KycDocKey, type KycIdState, type KycPartyKind, type KycPersonRole } from "./kyc-request";
@@ -333,7 +333,7 @@ export interface KycPartyPerson {
   canSend: boolean;
 }
 
-export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity" | "trust" | "trust_unrecorded" | "public_body";
+export type PartyPeopleBasis = "owners" | "listed" | "no_owners" | "not_read" | "individual" | "owners_abroad" | "abroad_company" | "charity" | "partnership" | "trust" | "trust_unrecorded" | "public_body";
 
 export interface PartyPeople {
   basis: PartyPeopleBasis;
@@ -366,6 +366,7 @@ export const PARTY_PEOPLE_BASIS_WORDS: Record<PartyPeopleBasis, string> = {
   no_owners: "The register names no person who owns or controls the company. Ask the client who does; the person dealing with us still does their own check.",
   not_read: "BGP's checks before asking have not read the register yet, so the owners are not known. The person dealing with us does their own check.",
   individual: "Private individuals: each person named on the transaction does an identity check and sends a proof of address (a photocard driving licence showing their current address covers both). When more than one person is buying, selling or renting together, add each of them.",
+  partnership: "A limited partnership: Companies House holds no register of its partners. Its beneficial owners are any partner with more than 25% of its capital, profits or votes, and whoever controls it, usually the general partner. Add the general partner under Also signs (its own owners are then checked), and record any person over 25% or in control under Partners, in The company. Each does an identity check.",
   abroad_company: "Registered outside the UK, so Companies House has no record of it. The client is asked for an extract from its own register and the people who own or control it. The app looks it up in GLEIF (under Owners abroad), and each person found is recorded there and does their own check.",
   owners_abroad: "A company registered outside the UK owns or controls it, so Companies House cannot show the people behind it. BGP's officers find them. The app traces what it can (the accounts and GLEIF, under Owners abroad in The company), the client can be asked for a structure chart, and each person found is recorded there and does their own check.",
   trust: "A trust: the people its structure records (the settlor, the trustees, any protector, and the beneficiaries of a trust that is not discretionary) each do an identity check. Everyone named is screened.",
@@ -630,9 +631,14 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
   // behind a parent GLEIF found above it (21 November 2026).
   const above = (name: string): string[] => [name, ...((input.precheck?.abroad?.traced || []).filter(t => sameCompany(t.name, name)).flatMap(t => t.gleif.parents.map(g => g.name)))];
   const unanswered = abroad.filter(a => !(input.abroadPeople || []).some(p => above(a.name).some(n => sameCompany(n, p.ownerName))));
+  // A limited partnership (27 November 2026): answered once its general partner
+  // signs alongside it, or a partner or controller is recorded against it.
+  const lp = input.kind !== "individual" && isLimitedPartnership(ch) && !ch?.listing ? ch! : null;
+  const lpAnswered = !lp || people.some(p => p.roles.some(r => r === "signer" || r === "signer_owner"))
+    || (input.abroadPeople || []).some(p => sameCompany(p.ownerName, lp.name));
   const basis: PartyPeopleBasis = input.kind === "individual" ? "individual"
     : !ch ? (input.precheck?.abroad?.party ? (input.precheck.abroad.listing ? "listed" : "abroad_company") : pc ? "charity" : "not_read")
-    : ch.listing ? "listed" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : pc ? "charity" : "no_owners";
+    : ch.listing ? "listed" : lp ? "partnership" : abroad.length ? "owners_abroad" : people.some(p => p.roles.includes("owner")) ? "owners" : pc ? "charity" : "no_owners";
   // A trust is on no register: its basis is its structure, recorded or not.
   const trustBasis: PartyPeopleBasis | null = input.trust !== undefined && input.kind === "company" && !ch?.owners.length
     ? (trust && trust.people.length ? "trust" : pc ? null : "trust_unrecorded") : null;
@@ -651,6 +657,7 @@ export function partyPeople(input: PartyPeopleInput): PartyPeople {
       ...people.filter(p => p.outstanding.length).map(p => `${p.name}: ${p.outstanding.join(" and ")}`),
       // Until the client names them, the people behind a company abroad are owed.
       ...(unanswered.length && !input.reliance && !party.some(r => !r.person && r.files.some(f => f.docKey === "ownership")) ? [`The people behind ${unanswered.map(a => `${a.name} (${a.country})`).join(" and ")}: a structure chart and their IDs`] : []),
+      ...(lp && !lpAnswered && !input.reliance ? [`${lp.name} is a limited partnership: add its general partner under Also signs, or record who holds more than 25% or controls it`] : []),
     ],
     ...(abroad.length ? { ownersAbroad: abroad.map(a => ({ name: a.name, country: a.country, foundAt: a.foundAt, ...(unanswered.includes(a) ? {} : { answered: true }) })) } : {}),
     ...(input.reliance ? { reliance: { ...input.reliance, words: relianceWords(input.reliance) } } : {}),

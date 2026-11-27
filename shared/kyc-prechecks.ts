@@ -1019,11 +1019,17 @@ const SIC_WORDS: Record<string, string> = {
 };
 export const sicWords = (code: string): string => SIC_WORDS[String(code || "").trim()] ? `${code} ${SIC_WORDS[String(code).trim()]}` : String(code || "");
 
+/** A limited partnership (27 November 2026): Companies House holds no register of its partners. */
+export const isLimitedPartnership = (ch: { type?: string | null } | null | undefined): boolean =>
+  /^(scottish-)?limited-partnership$|^scottish-partnership$/.test(String(ch?.type || ""));
+
 export interface PrecheckCompany {
   name: string;
   number: string;
   status: string;
   type: string | null;
+  // A limited partnership: its general partner and its partners over 25% are recorded by BGP.
+  partnership?: boolean;
   incorporatedOn: string | null;
   registeredOffice: string | null;
   business: string[];
@@ -1093,6 +1099,7 @@ export function precheckCompany(result: KycPrecheckResult | null): PrecheckCompa
     number: ch.number,
     status: status[0].toUpperCase() + status.slice(1),
     type: ch.type ? companyTypeWords(ch.type) : null,
+    ...(isLimitedPartnership(ch) ? { partnership: true } : {}),
     incorporatedOn: ch.incorporatedOn,
     registeredOffice: ch.registeredOffice,
     business: (ch.sicCodes || []).map(sicWords),

@@ -16,6 +16,7 @@ const DOC_WORDS: Record<string, string> = {
   company_accounts: "Accounts",
   company_cert: "Certificate of incorporation",
   confirmation_statement: "Confirmation statement",
+  ch_register_excerpt: "Register excerpt (people with significant control and officers)",
   credit_report: "Credit report",
   driving_licence: "Driving licence",
   electronic_id_check: "Electronic identity check",

@@ -1374,6 +1374,8 @@ export interface KycPortalView {
   question: { pep: KycPepAnswer | null; pepDetail: string | null } | null;
   // The owners on the register to confirm (null when not asked).
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
+  // A company's main place of business, when it is not its registered office (27 November 2026).
+  placeOfBusiness?: KycPlaceOfBusiness | null;
   docs: Array<{ key: KycDocKey; title: string; detail: string; files: Array<{ name: string; uploadedAt: string }> }>;
   otherFiles: Array<{ name: string; uploadedAt: string }>;
   // A person's own request (19 November 2026): who they are to the company.
@@ -1482,3 +1484,16 @@ export function sameSignerPartySql(param: string, tokens = "kyc_upload_tokens"):
 export function tokenPartyCompanySql(param: string, tokens = "kyc_upload_tokens"): string {
   return `(CASE WHEN ${tokens}.deal_id IS NOT NULL AND ${tokens}.deal_id <> ${param} THEN COALESCE(${sameSignerPartySql(param, tokens)}, ${tokens}.company_id) ELSE ${tokens}.company_id END)`;
 }
+
+// ── A company's principal place of business (Jack, 27 November 2026) ────────
+// MLR 2017 reg 28(3)(a): a company's registered office "and, if different, its
+// principal place of business". The register gives the first; the client is
+// asked the second. It never holds a request open.
+export interface KycPlaceOfBusiness { same: boolean | null; address: string | null; answeredAt: string | null }
+export const KYC_PLACE_QUESTION = {
+  title: "Where the company is run from",
+  intro: "Is the company's main place of business the same as its registered office?",
+  no: "The address the company is mainly run from",
+};
+export const placeOfBusinessWords = (p: KycPlaceOfBusiness | null | undefined): string | null =>
+  !p || p.same === null ? null : p.same ? "the registered office" : p.address || null;

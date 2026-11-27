@@ -242,7 +242,7 @@ export function AbroadTrace({ dealId, role, query, sanctionsOnly = false }: { de
     <div className="space-y-3 text-xs" data-testid="abroad-trace">
       {ownerBlocks.map(({ o, recs }) => (
         <div key={o.name} className="space-y-1.5" data-testid={`abroad-owner-${o.name}`}>
-          <p className="font-medium">{o.name} <span className="font-normal text-muted-foreground">({o.country})</span></p>
+          <p className="font-medium">{o.name}{o.country === "United Kingdom" ? null : <span className="font-normal text-muted-foreground"> ({o.country})</span>}</p>
           <ul className="list-disc space-y-0.5 pl-4 text-muted-foreground">{o.found.map(f => <li key={f} className="break-words">{f}</li>)}</ul>
           {recs.length > 0 && <ul className="space-y-1">{recs.map(r => <RecordLine key={r.id} dealId={dealId} role={role} r={r} />)}</ul>}
           {o.needs && !sanctionsOnly && <p className="text-amber-800 dark:text-amber-300">Still to find: {o.needs}.</p>}

@@ -62,6 +62,7 @@ export interface ClientCheckRequest {
   idVerifiedName?: string | null; idOtherPerson?: boolean;
   askPep: boolean; pep: KycPepAnswer | null; pepDetail: string | null;
   owners: { list: Array<{ name: string; detail: string }>; answer: KycOwnersAnswer | null; detail: string | null } | null;
+  placeOfBusiness?: string | null;
   notAsked: Array<{ key: KycDocKey; reason: string }>;
   // A person's own request (19 November 2026): who it is for.
   person?: { key: string; name: string; roles: KycPersonRole[] } | null;
@@ -200,6 +201,9 @@ export function ClientCheckRow({ dealId, request, startOpen }: { dealId: string;
           Public roles: <strong>{kycPepWords(request.pep)}</strong>{request.pepDetail ? ` · ${request.pepDetail}` : ""}
           {(request.pep === "yes" || request.pep === "unsure") && <> · Enhanced due diligence: senior management approval (a director or the MLRO) before the transaction goes ahead, source of wealth and of funds, closer monitoring. Lighter for a UK one with no other risk.</>}
         </p>
+      )}
+      {request.placeOfBusiness && (
+        <p className="text-muted-foreground" data-testid={`client-check-place-${request.ref}`}>Principal place of business: <strong>{request.placeOfBusiness}</strong></p>
       )}
       {request.owners && (
         <p className={request.owners.answer === "no" ? "rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" : "text-muted-foreground"} data-testid={`client-check-owners-${request.ref}`}>

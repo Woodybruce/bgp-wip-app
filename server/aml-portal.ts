@@ -105,6 +105,8 @@ export interface KycRequestDetails {
   // names them (20 November 2026).
   ownersAbroad?: Array<{ name: string; country: string }> | null;
   ownersAnswer?: KycOwnersReply | null;
+  // The company's main place of business, if not its registered office (27 November 2026).
+  placeOfBusiness?: { same: boolean; address: string | null; answeredAt: string } | null;
   notAsked?: Array<{ key: KycDocKey; reason: string }>;
   precheckId?: number | null;
   // A person's own request (Woody, 19 November 2026: "the owners and the
@@ -593,6 +595,7 @@ export async function portalView(row: TokenRow): Promise<KycPortalView> {
     idCheck,
     question: request.askPep ? { pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null } : null,
     owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
+    placeOfBusiness: asksPlaceOfBusiness(request) ? { same: request.placeOfBusiness?.same ?? null, address: request.placeOfBusiness?.address ?? null, answeredAt: request.placeOfBusiness?.answeredAt ?? null } : null,
     docs: docsStillAsked(request).map(key => ({
       ...kycDocWords(key, { ownerNames: request.ownerNames, ownersAbroad: request.ownersAbroad, publicBody: !!request.work?.publicBody, partyName: request.partyName }), key,
       files: progress.files.filter(f => f.docKey === key).map(f => ({ name: f.name, uploadedAt: f.uploadedAt })),
@@ -1183,6 +1186,7 @@ export async function clientChecksForDeal(dealId: string | null, client?: { comp
       askPep: !!request.askPep, pep: request.answers?.pep ?? null, pepDetail: request.answers?.pepDetail ?? null,
       owners: request.confirmOwners?.length ? { list: request.confirmOwners, answer: request.ownersAnswer?.answer ?? null, detail: request.ownersAnswer?.detail ?? null } : null,
       notAsked: request.notAsked || [],
+      placeOfBusiness: request.placeOfBusiness ? (request.placeOfBusiness.same ? "the registered office" : request.placeOfBusiness.address) : null,
       person: request.person ? { key: request.person.key, name: request.person.name, roles: request.person.roles } : null,
       viaAgent: request.viaAgent ? { firm: request.viaAgent.firm, name: request.viaAgent.name, email: request.viaAgent.email, passedOn: request.viaAgent.passedOn || [] } : null,
       contactRole: contactRoleWords(request.contactRole),
@@ -2022,6 +2026,11 @@ kycRequestRouter.post("/api/kyc-upload/:token/answers", async (req: Request, res
 // difference from the register: it goes on the party's KYC trail, and the
 // agents see it on the deal and in the finished note (HMRC, AMLG11400 14.8:
 // report it to Companies House).
+/** A request to the person acting for a company asks where it is run from; a person's own link, a trust's documents, a joint agent and a public body do not. */
+function asksPlaceOfBusiness(request: KycRequestDetails): boolean {
+  return request.kind === "company" && !request.person && !isJointRequest(request) && !isTrustDocsRequest(request) && !request.work?.publicBody;
+}
+
 kycRequestRouter.post("/api/kyc-upload/:token/owners", async (req: Request, res: Response) => {
   try {
     const row = await openRow(req, res);
@@ -2037,6 +2046,30 @@ kycRequestRouter.post("/api/kyc-upload/:token/owners", async (req: Request, res:
     if (row.company_id && !row.is_test) {
       await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_owners_confirmation', $2, $3)`,
         [row.company_id, row.contact_name || row.contact_email, `Owners on the register (ref ${request.ref}): ${kycOwnersWords(answer)}${detail ? `. ${detail}` : ""}${answer === "no" ? ". A difference from the register: report it to Companies House." : ""}`]).catch(() => {});
+    }
+    res.json(await portalView((await tokenRow(row.token))!));
+  } catch (err: any) {
+    res.status(500).json({ message: "Something went wrong. Please try again." });
+  }
+});
+
+// A company's main place of business, when it is not its registered office
+// (MLR 2017 reg 28(3)(a); Jack, 27 November 2026). It holds nothing open.
+kycRequestRouter.post("/api/kyc-upload/:token/place-of-business", async (req: Request, res: Response) => {
+  try {
+    const row = await openRow(req, res);
+    if (!row) return;
+    const request = row.request!;
+    if (!asksPlaceOfBusiness(request)) return res.status(400).json({ message: "This request does not ask where the company is run from." });
+    const same = req.body?.same === true ? true : req.body?.same === false ? false : null;
+    if (same === null) return res.status(400).json({ message: "Choose Yes or No." });
+    const address = same ? null : String(req.body?.address || "").replace(/\s+/g, " ").trim().slice(0, 400) || null;
+    if (!same && (!address || address.length < 8)) return res.status(400).json({ message: "Give the address the company is mainly run from." });
+    request.placeOfBusiness = { same, address, answeredAt: new Date().toISOString() };
+    await saveRequest(row.token, request);
+    if (row.company_id && !row.is_test) {
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'client_place_of_business', $2, $3)`,
+        [row.company_id, row.contact_name || row.contact_email, `Principal place of business (ref ${request.ref}): ${same ? "the registered office" : address}`]).catch(() => {});
     }
     res.json(await portalView((await tokenRow(row.token))!));
   } catch (err: any) {
